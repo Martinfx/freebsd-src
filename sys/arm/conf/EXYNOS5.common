@@ -84,6 +84,7 @@ device		hwreset
 device		md
 device		regulator
 device		syscon
+device 		loop
 
 # Minimal GPIO support
 device		gpio
