@@ -341,10 +341,8 @@ get_bank(struct pad_softc *sc, int gpio_number,
 static int
 port_intr(void *arg)
 {
-	struct port_softc *sc;
-
-	sc = arg;
-
+	/*struct port_softc *sc;
+	sc = arg;*/
 	return (FILTER_HANDLED);
 }
 
