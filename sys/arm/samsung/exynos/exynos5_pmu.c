@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 
 #define	EXYNOS5250	1
 #define	EXYNOS5420	2
+#define EXYNOS5422  3
 
 /* PWR control */
 #define	EXYNOS5_PWR_USBHOST_PHY		0x708
@@ -75,6 +76,7 @@ struct pmu_softc {
 struct pmu_softc *pmu_sc;
 
 static struct ofw_compat_data compat_data[] = {
+    {"samsung,exynos5422-pmu",	EXYNOS5422},
 	{"samsung,exynos5420-pmu",	EXYNOS5420},
 	{"samsung,exynos5250-pmu",	EXYNOS5250},
 	{NULL, 0}
@@ -174,6 +176,4 @@ static driver_t pmu_driver = {
 	sizeof(struct pmu_softc),
 };
 
-static devclass_t pmu_devclass;
-
-DRIVER_MODULE(pmu, simplebus, pmu_driver, pmu_devclass, 0, 0);
+DRIVER_MODULE(pmu, simplebus, pmu_driver, 0, 0);
