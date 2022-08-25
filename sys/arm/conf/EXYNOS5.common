@@ -128,3 +128,7 @@ device		smscphy
 device		miibus
 device		axe			# ASIX Electronics USB Ethernet
 device		bpf			# Berkeley packet filter
+
+# Flattened Device Tree
+options         FDT                     # Configure using FDT/DTB data
+#makeoptions     MODULES_EXTRA+="dtb/samsung"
