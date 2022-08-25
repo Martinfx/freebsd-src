@@ -127,9 +127,7 @@ static driver_t xhci_driver = {
 	sizeof(struct xhci_softc)
 };
 
-static devclass_t xhci_devclass;
-
-DRIVER_MODULE(xhci, simplebus, xhci_driver, xhci_devclass, 0, 0);
+DRIVER_MODULE(xhci, simplebus, xhci_driver, 0, 0);
 MODULE_DEPEND(xhci, usb, 1, 1, 1);
 
 /*

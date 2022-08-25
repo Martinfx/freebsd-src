@@ -132,6 +132,4 @@ static driver_t arm_tmr_driver = {
 	sizeof(struct arm_tmr_softc),
 };
 
-static devclass_t arm_tmr_devclass;
-
-DRIVER_MODULE(mct, simplebus, arm_tmr_driver, arm_tmr_devclass, 0, 0);
+DRIVER_MODULE(mct, simplebus, arm_tmr_driver, 0, 0);

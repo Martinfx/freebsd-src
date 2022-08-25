@@ -410,6 +410,4 @@ static driver_t combiner_driver = {
 	sizeof(struct combiner_softc),
 };
 
-static devclass_t combiner_devclass;
-
-DRIVER_MODULE(combiner, simplebus, combiner_driver, combiner_devclass, 0, 0);
+DRIVER_MODULE(combiner, simplebus, combiner_driver, 0, 0);

@@ -407,6 +407,4 @@ static driver_t fimd_driver = {
 	sizeof(struct fimd_softc),
 };
 
-static devclass_t fimd_devclass;
-
-DRIVER_MODULE(fb, simplebus, fimd_driver, fimd_devclass, 0, 0);
+DRIVER_MODULE(fb, simplebus, fimd_driver, 0, 0);

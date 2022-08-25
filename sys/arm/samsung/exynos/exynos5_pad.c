@@ -849,6 +849,4 @@ static driver_t pad_driver = {
 	sizeof(struct pad_softc),
 };
 
-static devclass_t pad_devclass;
-
-DRIVER_MODULE(pad, simplebus, pad_driver, pad_devclass, 0, 0);
+DRIVER_MODULE(pad, simplebus, pad_driver, 0, 0);

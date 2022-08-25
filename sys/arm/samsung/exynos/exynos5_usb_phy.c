@@ -266,6 +266,4 @@ static driver_t usb_phy_driver = {
 	sizeof(struct usb_phy_softc),
 };
 
-static devclass_t usb_phy_devclass;
-
-DRIVER_MODULE(usb_phy, simplebus, usb_phy_driver, usb_phy_devclass, 0, 0);
+DRIVER_MODULE(usb_phy, simplebus, usb_phy_driver, 0, 0);
