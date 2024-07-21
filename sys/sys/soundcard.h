@@ -30,8 +30,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -1746,7 +1744,7 @@ typedef struct oss_sysinfo
 	int	openedaudio[8];	/* Bit mask telling which audio devices
 				   are busy */
 
-	int	numsynths;	/* # of availavle synth devices */
+	int	numsynths;	/* # of available synth devices */
 	int	nummidis;	/* # of available MIDI ports */
 	int	numtimers;	/* # of available timer devices */
 	int	nummixers;	/* # of mixer devices */
@@ -1880,7 +1878,7 @@ typedef struct oss_audioinfo
 	int	card_number;
 	int	port_number;
 	int	mixer_dev;
-	int	real_device;	/* Obsolete field. Replaced by devnode */
+	int	legacy_device;	/* Obsolete field. Replaced by devnode */
 	int	enabled;	/* 1=enabled, 0=device not ready at this
 				   moment */
 	int	flags;		/* For internal use only - no practical
@@ -1927,7 +1925,9 @@ typedef struct oss_mixerinfo
    * as the default mixer.
    */
   int priority;
-  int filler[254];		/* Reserved */
+  oss_devnode_t devnode;
+  int legacy_device;
+  int filler[245];		/* Reserved */
 } oss_mixerinfo;
 
 typedef struct oss_midi_info

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Peter Holm
 #
@@ -27,7 +27,7 @@
 # SUCH DAMAGE.
 #
 
-# unionfs(8) test with a cd9660 file system
+# unionfs(4) test with a cd9660(4) file system
 
 # "panic: unionfs_noderem: vnode 0xfffffe014f9259c8 locked recursively" seen
 # https://people.freebsd.org/~pho/stress/log/log0233.txt
@@ -51,8 +51,8 @@ for i in $md1 $md2; do
 	mdconfig -l | grep -q md$i && mdconfig -d -u $i
 done
 
-mdconfig -a -t swap -s 4g -u $md1
-mdconfig -a -t swap -s 4g -u $md2
+mdconfig -a -t swap -s 5g -u $md1
+mdconfig -a -t swap -s 5g -u $md2
 newfs $newfs_flags -n md$md1 > /dev/null
 newfs $newfs_flags -n md$md2 > /dev/null
 mount /dev/md$md1 $mp1
@@ -68,6 +68,10 @@ chmod 777 $mp2
 mount -t unionfs -o below $mp1 $mp2
 set +e
 mount | grep -E "$mp1|$mp2"
+
+set `df -ik $mp2 | tail -1 | awk '{print $4,$7}'`
+export KBLOCKS=$(($1 / 6))
+export INODES=$(($2 / 6))
 
 export CTRLDIR=$mp2/stressX.control
 export INCARNATIONS=10

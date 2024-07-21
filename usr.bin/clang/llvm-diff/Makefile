@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG_CXX=	llvm-diff
 
 SRCDIR=		llvm/tools/llvm-diff

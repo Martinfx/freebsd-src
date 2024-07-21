@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/aac
 
 .if ${MACHINE_CPUARCH} == "i386"

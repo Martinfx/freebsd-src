@@ -36,25 +36,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	from: @(#)rbootd.c	8.1 (Berkeley) 6/4/93
- *
  * From: Utah Hdr: rbootd.c 3.1 92/07/06
  * Author: Jeff Forys, University of Utah CSS
  */
-
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1992, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-#if 0
-static const char sccsid[] = "@(#)rbootd.c	8.1 (Berkeley) 6/4/93";
-#endif
-#endif /* not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/time.h>
@@ -70,7 +54,7 @@ __FBSDID("$FreeBSD$");
 #include <unistd.h>
 #include "defs.h"
 
-static void usage(void);
+static void usage(void) __dead2;
 
 int
 main(int argc, char *argv[])
@@ -249,7 +233,7 @@ main(int argc, char *argv[])
 
 		if (FD_ISSET(fd, &r)) {
 			RMPCONN rconn;
-			CLIENT *client, *FindClient();
+			CLIENT *client;
 			int doread = 1;
 
 			while (BpfRead(&rconn, doread)) {

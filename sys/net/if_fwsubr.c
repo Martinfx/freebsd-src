@@ -28,8 +28,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include "opt_inet.h"
@@ -46,6 +44,7 @@
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/netisr.h>
 #include <net/route.h>
 #include <net/if_llc.h>
@@ -803,6 +802,7 @@ firewire_ifdetach(struct ifnet *ifp)
 {
 	bpfdetach(ifp);
 	if_detach(ifp);
+	NET_EPOCH_DRAIN_CALLBACKS();
 }
 
 void

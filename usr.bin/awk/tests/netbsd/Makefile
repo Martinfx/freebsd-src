@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/usr.bin/awk/${.CURDIR:T}

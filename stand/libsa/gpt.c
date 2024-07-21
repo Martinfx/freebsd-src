@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/gpt.h>
 
@@ -79,7 +76,7 @@ gptupdate(const char *which, struct dsk *dskp, struct gpt_hdr *hdr,
 	hdr->hdr_crc_table = crc32(0, Z_NULL, 0);
 	hdr->hdr_crc_table = crc32(hdr->hdr_crc_table, (const Bytef *)table,
 	    hdr->hdr_entries * hdr->hdr_entsz);
-	hdr->hdr_crc_self = crc32(0, Z_NULL, 0);;
+	hdr->hdr_crc_self = crc32(0, Z_NULL, 0);
 	hdr->hdr_crc_self = crc32(hdr->hdr_crc_self, (const Bytef *)hdr,
 	    hdr->hdr_size);
 	bzero(secbuf, DEV_BSIZE);

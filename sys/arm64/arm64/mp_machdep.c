@@ -32,9 +32,6 @@
 #include "opt_kstack_pages.h"
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -80,7 +77,7 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/psci/psci.h>
 
-#include "pic_if.h"
+#define	MP_BOOTSTACK_SIZE	(kstack_pages * PAGE_SIZE)
 
 #define	MP_QUIRK_CPULIST	0x01	/* The list of cpus may be wrong, */
 					/* don't panic if one fails to start */
@@ -99,42 +96,26 @@ static struct {
 };
 #endif
 
-typedef void intr_ipi_send_t(void *, cpuset_t, u_int);
-typedef void intr_ipi_handler_t(void *);
-
-#define INTR_IPI_NAMELEN	(MAXCOMLEN + 1)
-struct intr_ipi {
-	intr_ipi_handler_t *	ii_handler;
-	void *			ii_handler_arg;
-	intr_ipi_send_t *	ii_send;
-	void *			ii_send_arg;
-	char			ii_name[INTR_IPI_NAMELEN];
-	u_long *		ii_count;
-};
-
-static struct intr_ipi ipi_sources[INTR_IPI_COUNT];
-
-static struct intr_ipi *intr_ipi_lookup(u_int);
-static void intr_pic_ipi_setup(u_int, const char *, intr_ipi_handler_t *,
-    void *);
-
 static void ipi_ast(void *);
 static void ipi_hardclock(void *);
 static void ipi_preempt(void *);
 static void ipi_rendezvous(void *);
 static void ipi_stop(void *);
 
-struct pcb stoppcbs[MAXCPU];
-
 #ifdef FDT
 static u_int fdt_cpuid;
 #endif
 
-void mpentry(unsigned long cpuid);
+void mpentry_psci(unsigned long cpuid);
+void mpentry_spintable(void);
 void init_secondary(uint64_t);
 
 /* Synchronize AP startup. */
 static struct mtx ap_boot_mtx;
+
+/* Used to initialize the PCPU ahead of calling init_secondary(). */
+void *bootpcpu;
+uint64_t ap_cpuid;
 
 /* Stacks for AP initialization, discarded once idle threads are started. */
 void *bootstack;
@@ -147,13 +128,13 @@ static volatile int aps_started;
 static volatile int aps_ready;
 
 /* Temporary variables for init_secondary()  */
-void *dpcpu[MAXCPU - 1];
+static void *dpcpu[MAXCPU - 1];
 
 static bool
 is_boot_cpu(uint64_t target_cpu)
 {
 
-	return (cpuid_to_pcpu[0]->pc_mpidr == (target_cpu & CPU_AFF_MASK));
+	return (PCPU_GET_MPIDR(cpuid_to_pcpu[0]) == (target_cpu & CPU_AFF_MASK));
 }
 
 static void
@@ -165,12 +146,12 @@ release_aps(void *dummy __unused)
 	if (mp_ncpus == 1)
 		return;
 
-	intr_pic_ipi_setup(IPI_AST, "ast", ipi_ast, NULL);
-	intr_pic_ipi_setup(IPI_PREEMPT, "preempt", ipi_preempt, NULL);
-	intr_pic_ipi_setup(IPI_RENDEZVOUS, "rendezvous", ipi_rendezvous, NULL);
-	intr_pic_ipi_setup(IPI_STOP, "stop", ipi_stop, NULL);
-	intr_pic_ipi_setup(IPI_STOP_HARD, "stop hard", ipi_stop, NULL);
-	intr_pic_ipi_setup(IPI_HARDCLOCK, "hardclock", ipi_hardclock, NULL);
+	intr_ipi_setup(IPI_AST, "ast", ipi_ast, NULL);
+	intr_ipi_setup(IPI_PREEMPT, "preempt", ipi_preempt, NULL);
+	intr_ipi_setup(IPI_RENDEZVOUS, "rendezvous", ipi_rendezvous, NULL);
+	intr_ipi_setup(IPI_STOP, "stop", ipi_stop, NULL);
+	intr_ipi_setup(IPI_STOP_HARD, "stop hard", ipi_stop, NULL);
+	intr_ipi_setup(IPI_HARDCLOCK, "hardclock", ipi_hardclock, NULL);
 
 	atomic_store_rel_int(&aps_ready, 1);
 	/* Wake up the other CPUs */
@@ -207,7 +188,7 @@ init_secondary(uint64_t cpu)
 {
 	struct pcpu *pcpup;
 	pmap_t pmap0;
-	u_int mpidr;
+	uint64_t mpidr;
 
 	ptrauth_mp_start(cpu);
 
@@ -218,23 +199,14 @@ init_secondary(uint64_t cpu)
 	 */
 	mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
 	if (cpu >= MAXCPU || cpuid_to_pcpu[cpu] == NULL ||
-	    cpuid_to_pcpu[cpu]->pc_mpidr != mpidr) {
+	    PCPU_GET_MPIDR(cpuid_to_pcpu[cpu]) != mpidr) {
 		for (cpu = 0; cpu < mp_maxid; cpu++)
 			if (cpuid_to_pcpu[cpu] != NULL &&
-			    cpuid_to_pcpu[cpu]->pc_mpidr == mpidr)
+			    PCPU_GET_MPIDR(cpuid_to_pcpu[cpu]) == mpidr)
 				break;
 		if ( cpu >= MAXCPU)
 			panic("MPIDR for this CPU is not in pcpu table");
 	}
-
-	pcpup = cpuid_to_pcpu[cpu];
-	/*
-	 * Set the pcpu pointer with a backup in tpidr_el1 to be
-	 * loaded when entering the kernel from userland.
-	 */
-	__asm __volatile(
-	    "mov x18, %0 \n"
-	    "msr tpidr_el1, %0" :: "r"(pcpup));
 
 	/*
 	 * Identify current CPU. This is necessary to setup
@@ -244,6 +216,7 @@ init_secondary(uint64_t cpu)
 	 * We need this before signalling the CPU is ready to
 	 * let the boot CPU use the results.
 	 */
+	pcpup = cpuid_to_pcpu[cpu];
 	pcpup->pc_midr = get_midr();
 	identify_cpu(cpu);
 
@@ -274,7 +247,7 @@ init_secondary(uint64_t cpu)
 	cpu_initclocks_ap();
 
 #ifdef VFP
-	vfp_init();
+	vfp_init_secondary();
 #endif
 
 	dbg_init();
@@ -317,76 +290,11 @@ smp_after_idle_runnable(void *arg __unused)
 
 	for (cpu = 1; cpu < mp_ncpus; cpu++) {
 		if (bootstacks[cpu] != NULL)
-			kmem_free((vm_offset_t)bootstacks[cpu], PAGE_SIZE);
+			kmem_free(bootstacks[cpu], MP_BOOTSTACK_SIZE);
 	}
 }
 SYSINIT(smp_after_idle_runnable, SI_SUB_SMP, SI_ORDER_ANY,
     smp_after_idle_runnable, NULL);
-
-/*
- *  Send IPI thru interrupt controller.
- */
-static void
-pic_ipi_send(void *arg, cpuset_t cpus, u_int ipi)
-{
-
-	KASSERT(intr_irq_root_dev != NULL, ("%s: no root attached", __func__));
-
-	/*
-	 * Ensure that this CPU's stores will be visible to IPI
-	 * recipients before starting to send the interrupts.
-	 */
-	dsb(ishst);
-
-	PIC_IPI_SEND(intr_irq_root_dev, arg, cpus, ipi);
-}
-
-/*
- *  Setup IPI handler on interrupt controller.
- *
- *  Not SMP coherent.
- */
-static void
-intr_pic_ipi_setup(u_int ipi, const char *name, intr_ipi_handler_t *hand,
-    void *arg)
-{
-	struct intr_irqsrc *isrc;
-	struct intr_ipi *ii;
-	int error;
-
-	KASSERT(intr_irq_root_dev != NULL, ("%s: no root attached", __func__));
-	KASSERT(hand != NULL, ("%s: ipi %u no handler", __func__, ipi));
-
-	error = PIC_IPI_SETUP(intr_irq_root_dev, ipi, &isrc);
-	if (error != 0)
-		return;
-
-	isrc->isrc_handlers++;
-
-	ii = intr_ipi_lookup(ipi);
-	KASSERT(ii->ii_count == NULL, ("%s: ipi %u reused", __func__, ipi));
-
-	ii->ii_handler = hand;
-	ii->ii_handler_arg = arg;
-	ii->ii_send = pic_ipi_send;
-	ii->ii_send_arg = isrc;
-	strlcpy(ii->ii_name, name, INTR_IPI_NAMELEN);
-	ii->ii_count = intr_ipi_setup_counters(name);
-
-	PIC_ENABLE_INTR(intr_irq_root_dev, isrc);
-}
-
-static void
-intr_ipi_send(cpuset_t cpus, u_int ipi)
-{
-	struct intr_ipi *ii;
-
-	ii = intr_ipi_lookup(ipi);
-	if (ii->ii_count == NULL)
-		panic("%s: not setup IPI %u", __func__, ipi);
-
-	ii->ii_send(ii->ii_send_arg, cpus, ipi);
-}
 
 static void
 ipi_ast(void *dummy __unused)
@@ -487,15 +395,63 @@ cpu_mp_probe(void)
 	return (1);
 }
 
+static int
+enable_cpu_psci(uint64_t target_cpu, vm_paddr_t entry, u_int cpuid)
+{
+	int err;
+
+	err = psci_cpu_on(target_cpu, entry, cpuid);
+	if (err != PSCI_RETVAL_SUCCESS) {
+		/*
+		 * Panic here if INVARIANTS are enabled and PSCI failed to
+		 * start the requested CPU.  psci_cpu_on() returns PSCI_MISSING
+		 * to indicate we are unable to use it to start the given CPU.
+		 */
+		KASSERT(err == PSCI_MISSING ||
+		    (mp_quirks & MP_QUIRK_CPULIST) == MP_QUIRK_CPULIST,
+		    ("Failed to start CPU %u (%lx), error %d\n",
+		    cpuid, target_cpu, err));
+		return (EINVAL);
+	}
+
+	return (0);
+}
+
+static int
+enable_cpu_spin(uint64_t cpu, vm_paddr_t entry, vm_paddr_t release_paddr)
+{
+	vm_paddr_t *release_addr;
+
+	ap_cpuid = cpu & CPU_AFF_MASK;
+
+	release_addr = pmap_mapdev_attr(release_paddr, sizeof(*release_addr),
+	    VM_MEMATTR_DEFAULT);
+	if (release_addr == NULL)
+		return (ENOMEM);
+
+	*release_addr = entry;
+	cpu_dcache_wbinv_range(release_addr, sizeof(*release_addr));
+	pmap_unmapdev(release_addr, sizeof(*release_addr));
+
+	__asm __volatile(
+	    "sev	\n"
+	    ::: "memory");
+
+	/* Wait for the target CPU to start */
+	while (atomic_load_64(&ap_cpuid) != 0)
+		__asm __volatile("wfe");
+
+	return (0);
+}
+
 /*
  * Starts a given CPU. If the CPU is already running, i.e. it is the boot CPU,
  * do nothing. Returns true if the CPU is present and running.
  */
 static bool
-start_cpu(u_int cpuid, uint64_t target_cpu, int domain)
+start_cpu(u_int cpuid, uint64_t target_cpu, int domain, vm_paddr_t release_addr)
 {
 	struct pcpu *pcpup;
-	vm_offset_t pcpu_mem;
 	vm_size_t size;
 	vm_paddr_t pa;
 	int err, naps;
@@ -511,41 +467,43 @@ start_cpu(u_int cpuid, uint64_t target_cpu, int domain)
 	KASSERT(cpuid < MAXCPU, ("Too many CPUs"));
 
 	size = round_page(sizeof(*pcpup) + DPCPU_SIZE);
-	pcpu_mem = kmem_malloc_domainset(DOMAINSET_PREF(domain), size,
+	pcpup = kmem_malloc_domainset(DOMAINSET_PREF(domain), size,
 	    M_WAITOK | M_ZERO);
-	pmap_disable_promotion(pcpu_mem, size);
-
-	pcpup = (struct pcpu *)pcpu_mem;
+	pmap_disable_promotion((vm_offset_t)pcpup, size);
 	pcpu_init(pcpup, cpuid, sizeof(struct pcpu));
 	pcpup->pc_mpidr = target_cpu & CPU_AFF_MASK;
+	bootpcpu = pcpup;
 
 	dpcpu[cpuid - 1] = (void *)(pcpup + 1);
 	dpcpu_init(dpcpu[cpuid - 1], cpuid);
 
-	bootstacks[cpuid] = (void *)kmem_malloc_domainset(
-	    DOMAINSET_PREF(domain), PAGE_SIZE, M_WAITOK | M_ZERO);
+	bootstacks[cpuid] = kmem_malloc_domainset(DOMAINSET_PREF(domain),
+	    MP_BOOTSTACK_SIZE, M_WAITOK | M_ZERO);
 
 	naps = atomic_load_int(&aps_started);
-	bootstack = (char *)bootstacks[cpuid] + PAGE_SIZE;
+	bootstack = (char *)bootstacks[cpuid] + MP_BOOTSTACK_SIZE;
 
 	printf("Starting CPU %u (%lx)\n", cpuid, target_cpu);
-	pa = pmap_extract(kernel_pmap, (vm_offset_t)mpentry);
-	err = psci_cpu_on(target_cpu, pa, cpuid);
-	if (err != PSCI_RETVAL_SUCCESS) {
-		/*
-		 * Panic here if INVARIANTS are enabled and PSCI failed to
-		 * start the requested CPU.  psci_cpu_on() returns PSCI_MISSING
-		 * to indicate we are unable to use it to start the given CPU.
-		 */
-		KASSERT(err == PSCI_MISSING ||
-		    (mp_quirks & MP_QUIRK_CPULIST) == MP_QUIRK_CPULIST,
-		    ("Failed to start CPU %u (%lx), error %d\n",
-		    cpuid, target_cpu, err));
 
+	/*
+	 * A limited set of hardware we support can only do spintables and
+	 * remain useful, due to lack of EL3.  Thus, we'll usually fall into the
+	 * PSCI branch here.
+	 */
+	MPASS(release_addr == 0 || !psci_present);
+	if (release_addr != 0) {
+		pa = pmap_extract(kernel_pmap, (vm_offset_t)mpentry_spintable);
+		err = enable_cpu_spin(target_cpu, pa, release_addr);
+	} else {
+		pa = pmap_extract(kernel_pmap, (vm_offset_t)mpentry_psci);
+		err = enable_cpu_psci(target_cpu, pa, cpuid);
+	}
+
+	if (err != 0) {
 		pcpu_destroy(pcpup);
 		dpcpu[cpuid - 1] = NULL;
-		kmem_free((vm_offset_t)bootstacks[cpuid], PAGE_SIZE);
-		kmem_free(pcpu_mem, size);
+		kmem_free(bootstacks[cpuid], MP_BOOTSTACK_SIZE);
+		kmem_free(pcpup, size);
 		bootstacks[cpuid] = NULL;
 		mp_ncpus--;
 		return (false);
@@ -583,7 +541,7 @@ madt_handler(ACPI_SUBTABLE_HEADER *entry, void *arg)
 		if (vm_ndomains > 1)
 			domain = acpi_pxm_get_cpu_locality(intr->Uid);
 #endif
-		if (start_cpu(id, intr->ArmMpidr, domain)) {
+		if (start_cpu(id, intr->ArmMpidr, domain, 0)) {
 			MPASS(cpuid_to_pcpu[id] != NULL);
 			cpuid_to_pcpu[id]->pc_acpi_id = intr->Uid;
 			/*
@@ -630,10 +588,27 @@ cpu_init_acpi(void)
 #endif
 
 #ifdef FDT
-static boolean_t
+/*
+ * Failure is indicated by failing to populate *release_addr.
+ */
+static void
+populate_release_addr(phandle_t node, vm_paddr_t *release_addr)
+{
+	pcell_t buf[2];
+
+	if (OF_getencprop(node, "cpu-release-addr", buf, sizeof(buf)) !=
+	    sizeof(buf))
+		return;
+
+	*release_addr = (((uintptr_t)buf[0] << 32) | buf[1]);
+}
+
+static bool
 start_cpu_fdt(u_int id, phandle_t node, u_int addr_size, pcell_t *reg)
 {
 	uint64_t target_cpu;
+	vm_paddr_t release_addr;
+	char *enable_method;
 	int domain;
 	int cpuid;
 
@@ -648,8 +623,33 @@ start_cpu_fdt(u_int id, phandle_t node, u_int addr_size, pcell_t *reg)
 	else
 		cpuid = fdt_cpuid;
 
-	if (!start_cpu(cpuid, target_cpu, 0))
-		return (FALSE);
+	/*
+	 * If PSCI is present, we'll always use that -- the cpu_on method is
+	 * mandated in both v0.1 and v0.2.  We'll check the enable-method if
+	 * we don't have PSCI and use spin table if it's provided.
+	 */
+	release_addr = 0;
+	if (!psci_present && cpuid != 0) {
+		if (OF_getprop_alloc(node, "enable-method",
+		    (void **)&enable_method) <= 0)
+			return (false);
+
+		if (strcmp(enable_method, "spin-table") != 0) {
+			OF_prop_free(enable_method);
+			return (false);
+		}
+
+		OF_prop_free(enable_method);
+		populate_release_addr(node, &release_addr);
+		if (release_addr == 0) {
+			printf("Failed to fetch release address for CPU %u",
+			    cpuid);
+			return (false);
+		}
+	}
+
+	if (!start_cpu(cpuid, target_cpu, 0, release_addr))
+		return (false);
 
 	/*
 	 * Don't increment for the boot CPU, its CPU ID is reserved.
@@ -664,7 +664,7 @@ start_cpu_fdt(u_int id, phandle_t node, u_int addr_size, pcell_t *reg)
 	cpuid_to_pcpu[cpuid]->pc_domain = domain;
 	if (domain < MAXMEMDOM)
 		CPU_SET(cpuid, &cpuset_domain[domain]);
-	return (TRUE);
+	return (true);
 }
 static void
 cpu_init_fdt(void)
@@ -688,11 +688,16 @@ cpu_init_fdt(void)
 void
 cpu_mp_start(void)
 {
+	uint64_t mpidr;
+
 	mtx_init(&ap_boot_mtx, "ap boot", NULL, MTX_SPIN);
 
 	/* CPU 0 is always boot CPU. */
 	CPU_SET(0, &all_cpus);
-	cpuid_to_pcpu[0]->pc_mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
+	mpidr = READ_SPECIALREG(mpidr_el1) & CPU_AFF_MASK;
+	cpuid_to_pcpu[0]->pc_mpidr = mpidr;
+
+	cpu_desc_init();
 
 	switch(arm64_bus_method) {
 #ifdef DEV_ACPI
@@ -807,118 +812,6 @@ cpu_mp_setmaxid(void)
 		}
 	}
 }
-
-/*
- *  Lookup IPI source.
- */
-static struct intr_ipi *
-intr_ipi_lookup(u_int ipi)
-{
-
-	if (ipi >= INTR_IPI_COUNT)
-		panic("%s: no such IPI %u", __func__, ipi);
-
-	return (&ipi_sources[ipi]);
-}
-
-/*
- *  interrupt controller dispatch function for IPIs. It should
- *  be called straight from the interrupt controller, when associated
- *  interrupt source is learned. Or from anybody who has an interrupt
- *  source mapped.
- */
-void
-intr_ipi_dispatch(u_int ipi, struct trapframe *tf)
-{
-	void *arg;
-	struct intr_ipi *ii;
-
-	ii = intr_ipi_lookup(ipi);
-	if (ii->ii_count == NULL)
-		panic("%s: not setup IPI %u", __func__, ipi);
-
-	intr_ipi_increment_count(ii->ii_count, PCPU_GET(cpuid));
-
-	/*
-	 * Supply ipi filter with trapframe argument
-	 * if none is registered.
-	 */
-	arg = ii->ii_handler_arg != NULL ? ii->ii_handler_arg : tf;
-	ii->ii_handler(arg);
-}
-
-#ifdef notyet
-/*
- *  Map IPI into interrupt controller.
- *
- *  Not SMP coherent.
- */
-static int
-ipi_map(struct intr_irqsrc *isrc, u_int ipi)
-{
-	boolean_t is_percpu;
-	int error;
-
-	if (ipi >= INTR_IPI_COUNT)
-		panic("%s: no such IPI %u", __func__, ipi);
-
-	KASSERT(intr_irq_root_dev != NULL, ("%s: no root attached", __func__));
-
-	isrc->isrc_type = INTR_ISRCT_NAMESPACE;
-	isrc->isrc_nspc_type = INTR_IRQ_NSPC_IPI;
-	isrc->isrc_nspc_num = ipi_next_num;
-
-	error = PIC_REGISTER(intr_irq_root_dev, isrc, &is_percpu);
-	if (error == 0) {
-		isrc->isrc_dev = intr_irq_root_dev;
-		ipi_next_num++;
-	}
-	return (error);
-}
-
-/*
- *  Setup IPI handler to interrupt source.
- *
- *  Note that there could be more ways how to send and receive IPIs
- *  on a platform like fast interrupts for example. In that case,
- *  one can call this function with ASIF_NOALLOC flag set and then
- *  call intr_ipi_dispatch() when appropriate.
- *
- *  Not SMP coherent.
- */
-int
-intr_ipi_set_handler(u_int ipi, const char *name, intr_ipi_filter_t *filter,
-    void *arg, u_int flags)
-{
-	struct intr_irqsrc *isrc;
-	int error;
-
-	if (filter == NULL)
-		return(EINVAL);
-
-	isrc = intr_ipi_lookup(ipi);
-	if (isrc->isrc_ipifilter != NULL)
-		return (EEXIST);
-
-	if ((flags & AISHF_NOALLOC) == 0) {
-		error = ipi_map(isrc, ipi);
-		if (error != 0)
-			return (error);
-	}
-
-	isrc->isrc_ipifilter = filter;
-	isrc->isrc_arg = arg;
-	isrc->isrc_handlers = 1;
-	isrc->isrc_count = intr_ipi_setup_counters(name);
-	isrc->isrc_index = 0; /* it should not be used in IPI case */
-
-	if (isrc->isrc_dev != NULL) {
-		PIC_ENABLE_INTR(isrc->isrc_dev, isrc);
-		PIC_ENABLE_SOURCE(isrc->isrc_dev, isrc);
-	}
-	return (0);
-}
-#endif
 
 /* Sending IPI */
 void

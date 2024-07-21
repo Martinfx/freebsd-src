@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 Vadim Goncharov <vadimnuclight@tpu.ru>
  * All rights reserved.
@@ -28,8 +28,6 @@
  *
  * Portions Copyright (c) 1999 Whistle Communications, Inc.
  * (ng_bpf by Archie Cobbs <archie@freebsd.org>)
- *
- * $FreeBSD$
  */
 
 /*
@@ -260,7 +258,7 @@ NETGRAPH_INIT(tag, &typestruct);
  * One could ask why to have this structures at all when we have
  * ng_tag_hookinfo initialized to zero and don't need in and out structures
  * at all to operate.  Unfortunatelly, we have to return thisHook field
- * in response to messages so the fastest and simpliest way is to have
+ * in response to messages so the fastest and simplest way is to have
  * this default structures and initialize thisHook once at hook creation
  * rather than to do it on every response.
  */

@@ -31,12 +31,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * @(#) Header: arp.c,v 1.5 93/07/15 05:52:26 leres Exp  (LBL)
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -178,7 +173,7 @@ arprecv(struct iodesc *d, void **pkt, void **payload, time_t tleft, void *extra)
 	if (n == -1 || n < sizeof(struct ether_arp)) {
 #ifdef ARP_DEBUG
 		if (debug)
-			printf("bad len=%d\n", n);
+			printf("bad len=%zd\n", n);
 #endif
 		free(ptr);
 		return (-1);

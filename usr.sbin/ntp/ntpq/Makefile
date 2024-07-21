@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MAN=
 
 .include <src.opts.mk>
@@ -8,24 +6,23 @@ MAN=
 
 BINDIR=	/usr/bin
 
+PACKAGE=ntp
 PROG=	ntpq
 SRCS= 	ntpq.c ntpq-opts.c ntpq-subs.c version.c
 
 CFLAGS+= -I${SRCTOP}/contrib/ntp/include \
 	-I${SRCTOP}/contrib/ntp/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/unix/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/pthreads/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/${NTP_ATOMIC}/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/unix/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/pthreads/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/${NTP_ATOMIC}/include \
 	-I${SRCTOP}/contrib/ntp/sntp/libopts \
 	-I${.CURDIR:H}
 
-LIBADD+=	edit ntp opts m pthread
+LIBADD+=	edit ntp opts m md pthread
 
 .if ${MK_OPENSSL} != "no"
 LIBADD+=	crypto
-.else
-LIBADD+=	md
 .endif
 
 CLEANFILES+= .version version.c

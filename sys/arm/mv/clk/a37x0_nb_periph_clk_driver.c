@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Semihalf.
  *
@@ -35,8 +35,8 @@
 
 #include <dev/fdt/simplebus.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/clk/clk_fixed.h>
+#include <dev/clk/clk.h>
+#include <dev/clk/clk_fixed.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>

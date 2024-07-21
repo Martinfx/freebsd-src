@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 The FreeBSD Project
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -61,8 +58,9 @@ linux_ioctl_tdfx(struct thread *td, struct linux_ioctl_args* args)
    if (error != 0)
 	   return (error);
    /* We simply copy the data and send it right to ioctl */
-   copyin((caddr_t)args->arg, &d_pio, sizeof(d_pio));
-   error = fo_ioctl(fp, cmd, (caddr_t)&d_pio, td->td_ucred, td);
+   error = copyin((caddr_t)args->arg, &d_pio, sizeof(d_pio));
+   if (error == 0)
+	error = fo_ioctl(fp, cmd, (caddr_t)&d_pio, td->td_ucred, td);
    fdrop(fp, td);
    return error;
 }

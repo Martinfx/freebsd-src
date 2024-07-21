@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2005-2011, 2021 Intel Corporation
+ * Copyright (C) 2005-2011, 2021-2022 Intel Corporation
  */
 #include <linux/device.h>
 #include <linux/interrupt.h>
@@ -49,7 +49,7 @@ void __iwl_ ##fn(struct device *dev, const char *fmt, ...)	\
 								\
 	va_start(args, fmt);					\
 	vaf.va = &args;						\
-	vasprintf(&str, M_KMALLOC, fmt, args);			\
+	vasprintf(&str, M_KMALLOC, vaf.fmt, args);		\
 	dev_ ##fn(dev, "%s", str);				\
 	trace_iwlwifi_ ##fn(&vaf);				\
 	free(str, M_KMALLOC);					\
@@ -88,7 +88,7 @@ void __iwl_err(struct device *dev, enum iwl_err_mode mode, const char *fmt, ...)
 			dev_err(dev, "%pV", &vaf);
 #elif defined(__FreeBSD__)
 		char *str;
-		vasprintf(&str, M_KMALLOC, fmt, args2);
+		vasprintf(&str, M_KMALLOC, vaf.fmt, args2);
 		dev_err(dev, "%s%s", (mode == IWL_ERR_MODE_RFKILL) ? "(RFKILL)" : "", str);
 		free(str, M_KMALLOC);
 #endif
@@ -97,6 +97,7 @@ void __iwl_err(struct device *dev, enum iwl_err_mode mode, const char *fmt, ...)
 	default:
 		break;
 	}
+	vaf.va = &args;
 	trace_iwlwifi_err(&vaf);
 	va_end(args);
 }
@@ -115,7 +116,11 @@ iwl_have_debug_level(enum iwl_dl level)
 /* Passing the iwl_drv * in seems pointless. */
 void
 iwl_print_hex_dump(void *drv __unused, enum iwl_dl level,
+#if defined(__linux__)
     const char *prefix, uint8_t *data, size_t len)
+#elif defined(__FreeBSD__)
+    const char *prefix, const uint8_t *data, size_t len)
+#endif
 {
 
 	/* Given we have a level, check for it. */
@@ -150,7 +155,7 @@ void __iwl_dbg(struct device *dev,
 		dev_printk(KERN_DEBUG, dev, "%s %pV", function, &vaf);
 #elif defined(__FreeBSD__)
 		char *str;
-		vasprintf(&str, M_KMALLOC, fmt, args);
+		vasprintf(&str, M_KMALLOC, vaf.fmt, args);
 		dev_printk(KERN_DEBUG, dev, "%d %u %s %s",
 		    curthread->td_tid, (unsigned int)ticks, function, str);
 		free(str, M_KMALLOC);

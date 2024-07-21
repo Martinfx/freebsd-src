@@ -423,7 +423,6 @@ efi_alloc_and_read(int fd, struct dk_gpt **vtoc)
 		void *tmp;
 		length = (int) sizeof (struct dk_gpt) +
 		    (int) sizeof (struct dk_part) * (vptr->efi_nparts - 1);
-		nparts = vptr->efi_nparts;
 		if ((tmp = realloc(vptr, length)) == NULL) {
 			/* cppcheck-suppress doubleFree */
 			free(vptr);
@@ -565,10 +564,9 @@ int
 efi_rescan(int fd)
 {
 	int retry = 10;
-	int error;
 
 	/* Notify the kernel a devices partition table has been updated */
-	while ((error = ioctl(fd, BLKRRPART)) != 0) {
+	while (ioctl(fd, BLKRRPART) != 0) {
 		if ((--retry == 0) || (errno != EBUSY)) {
 			(void) fprintf(stderr, "the kernel failed to rescan "
 			    "the partition table: %d\n", errno);
@@ -1177,8 +1175,8 @@ efi_use_whole_disk(int fd)
 	 * (for performance reasons). The alignment should match the
 	 * alignment used by the "zpool_label_disk" function.
 	 */
-	limit = P2ALIGN(efi_label->efi_last_lba - nblocks - EFI_MIN_RESV_SIZE,
-	    PARTITION_END_ALIGNMENT);
+	limit = P2ALIGN_TYPED(efi_label->efi_last_lba - nblocks -
+	    EFI_MIN_RESV_SIZE, PARTITION_END_ALIGNMENT, diskaddr_t);
 	if (data_start + data_size != limit || resv_start != limit)
 		sync_needed = B_TRUE;
 
@@ -1364,7 +1362,7 @@ efi_write(int fd, struct dk_gpt *vtoc)
 	if (NBLOCKS(vtoc->efi_nparts, vtoc->efi_lbasize) < 34) {
 		dk_ioc.dki_length = EFI_MIN_ARRAY_SIZE + vtoc->efi_lbasize;
 	} else {
-		dk_ioc.dki_length = NBLOCKS(vtoc->efi_nparts,
+		dk_ioc.dki_length = (len_t)NBLOCKS(vtoc->efi_nparts,
 		    vtoc->efi_lbasize) *
 		    vtoc->efi_lbasize;
 	}

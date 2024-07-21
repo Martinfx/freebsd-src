@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_SYSFS_H_
 #define	_LINUXKPI_LINUX_SYSFS_H_
@@ -37,6 +35,7 @@
 
 #include <linux/kobject.h>
 #include <linux/stringify.h>
+#include <linux/mm.h>
 
 struct sysfs_ops {
 	ssize_t (*show)(struct kobject *, struct attribute *, char *);
@@ -55,7 +54,10 @@ struct attribute_group {
 	.attr = { .name = __stringify(_name), .mode = _mode },		\
 	.show = _show, .store  = _store,				\
 }
-#define	__ATTR_RO(_name)	__ATTR(_name, 0444, _name##_show, NULL)
+#define	__ATTR_RO(_name) {						\
+	.attr = { .name = __stringify(_name), .mode = 0444 },		\
+	.show = _name##_show,						\
+}
 #define	__ATTR_WO(_name)	__ATTR(_name, 0200, NULL, _name##_store)
 #define	__ATTR_RW(_name)	__ATTR(_name, 0644, _name##_show, _name##_store)
 #define	__ATTR_NULL	{ .attr = { .name = NULL } }
@@ -154,6 +156,21 @@ sysfs_remove_file(struct kobject *kobj, const struct attribute *attr)
 }
 
 static inline int
+sysfs_create_link(struct kobject *kobj __unused,
+    struct kobject *target __unused, const char *name __unused)
+{
+	/* TODO */
+
+	return (0);
+}
+
+static inline void
+sysfs_remove_link(struct kobject *kobj, const char *name)
+{
+	/* TODO (along with sysfs_create_link) */
+}
+
+static inline int
 sysfs_create_files(struct kobject *kobj, const struct attribute * const *attrs)
 {
 	int error = 0;
@@ -246,7 +263,7 @@ sysfs_unmerge_group(struct kobject *kobj, const struct attribute_group *grp)
 	struct attribute **attr;
 	struct sysctl_oid *oidp;
 
-	SLIST_FOREACH(oidp, SYSCTL_CHILDREN(kobj->oidp), oid_link) {
+	SYSCTL_FOREACH(oidp, SYSCTL_CHILDREN(kobj->oidp)) {
 		if (strcmp(oidp->oid_name, grp->name) != 0)
 			continue;
 		for (attr = grp->attrs; *attr != NULL; attr++) {
@@ -293,6 +310,42 @@ sysfs_streq(const char *s1, const char *s2)
 		l2--;
 
 	return (l1 == l2 && strncmp(s1, s2, l1) == 0);
+}
+
+static inline int
+sysfs_emit(char *buf, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	if (!buf || offset_in_page(buf)) {
+		pr_warn("invalid sysfs_emit: buf:%p\n", buf);
+		return (0);
+	}
+
+	va_start(args, fmt);
+	i = vscnprintf(buf, PAGE_SIZE, fmt, args);
+	va_end(args);
+
+	return (i);
+}
+
+static inline int
+sysfs_emit_at(char *buf, int at, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	if (!buf || offset_in_page(buf) || at < 0 || at >= PAGE_SIZE) {
+		pr_warn("invalid sysfs_emit: buf:%p at:%d\n", buf, at);
+		return (0);
+	}
+
+	va_start(args, fmt);
+	i = vscnprintf(buf + at, PAGE_SIZE - at, fmt, args);
+	va_end(args);
+
+	return (i);
 }
 
 #define sysfs_attr_init(attr) do {} while(0)

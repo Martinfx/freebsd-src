@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Hudson River Trading LLC
  * Written by: John H. Baldwin <jhb@FreeBSD.org>
@@ -32,8 +32,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifdef __amd64__
 #define	DEV_APIC
 #else
@@ -811,7 +809,7 @@ update_threshold(enum scan_mode mode, int valid, int last_intr, int count,
 	if (mode != POLLED)
 		return (limit);
 
-	/* If a CMCI occured recently, do nothing for now. */
+	/* If a CMCI occurred recently, do nothing for now. */
 	if (delta < cmc_throttle)
 		return (limit);
 
@@ -1079,11 +1077,7 @@ mca_startup(void *dummy)
 	taskqueue_enqueue_timeout_sbt(mca_tq, &mca_scan_task,
 	    mca_ticks * SBT_1S, 0, C_PREL(1));
 }
-#ifdef EARLY_AP_STARTUP
 SYSINIT(mca_startup, SI_SUB_KICK_SCHEDULER, SI_ORDER_ANY, mca_startup, NULL);
-#else
-SYSINIT(mca_startup, SI_SUB_SMP, SI_ORDER_ANY, mca_startup, NULL);
-#endif
 
 #ifdef DEV_APIC
 static void

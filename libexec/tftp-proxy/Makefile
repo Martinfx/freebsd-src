@@ -1,5 +1,3 @@
-#	$FreeBSD$
-
 .PATH:	${SRCTOP}/contrib/pf/tftp-proxy
 
 PROG=	tftp-proxy

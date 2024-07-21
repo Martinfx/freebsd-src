@@ -452,17 +452,17 @@ dt_module_symaddr64(dt_module_t *dmp, GElf_Addr addr,
 }
 
 static const dt_modops_t dt_modops_32 = {
-	dt_module_syminit32,
-	dt_module_symsort32,
-	dt_module_symname32,
-	dt_module_symaddr32
+	.do_syminit = dt_module_syminit32,
+	.do_symsort = dt_module_symsort32,
+	.do_symname = dt_module_symname32,
+	.do_symaddr = dt_module_symaddr32
 };
 
 static const dt_modops_t dt_modops_64 = {
-	dt_module_syminit64,
-	dt_module_symsort64,
-	dt_module_symname64,
-	dt_module_symaddr64
+	.do_syminit = dt_module_syminit64,
+	.do_symsort = dt_module_symsort64,
+	.do_symname = dt_module_symname64,
+	.do_symaddr = dt_module_symaddr64
 };
 
 dt_module_t *
@@ -1129,33 +1129,21 @@ dt_module_getctflib(dtrace_hdl_t *dtp, dt_module_t *dmp, const char *name)
  * including the path.
  */
 static void
-#ifdef illumos
-dt_module_update(dtrace_hdl_t *dtp, const char *name)
-#else
 dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
-#endif
 {
 	char fname[MAXPATHLEN];
 	struct stat64 st;
 	int fd, err, bits;
-#ifdef __FreeBSD__
 	struct module_stat ms;
 	dt_kmodule_t *dkmp;
 	uint_t h;
 	int modid;
-#endif
-
 	dt_module_t *dmp;
 	const char *s;
 	size_t shstrs;
 	GElf_Shdr sh;
 	Elf_Data *dp;
 	Elf_Scn *sp;
-
-#ifdef illumos
-	(void) snprintf(fname, sizeof (fname),
-	    "%s/%s/object", OBJFS_ROOT, name);
-#else
 	GElf_Ehdr ehdr;
 	GElf_Phdr ph;
 	char name[MAXPATHLEN];
@@ -1165,7 +1153,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 
 	(void) strlcpy(name, k_stat->name, sizeof(name));
 	(void) strlcpy(fname, k_stat->pathname, sizeof(fname));
-#endif
 
 	if ((fd = open(fname, O_RDONLY)) == -1 || fstat64(fd, &st) == -1 ||
 	    (dmp = dt_module_create(dtp, name)) == NULL) {
@@ -1173,6 +1160,9 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		(void) close(fd);
 		return;
 	}
+
+	(void) strlcpy(dmp->dm_file, fname, sizeof(dmp->dm_file));
+	dmp->dm_modid = k_stat->id;
 
 	/*
 	 * Since the module can unload out from under us (and /system/object
@@ -1206,7 +1196,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		dt_module_destroy(dtp, dmp);
 		return;
 	}
-#if defined(__FreeBSD__)
 	mapbase = (uintptr_t)k_stat->address;
 	gelf_getehdr(dmp->dm_elf, &ehdr);
 	is_elf_obj = (ehdr.e_type == ET_REL);
@@ -1219,7 +1208,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 			return;
 		}
 	}
-#endif
 	/*
 	 * Iterate over the section headers locating various sections of
 	 * interest and use their attributes to flesh out the dt_module_t.
@@ -1228,7 +1216,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		if (gelf_getshdr(sp, &sh) == NULL || sh.sh_type == SHT_NULL ||
 		    (s = elf_strptr(dmp->dm_elf, shstrs, sh.sh_name)) == NULL)
 			continue; /* skip any malformed sections */
-#if defined(__FreeBSD__)
 		if (sh.sh_size == 0)
 			continue;
 		if (sh.sh_type == SHT_PROGBITS || sh.sh_type == SHT_NOBITS) {
@@ -1240,7 +1227,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 				dmp->dm_sec_offsets[elf_ndxscn(sp)] = sh.sh_addr;
 			mapbase += sh.sh_size;
 		}
-#endif
 		if (strcmp(s, ".text") == 0) {
 			dmp->dm_text_size = sh.sh_size;
 			dmp->dm_text_va = sh.sh_addr;
@@ -1254,17 +1240,10 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		    (dp = elf_getdata(sp, NULL)) != NULL) {
 			bcopy(dp->d_buf, &dmp->dm_info,
 			    MIN(sh.sh_size, sizeof (dmp->dm_info)));
-		} else if (strcmp(s, ".filename") == 0 &&
-		    (dp = elf_getdata(sp, NULL)) != NULL) {
-			(void) strlcpy(dmp->dm_file,
-			    dp->d_buf, sizeof (dmp->dm_file));
 		}
 	}
 
 	dmp->dm_flags |= DT_DM_KERNEL;
-#ifdef illumos
-	dmp->dm_modid = (int)OBJFS_MODID(st.st_ino);
-#else
 	/*
 	 * Include .rodata and special sections into .text.
 	 * This depends on default section layout produced by GNU ld
@@ -1272,25 +1251,25 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 	 * [Text][R/O data][R/W data][Dynamic][BSS][Non loadable]
 	 */
 	dmp->dm_text_size = dmp->dm_data_va - dmp->dm_text_va;
-#if defined(__i386__)
-	/*
-	 * Find the first load section and figure out the relocation
-	 * offset for the symbols. The kernel module will not need
-	 * relocation, but the kernel linker modules will.
-	 */
-	for (i = 0; gelf_getphdr(dmp->dm_elf, i, &ph) != NULL; i++) {
-		if (ph.p_type == PT_LOAD) {
-			dmp->dm_reloc_offset = k_stat->address - ph.p_vaddr;
-			break;
+
+	if (!is_elf_obj) {
+		/*
+		 * Find the first load section and figure out the relocation
+		 * offset for the symbols. The kernel module will not need
+		 * relocation, but the kernel linker modules will.
+		 */
+		for (i = 0; gelf_getphdr(dmp->dm_elf, i, &ph) != NULL; i++) {
+			if (ph.p_type == PT_LOAD) {
+				dmp->dm_reloc_offset =
+				    k_stat->address - ph.p_vaddr;
+				break;
+			}
 		}
 	}
-#endif
-#endif /* illumos */
 
 	if (dmp->dm_info.objfs_info_primary)
 		dmp->dm_flags |= DT_DM_PRIMARY;
 
-#ifdef __FreeBSD__
 	ms.version = sizeof(ms);
 	for (modid = kldfirstmod(k_stat->id); modid > 0;
 	    modid = modnext(modid)) {
@@ -1315,7 +1294,6 @@ dt_module_update(dtrace_hdl_t *dtp, struct kld_file_stat *k_stat)
 		dkmp->dkm_module = dmp;
 		dtp->dt_kmods[h] = dkmp;
 	}
-#endif
 
 	dt_dprintf("opened %d-bit module %s (%s) [%d]\n",
 	    bits, dmp->dm_name, dmp->dm_file, dmp->dm_modid);

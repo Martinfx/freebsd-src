@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=   getpmac
 MAN=	getpmac.8
 

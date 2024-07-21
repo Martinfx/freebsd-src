@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/powerpc/powernv
 
 KMOD=	opal_nvram

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  *  Copyright (c) 2007 Lukas Ertl
  *  All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -185,8 +182,7 @@ gv_drive_tasted(struct gv_softc *sc, struct g_provider *pp)
 	return;
 
 failed:
-	if (hdr != NULL)
-		g_free(hdr);
+	g_free(hdr);
 	g_topology_lock();
 	g_access(cp, -1, 0, 0);
 	g_detach(cp);

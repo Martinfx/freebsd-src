@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Marcel Moolenaar
  * All rights reserved.
@@ -29,9 +29,6 @@
 #include "opt_acpi.h"
 #include "opt_platform.h"
 #include "opt_uart.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -79,6 +76,30 @@ __FBSDID("$FreeBSD$");
 static int broken_txfifo = 0;
 SYSCTL_INT(_hw, OID_AUTO, broken_txfifo, CTLFLAG_RWTUN,
 	&broken_txfifo, 0, "UART FIFO has QEMU emulation bug");
+
+/*
+ * To use early printf on x86, add the following to your kernel config:
+ *
+ * options UART_NS8250_EARLY_PORT=0x3f8
+ * options EARLY_PRINTF=ns8250
+*/
+#if CHECK_EARLY_PRINTF(ns8250)
+#if !(defined(__amd64__) || defined(__i386__))
+#error ns8250 early putc is x86 specific as it uses inb/outb
+#endif
+static void
+uart_ns8250_early_putc(int c)
+{
+	u_int stat = UART_NS8250_EARLY_PORT + REG_LSR;
+	u_int tx = UART_NS8250_EARLY_PORT + REG_DATA;
+	int limit = 10000; /* 10ms is plenty of time */
+
+	while ((inb(stat) & LSR_THRE) == 0 && --limit > 0)
+		continue;
+	outb(tx, c);
+}
+early_putc_t *early_putc = uart_ns8250_early_putc;
+#endif /* EARLY_PRINTF */
 
 /*
  * Clear pending interrupts. THRE is cleared by reading IIR. Data
@@ -178,11 +199,18 @@ ns8250_drain(struct uart_bas *bas, int what)
 		 * limit high enough to handle large FIFOs and integrated
 		 * UARTs. The HP rx2600 for example has 3 UARTs on the
 		 * management board that tend to get a lot of data send
-		 * to it when the UART is first activated.
+		 * to it when the UART is first activated.  Assume that we
+		 * have finished draining if LSR_RXRDY is not asserted both
+		 * prior to and after a DELAY; but as long as LSR_RXRDY is
+		 * asserted, read (and discard) characters as quickly as
+		 * possible.
 		 */
 		limit=10*4096;
-		while ((uart_getreg(bas, REG_LSR) & LSR_RXRDY) && --limit) {
-			(void)uart_getreg(bas, REG_DATA);
+		while (limit && (uart_getreg(bas, REG_LSR) & LSR_RXRDY) && --limit) {
+			do {
+				(void)uart_getreg(bas, REG_DATA);
+				uart_barrier(bas);
+			} while ((uart_getreg(bas, REG_LSR) & LSR_RXRDY) && --limit);
 			uart_barrier(bas);
 			DELAY(delay << 2);
 		}
@@ -203,17 +231,33 @@ static void
 ns8250_flush(struct uart_bas *bas, int what)
 {
 	uint8_t fcr;
+	uint8_t lsr;
+	int drain = 0;
 
 	fcr = FCR_ENABLE;
-#ifdef CPU_XBURST
-	fcr |= FCR_UART_ON;
-#endif
 	if (what & UART_FLUSH_TRANSMITTER)
 		fcr |= FCR_XMT_RST;
 	if (what & UART_FLUSH_RECEIVER)
 		fcr |= FCR_RCV_RST;
 	uart_setreg(bas, REG_FCR, fcr);
 	uart_barrier(bas);
+
+	/*
+	 * Detect and work around emulated UARTs which don't implement the
+	 * FCR register; on these systems we need to drain the FIFO since
+	 * the flush we request doesn't happen.  One such system is the
+	 * Firecracker VMM, aka. the rust-vmm/vm-superio emulation code:
+	 * https://github.com/rust-vmm/vm-superio/issues/83
+	 */
+	lsr = uart_getreg(bas, REG_LSR);
+	if (((lsr & LSR_TEMT) == 0) && (what & UART_FLUSH_TRANSMITTER))
+		drain |= UART_DRAIN_TRANSMITTER;
+	if ((lsr & LSR_RXRDY) && (what & UART_FLUSH_RECEIVER))
+		drain |= UART_DRAIN_RECEIVER;
+	if (drain != 0) {
+		printf("ns8250: UART FCR is broken\n");
+		ns8250_drain(bas, drain);
+	}
 }
 
 static int
@@ -222,6 +266,10 @@ ns8250_param(struct uart_bas *bas, int baudrate, int databits, int stopbits,
 {
 	int divisor;
 	uint8_t lcr;
+
+	/* Don't change settings when running on Hyper-V */
+	if (vm_guest == VM_GUEST_HV)
+		return (0);
 
 	lcr = 0;
 	if (databits >= 8)
@@ -278,10 +326,6 @@ ns8250_probe(struct uart_bas *bas)
 {
 	u_char val;
 
-#ifdef CPU_XBURST
-	uart_setreg(bas, REG_FCR, FCR_UART_ON);
-#endif
-
 	/* Check known 0 bits that don't depend on DLAB. */
 	val = uart_getreg(bas, REG_IIR);
 	if (val & 0x30)
@@ -303,7 +347,7 @@ static void
 ns8250_init(struct uart_bas *bas, int baudrate, int databits, int stopbits,
     int parity)
 {
-	u_char ier, val;
+	u_char ier;
 
 	if (bas->rclk == 0)
 		bas->rclk = DEFAULT_RCLK;
@@ -320,11 +364,7 @@ ns8250_init(struct uart_bas *bas, int baudrate, int databits, int stopbits,
 	uart_barrier(bas);
 
 	/* Disable the FIFO (if present). */
-	val = 0;
-#ifdef CPU_XBURST
-	val |= FCR_UART_ON;
-#endif
-	uart_setreg(bas, REG_FCR, val);
+	uart_setreg(bas, REG_FCR, 0);
 	uart_barrier(bas);
 
 	/* Set RTS & DTR. */
@@ -348,9 +388,11 @@ ns8250_putc(struct uart_bas *bas, int c)
 {
 	int limit;
 
-	limit = 250000;
-	while ((uart_getreg(bas, REG_LSR) & LSR_THRE) == 0 && --limit)
-		DELAY(4);
+	if (vm_guest != VM_GUEST_HV) {
+		limit = 250000;
+		while ((uart_getreg(bas, REG_LSR) & LSR_THRE) == 0 && --limit)
+			DELAY(4);
+	}
 	uart_setreg(bas, REG_DATA, c);
 	uart_barrier(bas);
 }
@@ -394,9 +436,10 @@ static kobj_method_t ns8250_methods[] = {
 	KOBJMETHOD(uart_receive,	ns8250_bus_receive),
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
+	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
 	KOBJMETHOD(uart_grab,		ns8250_bus_grab),
 	KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
-	{ 0, 0 }
+	KOBJMETHOD_END
 };
 
 struct uart_class uart_ns8250_class = {
@@ -408,6 +451,7 @@ struct uart_class uart_ns8250_class = {
 	.uc_rclk = DEFAULT_RCLK,
 	.uc_rshift = 0
 };
+UART_CLASS(uart_ns8250_class);
 
 /*
  * XXX -- refactor out ACPI and FDT ifdefs
@@ -501,20 +545,17 @@ ns8250_bus_attach(struct uart_softc *sc)
 	ns8250->busy_detect = bas->busy_detect;
 	ns8250->mcr = uart_getreg(bas, REG_MCR);
 	ns8250->fcr = FCR_ENABLE;
-#ifdef CPU_XBURST
-	ns8250->fcr |= FCR_UART_ON;
-#endif
 	if (!resource_int_value("uart", device_get_unit(sc->sc_dev), "flags",
 	    &ivar)) {
-		if (UART_FLAGS_FCR_RX_LOW(ivar)) 
+		if (UART_FLAGS_FCR_RX_LOW(ivar))
 			ns8250->fcr |= FCR_RX_LOW;
-		else if (UART_FLAGS_FCR_RX_MEDL(ivar)) 
+		else if (UART_FLAGS_FCR_RX_MEDL(ivar))
 			ns8250->fcr |= FCR_RX_MEDL;
-		else if (UART_FLAGS_FCR_RX_HIGH(ivar)) 
+		else if (UART_FLAGS_FCR_RX_HIGH(ivar))
 			ns8250->fcr |= FCR_RX_HIGH;
 		else
 			ns8250->fcr |= FCR_RX_MEDH;
-	} else 
+	} else
 		ns8250->fcr |= FCR_RX_MEDH;
 
 	/* Get IER mask */
@@ -796,7 +837,6 @@ ns8250_bus_probe(struct uart_softc *sc)
 	struct uart_bas *bas;
 	int count, delay, error, limit;
 	uint8_t lsr, mcr, ier;
-	uint8_t val;
 
 	bas = &sc->sc_bas;
 
@@ -829,11 +869,7 @@ ns8250_bus_probe(struct uart_softc *sc)
 	 * done. Since this is the first time we enable the FIFOs, we reset
 	 * them.
 	 */
-	val = FCR_ENABLE;
-#ifdef CPU_XBURST
-	val |= FCR_UART_ON;
-#endif
-	uart_setreg(bas, REG_FCR, val);
+	uart_setreg(bas, REG_FCR, FCR_ENABLE);
 	uart_barrier(bas);
 	if (!(uart_getreg(bas, REG_IIR) & IIR_FIFO_MASK)) {
 		/*
@@ -847,11 +883,7 @@ ns8250_bus_probe(struct uart_softc *sc)
 		return (0);
 	}
 
-	val = FCR_ENABLE | FCR_XMT_RST | FCR_RCV_RST;
-#ifdef CPU_XBURST
-	val |= FCR_UART_ON;
-#endif
-	uart_setreg(bas, REG_FCR, val);
+	uart_setreg(bas, REG_FCR, FCR_ENABLE | FCR_XMT_RST | FCR_RCV_RST);
 	uart_barrier(bas);
 
 	count = 0;
@@ -861,11 +893,7 @@ ns8250_bus_probe(struct uart_softc *sc)
 	error = ns8250_drain(bas, UART_DRAIN_RECEIVER|UART_DRAIN_TRANSMITTER);
 	if (error) {
 		uart_setreg(bas, REG_MCR, mcr);
-		val = 0;
-#ifdef CPU_XBURST
-		val |= FCR_UART_ON;
-#endif
-		uart_setreg(bas, REG_FCR, val);
+		uart_setreg(bas, REG_FCR, 0);
 		uart_barrier(bas);
 		goto describe;
 	}
@@ -896,11 +924,7 @@ ns8250_bus_probe(struct uart_softc *sc)
 			ier = uart_getreg(bas, REG_IER) & 0xe0;
 			uart_setreg(bas, REG_IER, ier);
 			uart_setreg(bas, REG_MCR, mcr);
-			val = 0;
-#ifdef CPU_XBURST
-			val |= FCR_UART_ON;
-#endif
-			uart_setreg(bas, REG_FCR, val);
+			uart_setreg(bas, REG_FCR, 0);
 			uart_barrier(bas);
 			count = 0;
 			goto describe;
@@ -1049,6 +1073,17 @@ ns8250_bus_transmit(struct uart_softc *sc)
 	if (broken_txfifo)
 		uart_sched_softih(sc, SER_INT_TXIDLE);
 	return (0);
+}
+
+bool
+ns8250_bus_txbusy(struct uart_softc *sc)
+{
+	struct uart_bas *bas = &sc->sc_bas;
+
+	if ((uart_getreg(bas, REG_LSR) & (LSR_TEMT | LSR_THRE)) !=
+	    (LSR_TEMT | LSR_THRE))
+		return (true);
+	return (false);
 }
 
 void

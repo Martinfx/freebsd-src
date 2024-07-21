@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-3-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-3-Clause
  *
  * Copyright (c) 2003 Poul-Henning Kamp
  * All rights reserved.
@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <stdio.h>
@@ -409,7 +407,7 @@ geom_xml2tree(struct gmesh *gmp, char *p)
 		free(mt);
 		return (error);
 	}
-	gmp->lg_ident = calloc(sizeof *gmp->lg_ident, mt->nident + 1);
+	gmp->lg_ident = calloc(mt->nident + 1, sizeof(*gmp->lg_ident));
 	free(mt);
 	if (gmp->lg_ident == NULL)
 		return (ENOMEM);

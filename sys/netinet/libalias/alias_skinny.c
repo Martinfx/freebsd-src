@@ -1,7 +1,7 @@
 /*-
  * alias_skinny.c
  *
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002, 2003 MarcusCom, Inc.
  * All rights reserved.
@@ -28,8 +28,6 @@
  * SUCH DAMAGE.
  *
  * Author: Joe Marcus Clarke <marcus@FreeBSD.org>
- *
- * $FreeBSD$
  */
 
 #ifdef _KERNEL
@@ -216,7 +214,7 @@ alias_skinny_reg_msg(struct RegisterMessage *reg_msg, struct ip *pip,
 
 	tc->th_sum = 0;
 #ifdef _KERNEL
-	tc->th_x2 = 1;
+	tc->th_x2 = (TH_RES1 >> 8);
 #else
 	tc->th_sum = TcpChecksum(pip);
 #endif
@@ -230,7 +228,7 @@ alias_skinny_startmedia(struct StartMediaTransmission *start_media,
     struct alias_link *lnk, u_int32_t localIpAddr,
     ConvDirection direction)
 {
-	struct in_addr dst, src;
+	struct in_addr dst __unused, src __unused;
 
 	(void)pip;
 	(void)tc;
@@ -259,7 +257,7 @@ alias_skinny_port_msg(struct IpPortMessage *port_msg, struct ip *pip,
 
 	tc->th_sum = 0;
 #ifdef _KERNEL
-	tc->th_x2 = 1;
+	tc->th_x2 = (TH_RES1 >> 8);
 #else
 	tc->th_sum = TcpChecksum(pip);
 #endif
@@ -289,7 +287,7 @@ alias_skinny_opnrcvch_ack(struct libalias *la, struct OpenReceiveChannelAck *opn
 
 	tc->th_sum = 0;
 #ifdef _KERNEL
-	tc->th_x2 = 1;
+	tc->th_x2 = (TH_RES1 >> 8);
 #else
 	tc->th_sum = TcpChecksum(pip);
 #endif

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 Michael Smith
  * All rights reserved.
@@ -27,9 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -296,6 +293,7 @@ preload_bootstrap_relocate(vm_offset_t offset)
 	    switch (hdr[0]) {
 	    case MODINFO_ADDR:
 	    case MODINFO_METADATA|MODINFOMD_FONT:
+	    case MODINFO_METADATA|MODINFOMD_SPLASH:
 	    case MODINFO_METADATA|MODINFOMD_SSYM:
 	    case MODINFO_METADATA|MODINFOMD_ESYM:
 		ptr = (vm_offset_t *)(curp + (sizeof(uint32_t) * 2));
@@ -427,6 +425,11 @@ preload_modinfo_type(struct sbuf *sbp, int type)
 		sbuf_cat(sbp, "MODINFOMD_FONT");
 		break;
 #endif
+#ifdef MODINFOMD_SPLASH
+	case MODINFOMD_SPLASH:
+		sbuf_cat(sbp, "MODINFOMD_SPLASH");
+		break;
+#endif
 	default:
 		sbuf_cat(sbp, "unrecognized metadata type");
 	}
@@ -478,6 +481,9 @@ preload_modinfo_value(struct sbuf *sbp, uint32_t *bptr, int type, int len)
 #endif
 #ifdef MODINFOMD_FONT
 	case MODINFO_METADATA | MODINFOMD_FONT:
+#endif
+#ifdef MODINFOMD_SPLASH
+	case MODINFO_METADATA | MODINFOMD_SPLASH:
 #endif
 		sbuf_print_vmoffset(sbp, *(vm_offset_t *)bptr);
 		break;

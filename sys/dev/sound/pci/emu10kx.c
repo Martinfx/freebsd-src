@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999 Cameron Grant <cg@freebsd.org>
  * Copyright (c) 2003-2007 Yuriy Tsibizov <yuriy.tsibizov@gfk.ru>
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -51,7 +49,6 @@
 #include "opt_snd.h"
 #endif
 
-#include <dev/sound/chip.h>
 #include <dev/sound/pcm/sound.h>
 #include <dev/sound/pcm/ac97.h>
 
@@ -2315,7 +2312,7 @@ emu10kx_dev_init(struct emu_sc_info *sc)
 	mtx_init(&sc->emu10kx_lock, device_get_nameunit(sc->dev), "kxdevlock", 0);
 	unit = device_get_unit(sc->dev);
 
-	sc->cdev = make_dev(&emu10kx_cdevsw, PCMMINOR(unit), UID_ROOT, GID_WHEEL, 0640, "emu10kx%d", unit);
+	sc->cdev = make_dev(&emu10kx_cdevsw, unit, UID_ROOT, GID_WHEEL, 0640, "emu10kx%d", unit);
 	if (sc->cdev != NULL) {
 		sc->cdev->si_drv1 = sc;
 		return (0);
@@ -2987,7 +2984,6 @@ emu_write_ivar(device_t bus __unused, device_t dev __unused,
 static int
 emu_pci_probe(device_t dev)
 {
-	struct sbuf *s;
 	unsigned int thiscard = 0;
 	uint16_t vendor;
 
@@ -2999,15 +2995,8 @@ emu_pci_probe(device_t dev)
 	if (thiscard == 0)
 		return (ENXIO);
 
-	s = sbuf_new(NULL, NULL, 4096, 0);
-	if (s == NULL)
-		return (ENOMEM);
-	sbuf_printf(s, "Creative %s [%s]", emu_cards[thiscard].desc, emu_cards[thiscard].SBcode);
-	sbuf_finish(s);
-
-	device_set_desc_copy(dev, sbuf_data(s));
-
-	sbuf_delete(s);
+	device_set_descf(dev, "Creative %s [%s]",
+	    emu_cards[thiscard].desc, emu_cards[thiscard].SBcode);
 
 	return (BUS_PROBE_DEFAULT);
 }

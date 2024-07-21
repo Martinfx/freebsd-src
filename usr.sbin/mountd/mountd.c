@@ -32,21 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1989, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /*not lint*/
-
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)mountd.c	8.15 (Berkeley) 5/1/95";
-#endif /*not lint*/
-#endif
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
@@ -85,6 +70,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <vis.h>
 #include "pathnames.h"
 #include "mntopts.h"
 
@@ -144,10 +130,11 @@ struct exportlist {
 	SLIST_ENTRY(exportlist) entries;
 };
 /* ex_flag bits */
-#define	EX_LINKED	0x1
-#define	EX_DONE		0x2
-#define	EX_DEFSET	0x4
-#define	EX_PUBLICFH	0x8
+#define	EX_LINKED	0x01
+#define	EX_DONE		0x02
+#define	EX_DEFSET	0x04
+#define	EX_PUBLICFH	0x08
+#define	EX_ADMINWARN	0x10
 
 SLIST_HEAD(exportlisthead, exportlist);
 
@@ -210,7 +197,9 @@ static void	add_dlist(struct dirlist **, struct dirlist *,
 		    struct grouplist *, int, struct exportlist *,
 		    struct expcred *, uint64_t);
 static void	add_mlist(char *, char *);
-static int	check_dirpath(char *);
+static int	check_path_component(const char *, char **);
+static int	check_dirpath(char *, char **);
+static int	check_statfs(const char *, struct statfs *, char **);
 static int	check_options(struct dirlist *);
 static int	checkmask(struct sockaddr *sa);
 static int	chk_host(struct dirlist *, struct sockaddr *, int *, int *,
@@ -284,11 +273,12 @@ static char *exnames_default[2] = { _PATH_EXPORTS, NULL };
 static char **exnames;
 static char **hosts = NULL;
 static int force_v2 = 0;
+static int warn_admin = 1;
 static int resvport_only = 1;
 static int nhosts = 0;
 static int dir_only = 1;
 static int dolog = 0;
-static int got_sighup = 0;
+static _Atomic(int) got_sighup = 0;
 static int xcreated = 0;
 
 static char *svcport_str = NULL;
@@ -297,6 +287,8 @@ static int *sock_fd;
 static int sock_fdcnt;
 static int sock_fdpos;
 static int suspend_nfsd = 0;
+static int nofork = 0;
+static int skiplocalhost = 0;
 
 static int opt_flags;
 static int have_v6 = 1;
@@ -319,6 +311,7 @@ static struct pidfh *pfh = NULL;
 #define	OP_QUIET	0x100
 #define OP_MASKLEN	0x200
 #define OP_SEC		0x400
+#define OP_CLASSMASK	0x800	/* mask not specified, is Class A/B/C default */
 
 #ifdef DEBUG
 static int debug = 1;
@@ -445,10 +438,13 @@ main(int argc, char **argv)
 	else
 		close(s);
 
-	while ((c = getopt(argc, argv, "2deh:lnp:RrS")) != -1)
+	while ((c = getopt(argc, argv, "2Adeh:lNnp:RrSs")) != -1)
 		switch (c) {
 		case '2':
 			force_v2 = 1;
+			break;
+		case 'A':
+			warn_admin = 0;
 			break;
 		case 'e':
 			/* now a no-op, since this is the default */
@@ -501,6 +497,12 @@ main(int argc, char **argv)
 		case 'S':
 			suspend_nfsd = 1;
 			break;
+		case 'N':
+			nofork = 1;
+			break;
+		case 's':
+			skiplocalhost = 1;
+			break;
 		default:
 			usage();
 		}
@@ -519,6 +521,9 @@ main(int argc, char **argv)
 			nhosts = 0;
 		}
 	}
+
+	if (nhosts == 0 && skiplocalhost != 0)
+		warnx("-s without -h, ignored");
 
 	if (modfind("nfsd") < 0) {
 		/* Not present in kernel, try loading it */
@@ -541,7 +546,7 @@ main(int argc, char **argv)
 	get_mountlist();
 	if (debug)
 		warnx("here we go");
-	if (debug == 0) {
+	if (debug == 0 && nofork == 0) {
 		daemon(0, 0);
 		signal(SIGINT, SIG_IGN);
 		signal(SIGQUIT, SIG_IGN);
@@ -577,7 +582,7 @@ main(int argc, char **argv)
 				out_of_mem();
 			hosts[0] = "*";
 			nhosts = 1;
-		} else {
+		} else if (skiplocalhost == 0) {
 			hosts_bak = hosts;
 			if (have_v6) {
 				hosts_bak = realloc(hosts, (nhosts + 2) *
@@ -779,7 +784,7 @@ main(int argc, char **argv)
 /*
  * This routine creates and binds sockets on the appropriate
  * addresses. It gets called one time for each transport.
- * It returns 0 upon success, 1 for ingore the call and -1 to indicate
+ * It returns 0 upon success, 1 for ignore the call and -1 to indicate
  * bind failed with EADDRINUSE.
  * Any file descriptors that have been created are stored in sock_fd and
  * the total count of them is maintained in sock_fdcnt.
@@ -1117,8 +1122,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-		"usage: mountd [-2] [-d] [-e] [-l] [-n] [-p <port>] [-r] "
-		"[-S] [-h <bindip>] [export_file ...]\n");
+	    "usage: mountd [-2] [-d] [-e] [-l] [-N] [-n] [-p <port>] [-r] [-S] "
+	    "[-s] [-h <bindip>] [export_file ...]\n");
 	exit(1);
 }
 
@@ -1557,12 +1562,16 @@ get_exportlist_one(int passno)
 	struct statfs fsb;
 	struct expcred anon;
 	char *cp, *endcp, *dirp, *hst, *usr, *dom, savedc;
+	char *err_msg = NULL;
 	int len, has_host, got_nondir, dirplen, netgrp;
 	uint64_t exflags;
+	char unvis_dir[PATH_MAX + 1];
+	int unvis_len;
 
 	v4root_phase = 0;
 	anon.cr_groups = NULL;
 	dirhead = (struct dirlist *)NULL;
+	unvis_dir[0] = '\0';
 	while (get_line()) {
 		if (debug)
 			warnx("got line %s", line);
@@ -1629,17 +1638,25 @@ get_exportlist_one(int passno)
 			} else if (*cp == '/') {
 			    savedc = *endcp;
 			    *endcp = '\0';
+			    unvis_len = strnunvis(unvis_dir, sizeof(unvis_dir),
+				cp);
+			    if (unvis_len <= 0) {
+				getexp_err(ep, tgrp, "Cannot strunvis "
+				    "decode dir");
+				goto nextline;
+			    }
 			    if (v4root_phase > 1) {
 				    if (dirp != NULL) {
 					getexp_err(ep, tgrp, "Multiple V4 dirs");
 					goto nextline;
 				    }
 			    }
-			    if (check_dirpath(cp) &&
-				statfs(cp, &fsb) >= 0) {
+			    if (check_dirpath(unvis_dir, &err_msg) &&
+				check_statfs(unvis_dir, &fsb, &err_msg)) {
 				if ((fsb.f_flags & MNT_AUTOMOUNTED) != 0)
 				    syslog(LOG_ERR, "Warning: exporting of "
-					"automounted fs %s not supported", cp);
+					"automounted fs %s not supported",
+					unvis_dir);
 				if (got_nondir) {
 				    getexp_err(ep, tgrp, "dirs must be first");
 				    goto nextline;
@@ -1650,16 +1667,17 @@ get_exportlist_one(int passno)
 					goto nextline;
 				    }
 				    if (strlen(v4root_dirpath) == 0) {
-					strlcpy(v4root_dirpath, cp,
+					strlcpy(v4root_dirpath, unvis_dir,
 					    sizeof (v4root_dirpath));
-				    } else if (strcmp(v4root_dirpath, cp)
+				    } else if (strcmp(v4root_dirpath, unvis_dir)
 					!= 0) {
 					syslog(LOG_ERR,
-					    "different V4 dirpath %s", cp);
+					    "different V4 dirpath %s",
+					    unvis_dir);
 					getexp_err(ep, tgrp, NULL);
 					goto nextline;
 				    }
-				    dirp = cp;
+				    dirp = unvis_dir;
 				    v4root_phase = 2;
 				    got_nondir = 1;
 				    ep = get_exp();
@@ -1694,15 +1712,37 @@ get_exportlist_one(int passno)
 						fsb.f_fsid.val[1]);
 				    }
 
+				    if (warn_admin != 0 &&
+					(ep->ex_flag & EX_ADMINWARN) == 0 &&
+					strcmp(unvis_dir, fsb.f_mntonname) !=
+					0) {
+					if (debug)
+					    warnx("exporting %s exports entire "
+						"%s file system", unvis_dir,
+						    fsb.f_mntonname);
+					syslog(LOG_ERR, "Warning: exporting %s "
+					    "exports entire %s file system",
+					    unvis_dir, fsb.f_mntonname);
+					ep->ex_flag |= EX_ADMINWARN;
+				    }
+
 				    /*
 				     * Add dirpath to export mount point.
 				     */
-				    dirp = add_expdir(&dirhead, cp, len);
-				    dirplen = len;
+				    dirp = add_expdir(&dirhead, unvis_dir,
+					unvis_len);
+				    dirplen = unvis_len;
 				}
 			    } else {
-				getexp_err(ep, tgrp,
-				    "symbolic link in export path or statfs failed");
+				if (err_msg != NULL) {
+					getexp_err(ep, tgrp, err_msg);
+					free(err_msg);
+					err_msg = NULL;
+				} else {
+					getexp_err(ep, tgrp,
+					    "symbolic link in export path or "
+					    "statfs failed");
+				}
 				goto nextline;
 			    }
 			    *endcp = savedc;
@@ -1749,6 +1789,11 @@ get_exportlist_one(int passno)
 			nextfield(&cp, &endcp);
 			len = endcp - cp;
 		}
+		if (opt_flags & OP_CLASSMASK)
+			syslog(LOG_WARNING,
+			    "WARNING: No mask specified for %s, "
+			    "using out-of-date default",
+			    (&grp->gr_ptr.gt_net)->nt_name);
 		if (check_options(dirhead)) {
 			getexp_err(ep, tgrp, NULL);
 			goto nextline;
@@ -2300,7 +2345,7 @@ compare_export(struct exportlist *ep, struct exportlist *oep)
  * "same" refers to having the same set of values in the two arrays.
  * The arrays are in no particular order and duplicates (multiple entries
  * in an array with the same value) is allowed.
- * The algorithm is inefficient, but the common case of indentical arrays is
+ * The algorithm is inefficient, but the common case of identical arrays is
  * handled first and "n" is normally fairly small.
  * Since the two functions need the same algorithm but for arrays of
  * different types (gid_t vs int), this is done as a macro.
@@ -3385,6 +3430,7 @@ get_net(char *cp, struct netmsk *net, int maskflg)
 			goto fail;
 		bcopy(sa, &net->nt_mask, sa->sa_len);
 		opt_flags |= OP_HAVEMASK;
+		opt_flags &= ~OP_CLASSMASK;
 	} else {
 		/* The specified sockaddr is a network address. */
 		bcopy(sa, &net->nt_net, sa->sa_len);
@@ -3418,9 +3464,6 @@ get_net(char *cp, struct netmsk *net, int maskflg)
 		    (opt_flags & OP_MASK) == 0) {
 			in_addr_t addr;
 
-			syslog(LOG_WARNING,
-			    "WARNING: No mask specified for %s, "
-			    "using out-of-date default", name);
 			addr = ((struct sockaddr_in *)sa)->sin_addr.s_addr;
 			if (IN_CLASSA(addr))
 				preflen = 8;
@@ -3435,7 +3478,7 @@ get_net(char *cp, struct netmsk *net, int maskflg)
 
 			bcopy(sa, &net->nt_mask, sa->sa_len);
 			makemask(&net->nt_mask, (int)preflen);
-			opt_flags |= OP_HAVEMASK;
+			opt_flags |= OP_HAVEMASK | OP_CLASSMASK;
 		}
 	}
 
@@ -3786,29 +3829,76 @@ check_options(struct dirlist *dp)
 	return (0);
 }
 
-/*
- * Check an absolute directory path for any symbolic links. Return true
- */
 static int
-check_dirpath(char *dirp)
+check_path_component(const char *path, char **err)
 {
-	char *cp;
-	int ret = 1;
 	struct stat sb;
 
+	if (lstat(path, &sb)) {
+		asprintf(err, "%s: lstat() failed: %s.\n",
+		    path, strerror(errno));
+		return (0);
+	}
+
+	switch (sb.st_mode & S_IFMT) {
+	case S_IFDIR:
+		return (1);
+	case S_IFLNK:
+		asprintf(err, "%s: path is a symbolic link.\n", path);
+		break;
+	case S_IFREG:
+		asprintf(err, "%s: path is a file rather than a directory.\n",
+		    path);
+		break;
+	default:
+		asprintf(err, "%s: path is not a directory.\n", path);
+	}
+
+	return (0);
+}
+
+/*
+ * Check each path component for the presence of symbolic links. Return true
+ */
+static int
+check_dirpath(char *dirp, char **err)
+{
+	char *cp;
+
 	cp = dirp + 1;
-	while (*cp && ret) {
+	while (*cp) {
 		if (*cp == '/') {
 			*cp = '\0';
-			if (lstat(dirp, &sb) < 0 || !S_ISDIR(sb.st_mode))
-				ret = 0;
+
+			if (!check_path_component(dirp, err)) {
+				*cp = '/';
+				return (0);
+			}
+
 			*cp = '/';
 		}
 		cp++;
 	}
-	if (lstat(dirp, &sb) < 0 || !S_ISDIR(sb.st_mode))
-		ret = 0;
-	return (ret);
+
+	if (!check_path_component(dirp, err))
+		return (0);
+
+	return (1);
+}
+
+/*
+ * Populate statfs information. Return true on success.
+ */
+static int
+check_statfs(const char *dirp, struct statfs *fsb, char **err)
+{
+	if (statfs(dirp, fsb)) {
+		asprintf(err, "%s: statfs() failed: %s\n", dirp,
+		    strerror(errno));
+		return (0);
+	}
+
+	return (1);
 }
 
 /*

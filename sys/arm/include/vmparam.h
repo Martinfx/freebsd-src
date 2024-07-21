@@ -29,8 +29,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_MACHINE_VMPARAM_H_
@@ -202,5 +200,6 @@ extern vm_offset_t vm_max_kernel_address;
  * Need a page dump array for minidump.
  */
 #define MINIDUMP_PAGE_TRACKING	1
+#define MINIDUMP_STARTUP_PAGE_TRACKING 0
 
 #endif	/* _MACHINE_VMPARAM_H_ */

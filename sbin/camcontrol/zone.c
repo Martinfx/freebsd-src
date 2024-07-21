@@ -34,12 +34,9 @@
  * This is an implementation of the SCSI ZBC and ATA ZAC specs.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
+#include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/stdint.h>
-#include <sys/types.h>
 #include <sys/endian.h>
 #include <sys/sbuf.h>
 #include <sys/queue.h>
@@ -138,7 +135,6 @@ zone_rz_print(uint8_t *data_ptr, uint32_t valid_len, int ata_format,
 	struct scsi_report_zones_desc *desc = NULL;
 	uint32_t hdr_len, len;
 	uint64_t max_lba, next_lba = 0;
-	int more_data = 0;
 	zone_print_status status = ZONE_PRINT_OK;
 	char tmpstr[80];
 	int field_widths[ZONE_NUM_FIELDS];
@@ -168,7 +164,6 @@ zone_rz_print(uint8_t *data_ptr, uint32_t valid_len, int ata_format,
 	}
 
 	if (hdr_len > (valid_len + sizeof(*hdr))) {
-		more_data = 1;
 		status = ZONE_PRINT_MORE_DATA;
 	}
 
@@ -357,7 +352,7 @@ zone(struct cam_device *device, int argc, char **argv, char *combinedopt,
 			int entry_num;
 
 			status = scsi_get_nv(zone_cmd_map,
-			    (sizeof(zone_cmd_map) / sizeof(zone_cmd_map[0])),
+			    nitems(zone_cmd_map),
 			    optarg, &entry_num, SCSI_NV_FLAG_IG_CASE);
 			if (status == SCSI_NV_FOUND)
 				action = zone_cmd_map[entry_num].value;
@@ -391,7 +386,7 @@ zone(struct cam_device *device, int argc, char **argv, char *combinedopt,
 			int entry_num;
 
 			status = scsi_get_nv(zone_rep_opts,
-			    (sizeof(zone_rep_opts) /sizeof(zone_rep_opts[0])),
+			    nitems(zone_rep_opts),
 			    optarg, &entry_num, SCSI_NV_FLAG_IG_CASE);
 			if (status == SCSI_NV_FOUND)
 				rep_option = zone_rep_opts[entry_num].value;
@@ -592,7 +587,7 @@ restart_report:
 			    /*retry_count*/ retry_count,
 			    /*flags*/ CAM_DIR_NONE | CAM_DEV_QFRZDIS,
 			    /*tag_action*/ task_attr,
-			    /*protocol*/ AP_PROTO_NON_DATA,
+			    /*protocol*/ protocol,
 			    /*ata_flags*/ AP_FLAG_BYT_BLOK_BYTES |
 					  AP_FLAG_TLEN_NO_DATA,
 			    /*features*/ features,

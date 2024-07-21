@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/fxp
 
 KMOD=	if_fxp

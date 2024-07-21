@@ -1,6 +1,5 @@
-/* $FreeBSD$ */
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Qlogic ISP SCSI Host Adapter FreeBSD Wrapper Definitions
  *
@@ -245,7 +244,7 @@ struct isposinfo {
 	/*
 	 * Firmware pointer
 	 */
-	const struct firmware *	fw;
+	const struct firmware *	ispfw;
 
 	/*
 	 * DMA related stuff

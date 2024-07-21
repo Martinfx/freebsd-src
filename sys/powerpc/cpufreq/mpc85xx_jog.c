@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -121,7 +118,7 @@ static struct ofw_compat_data jog_compat[] = {
 };
 
 static struct ofw_compat_data *
-mpc85xx_jog_devcompat()
+mpc85xx_jog_devcompat(void)
 {
 	phandle_t node;
 	int i;

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include "${SRCTOP}/sys/modules/libalias/modules/modules.inc"
 
 SUBDIR=	${MODULES}

@@ -29,9 +29,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)user.h	8.2 (Berkeley) 9/23/93
- * $FreeBSD$
  */
 
 #ifndef _SYS_USER_H_
@@ -265,6 +262,7 @@ struct user {
 #define	KF_TYPE_PROCDESC	11
 #define	KF_TYPE_DEV	12
 #define	KF_TYPE_EVENTFD	13
+#define	KF_TYPE_TIMERFD	14
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0
@@ -373,7 +371,7 @@ struct kinfo_file {
 				struct sockaddr_storage	kf_sa_peer;
 				/* Address of so_pcb. */
 				uint64_t	kf_sock_pcb;
-				/* Address of inp_ppcb. */
+				/* Obsolete! May be reused as a spare. */
 				uint64_t	kf_sock_inpcb;
 				/* Address of unp_conn. */
 				uint64_t	kf_sock_unpconn;
@@ -389,7 +387,9 @@ struct kinfo_file {
 				int		kf_file_type;
 				/* Space for future use */
 				int		kf_spareint[3];
-				uint64_t	kf_spareint64[30];
+				uint64_t	kf_spareint64[29];
+				/* Number of references to file. */
+				uint64_t	kf_file_nlink;
 				/* Vnode filesystem id. */
 				uint64_t	kf_file_fsid;
 				/* File device. */
@@ -444,6 +444,11 @@ struct kinfo_file {
 				uint32_t	kf_eventfd_spareint[3];
 				uint64_t	kf_eventfd_addr;
 			} kf_eventfd;
+			struct {
+				uint32_t	kf_timerfd_clockid;
+				uint32_t	kf_timerfd_flags;
+				uint64_t	kf_timerfd_addr;
+			} kf_timerfd;
 			struct {
 				uint64_t	kf_kqueue_addr;
 				int32_t		kf_kqueue_count;

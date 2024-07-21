@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LIB=		stats
 SHLIBDIR?= 	/lib
 SHLIB_MAJOR=	0

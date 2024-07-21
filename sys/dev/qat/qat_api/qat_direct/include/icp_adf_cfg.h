@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /******************************************************************************
  * @file icp_adf_cfg.h
  *
@@ -52,9 +51,9 @@
 #define ADF_SRAM_SIZE_IN_BYTES ("Sram_SizeInBytes")
 /* Device node id, tells to which die the device is
  * connected to */
-#define ADF_DEV_NODE_ID ("Device_NodeId")
+#define ADF_DEV_NODE_ID "Device_NodeId"
 /* Device package id, this is accel_dev id */
-#define ADF_DEV_PKG_ID ("Device_PkgId")
+#define ADF_DEV_PKG_ID "Device_PkgId"
 /* Device bus address, B.D.F (Bus(8bits),Device(5bits),Function(3bits)) */
 #define ADF_DEV_BUS_ADDRESS ("Device_BusAddress")
 /* Number of Acceleration Engines */
@@ -76,9 +75,9 @@
 /* Whether or not arbitration is supported */
 #define ADF_DEV_ARB_SUPPORTED ("ArbitrationSupported")
 /* Slice Watch Dog Timer for CySym+Comp */
-#define ADF_DEV_SSM_WDT_BULK ("CySymAndDcWatchDogTimer")
+#define ADF_DEV_SSM_WDT_BULK "CySymAndDcWatchDogTimer"
 /* Slice Watch Dog Timer for CyAsym */
-#define ADF_DEV_SSM_WDT_PKE ("CyAsymWatchDogTimer")
+#define ADF_DEV_SSM_WDT_PKE "CyAsymWatchDogTimer"
 
 /* String names for the exposed sections of config file. */
 #define GENERAL_SEC "GENERAL"

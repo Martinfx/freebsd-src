@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: (GPL-2.0 WITH Linux-syscall-note) OR Linux-OpenIB)
  *
  *
- * Copyright (c) 2006 - 2021 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2006 - 2022 Intel Corporation.  All rights reserved.
  * Copyright (c) 2005 Topspin Communications.  All rights reserved.
  * Copyright (c) 2005 Cisco Systems.  All rights reserved.
  * Copyright (c) 2005 Open Grid Computing, Inc. All rights reserved.
@@ -35,7 +35,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*$FreeBSD$*/
 
 #ifndef IRDMA_ABI_H
 #define IRDMA_ABI_H
@@ -53,10 +52,20 @@ enum irdma_memreg_type {
 	IRDMA_MEMREG_TYPE_CQ   = 2,
 };
 
+enum {
+	IRDMA_ALLOC_UCTX_USE_RAW_ATTR = 1 << 0,
+	IRDMA_ALLOC_UCTX_MIN_HW_WQ_SIZE = 1 << 1,
+};
+
+enum {
+	IRDMA_CREATE_QP_USE_START_WQE_IDX = 1 << 0,
+};
+
 struct irdma_alloc_ucontext_req {
 	__u32 rsvd32;
 	__u8 userspace_ver;
 	__u8 rsvd8[3];
+	__aligned_u64 comp_mask;
 };
 
 struct irdma_alloc_ucontext_resp {
@@ -77,6 +86,9 @@ struct irdma_alloc_ucontext_resp {
 	__u16 max_hw_sq_chunk;
 	__u8 hw_rev;
 	__u8 rsvd2;
+	__aligned_u64 comp_mask;
+	__u16 min_hw_wq_size;
+	__u8 rsvd3[6];
 };
 
 struct irdma_alloc_pd_resp {
@@ -96,6 +108,7 @@ struct irdma_create_cq_req {
 struct irdma_create_qp_req {
 	__aligned_u64 user_wqe_bufs;
 	__aligned_u64 user_compl_ctx;
+	__aligned_u64 comp_mask;
 };
 
 struct irdma_mem_reg_req {
@@ -125,6 +138,9 @@ struct irdma_create_qp_resp {
 	__u8 lsmm;
 	__u8 rsvd;
 	__u32 qp_caps;
+	__aligned_u64 comp_mask;
+	__u8 start_wqe_idx;
+	__u8 rsvd2[7];
 };
 
 struct irdma_modify_qp_resp {

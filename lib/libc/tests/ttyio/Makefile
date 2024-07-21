@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.own.mk>
 
 # TODO: ptm_test

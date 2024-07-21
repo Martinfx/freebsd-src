@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Juniper Networks, Inc.
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_platform.h"
 
 #include <sys/param.h>
@@ -48,7 +46,7 @@ x86_init_fdt(void)
 	void *dtbp, *mdp;
 	int error;
 
-	if (OF_install(OFW_FDT, 0) == FALSE) {
+	if (!OF_install(OFW_FDT, 0)) {
 		error = ENXIO;
 		goto out;
 	}

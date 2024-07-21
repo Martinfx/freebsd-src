@@ -46,9 +46,6 @@
  **
  **/
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/consio.h>
 #include <sys/mouse.h>
@@ -1036,7 +1033,7 @@ moused(void)
 	bstate[i].count = 0;
 	bstate[i].ts = mouse_button_state_ts;
     }
-    for (i = 0; i < (int)(sizeof(zstate) / sizeof(zstate[0])); ++i) {
+    for (i = 0; i < (int)nitems(zstate); ++i) {
 	zstate[i].count = 0;
 	zstate[i].ts = mouse_button_state_ts;
     }
@@ -1492,7 +1489,7 @@ r_identify(void)
     rodent.mode.level = 0;
     if (ioctl(rodent.mfd, MOUSE_GETMODE, &rodent.mode) == 0) {
 	if (rodent.mode.protocol == MOUSE_PROTO_UNKNOWN ||
-	    rodent.mode.protocol >= (int)(sizeof(proto) / sizeof(proto[0]))) {
+	    rodent.mode.protocol >= (int)nitems(proto)) {
 	    logwarnx("unknown mouse protocol (%d)", rodent.mode.protocol);
 	    return (MOUSE_PROTO_UNKNOWN);
 	} else {
@@ -1567,8 +1564,7 @@ r_name(int type)
 {
     const char *unknown = "unknown";
 
-    return (type == MOUSE_PROTO_UNKNOWN ||
-	type >= (int)(sizeof(rnames) / sizeof(rnames[0])) ?
+    return (type == MOUSE_PROTO_UNKNOWN || type >= (int)nitems(rnames) ?
 	unknown : rnames[type]);
 }
 
@@ -3013,7 +3009,7 @@ pnpparse(pnpid_t *id, char *buf, int len)
     id->revision = ((buf[1] & 0x3f) << 6) | (buf[2] & 0x3f);
     debug("PnP rev %d.%02d", id->revision / 100, id->revision % 100);
 
-    /* EISA vender and product ID */
+    /* EISA vendor and product ID */
     id->eisaid = &buf[3];
     id->neisaid = 7;
 
@@ -3053,7 +3049,7 @@ pnpparse(pnpid_t *id, char *buf, int len)
 	}
 	/*
 	 * PnP COM spec prior to v0.96 allowed '*' in this field,
-	 * it's not allowed now; just igore it.
+	 * it's not allowed now; just ignore it.
 	 */
 	if (buf[j] == '*')
 	    ++j;

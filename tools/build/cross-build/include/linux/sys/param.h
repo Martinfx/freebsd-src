@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #pragma once
 #include_next <sys/param.h>
@@ -47,3 +45,5 @@
  * let's use 32 since that will work across all systems
  */
 #define MAXLOGNAME 33 /* max login name length (incl. NUL) */
+
+#include <sys/types.h>

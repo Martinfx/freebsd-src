@@ -6,8 +6,6 @@
  * $Id: //depot/aic7xxx/aic7xxx/aic7xxx.reg#40 $
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #include <dev/aic7xxx/aic7xxx_osm.h>
 
 static ahc_reg_parse_entry_t SCSISEQ_parse_table[] = {

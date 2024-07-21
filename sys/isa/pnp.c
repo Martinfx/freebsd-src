@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1996, Sujal M. Patel
  * All rights reserved.
@@ -27,9 +27,6 @@
  *
  *      from: pnp.c,v 1.11 1999/05/06 22:11:19 peter Exp
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

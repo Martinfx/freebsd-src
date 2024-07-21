@@ -106,8 +106,10 @@ crypto_get_ptrs(crypto_data_t *out, void **iov_or_mp, offset_t *current_offset,
 		} else {
 			/* one block spans two iovecs */
 			*out_data_1_len = iov_len - offset;
-			if (vec_idx == zfs_uio_iovcnt(uio))
+			if (vec_idx == zfs_uio_iovcnt(uio)) {
+				*out_data_2 = NULL;
 				return;
+			}
 			vec_idx++;
 			zfs_uio_iov_at_index(uio, vec_idx, &iov_base, &iov_len);
 			*out_data_2 = (uint8_t *)iov_base;
@@ -124,20 +126,7 @@ crypto_free_mode_ctx(void *ctx)
 {
 	common_ctx_t *common_ctx = (common_ctx_t *)ctx;
 
-	switch (common_ctx->cc_flags &
-	    (ECB_MODE|CBC_MODE|CTR_MODE|CCM_MODE|GCM_MODE|GMAC_MODE)) {
-	case ECB_MODE:
-		kmem_free(common_ctx, sizeof (ecb_ctx_t));
-		break;
-
-	case CBC_MODE:
-		kmem_free(common_ctx, sizeof (cbc_ctx_t));
-		break;
-
-	case CTR_MODE:
-		kmem_free(common_ctx, sizeof (ctr_ctx_t));
-		break;
-
+	switch (common_ctx->cc_flags & (CCM_MODE|GCM_MODE)) {
 	case CCM_MODE:
 		if (((ccm_ctx_t *)ctx)->ccm_pt_buf != NULL)
 			vmem_free(((ccm_ctx_t *)ctx)->ccm_pt_buf,
@@ -147,19 +136,51 @@ crypto_free_mode_ctx(void *ctx)
 		break;
 
 	case GCM_MODE:
-	case GMAC_MODE:
-		if (((gcm_ctx_t *)ctx)->gcm_pt_buf != NULL)
-			vmem_free(((gcm_ctx_t *)ctx)->gcm_pt_buf,
-			    ((gcm_ctx_t *)ctx)->gcm_pt_buf_len);
-
-#ifdef CAN_USE_GCM_ASM
-		if (((gcm_ctx_t *)ctx)->gcm_Htable != NULL) {
-			gcm_ctx_t *gcm_ctx = (gcm_ctx_t *)ctx;
-			memset(gcm_ctx->gcm_Htable, 0, gcm_ctx->gcm_htab_len);
-			kmem_free(gcm_ctx->gcm_Htable, gcm_ctx->gcm_htab_len);
-		}
-#endif
-
+		gcm_clear_ctx((gcm_ctx_t *)ctx);
 		kmem_free(ctx, sizeof (gcm_ctx_t));
+		break;
+
+	default:
+		__builtin_unreachable();
 	}
+}
+
+static void *
+explicit_memset(void *s, int c, size_t n)
+{
+	memset(s, c, n);
+	__asm__ __volatile__("" :: "r"(s) : "memory");
+	return (s);
+}
+
+/*
+ * Clear sensitive data in the context and free allocated memory.
+ *
+ * ctx->gcm_remainder may contain a plaintext remainder. ctx->gcm_H and
+ * ctx->gcm_Htable contain the hash sub key which protects authentication.
+ * ctx->gcm_pt_buf contains the plaintext result of decryption.
+ *
+ * Although extremely unlikely, ctx->gcm_J0 and ctx->gcm_tmp could be used for
+ * a known plaintext attack, they consist of the IV and the first and last
+ * counter respectively. If they should be cleared is debatable.
+ */
+void
+gcm_clear_ctx(gcm_ctx_t *ctx)
+{
+	explicit_memset(ctx->gcm_remainder, 0, sizeof (ctx->gcm_remainder));
+	explicit_memset(ctx->gcm_H, 0, sizeof (ctx->gcm_H));
+#if defined(CAN_USE_GCM_ASM)
+	if (ctx->gcm_use_avx == B_TRUE) {
+		ASSERT3P(ctx->gcm_Htable, !=, NULL);
+		memset(ctx->gcm_Htable, 0, ctx->gcm_htab_len);
+		kmem_free(ctx->gcm_Htable, ctx->gcm_htab_len);
+	}
+#endif
+	if (ctx->gcm_pt_buf != NULL) {
+		memset(ctx->gcm_pt_buf, 0, ctx->gcm_pt_buf_len);
+		vmem_free(ctx->gcm_pt_buf, ctx->gcm_pt_buf_len);
+	}
+	/* Optional */
+	explicit_memset(ctx->gcm_J0, 0, sizeof (ctx->gcm_J0));
+	explicit_memset(ctx->gcm_tmp, 0, sizeof (ctx->gcm_tmp));
 }

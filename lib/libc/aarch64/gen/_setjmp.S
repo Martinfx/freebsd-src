@@ -29,9 +29,8 @@
  */
 
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 #include <machine/setjmp.h>
+#include <sys/elf_common.h>
 
 ENTRY(_setjmp)
 	/* Store the magic value and stack pointer */
@@ -91,7 +90,8 @@ ENTRY(_longjmp)
 #endif
 
 	/* Load the return value */
-	mov	x0, x1
+	cmp	x1, #0
+	csinc	x0, x1, xzr, ne
 	ret
 
 botch:
@@ -102,3 +102,5 @@ botch:
 	bl	_C_LABEL(abort)
 #endif
 END(_longjmp)
+
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

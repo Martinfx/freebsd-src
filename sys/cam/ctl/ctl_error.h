@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * Copyright (c) 2014-2015 Alexander Motin <mav@FreeBSD.org>
@@ -31,7 +31,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_error.h#1 $
- * $FreeBSD$
  */
 /*
  * Function definitions for various error reporting routines used both
@@ -96,5 +95,32 @@ void ctl_set_task_aborted(struct ctl_scsiio *ctsio);
 void ctl_set_hw_write_protected(struct ctl_scsiio *ctsio);
 void ctl_set_space_alloc_fail(struct ctl_scsiio *ctsio);
 void ctl_set_success(struct ctl_scsiio *ctsio);
+
+void ctl_nvme_set_error(struct ctl_nvmeio *ctnio, uint8_t sc_type,
+			uint8_t sc_status);
+void ctl_nvme_set_generic_error(struct ctl_nvmeio *ctnio, uint8_t sc_status);
+void ctl_nvme_set_invalid_opcode(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_invalid_field(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_data_transfer_error(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_internal_error(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_invalid_namespace(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_command_aborted(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_failed_fused_command(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_missing_fused_command(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_namespace_is_write_protected(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_lba_out_of_range(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_namespace_not_ready(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_write_fault(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_unrecoverable_read_error(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_compare_failure(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_space_alloc_fail(struct ctl_nvmeio *ctnio);
+void ctl_nvme_set_success(struct ctl_nvmeio *ctnio);
+
+void ctl_io_set_invalid_opcode(union ctl_io *io);
+void ctl_io_set_hw_write_protected(union ctl_io *io);
+void ctl_io_set_busy(union ctl_io *io);
+void ctl_io_set_compare_failure(union ctl_io *io, uint64_t offset);
+void ctl_io_set_space_alloc_fail(union ctl_io *io);
+void ctl_io_set_success(union ctl_io *io);
 
 #endif	/* _CTL_ERROR_H_ */

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	dpv
 LIB=		dpv
 SHLIB_MAJOR=	3

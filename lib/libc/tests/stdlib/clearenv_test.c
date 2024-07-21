@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2021 Mariusz Zaborski <oshogbo@FreeBSD.org>
  *
@@ -28,9 +28,6 @@
 /*
  * Test for clearenv(3) routine.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <atf-c.h>
 

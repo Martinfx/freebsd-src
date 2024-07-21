@@ -37,9 +37,6 @@ SOFTWARE.
  *	See ./ToDo
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -170,9 +167,7 @@ char *bootpd_dump = DUMPTAB_FILE;
  */
 
 int
-main(argc, argv)
-	int argc;
-	char **argv;
+main(int argc, char **argv)
 {
 	struct timeval *timeout;
 	struct bootp *bp;
@@ -593,8 +588,7 @@ usage()
 
 /* Signal catchers */
 PRIVATE void
-catcher(sig)
-	int sig;
+catcher(int sig)
 {
 	if (sig == SIGHUP)
 		do_readtab = 1;
@@ -620,7 +614,7 @@ catcher(sig)
  * forward the request there.)
  */
 PRIVATE void
-handle_request()
+handle_request(void)
 {
 	struct bootp *bp = (struct bootp *) pktbuf;
 	struct host *hp = NULL;
@@ -998,7 +992,7 @@ null_file_name:
  * Process BOOTREPLY packet.
  */
 PRIVATE void
-handle_reply()
+handle_reply(void)
 {
 	if (debug) {
 		report(LOG_INFO, "processing boot reply");
@@ -1013,9 +1007,7 @@ handle_reply()
  * not the originator of this reply packet.
  */
 PRIVATE void
-sendreply(forward, dst_override)
-	int forward;
-	int32 dst_override;
+sendreply(int forward, int32 dst_override)
 {
 	struct bootp *bp = (struct bootp *) pktbuf;
 	struct in_addr dst;
@@ -1131,9 +1123,7 @@ sendreply(forward, dst_override)
  */
 
 PRIVATE int
-chk_access(path, filesize)
-	char *path;
-	int32 *filesize;
+chk_access(char *path, int32 *filesize)
 {
 	struct stat st;
 
@@ -1161,9 +1151,7 @@ chk_access(path, filesize)
  */
 
 PRIVATE void
-dovend_cmu(bp, hp)
-	struct bootp *bp;
-	struct host *hp;
+dovend_cmu(struct bootp *bp, struct host *hp)
 {
 	struct cmu_vend *vendp;
 	struct in_addr_list *taddr;
@@ -1231,10 +1219,7 @@ dovend_cmu(bp, hp)
 		return; \
 	} while (0)
 PRIVATE void
-dovend_rfc1048(bp, hp, bootsize)
-	struct bootp *bp;
-	struct host *hp;
-	int32 bootsize;
+dovend_rfc1048(struct bootp *bp, struct host *hp, int32 bootsize)
 {
 	int bytesleft, len;
 	byte *vp;

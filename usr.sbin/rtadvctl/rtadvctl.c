@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2011 Hiroki Sato <hrs@FreeBSD.org>
  * All rights reserved.
@@ -25,12 +25,10 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * $FreeBSD$
- *
  */
 
+#include <sys/param.h>
 #include <sys/queue.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -139,7 +137,7 @@ usage(void)
 {
 	int i;
 
-	for (i = 0; (size_t)i < sizeof(dtable)/sizeof(dtable[0]); i++) {
+	for (i = 0; (size_t)i < nitems(dtable); i++) {
 		if (dtable[i].dt_comm == NULL)
 			break;
 		printf("%s\n", dtable[i].dt_comm);
@@ -174,7 +172,7 @@ main(int argc, char *argv[])
 	if (argc == 0)
 		usage();
 
-	for (i = 0; (size_t)i < sizeof(dtable)/sizeof(dtable[0]); i++) {
+	for (i = 0; (size_t)i < nitems(dtable); i++) {
 		if (dtable[i].dt_comm == NULL ||
 		    strcmp(dtable[i].dt_comm, argv[0]) == 0) {
 			action = dtable[i].dt_act;

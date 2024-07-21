@@ -1,6 +1,5 @@
-/* $FreeBSD$ */
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008-2022 Hans Petter Selasky.
  *
@@ -36,6 +35,8 @@ enum {
 	MSC_EJECT_CMOTECH,
 	MSC_EJECT_HUAWEI,
 	MSC_EJECT_HUAWEI2,
+	MSC_EJECT_HUAWEI3,
+	MSC_EJECT_HUAWEI4,
 	MSC_EJECT_TCT,
 };
 

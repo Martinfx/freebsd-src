@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #ifndef ADF_CFG_H_
 #define ADF_CFG_H_
 
@@ -8,6 +7,8 @@
 #include "adf_accel_devices.h"
 #include "adf_cfg_common.h"
 #include "adf_cfg_strings.h"
+
+#define ADF_CFG_MAX_VAL 16
 
 struct adf_cfg_key_val {
 	char key[ADF_CFG_MAX_KEY_LEN_IN_BYTES];
@@ -29,6 +30,9 @@ struct adf_cfg_device_data {
 	struct list_head sec_list;
 	struct sysctl_oid *debug;
 	struct sx lock;
+	char cfg_services[ADF_CFG_MAX_VAL];
+	char cfg_mode[ADF_CFG_MAX_VAL];
+	u16 num_user_processes;
 };
 
 struct adf_cfg_depot_list {
@@ -76,4 +80,14 @@ int adf_cfg_get_services_enabled(struct adf_accel_dev *accel_dev,
 int adf_cfg_restore_section(struct adf_accel_dev *accel_dev,
 			    struct adf_cfg_section *section);
 void adf_cfg_keyval_del_all(struct list_head *head);
+
+static inline int
+adf_cy_inst_cross_banks(struct adf_accel_dev *accel_dev)
+{
+	if (accel_dev->hw_device->num_rings_per_bank == 2)
+		return 1;
+	else
+		return 0;
+}
+
 #endif

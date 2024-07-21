@@ -1,7 +1,7 @@
 /*-
  * hccontrol.c
  *
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001-2002 Maksim Yevmenkin <m_evmenkin@yahoo.com>
  * All rights reserved.
@@ -28,12 +28,12 @@
  * SUCH DAMAGE.
  *
  * $Id: hccontrol.c,v 1.5 2003/09/05 00:38:24 max Exp $
- * $FreeBSD$
  */
 
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>
 #include <sys/sysctl.h>
 #include <assert.h>
 #include <err.h>
@@ -154,11 +154,11 @@ socket_open(char const *node)
 			(void * const) &filter, sizeof(filter)) < 0)
 		err(4, "Could not setsockopt()");
 
-	size = (sizeof(mib)/sizeof(mib[0]));
+	size = nitems(mib);
 	if (sysctlnametomib("net.bluetooth.hci.command_timeout",mib,&size) < 0)
 		err(5, "Could not sysctlnametomib()");
 
-	if (sysctl(mib, sizeof(mib)/sizeof(mib[0]),
+	if (sysctl(mib, nitems(mib),
 			(void *) &timeout, &size, NULL, 0) < 0)
 		err(6, "Could not sysctl()");
 

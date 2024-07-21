@@ -1,5 +1,3 @@
-#	$FreeBSD$
-
 NOGCCERROR=	# defined
 
 PACKAGE=	ipf

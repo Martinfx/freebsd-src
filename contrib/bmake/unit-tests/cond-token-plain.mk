@@ -1,4 +1,4 @@
-# $NetBSD: cond-token-plain.mk,v 1.15 2021/12/30 02:14:55 rillig Exp $
+# $NetBSD: cond-token-plain.mk,v 1.19 2023/11/19 21:47:52 rillig Exp $
 #
 # Tests for plain tokens (that is, string literals without quotes)
 # in .if conditions.  These are also called bare words.
@@ -63,10 +63,10 @@
 # anybody really use this?  This is neither documented nor obvious since
 # the '#' is escaped.  It's much clearer to write a comment in the line
 # above the condition.
-.if ${0 \# comment :?yes:no} != no
+.if ${0 \# comment:?yes:no} != no
 .  error
 .endif
-.if ${1 \# comment :?yes:no} != yes
+.if ${1 \# comment:?yes:no} != yes
 .  error
 .endif
 
@@ -89,7 +89,7 @@
 # a coincidence that the '!' is both used in the '!=' comparison operator
 # as well as for negating a comparison result.
 #
-# The boolean operators '&' and '|' don't terminate a comparison operand.
+# The characters '&' and '|' are part of the comparison operand.
 .if ${:Uvar}&&name != "var&&name"
 .  error
 .endif
@@ -97,24 +97,27 @@
 .  error
 .endif
 
-# A bare word may appear alone in a condition, without any comparison
-# operator.  It is implicitly converted into defined(bare).
+# A bare word may occur alone in a condition, without any comparison
+# operator.  It is interpreted as the function call 'defined(bare)'.
 .if bare
 .  error
 .else
+# expect+1: A bare word is treated like defined(...), and the variable 'bare' is not defined.
 .  info A bare word is treated like defined(...), and the variable $\
 	'bare' is not defined.
 .endif
 
 VAR=	defined
 .if VAR
+# expect+1: A bare word is treated like defined(...).
 .  info A bare word is treated like defined(...).
 .else
 .  error
 .endif
 
-# Bare words may be intermixed with variable expressions.
+# Bare words may be intermixed with expressions.
 .if V${:UA}R
+# expect+1: ok
 .  info ok
 .else
 .  error
@@ -123,6 +126,7 @@ VAR=	defined
 # In bare words, even undefined variables are allowed.  Without the bare
 # words, undefined variables are not allowed.  That feels inconsistent.
 .if V${UNDEF}AR
+# expect+1: Undefined variables in bare words expand to an empty string.
 .  info Undefined variables in bare words expand to an empty string.
 .else
 .  error
@@ -131,16 +135,19 @@ VAR=	defined
 .if 0${:Ux00}
 .  error
 .else
-.  info Numbers can be composed from literals and variable expressions.
+# expect+1: Numbers can be composed from literals and expressions.
+.  info Numbers can be composed from literals and expressions.
 .endif
 
 .if 0${:Ux01}
-.  info Numbers can be composed from literals and variable expressions.
+# expect+1: Numbers can be composed from literals and expressions.
+.  info Numbers can be composed from literals and expressions.
 .else
 .  error
 .endif
 
 # If the right-hand side is missing, it's a parse error.
+# expect+1: Missing right-hand side of operator '=='
 .if "" ==
 .  error
 .else
@@ -149,6 +156,7 @@ VAR=	defined
 
 # If the left-hand side is missing, it's a parse error as well, but without
 # a specific error message.
+# expect+1: Malformed conditional (== "")
 .if == ""
 .  error
 .else
@@ -164,11 +172,13 @@ VAR=	defined
 .if \\
 .  error
 .else
+# expect+1: The variable '\\' is not defined.
 .  info The variable '\\' is not defined.
 .endif
 
 ${:U\\\\}=	backslash
 .if \\
+# expect+1: Now the variable '\\' is defined.
 .  info Now the variable '\\' is defined.
 .else
 .  error
@@ -183,6 +193,7 @@ ${:U\\\\}=	backslash
 
 # FIXME: In CondParser_String, Var_Parse returns var_Error without a
 # corresponding error message.
+# expect+1: Malformed conditional ($$$$$$$$ != "")
 .if $$$$$$$$ != ""
 .  error
 .else
@@ -194,7 +205,7 @@ ${:U\\\\}=	backslash
 # expect+1: Malformed conditional (left == right)
 .if left == right
 .endif
-# Before cond.c 1.276 from 2021-09-21, a variable expression containing the
+# Before cond.c 1.276 from 2021-09-21, an expression containing the
 # modifier ':?:' allowed unquoted string literals for the rest of the
 # condition.  This was an unintended implementation mistake.
 # expect+1: Malformed conditional (${0:?:} || left == right)
@@ -234,7 +245,7 @@ ${:U\\\\}=	backslash
 # A different situation is when CondParser.leftUnquotedOK is true.  This
 # situation arises in expressions of the form ${cond:?yes:no}.  As of
 # 2021-12-30, the condition in such an expression is evaluated before parsing
-# the condition, see varmod-ifelse.mk.  To pass a variable expression to the
+# the condition, see varmod-ifelse.mk.  To pass an expression to the
 # condition parser, it needs to be escaped.  This rarely happens in practice,
 # in most cases the conditions are simple enough that it doesn't matter
 # whether the condition is first evaluated and then parsed, or vice versa.

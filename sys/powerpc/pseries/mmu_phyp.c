@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2010 Andreas Tobler
  * All rights reserved.
@@ -24,9 +24,6 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -124,7 +121,7 @@ SYSINIT(kvmbugwarn2, SI_SUB_LAST, SI_ORDER_THIRD + 1, print_kvm_bug_warning,
     NULL);
 
 static void
-mphyp_install()
+mphyp_install(void)
 {
 	char buf[8];
 	uint32_t prop[2];

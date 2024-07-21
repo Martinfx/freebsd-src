@@ -1,6 +1,3 @@
-#$FreeBSD$
-#	@(#)Makefile	8.1 (Berkeley) 6/2/93
-
 MAN=
 
 .include <bsd.own.mk>
@@ -100,9 +97,6 @@ CRUNCH_LIBS+= -lm
 #.include "Makefile.textproc"
 .include "Makefile.login"
 .include "Makefile.kld"
-# telnet/telnetd are too broken to include as a crunchgen'ed binary,
-# thanks to some of the horrible layering violations going on.
-# .include "Makefile.telnetd"
 .include "Makefile.fs"
 
 CRUNCH_LIBS+= -lcrypto -lssl -lz

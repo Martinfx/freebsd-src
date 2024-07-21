@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)proc.h	7.1 (Berkeley) 5/15/91
- * $FreeBSD$
  */
 
 #ifdef __i386__
@@ -96,15 +93,6 @@ struct mdproc {
 #define	KINFO_PROC32_SIZE 768
 
 #ifdef	_KERNEL
-
-/* Get the current kernel thread stack usage. */
-#define GET_STACK_USAGE(total, used) do {				\
-	struct thread	*td = curthread;				\
-	(total) = td->td_kstack_pages * PAGE_SIZE;			\
-	(used) = (char *)td->td_kstack +				\
-	    td->td_kstack_pages * PAGE_SIZE -				\
-	    (char *)&td;						\
-} while (0)
 
 struct proc_ldt *user_ldt_alloc(struct proc *, int);
 void user_ldt_free(struct thread *);

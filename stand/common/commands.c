@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <stand.h>
 #include <string.h>
 
@@ -123,7 +120,6 @@ help_emitsummary(char *topic, char *subtopic, char *desc)
 	return (pager_output("\n"));
 }
 
-
 static int
 command_help(int argc, char *argv[])
 {
@@ -132,7 +128,8 @@ command_help(int argc, char *argv[])
 	char	*topic, *subtopic, *t, *s, *d;
 
 	/* page the help text from our load path */
-	snprintf(buf, sizeof(buf), "%s/boot/loader.help", getenv("loaddev"));
+	snprintf(buf, sizeof(buf), "%s/boot/%s", getenv("loaddev"),
+	    HELP_FILENAME);
 	if ((hfd = open(buf, O_RDONLY)) < 0) {
 		printf("Verbose help not available, "
 		    "use '?' to list commands\n");
@@ -232,7 +229,7 @@ command_commandlist(int argc __unused, char *argv[] __unused)
 {
 	struct bootblk_command	**cmdp;
 	int	res;
-	char	name[20];
+	char	name[23];
 
 	res = 0;
 	pager_open();
@@ -241,9 +238,10 @@ command_commandlist(int argc __unused, char *argv[] __unused)
 		if (res)
 			break;
 		if ((*cmdp)->c_name != NULL && (*cmdp)->c_desc != NULL) {
-			snprintf(name, sizeof(name), "  %-15s  ",
+			snprintf(name, sizeof(name), "  %-20s",
 			    (*cmdp)->c_name);
 			pager_output(name);
+			pager_output("  ");
 			pager_output((*cmdp)->c_desc);
 			res = pager_output("\n");
 		}

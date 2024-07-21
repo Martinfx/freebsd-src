@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_POLL_H_
@@ -109,6 +107,10 @@ struct pollfd {
 typedef	__sigset_t	sigset_t;
 #endif
 
+#endif
+
+#if defined(_FORTIFY_SOURCE) && _FORTIFY_SOURCE > 0
+#include <ssp/poll.h>
 #endif
 
 __BEGIN_DECLS

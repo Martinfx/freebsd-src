@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * Copyright (c) 1999 Cameron Grant <cg@FreeBSD.org>
@@ -32,10 +32,9 @@
 #endif
 
 #include <dev/sound/pcm/sound.h>
+#include <dev/sound/pcm/vchan.h>
 
 #include "feeder_if.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 static MALLOC_DEFINE(M_FEEDER, "feeder", "pcm feeder");
 
@@ -84,9 +83,7 @@ feeder_register(void *p)
 		if (snd_verbose < 0 || snd_verbose > 4)
 			snd_verbose = 1;
 
-		/* initialize unit numbering */
-		snd_unit_init();
-		if (snd_unit < 0 || snd_unit > PCMMAXUNIT)
+		if (snd_unit < 0)
 			snd_unit = -1;
 		
 		if (snd_maxautovchans < 0 ||

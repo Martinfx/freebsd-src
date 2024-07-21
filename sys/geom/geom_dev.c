@@ -35,9 +35,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -701,8 +698,7 @@ g_dev_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag, struct thread
 			error = copyout(new_entries, old_entries, alloc_size);
 		if (old_entries != NULL && rep != NULL)
 			rep->entries = old_entries;
-		if (new_entries != NULL)
-			g_free(new_entries);
+		g_free(new_entries);
 		break;
 	}
 	default:

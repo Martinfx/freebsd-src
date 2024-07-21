@@ -32,6 +32,7 @@
  * Copyright (c) 2018, loli10K <ezomori.nozomu@gmail.com>. All rights reserved.
  * Copyright (c) 2019, Klara Inc.
  * Copyright (c) 2019, Allan Jude
+ * Copyright (c) 2022 Hewlett Packard Enterprise Development LP.
  */
 
 /* Portions Copyright 2010 Robert Milkowski */
@@ -263,6 +264,19 @@ secondary_cache_changed_cb(void *arg, uint64_t newval)
 }
 
 static void
+prefetch_changed_cb(void *arg, uint64_t newval)
+{
+	objset_t *os = arg;
+
+	/*
+	 * Inheritance should have been done by now.
+	 */
+	ASSERT(newval == ZFS_PREFETCH_ALL || newval == ZFS_PREFETCH_NONE ||
+	    newval == ZFS_PREFETCH_METADATA);
+	os->os_prefetch = newval;
+}
+
+static void
 sync_changed_cb(void *arg, uint64_t newval)
 {
 	objset_t *os = arg;
@@ -287,7 +301,9 @@ redundant_metadata_changed_cb(void *arg, uint64_t newval)
 	 * Inheritance and range checking should have been done by now.
 	 */
 	ASSERT(newval == ZFS_REDUNDANT_METADATA_ALL ||
-	    newval == ZFS_REDUNDANT_METADATA_MOST);
+	    newval == ZFS_REDUNDANT_METADATA_MOST ||
+	    newval == ZFS_REDUNDANT_METADATA_SOME ||
+	    newval == ZFS_REDUNDANT_METADATA_NONE);
 
 	os->os_redundant_metadata = newval;
 }
@@ -384,10 +400,10 @@ dnode_hash(const objset_t *os, uint64_t obj)
 
 	ASSERT(zfs_crc64_table[128] == ZFS_CRC64_POLY);
 	/*
-	 * The low 6 bits of the pointer don't have much entropy, because
-	 * the objset_t is larger than 2^6 bytes long.
+	 * The lower 11 bits of the pointer don't have much entropy, because
+	 * the objset_t is more than 1KB long and so likely aligned to 2KB.
 	 */
-	crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ (osv >> 6)) & 0xFF];
+	crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ (osv >> 11)) & 0xFF];
 	crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ (obj >> 0)) & 0xFF];
 	crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ (obj >> 8)) & 0xFF];
 	crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ (obj >> 16)) & 0xFF];
@@ -416,28 +432,28 @@ dnode_multilist_index_func(multilist_t *ml, void *obj)
 static inline boolean_t
 dmu_os_is_l2cacheable(objset_t *os)
 {
-	vdev_t *vd = NULL;
-	zfs_cache_type_t cache = os->os_secondary_cache;
-	blkptr_t *bp = os->os_rootbp;
+	if (os->os_secondary_cache == ZFS_CACHE_ALL ||
+	    os->os_secondary_cache == ZFS_CACHE_METADATA) {
+		if (l2arc_exclude_special == 0)
+			return (B_TRUE);
 
-	if (bp != NULL && !BP_IS_HOLE(bp)) {
+		blkptr_t *bp = os->os_rootbp;
+		if (bp == NULL || BP_IS_HOLE(bp))
+			return (B_FALSE);
 		uint64_t vdev = DVA_GET_VDEV(bp->blk_dva);
 		vdev_t *rvd = os->os_spa->spa_root_vdev;
+		vdev_t *vd = NULL;
 
 		if (vdev < rvd->vdev_children)
 			vd = rvd->vdev_child[vdev];
 
-		if (cache == ZFS_CACHE_ALL || cache == ZFS_CACHE_METADATA) {
-			if (vd == NULL)
-				return (B_TRUE);
+		if (vd == NULL)
+			return (B_TRUE);
 
-			if ((vd->vdev_alloc_bias != VDEV_BIAS_SPECIAL &&
-			    vd->vdev_alloc_bias != VDEV_BIAS_DEDUP) ||
-			    l2arc_exclude_special == 0)
-				return (B_TRUE);
-		}
+		if (vd->vdev_alloc_bias != VDEV_BIAS_SPECIAL &&
+		    vd->vdev_alloc_bias != VDEV_BIAS_DEDUP)
+			return (B_TRUE);
 	}
-
 	return (B_FALSE);
 }
 
@@ -479,7 +495,7 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 		arc_flags_t aflags = ARC_FLAG_WAIT;
 		zbookmark_phys_t zb;
 		int size;
-		enum zio_flag zio_flags = ZIO_FLAG_CANFAIL;
+		zio_flag_t zio_flags = ZIO_FLAG_CANFAIL;
 		SET_BOOKMARK(&zb, ds ? ds->ds_object : DMU_META_OBJSET,
 		    ZB_ROOT_OBJECT, ZB_ROOT_LEVEL, ZB_ROOT_BLKID);
 
@@ -559,6 +575,11 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 			    zfs_prop_to_name(ZFS_PROP_SECONDARYCACHE),
 			    secondary_cache_changed_cb, os);
 		}
+		if (err == 0) {
+			err = dsl_prop_register(ds,
+			    zfs_prop_to_name(ZFS_PROP_PREFETCH),
+			    prefetch_changed_cb, os);
+		}
 		if (!ds->ds_is_snapshot) {
 			if (err == 0) {
 				err = dsl_prop_register(ds,
@@ -632,6 +653,7 @@ dmu_objset_open_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 		os->os_primary_cache = ZFS_CACHE_ALL;
 		os->os_secondary_cache = ZFS_CACHE_ALL;
 		os->os_dnodesize = DNODE_MIN_SIZE;
+		os->os_prefetch = ZFS_PREFETCH_ALL;
 	}
 
 	if (ds == NULL || !ds->ds_is_snapshot)
@@ -1118,12 +1140,14 @@ dmu_objset_create_impl_dnstats(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 	    (!os->os_encrypted || !dmu_objset_is_receiving(os))) {
 		os->os_phys->os_flags |= OBJSET_FLAG_USERACCOUNTING_COMPLETE;
 		if (dmu_objset_userobjused_enabled(os)) {
+			ASSERT3P(ds, !=, NULL);
 			ds->ds_feature_activation[
 			    SPA_FEATURE_USEROBJ_ACCOUNTING] = (void *)B_TRUE;
 			os->os_phys->os_flags |=
 			    OBJSET_FLAG_USEROBJACCOUNTING_COMPLETE;
 		}
 		if (dmu_objset_projectquota_enabled(os)) {
+			ASSERT3P(ds, !=, NULL);
 			ds->ds_feature_activation[
 			    SPA_FEATURE_PROJECT_QUOTA] = (void *)B_TRUE;
 			os->os_phys->os_flags |=
@@ -1298,6 +1322,7 @@ dmu_objset_create_sync(void *arg, dmu_tx_t *tx)
 			ASSERT3P(ds->ds_key_mapping, !=, NULL);
 			key_mapping_rele(spa, ds->ds_key_mapping, ds);
 			dsl_dataset_sync_done(ds, tx);
+			dmu_buf_rele(ds->ds_dbuf, ds);
 		}
 
 		mutex_enter(&ds->ds_lock);
@@ -1614,28 +1639,92 @@ dmu_objset_write_done(zio_t *zio, arc_buf_t *abuf, void *arg)
 	kmem_free(bp, sizeof (*bp));
 }
 
+typedef struct sync_objset_arg {
+	zio_t		*soa_zio;
+	objset_t	*soa_os;
+	dmu_tx_t	*soa_tx;
+	kmutex_t	soa_mutex;
+	int		soa_count;
+	taskq_ent_t	soa_tq_ent;
+} sync_objset_arg_t;
+
 typedef struct sync_dnodes_arg {
-	multilist_t *sda_list;
-	int sda_sublist_idx;
-	multilist_t *sda_newlist;
-	dmu_tx_t *sda_tx;
+	multilist_t	*sda_list;
+	int		sda_sublist_idx;
+	multilist_t	*sda_newlist;
+	sync_objset_arg_t *sda_soa;
 } sync_dnodes_arg_t;
+
+static void sync_meta_dnode_task(void *arg);
 
 static void
 sync_dnodes_task(void *arg)
 {
 	sync_dnodes_arg_t *sda = arg;
+	sync_objset_arg_t *soa = sda->sda_soa;
+	objset_t *os = soa->soa_os;
 
+	uint_t allocator = spa_acq_allocator(os->os_spa);
 	multilist_sublist_t *ms =
-	    multilist_sublist_lock(sda->sda_list, sda->sda_sublist_idx);
+	    multilist_sublist_lock_idx(sda->sda_list, sda->sda_sublist_idx);
 
-	dmu_objset_sync_dnodes(ms, sda->sda_tx);
+	dmu_objset_sync_dnodes(ms, soa->soa_tx);
 
 	multilist_sublist_unlock(ms);
+	spa_rel_allocator(os->os_spa, allocator);
 
 	kmem_free(sda, sizeof (*sda));
+
+	mutex_enter(&soa->soa_mutex);
+	ASSERT(soa->soa_count != 0);
+	if (--soa->soa_count != 0) {
+		mutex_exit(&soa->soa_mutex);
+		return;
+	}
+	mutex_exit(&soa->soa_mutex);
+
+	taskq_dispatch_ent(dmu_objset_pool(os)->dp_sync_taskq,
+	    sync_meta_dnode_task, soa, TQ_FRONT, &soa->soa_tq_ent);
 }
 
+/*
+ * Issue the zio_nowait() for all dirty record zios on the meta dnode,
+ * then trigger the callback for the zil_sync. This runs once for each
+ * objset, only after any/all sublists in the objset have been synced.
+ */
+static void
+sync_meta_dnode_task(void *arg)
+{
+	sync_objset_arg_t *soa = arg;
+	objset_t *os = soa->soa_os;
+	dmu_tx_t *tx = soa->soa_tx;
+	int txgoff = tx->tx_txg & TXG_MASK;
+	dbuf_dirty_record_t *dr;
+
+	ASSERT0(soa->soa_count);
+
+	list_t *list = &DMU_META_DNODE(os)->dn_dirty_records[txgoff];
+	while ((dr = list_remove_head(list)) != NULL) {
+		ASSERT0(dr->dr_dbuf->db_level);
+		zio_nowait(dr->dr_zio);
+	}
+
+	/* Enable dnode backfill if enough objects have been freed. */
+	if (os->os_freed_dnodes >= dmu_rescan_dnode_threshold) {
+		os->os_rescan_dnodes = B_TRUE;
+		os->os_freed_dnodes = 0;
+	}
+
+	/*
+	 * Free intent log blocks up to this tx.
+	 */
+	zil_sync(os->os_zil, tx);
+	os->os_phys->os_zil_header = os->os_zil_header;
+	zio_nowait(soa->soa_zio);
+
+	mutex_destroy(&soa->soa_mutex);
+	kmem_free(soa, sizeof (*soa));
+}
 
 /* called from dsl */
 void
@@ -1645,8 +1734,6 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 	zbookmark_phys_t zb;
 	zio_prop_t zp;
 	zio_t *zio;
-	list_t *list;
-	dbuf_dirty_record_t *dr;
 	int num_sublists;
 	multilist_t *ml;
 	blkptr_t *blkptr_copy = kmem_alloc(sizeof (*os->os_rootbp), KM_SLEEP);
@@ -1691,19 +1778,9 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 	}
 
 	zio = arc_write(pio, os->os_spa, tx->tx_txg,
-	    blkptr_copy, os->os_phys_buf, dmu_os_is_l2cacheable(os),
-	    &zp, dmu_objset_write_ready, NULL, NULL, dmu_objset_write_done,
+	    blkptr_copy, os->os_phys_buf, B_FALSE, dmu_os_is_l2cacheable(os),
+	    &zp, dmu_objset_write_ready, NULL, dmu_objset_write_done,
 	    os, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
-
-	/*
-	 * In the codepath dsl_dataset_sync()->dmu_objset_sync() we cannot
-	 * rely on the zio above completing and calling back
-	 * dmu_objset_write_done()->dsl_dataset_block_born() before
-	 * dsl_dataset_sync() actually activates feature flags near its end.
-	 * Decide here if any features need to be activated, before
-	 * dsl_dataset_sync() completes its run.
-	 */
-	dsl_dataset_feature_set_activation(blkptr_copy, os->os_dsl_dataset);
 
 	/*
 	 * Sync special dnodes - the parent IO for the sync is the root block
@@ -1743,40 +1820,49 @@ dmu_objset_sync(objset_t *os, zio_t *pio, dmu_tx_t *tx)
 		    offsetof(dnode_t, dn_dirty_link[txgoff]));
 	}
 
+	/*
+	 * zio_nowait(zio) is done after any/all sublist and meta dnode
+	 * zios have been nowaited, and the zil_sync() has been performed.
+	 * The soa is freed at the end of sync_meta_dnode_task.
+	 */
+	sync_objset_arg_t *soa = kmem_alloc(sizeof (*soa), KM_SLEEP);
+	soa->soa_zio = zio;
+	soa->soa_os = os;
+	soa->soa_tx = tx;
+	taskq_init_ent(&soa->soa_tq_ent);
+	mutex_init(&soa->soa_mutex, NULL, MUTEX_DEFAULT, NULL);
+
 	ml = &os->os_dirty_dnodes[txgoff];
-	num_sublists = multilist_get_num_sublists(ml);
+	soa->soa_count = num_sublists = multilist_get_num_sublists(ml);
+
 	for (int i = 0; i < num_sublists; i++) {
 		if (multilist_sublist_is_empty_idx(ml, i))
-			continue;
-		sync_dnodes_arg_t *sda = kmem_alloc(sizeof (*sda), KM_SLEEP);
-		sda->sda_list = ml;
-		sda->sda_sublist_idx = i;
-		sda->sda_tx = tx;
-		(void) taskq_dispatch(dmu_objset_pool(os)->dp_sync_taskq,
-		    sync_dnodes_task, sda, 0);
-		/* callback frees sda */
-	}
-	taskq_wait(dmu_objset_pool(os)->dp_sync_taskq);
-
-	list = &DMU_META_DNODE(os)->dn_dirty_records[txgoff];
-	while ((dr = list_head(list)) != NULL) {
-		ASSERT0(dr->dr_dbuf->db_level);
-		list_remove(list, dr);
-		zio_nowait(dr->dr_zio);
+			soa->soa_count--;
 	}
 
-	/* Enable dnode backfill if enough objects have been freed. */
-	if (os->os_freed_dnodes >= dmu_rescan_dnode_threshold) {
-		os->os_rescan_dnodes = B_TRUE;
-		os->os_freed_dnodes = 0;
+	if (soa->soa_count == 0) {
+		taskq_dispatch_ent(dmu_objset_pool(os)->dp_sync_taskq,
+		    sync_meta_dnode_task, soa, TQ_FRONT, &soa->soa_tq_ent);
+	} else {
+		/*
+		 * Sync sublists in parallel. The last to finish
+		 * (i.e., when soa->soa_count reaches zero) must
+		 *  dispatch sync_meta_dnode_task.
+		 */
+		for (int i = 0; i < num_sublists; i++) {
+			if (multilist_sublist_is_empty_idx(ml, i))
+				continue;
+			sync_dnodes_arg_t *sda =
+			    kmem_alloc(sizeof (*sda), KM_SLEEP);
+			sda->sda_list = ml;
+			sda->sda_sublist_idx = i;
+			sda->sda_soa = soa;
+			(void) taskq_dispatch(
+			    dmu_objset_pool(os)->dp_sync_taskq,
+			    sync_dnodes_task, sda, 0);
+			/* sync_dnodes_task frees sda */
+		}
 	}
-
-	/*
-	 * Free intent log blocks up to this tx.
-	 */
-	zil_sync(os->os_zil, tx);
-	os->os_phys->os_zil_header = os->os_zil_header;
-	zio_nowait(zio);
 }
 
 boolean_t
@@ -1992,8 +2078,8 @@ userquota_updates_task(void *arg)
 	dnode_t *dn;
 	userquota_cache_t cache = { { 0 } };
 
-	multilist_sublist_t *list =
-	    multilist_sublist_lock(&os->os_synced_dnodes, uua->uua_sublist_idx);
+	multilist_sublist_t *list = multilist_sublist_lock_idx(
+	    &os->os_synced_dnodes, uua->uua_sublist_idx);
 
 	ASSERT(multilist_sublist_head(list) == NULL ||
 	    dmu_objset_userused_enabled(os));
@@ -2075,8 +2161,8 @@ dnode_rele_task(void *arg)
 	userquota_updates_arg_t *uua = arg;
 	objset_t *os = uua->uua_os;
 
-	multilist_sublist_t *list =
-	    multilist_sublist_lock(&os->os_synced_dnodes, uua->uua_sublist_idx);
+	multilist_sublist_t *list = multilist_sublist_lock_idx(
+	    &os->os_synced_dnodes, uua->uua_sublist_idx);
 
 	dnode_t *dn;
 	while ((dn = multilist_sublist_head(list)) != NULL) {
@@ -2351,7 +2437,7 @@ dmu_objset_space_upgrade(objset_t *os)
 		if (err != 0)
 			return (err);
 
-		if (issig(JUSTLOOKING) && issig(FORREAL))
+		if (issig())
 			return (SET_ERROR(EINTR));
 
 		objerr = dmu_bonus_hold(os, obj, FTAG, &db);

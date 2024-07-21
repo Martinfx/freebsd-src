@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002 Tim J. Robbins.
  * All rights reserved.
@@ -33,9 +33,6 @@
  * command line. If -p is specified, check whether the pathname is portable
  * to all POSIX systems.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/stat.h>

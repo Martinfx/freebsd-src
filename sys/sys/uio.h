@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)uio.h	8.5 (Berkeley) 2/22/94
- * $FreeBSD$
  */
 
 #ifndef _SYS_UIO_H_
@@ -79,6 +76,8 @@ struct vm_object;
 struct vm_page;
 struct bus_dma_segment;
 
+struct uio *allocuio(u_int iovcnt);
+void	freeuio(struct uio *uio);
 struct uio *cloneuio(struct uio *uiop);
 int	copyiniov(const struct iovec *iovp, u_int iovcnt, struct iovec **iov,
 	    int error);
@@ -99,6 +98,10 @@ int	uiomove_nofault(void *cp, int n, struct uio *uio);
 int	uiomove_object(struct vm_object *obj, off_t obj_size, struct uio *uio);
 
 #else /* !_KERNEL */
+
+#if defined(_FORTIFY_SOURCE) && _FORTIFY_SOURCE > 0
+#include <ssp/uio.h>
+#endif
 
 __BEGIN_DECLS
 ssize_t	readv(int, const struct iovec *, int);

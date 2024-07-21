@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007-2009 Bruce Simpson.
  * Copyright (c) 2000 Wilbert De Graaf.
@@ -37,9 +37,6 @@
  * TODO: Use IPv4 link-local address when source address selection
  * is implemented; use MCAST_JOIN_SOURCE for IPv4.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/param.h>

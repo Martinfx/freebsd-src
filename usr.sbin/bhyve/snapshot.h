@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016 Flavius Anton
  * Copyright (c) 2016 Mihai Tiganus
@@ -31,8 +31,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _BHYVE_SNAPSHOT_
@@ -66,8 +64,8 @@ struct checkpoint_thread_info {
 };
 
 typedef int (*vm_snapshot_dev_cb)(struct vm_snapshot_meta *);
-typedef int (*vm_pause_dev_cb) (struct vmctx *, const char *);
-typedef int (*vm_resume_dev_cb) (struct vmctx *, const char *);
+typedef int (*vm_pause_dev_cb) (const char *);
+typedef int (*vm_resume_dev_cb) (const char *);
 
 struct vm_snapshot_dev_info {
 	const char *dev_name;		/* device name */
@@ -95,15 +93,34 @@ void checkpoint_cpu_suspend(int vcpu);
 int restore_vm_mem(struct vmctx *ctx, struct restore_state *rstate);
 int vm_restore_kern_structs(struct vmctx *ctx, struct restore_state *rstate);
 
-int vm_restore_user_devs(struct vmctx *ctx, struct restore_state *rstate);
-int vm_pause_user_devs(struct vmctx *ctx);
-int vm_resume_user_devs(struct vmctx *ctx);
+int vm_restore_devices(struct restore_state *rstate);
+int vm_pause_devices(void);
+int vm_resume_devices(void);
 
 int get_checkpoint_msg(int conn_fd, struct vmctx *ctx);
 void *checkpoint_thread(void *param);
 int init_checkpoint_thread(struct vmctx *ctx);
-void init_snapshot(void);
 
 int load_restore_file(const char *filename, struct restore_state *rstate);
+
+int vm_snapshot_guest2host_addr(struct vmctx *ctx, void **addrp, size_t len,
+    bool restore_null, struct vm_snapshot_meta *meta);
+
+/*
+ * Address variables are pointers to guest memory.
+ *
+ * When RNULL != 0, do not enforce invalid address checks; instead, make the
+ * pointer NULL at restore time.
+ */
+#define	SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(CTX, ADDR, LEN, RNULL, META, RES, LABEL) \
+do {										\
+	(RES) = vm_snapshot_guest2host_addr((CTX), (void **)&(ADDR), (LEN),	\
+	    (RNULL), (META));							\
+	if ((RES) != 0) {							\
+		if ((RES) == EFAULT)						\
+			EPRINTLN("%s: invalid address: %s", __func__, #ADDR);	\
+		goto LABEL;							\
+	}									\
+} while (0)
 
 #endif

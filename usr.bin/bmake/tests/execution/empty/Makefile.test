@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 EMPTY=
 
 check-empty:

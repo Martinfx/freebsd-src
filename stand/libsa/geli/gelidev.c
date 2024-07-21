@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Ian Lepore <ian@FreeBSD.org>
  *
@@ -23,8 +23,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <stand.h>
@@ -63,6 +61,7 @@ static struct devsw geli_devsw = {
 	.dv_print    = geli_dev_print,
 	.dv_cleanup  = geli_dev_cleanup,
 	.dv_fmtdev   = disk_fmtdev,
+	.dv_parsedev = disk_parsedev,
 };
 
 /*
@@ -301,8 +300,12 @@ geli_probe_and_attach(struct open_file *f)
 
 	hdesc = (struct disk_devdesc *)(f->f_devdata);
 
+	/* We only work on DEVT_DISKs */
+	if (hdesc->dd.d_dev->dv_type != DEVT_DISK)
+		return;
 	/* Get the last block number for the host provider. */
-	hdesc->dd.d_dev->dv_ioctl(f, DIOCGMEDIASIZE, &hmediasize);
+	if (hdesc->dd.d_dev->dv_ioctl(f, DIOCGMEDIASIZE, &hmediasize) != 0)
+		return;
 	hlastblk = (hmediasize / DEV_BSIZE) - 1;
 
 	/* Taste the host provider.  If it's not geli-encrypted just return. */

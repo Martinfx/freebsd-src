@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	runtime
 LIB=	ypclnt
 SHLIB_MAJOR= 4

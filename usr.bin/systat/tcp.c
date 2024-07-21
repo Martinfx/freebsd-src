@@ -29,18 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-/* From: */
-static char sccsid[] = "@(#)mbufs.c	8.1 (Berkeley) 6/6/93";
-static const char rcsid[] =
-	"Id: mbufs.c,v 1.5 1997/02/24 20:59:03 wollman Exp";
-#endif /* not lint */
-#endif
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -125,8 +113,8 @@ labeltcp(void)
 	L(5, "- in embryonic state");		R(5, "- ack-only");
 	L(6, "- on retransmit timeout");	R(6, "- window probes");
 	L(7, "- by keepalive");			R(7, "- window updates");
-	L(8, "- from listen queue");		R(8, "- urgent data only");
-						R(9, "- control");
+	L(8, "- exceeded progress time");	R(8, "- urgent data only");
+	L(9, "- from listen queue");		R(9, "- control");
 						R(10, "- resends by PMTU discovery");
 	L(11, "TCP Timers");			R(11, "total packets received");
 	L(12, "potential rtt updates");		R(12, "- in sequence");
@@ -179,6 +167,7 @@ domode(struct tcpstat *ret)
 	DO(tcps_keeptimeo);
 	DO(tcps_keepprobe);
 	DO(tcps_keepdrops);
+	DO(tcps_progdrops);
 
 	DO(tcps_sndtotal);
 	DO(tcps_sndpack);
@@ -248,8 +237,8 @@ showtcp(void)
 	L(5, tcps_conndrops);		R(5, tcps_sndacks);
 	L(6, tcps_timeoutdrop);		R(6, tcps_sndprobe);
 	L(7, tcps_keepdrops);		R(7, tcps_sndwinup);
-	L(8, tcps_listendrop);		R(8, tcps_sndurg);
-					R(9, tcps_sndctrl);
+	L(8, tcps_progdrops);		R(8, tcps_sndurg);
+	L(9, tcps_listendrop);		R(9, tcps_sndctrl);
 					R(10, tcps_mturesent);
 					R(11, tcps_rcvtotal);
 	L(12, tcps_segstimed);		R(12, tcps_rcvpack);

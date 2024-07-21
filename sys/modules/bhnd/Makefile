@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/bhnd
 .PATH: ${SRCTOP}/sys/dev/bhnd/cores/chipc
 .PATH: ${SRCTOP}/sys/dev/bhnd/cores/chipc/pwrctl

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * USB Enhanced Host Controller Driver, a.k.a. USB 2.0 controller.
  *
@@ -95,6 +93,8 @@ __FBSDID("$FreeBSD$");
 #define	PCI_EHCI_VENDORID_NVIDIA	0x12D2
 #define	PCI_EHCI_VENDORID_NVIDIA2	0x10DE
 #define	PCI_EHCI_VENDORID_VIA		0x1106
+#define	PCI_EHCI_VENDORID_VMWARE	0x15ad
+#define	PCI_EHCI_VENDORID_ZHAOXIN	0x1d17
 
 static device_probe_t ehci_pci_probe;
 static device_attach_t ehci_pci_attach;
@@ -167,6 +167,10 @@ ehci_pci_match(device_t self)
 		return "Intel 82801JI (ICH10) USB 2.0 controller USB-A";
 	case 0x3a3c8086:
 		return "Intel 82801JI (ICH10) USB 2.0 controller USB-B";
+	case 0x3a6c8086:
+		return "Intel 82801JD (ICH10) USB 2.0 controller USB-A";
+	case 0x3a6a8086:
+		return "Intel 82801JD (ICH10) USB 2.0 controller USB-B";
 	case 0x3b348086:
 		return ("Intel PCH USB 2.0 controller USB-A");
 	case 0x3b3c8086:
@@ -220,6 +224,12 @@ ehci_pci_match(device_t self)
 
 	case 0x31041106:
 		return ("VIA VT6202 USB 2.0 controller");
+
+	case 0x077015ad:
+		return ("VMware USB 2.0 controller");
+
+	case 0x31041d17:
+		return ("Zhaoxin ZX-100/ZX-200/ZX-E USB 2.0 controller");
 
 	default:
 		break;
@@ -403,6 +413,12 @@ ehci_pci_attach(device_t self)
 	case PCI_EHCI_VENDORID_VIA:
 		sprintf(sc->sc_vendor, "VIA");
 		break;
+	case PCI_EHCI_VENDORID_VMWARE:
+		sprintf(sc->sc_vendor, "VMware");
+		break;
+	case PCI_EHCI_VENDORID_ZHAOXIN:
+		sprintf(sc->sc_vendor, "Zhaoxin");
+		break;
 	default:
 		if (bootverbose)
 			device_printf(self, "(New EHCI DeviceId=0x%08x)\n",
@@ -410,13 +426,8 @@ ehci_pci_attach(device_t self)
 		sprintf(sc->sc_vendor, "(0x%04x)", pci_get_vendor(self));
 	}
 
-#if (__FreeBSD_version >= 700031)
 	err = bus_setup_intr(self, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
 	    NULL, (driver_intr_t *)ehci_interrupt, sc, &sc->sc_intr_hdl);
-#else
-	err = bus_setup_intr(self, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
-	    (driver_intr_t *)ehci_interrupt, sc, &sc->sc_intr_hdl);
-#endif
 	if (err) {
 		device_printf(self, "Could not setup irq, %d\n", err);
 		sc->sc_intr_hdl = NULL;

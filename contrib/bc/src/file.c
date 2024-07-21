@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2018-2021 Gavin D. Howard and contributors.
+ * Copyright (c) 2018-2024 Gavin D. Howard and contributors.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -159,12 +159,12 @@ bc_file_flushErr(BcFile* restrict f, BcFlushType type)
 				i += 1;
 
 				// Save the extras.
-				bc_vec_string(&vm.history.extras, f->len - i, f->buf + i);
+				bc_vec_string(&vm->history.extras, f->len - i, f->buf + i);
 			}
 			// Else clear the extras if told to.
 			else if (type >= BC_FLUSH_NO_EXTRAS_CLEAR)
 			{
-				bc_vec_popAll(&vm.history.extras);
+				bc_vec_popAll(&vm->history.extras);
 			}
 		}
 #endif // BC_ENABLE_HISTORY
@@ -196,12 +196,17 @@ bc_file_flush(BcFile* restrict f, BcFlushType type)
 		// For EOF, set it and jump.
 		if (s == BC_STATUS_EOF)
 		{
-			vm.status = (sig_atomic_t) s;
+			vm->status = (sig_atomic_t) s;
 			BC_SIG_TRYUNLOCK(lock);
 			BC_JMP;
 		}
+		// Make sure to handle non-fatal I/O properly.
+		else if (!f->errors_fatal)
+		{
+			bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+		}
 		// Blow up on fatal error. Okay, not blow up, just quit.
-		else bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+		else exit(BC_STATUS_ERROR_FATAL);
 	}
 
 	BC_SIG_TRYUNLOCK(lock);
@@ -234,12 +239,17 @@ bc_file_write(BcFile* restrict f, BcFlushType type, const char* buf, size_t n)
 			// For EOF, set it and jump.
 			if (s == BC_STATUS_EOF)
 			{
-				vm.status = (sig_atomic_t) s;
+				vm->status = (sig_atomic_t) s;
 				BC_SIG_TRYUNLOCK(lock);
 				BC_JMP;
 			}
+			// Make sure to handle non-fatal I/O properly.
+			else if (!f->errors_fatal)
+			{
+				bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+			}
 			// Blow up on fatal error. Okay, not blow up, just quit.
-			else bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+			else exit(BC_STATUS_ERROR_FATAL);
 		}
 	}
 	else
@@ -276,102 +286,125 @@ bc_file_vprintf(BcFile* restrict f, const char* fmt, va_list args)
 
 #if BC_ENABLE_LINE_LIB
 
-	// Just print and propagate the error.
-	if (BC_ERR(vfprintf(f->f, fmt, args) < 0))
 	{
-		bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+		int r;
+
+		// This mess is to silence a warning.
+#if BC_CLANG
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#endif // BC_CLANG
+		r = vfprintf(f->f, fmt, args);
+#if BC_CLANG
+#pragma clang diagnostic warning "-Wformat-nonliteral"
+#endif // BC_CLANG
+
+		// Just print and propagate the error.
+		if (BC_ERR(r < 0))
+		{
+			// Make sure to handle non-fatal I/O properly.
+			if (!f->errors_fatal)
+			{
+				bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+			}
+			else
+			{
+				exit(BC_STATUS_ERROR_FATAL);
+			}
+		}
 	}
 
 #else // BC_ENABLE_LINE_LIB
 
-	char* percent;
-	const char* ptr = fmt;
-	char buf[BC_FILE_ULL_LENGTH];
-
-	// This is a poor man's printf(). While I could look up algorithms to make
-	// it as fast as possible, and should when I write the standard library for
-	// a new language, for bc, outputting is not the bottleneck. So we cheese it
-	// for now.
-
-	// Find each percent sign.
-	while ((percent = strchr(ptr, '%')) != NULL)
 	{
-		char c;
+		char* percent;
+		const char* ptr = fmt;
+		char buf[BC_FILE_ULL_LENGTH];
 
-		// If the percent sign is not where we are, write what's inbetween to
-		// the buffer.
-		if (percent != ptr)
+		// This is a poor man's printf(). While I could look up algorithms to
+		// make it as fast as possible, and should when I write the standard
+		// library for a new language, for bc, outputting is not the bottleneck.
+		// So we cheese it for now.
+
+		// Find each percent sign.
+		while ((percent = strchr(ptr, '%')) != NULL)
 		{
-			size_t len = (size_t) (percent - ptr);
-			bc_file_write(f, bc_flush_none, ptr, len);
-		}
+			char c;
 
-		c = percent[1];
-
-		// We only parse some format specifiers, the ones bc uses. If you add
-		// more, you need to make sure to add them here.
-		if (c == 'c')
-		{
-			uchar uc = (uchar) va_arg(args, int);
-
-			bc_file_putchar(f, bc_flush_none, uc);
-		}
-		else if (c == 's')
-		{
-			char* s = va_arg(args, char*);
-
-			bc_file_puts(f, bc_flush_none, s);
-		}
-#if BC_DEBUG_CODE
-		// We only print signed integers in debug code.
-		else if (c == 'd')
-		{
-			int d = va_arg(args, int);
-
-			// Take care of negative. Let's not worry about overflow.
-			if (d < 0)
+			// If the percent sign is not where we are, write what's inbetween
+			// to the buffer.
+			if (percent != ptr)
 			{
-				bc_file_putchar(f, bc_flush_none, '-');
-				d = -d;
+				size_t len = (size_t) (percent - ptr);
+				bc_file_write(f, bc_flush_none, ptr, len);
 			}
 
-			// Either print 0 or translate and print.
-			if (!d) bc_file_putchar(f, bc_flush_none, '0');
+			c = percent[1];
+
+			// We only parse some format specifiers, the ones bc uses. If you
+			// add more, you need to make sure to add them here.
+			if (c == 'c')
+			{
+				uchar uc = (uchar) va_arg(args, int);
+
+				bc_file_putchar(f, bc_flush_none, uc);
+			}
+			else if (c == 's')
+			{
+				char* s = va_arg(args, char*);
+
+				bc_file_puts(f, bc_flush_none, s);
+			}
+#if BC_DEBUG
+			// We only print signed integers in debug code.
+			else if (c == 'd')
+			{
+				int d = va_arg(args, int);
+
+				// Take care of negative. Let's not worry about overflow.
+				if (d < 0)
+				{
+					bc_file_putchar(f, bc_flush_none, '-');
+					d = -d;
+				}
+
+				// Either print 0 or translate and print.
+				if (!d) bc_file_putchar(f, bc_flush_none, '0');
+				else
+				{
+					bc_file_ultoa((unsigned long long) d, buf);
+					bc_file_puts(f, bc_flush_none, buf);
+				}
+			}
+#endif // BC_DEBUG
 			else
 			{
-				bc_file_ultoa((unsigned long long) d, buf);
-				bc_file_puts(f, bc_flush_none, buf);
+				unsigned long long ull;
+
+				// These are the ones that it expects from here. Fortunately,
+				// all of these are unsigned types, so they can use the same
+				// code, more or less.
+				assert((c == 'l' || c == 'z') && percent[2] == 'u');
+
+				if (c == 'z') ull = (unsigned long long) va_arg(args, size_t);
+				else ull = (unsigned long long) va_arg(args, unsigned long);
+
+				// Either print 0 or translate and print.
+				if (!ull) bc_file_putchar(f, bc_flush_none, '0');
+				else
+				{
+					bc_file_ultoa(ull, buf);
+					bc_file_puts(f, bc_flush_none, buf);
+				}
 			}
-		}
-#endif // BC_DEBUG_CODE
-		else
-		{
-			unsigned long long ull;
 
-			// These are the ones that it expects from here. Fortunately, all of
-			// these are unsigned types, so they can use the same code, more or
-			// less.
-			assert((c == 'l' || c == 'z') && percent[2] == 'u');
-
-			if (c == 'z') ull = (unsigned long long) va_arg(args, size_t);
-			else ull = (unsigned long long) va_arg(args, unsigned long);
-
-			// Either print 0 or translate and print.
-			if (!ull) bc_file_putchar(f, bc_flush_none, '0');
-			else
-			{
-				bc_file_ultoa(ull, buf);
-				bc_file_puts(f, bc_flush_none, buf);
-			}
+			// Increment to the next spot after the specifier.
+			ptr = percent + 2 + (c == 'l' || c == 'z');
 		}
 
-		// Increment to the next spot after the specifier.
-		ptr = percent + 2 + (c == 'l' || c == 'z');
+		// If we get here, there are no more percent signs, so we just output
+		// whatever is left.
+		if (ptr[0]) bc_file_puts(f, bc_flush_none, ptr);
 	}
-
-	// If we get here, there are no more percent signs, so we just output
-	// whatever is left.
-	if (ptr[0]) bc_file_puts(f, bc_flush_none, ptr);
 
 #endif // BC_ENABLE_LINE_LIB
 }
@@ -403,7 +436,7 @@ bc_file_putchar(BcFile* restrict f, BcFlushType type, uchar c)
 		// This is here to prevent a stack overflow from unbounded recursion.
 		if (f->f == stderr) exit(BC_STATUS_ERROR_FATAL);
 
-		bc_vm_fatalError(BC_ERR_FATAL_IO_ERR);
+		bc_err(BC_ERR_FATAL_IO_ERR);
 	}
 
 #else // BC_ENABLE_LINE_LIB
@@ -423,16 +456,17 @@ bc_file_putchar(BcFile* restrict f, BcFlushType type, uchar c)
 #if BC_ENABLE_LINE_LIB
 
 void
-bc_file_init(BcFile* f, FILE* file)
+bc_file_init(BcFile* f, FILE* file, bool errors_fatal)
 {
 	BC_SIG_ASSERT_LOCKED;
 	f->f = file;
+	f->errors_fatal = errors_fatal;
 }
 
 #else // BC_ENABLE_LINE_LIB
 
 void
-bc_file_init(BcFile* f, int fd, char* buf, size_t cap)
+bc_file_init(BcFile* f, int fd, char* buf, size_t cap, bool errors_fatal)
 {
 	BC_SIG_ASSERT_LOCKED;
 
@@ -440,6 +474,7 @@ bc_file_init(BcFile* f, int fd, char* buf, size_t cap)
 	f->buf = buf;
 	f->len = 0;
 	f->cap = cap;
+	f->errors_fatal = errors_fatal;
 }
 
 #endif // BC_ENABLE_LINE_LIB

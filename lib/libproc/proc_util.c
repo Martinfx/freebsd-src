@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 The FreeBSD Foundation
  * Copyright (c) 2008 John Birrell (jb@freebsd.org)
@@ -29,9 +29,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/ptrace.h>
@@ -85,25 +82,21 @@ int
 proc_detach(struct proc_handle *phdl, int reason)
 {
 	int status;
+	int request;
 	pid_t pid;
 
 	if (phdl == NULL)
 		return (EINVAL);
 	if (reason == PRELEASE_HANG)
 		return (EINVAL);
-	if (reason == PRELEASE_KILL) {
-		kill(proc_getpid(phdl), SIGKILL);
-		goto free;
-	}
 	if ((phdl->flags & PATTACH_RDONLY) != 0)
 		goto free;
+	request = (reason == PRELEASE_KILL) ? PT_KILL : PT_DETACH;
 	pid = proc_getpid(phdl);
-	if (ptrace(PT_DETACH, pid, 0, 0) != 0 && errno == ESRCH)
-		goto free;
-	if (errno == EBUSY) {
+	if (ptrace(request, pid, 0, 0) != 0 && errno == EBUSY) {
 		kill(pid, SIGSTOP);
 		waitpid(pid, &status, WUNTRACED);
-		ptrace(PT_DETACH, pid, 0, 0);
+		ptrace(request, pid, 0, 0);
 		kill(pid, SIGCONT);
 	}
 free:

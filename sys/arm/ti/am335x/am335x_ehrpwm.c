@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -193,6 +190,7 @@ struct am335x_ehrpwm_softc {
 };
 
 static struct ofw_compat_data compat_data[] = {
+	{"ti,am3352-ehrpwm",    true},
 	{"ti,am33xx-ehrpwm",    true},
 	{NULL,                  false},
 };

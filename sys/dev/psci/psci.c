@@ -41,8 +41,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #include "opt_platform.h"
 
@@ -126,7 +124,6 @@ static struct ofw_compat_data compat_data[] = {
 #endif
 
 static int psci_attach(device_t, psci_initfn_t, int);
-static void psci_shutdown(void *, int);
 
 static int psci_find_callfn(psci_callfn_t *);
 static int psci_def_callfn(register_t, register_t, register_t, register_t,
@@ -146,6 +143,7 @@ psci_init(void *dummy)
 	}
 
 	psci_callfn = new_callfn;
+	psci_present = true;
 }
 /* This needs to be before cpu_mp at SI_SUB_CPU, SI_ORDER_THIRD */
 SYSINIT(psci_start, SI_SUB_CPU, SI_ORDER_FIRST, psci_init, NULL);
@@ -343,8 +341,11 @@ psci_attach(device_t dev, psci_initfn_t psci_init, int default_version)
 	if (psci_init(dev, default_version))
 		return (ENXIO);
 
+#ifdef __aarch64__
+	smccc_init();
+#endif
+
 	psci_softc = sc;
-	psci_present = true;
 
 	return (0);
 }
@@ -377,12 +378,21 @@ psci_fdt_callfn(psci_callfn_t *callfn)
 {
 	phandle_t node;
 
-	node = ofw_bus_find_compatible(OF_peer(0), "arm,psci-0.2");
-	if (node == 0) {
-		node = ofw_bus_find_compatible(OF_peer(0), "arm,psci-1.0");
-		if (node == 0)
-			return (PSCI_MISSING);
+	/* XXX: This is suboptimal, we should walk the tree & check each
+	 * node against compat_data, but we only have a few entries so
+	 * it's ok for now.
+	 */
+	for (int i = 0; compat_data[i].ocd_str != NULL; i++) {
+		node = ofw_bus_find_compatible(OF_peer(0),
+		    compat_data[i].ocd_str);
+		if (node != 0)
+			break;
 	}
+	if (node == 0)
+		return (PSCI_MISSING);
+
+	if (!ofw_bus_node_status_okay(node))
+		return (PSCI_MISSING);
 
 	*callfn = psci_fdt_get_callfn(node);
 	return (0);
@@ -466,12 +476,24 @@ psci_shutdown(void *xsc, int howto)
 	if (psci_softc == NULL)
 		return;
 
-	/* PSCI system_off and system_reset werent't supported in v0.1. */
 	if ((howto & RB_POWEROFF) != 0)
 		fn = psci_softc->psci_fnids[PSCI_FN_SYSTEM_OFF];
-	else if ((howto & RB_HALT) == 0)
-		fn = psci_softc->psci_fnids[PSCI_FN_SYSTEM_RESET];
+	if (fn)
+		psci_call(fn, 0, 0, 0);
 
+	/* System reset and off do not return. */
+}
+
+static void
+psci_reboot(void *xsc, int howto)
+{
+	uint32_t fn = 0;
+
+	if (psci_softc == NULL)
+		return;
+
+	if ((howto & RB_HALT) == 0)
+		fn = psci_softc->psci_fnids[PSCI_FN_SYSTEM_RESET];
 	if (fn)
 		psci_call(fn, 0, 0, 0);
 
@@ -482,7 +504,7 @@ void
 psci_reset(void)
 {
 
-	psci_shutdown(NULL, 0);
+	psci_reboot(NULL, 0);
 }
 
 #ifdef FDT
@@ -579,6 +601,10 @@ psci_v0_2_init(device_t dev, int default_version)
 		 */
 		EVENTHANDLER_REGISTER(shutdown_final, psci_shutdown, sc,
 		    SHUTDOWN_PRI_LAST);
+
+		/* Handle reboot after shutdown_panic. */
+		EVENTHANDLER_REGISTER(shutdown_final, psci_reboot, sc,
+		    SHUTDOWN_PRI_LAST + 150);
 
 		return (0);
 	}

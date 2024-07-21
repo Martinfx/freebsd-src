@@ -22,9 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd July 21, 2022
+.Dd August 6, 2023
 .Dt RELEASE 7
 .Os
 .Sh NAME
@@ -365,6 +363,25 @@ is used, the resulting files compressed with
 .Xr xz 1
 compress to roughly the same size, regardless of the specified disk image
 size.
+.It Va VMFS
+(Deprecated.)
+Set to specify which of the filesystem(s) listed in
+.Va VMFSLIST
+is linked to the historical non-filesystem-labelled file name.
+Valid values are
+.Va ufs
+and
+.Va zfs .
+The default value is
+.Va ufs .
+.It Va VMFSLIST
+Set to specify the list of file system types to build images for.
+Valid values are one or both of
+.Va ufs
+and
+.Va zfs .
+The default value is
+.Va ufs zfs .
 .It Va VMFORMATS
 Set to the target virtual disk image format(s) to create.
 By default, the
@@ -503,7 +520,7 @@ Displays the list of valid
 values.
 .It Cm list-vmtargets
 Displays the list of valid
-.Va VMFORMAT
+.Va VMFORMATS
 and
 .Va CLOUDWARE
 values.

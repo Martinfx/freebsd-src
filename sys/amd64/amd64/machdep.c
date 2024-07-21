@@ -36,13 +36,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)machdep.c	7.4 (Berkeley) 6/3/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_atpic.h"
 #include "opt_cpu.h"
 #include "opt_ddb.h"
@@ -116,6 +112,8 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include <net/netisr.h>
+
+#include <dev/smbios/smbios.h>
 
 #include <machine/clock.h>
 #include <machine/cpu.h>
@@ -220,8 +218,7 @@ void (*vmm_resume_p)(void);
 bool efi_boot;
 
 static void
-cpu_startup(dummy)
-	void *dummy;
+cpu_startup(void *dummy)
 {
 	uintmax_t memsize;
 	char *sysenv;
@@ -325,13 +322,13 @@ cpu_setregs(void)
 {
 	register_t cr0;
 
+	TSENTER();
 	cr0 = rcr0();
-	/*
-	 * CR0_MP, CR0_NE and CR0_TS are also set by npx_probe() for the
-	 * BSP.  See the comments there about why we set them.
-	 */
 	cr0 |= CR0_MP | CR0_NE | CR0_TS | CR0_WP | CR0_AM;
+	TSENTER2("load_cr0");
 	load_cr0(cr0);
+	TSEXIT2("load_cr0");
+	TSEXIT();
 }
 
 /*
@@ -357,8 +354,8 @@ CTASSERT(sizeof(struct nmi_pcpu) == 16);
  * slots as corresponding segments for i386 kernel.
  */
 struct soft_segment_descriptor gdt_segs[] = {
-/* GNULL_SEL	0 Null Descriptor */
-{	.ssd_base = 0x0,
+[GNULL_SEL] = { /* 0 Null Descriptor */
+	.ssd_base = 0x0,
 	.ssd_limit = 0x0,
 	.ssd_type = 0,
 	.ssd_dpl = 0,
@@ -366,8 +363,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 0,
 	.ssd_gran = 0		},
-/* GNULL2_SEL	1 Null Descriptor */
-{	.ssd_base = 0x0,
+[GNULL2_SEL] = { /*	1 Null Descriptor */
+	.ssd_base = 0x0,
 	.ssd_limit = 0x0,
 	.ssd_type = 0,
 	.ssd_dpl = 0,
@@ -375,8 +372,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 0,
 	.ssd_gran = 0		},
-/* GUFS32_SEL	2 32 bit %gs Descriptor for user */
-{	.ssd_base = 0x0,
+[GUFS32_SEL] = { /* 2 32 bit %gs Descriptor for user */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMRWA,
 	.ssd_dpl = SEL_UPL,
@@ -384,8 +381,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 1,
 	.ssd_gran = 1		},
-/* GUGS32_SEL	3 32 bit %fs Descriptor for user */
-{	.ssd_base = 0x0,
+[GUGS32_SEL] = { /* 3 32 bit %fs Descriptor for user */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMRWA,
 	.ssd_dpl = SEL_UPL,
@@ -393,8 +390,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 1,
 	.ssd_gran = 1		},
-/* GCODE_SEL	4 Code Descriptor for kernel */
-{	.ssd_base = 0x0,
+[GCODE_SEL] = { /* 4 Code Descriptor for kernel */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMERA,
 	.ssd_dpl = SEL_KPL,
@@ -402,8 +399,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 1,
 	.ssd_def32 = 0,
 	.ssd_gran = 1		},
-/* GDATA_SEL	5 Data Descriptor for kernel */
-{	.ssd_base = 0x0,
+[GDATA_SEL] = { /* 5 Data Descriptor for kernel */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMRWA,
 	.ssd_dpl = SEL_KPL,
@@ -411,8 +408,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 1,
 	.ssd_def32 = 0,
 	.ssd_gran = 1		},
-/* GUCODE32_SEL	6 32 bit Code Descriptor for user */
-{	.ssd_base = 0x0,
+[GUCODE32_SEL] = { /* 6 32 bit Code Descriptor for user */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMERA,
 	.ssd_dpl = SEL_UPL,
@@ -420,8 +417,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 1,
 	.ssd_gran = 1		},
-/* GUDATA_SEL	7 32/64 bit Data Descriptor for user */
-{	.ssd_base = 0x0,
+[GUDATA_SEL] = { /* 7 32/64 bit Data Descriptor for user */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMRWA,
 	.ssd_dpl = SEL_UPL,
@@ -429,8 +426,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 1,
 	.ssd_gran = 1		},
-/* GUCODE_SEL	8 64 bit Code Descriptor for user */
-{	.ssd_base = 0x0,
+[GUCODE_SEL] = { /* 8 64 bit Code Descriptor for user */
+	.ssd_base = 0x0,
 	.ssd_limit = 0xfffff,
 	.ssd_type = SDT_MEMERA,
 	.ssd_dpl = SEL_UPL,
@@ -438,8 +435,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 1,
 	.ssd_def32 = 0,
 	.ssd_gran = 1		},
-/* GPROC0_SEL	9 Proc 0 Tss Descriptor */
-{	.ssd_base = 0x0,
+[GPROC0_SEL] = { /* 9 Proc 0 TSS Descriptor */
+	.ssd_base = 0x0,
 	.ssd_limit = sizeof(struct amd64tss) + IOPERM_BITMAP_SIZE - 1,
 	.ssd_type = SDT_SYSTSS,
 	.ssd_dpl = SEL_KPL,
@@ -447,8 +444,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 0,
 	.ssd_gran = 0		},
-/* Actually, the TSS is a system descriptor which is double size */
-{	.ssd_base = 0x0,
+[GPROC0_SEL + 1] = { /* 10 Proc 0 TSS descriptor, double size */
+	.ssd_base = 0x0,
 	.ssd_limit = 0x0,
 	.ssd_type = 0,
 	.ssd_dpl = 0,
@@ -456,8 +453,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 0,
 	.ssd_gran = 0		},
-/* GUSERLDT_SEL	11 LDT Descriptor */
-{	.ssd_base = 0x0,
+[GUSERLDT_SEL] = { /* 11 LDT Descriptor */
+	.ssd_base = 0x0,
 	.ssd_limit = 0x0,
 	.ssd_type = 0,
 	.ssd_dpl = 0,
@@ -465,8 +462,8 @@ struct soft_segment_descriptor gdt_segs[] = {
 	.ssd_long = 0,
 	.ssd_def32 = 0,
 	.ssd_gran = 0		},
-/* GUSERLDT_SEL	12 LDT Descriptor, double size */
-{	.ssd_base = 0x0,
+[GUSERLDT_SEL + 1] = { /* 12 LDT Descriptor, double size */
+	.ssd_base = 0x0,
 	.ssd_limit = 0x0,
 	.ssd_type = 0,
 	.ssd_dpl = 0,
@@ -584,9 +581,7 @@ DB_SHOW_COMMAND_FLAGS(dbregs, db_show_dbregs, DB_CMD_MEMSAFE)
 #endif
 
 void
-sdtossd(sd, ssd)
-	struct user_segment_descriptor *sd;
-	struct soft_segment_descriptor *ssd;
+sdtossd(struct user_segment_descriptor *sd, struct soft_segment_descriptor *ssd)
 {
 
 	ssd->ssd_base  = (sd->sd_hibase << 24) | sd->sd_lobase;
@@ -600,9 +595,7 @@ sdtossd(sd, ssd)
 }
 
 void
-ssdtosd(ssd, sd)
-	struct soft_segment_descriptor *ssd;
-	struct user_segment_descriptor *sd;
+ssdtosd(struct soft_segment_descriptor *ssd, struct user_segment_descriptor *sd)
 {
 
 	sd->sd_lobase = (ssd->ssd_base) & 0xffffff;
@@ -618,9 +611,7 @@ ssdtosd(ssd, sd)
 }
 
 void
-ssdtosyssd(ssd, sd)
-	struct soft_segment_descriptor *ssd;
-	struct system_segment_descriptor *sd;
+ssdtosyssd(struct soft_segment_descriptor *ssd, struct system_segment_descriptor *sd)
 {
 
 	sd->sd_lobase = (ssd->ssd_base) & 0xffffff;
@@ -875,6 +866,7 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 	quad_t dcons_addr, dcons_size;
 	int page_counter;
 
+	TSENTER();
 	/*
 	 * Tell the physical memory allocator about pages used to store
 	 * the kernel and preloaded data.  See kmem_bootstrap_free().
@@ -990,10 +982,11 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 		if (physmap[i + 1] < end)
 			end = trunc_page(physmap[i + 1]);
 		for (pa = round_page(physmap[i]); pa < end; pa += PAGE_SIZE) {
-			int tmp, page_bad, full;
 			int *ptr = (int *)CADDR1;
+			int tmp;
+			bool full, page_bad;
 
-			full = FALSE;
+			full = false;
 			/*
 			 * block out kernel memory as not available.
 			 */
@@ -1008,7 +1001,7 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 			    && pa < dcons_addr + dcons_size)
 				goto do_dump_avail;
 
-			page_bad = FALSE;
+			page_bad = false;
 			if (memtest == 0)
 				goto skip_memtest;
 
@@ -1032,25 +1025,25 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 			 */
 			*(volatile int *)ptr = 0xaaaaaaaa;
 			if (*(volatile int *)ptr != 0xaaaaaaaa)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for alternating 0's and 1's
 			 */
 			*(volatile int *)ptr = 0x55555555;
 			if (*(volatile int *)ptr != 0x55555555)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 1's
 			 */
 			*(volatile int *)ptr = 0xffffffff;
 			if (*(volatile int *)ptr != 0xffffffff)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 0's
 			 */
 			*(volatile int *)ptr = 0x0;
 			if (*(volatile int *)ptr != 0x0)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Restore original value.
 			 */
@@ -1060,7 +1053,7 @@ skip_memtest:
 			/*
 			 * Adjust array of valid/good pages.
 			 */
-			if (page_bad == TRUE)
+			if (page_bad == true)
 				continue;
 			/*
 			 * If this good page is a continuation of the
@@ -1081,7 +1074,7 @@ skip_memtest:
 					printf(
 		"Too many holes in the physical address space, giving up\n");
 					pa_indx--;
-					full = TRUE;
+					full = true;
 					goto do_dump_avail;
 				}
 				phys_avail[pa_indx++] = pa;	/* start */
@@ -1130,6 +1123,7 @@ do_next:
 
 	/* Map the message buffer. */
 	msgbufp = (struct msgbuf *)PHYS_TO_DMAP(phys_avail[pa_indx]);
+	TSEXIT();
 }
 
 static caddr_t
@@ -1322,6 +1316,7 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	identify_cpu1();
 	identify_hypervisor();
+	identify_hypervisor_smbios();
 	identify_cpu_fixup_bsp();
 	identify_cpu2();
 	initializecpucache();
@@ -1339,6 +1334,19 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 		    CPUID_STDEXT_INVPCID) != 0;
 	} else {
 		pmap_pcid_enabled = 0;
+	}
+
+	/*
+	 * Now we can do small core initialization, after the PCID
+	 * CPU features and user knobs are evaluated.
+	 */
+	TUNABLE_INT_FETCH("vm.pmap.pcid_invlpg_workaround",
+	    &pmap_pcid_invlpg_workaround_uena);
+	cpu_init_small_core();
+
+	if ((cpu_feature2 & CPUID2_XSAVE) != 0) {
+		use_xsave = 1;
+		TUNABLE_INT_FETCH("hw.use_xsave", &use_xsave);
 	}
 
 	link_elf_ireloc(kmdp);
@@ -1456,22 +1464,13 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	r_idt.rd_base = (long) idt;
 	lidt(&r_idt);
 
-	/*
-	 * Use vt(4) by default for UEFI boot (during the sc(4)/vt(4)
-	 * transition).
-	 * Once bootblocks have updated, we can test directly for
-	 * efi_systbl != NULL here...
-	 */
-	if (efi_boot)
-		vty_set_preferred(VTY_VT);
-
 	TUNABLE_INT_FETCH("hw.ibrs_disable", &hw_ibrs_disable);
 	TUNABLE_INT_FETCH("machdep.mitigations.ibrs.disable", &hw_ibrs_disable);
 
 	TUNABLE_INT_FETCH("hw.spec_store_bypass_disable", &hw_ssb_disable);
 	TUNABLE_INT_FETCH("machdep.mitigations.ssb.disable", &hw_ssb_disable);
 
-	TUNABLE_INT_FETCH("machdep.syscall_ret_l1d_flush",
+	TUNABLE_INT_FETCH("machdep.syscall_ret_flush_l1d",
 	    &syscall_ret_l1d_flush_mode);
 
 	TUNABLE_INT_FETCH("hw.mds_disable", &hw_mds_disable);
@@ -1479,8 +1478,12 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 
 	TUNABLE_INT_FETCH("machdep.mitigations.taa.enable", &x86_taa_enable);
 
-	TUNABLE_INT_FETCH("machdep.mitigations.rndgs.enable",
+	TUNABLE_INT_FETCH("machdep.mitigations.rngds.enable",
 	    &x86_rngds_mitg_enable);
+
+	TUNABLE_INT_FETCH("machdep.mitigations.zenbleed.enable",
+	    &zenbleed_enable);
+	zenbleed_sanitize_enable();
 
 	finishidentcpu();	/* Final stage of CPU initialization */
 

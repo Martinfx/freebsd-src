@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 The FreeBSD Foundation
  *
@@ -26,12 +26,12 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef AUTOFS_H
 #define	AUTOFS_H
+
+#include <vm/uma.h>
 
 #define VFSTOAUTOFS(mp)    ((struct autofs_mount *)((mp)->mnt_data))
 

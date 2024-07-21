@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000-2015, 2017 Mark R. V. Murray
  * All rights reserved.
@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_SYS_RANDOM_H_
@@ -104,6 +102,7 @@ enum random_entropy_source {
 	RANDOM_PURE_TPM,
 	RANDOM_PURE_VMGENID,
 	RANDOM_PURE_QUALCOMM,
+	RANDOM_PURE_ARMV8,
 	ENTROPYSOURCE
 };
 _Static_assert(ENTROPYSOURCE <= 32,
@@ -161,6 +160,10 @@ void random_harvest_deregister_source(enum random_entropy_source);
 #define GRND_NONBLOCK	0x1
 #define GRND_RANDOM	0x2
 #define GRND_INSECURE	0x4
+
+#if defined(_FORTIFY_SOURCE) && _FORTIFY_SOURCE > 0
+#include <ssp/random.h>
+#endif
 
 __BEGIN_DECLS
 ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);

@@ -1,9 +1,13 @@
 /badsend
 /btree_test
 /chg_usr_exec
+/clonefile
+/clone_mmap_cached
+/clone_mmap_write
 /devname2devid
 /dir_rd_update
 /draid
+/file_fadvise
 /file_append
 /file_check
 /file_trunc
@@ -26,6 +30,7 @@
 /randwritecomp
 /read_dos_attributes
 /readmmap
+/renameat2
 /rename_dir
 /rm_lnkcnt_zero_file
 /send_doall
@@ -46,3 +51,4 @@
 /edonr_test
 /skein_test
 /sha2_test
+/idmap_util

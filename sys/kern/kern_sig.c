@@ -32,16 +32,13 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_sig.c	8.7 (Berkeley) 4/18/94
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
+#include "opt_capsicum.h"
 #include "opt_ktrace.h"
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/ctype.h>
 #include <sys/systm.h>
 #include <sys/signalvar.h>
@@ -54,6 +51,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/event.h>
 #include <sys/fcntl.h>
 #include <sys/imgact.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/ktr.h>
 #include <sys/ktrace.h>
@@ -75,6 +73,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/smp.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
+#include <sys/syscall.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
@@ -82,12 +81,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysproto.h>
 #include <sys/timers.h>
 #include <sys/unistd.h>
+#include <sys/vmmeter.h>
 #include <sys/wait.h>
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
-
-#include <sys/jail.h>
 
 #include <machine/cpu.h>
 
@@ -158,6 +156,10 @@ static int	kern_lognosys = 0;
 SYSCTL_INT(_kern, OID_AUTO, lognosys, CTLFLAG_RWTUN, &kern_lognosys, 0,
     "Log invalid syscalls");
 
+static int	kern_signosys = 1;
+SYSCTL_INT(_kern, OID_AUTO, signosys, CTLFLAG_RWTUN, &kern_signosys, 0,
+    "Send SIGSYS on return from invalid syscall");
+
 __read_frequently bool sigfastblock_fetch_always = false;
 SYSCTL_BOOL(_kern, OID_AUTO, sigfastblock_fetch_always, CTLFLAG_RWTUN,
     &sigfastblock_fetch_always, 0,
@@ -216,7 +218,7 @@ SYSCTL_INT(_kern, OID_AUTO, coredump_devctl, CTLFLAG_RW, &coredump_devctl,
 #define	SIGPROP_IGNORE		0x10	/* ignore by default */
 #define	SIGPROP_CONT		0x20	/* continue if suspended */
 
-static int sigproptbl[NSIG] = {
+static const int sigproptbl[NSIG] = {
 	[SIGHUP] =	SIGPROP_KILL,
 	[SIGINT] =	SIGPROP_KILL,
 	[SIGQUIT] =	SIGPROP_KILL | SIGPROP_CORE,
@@ -279,7 +281,7 @@ static void
 ast_sig(struct thread *td, int tda)
 {
 	struct proc *p;
-	int sig;
+	int old_boundary, sig;
 	bool resched_sigs;
 
 	p = td->td_proc;
@@ -321,12 +323,15 @@ ast_sig(struct thread *td, int tda)
 	    !SIGISEMPTY(p->p_siglist)) {
 		sigfastblock_fetch(td);
 		PROC_LOCK(p);
+		old_boundary = ~TDB_BOUNDARY | (td->td_dbgflags & TDB_BOUNDARY);
+		td->td_dbgflags |= TDB_BOUNDARY;
 		mtx_lock(&p->p_sigacts->ps_mtx);
 		while ((sig = cursig(td)) != 0) {
 			KASSERT(sig >= 0, ("sig %d", sig));
 			postsig(sig);
 		}
 		mtx_unlock(&p->p_sigacts->ps_mtx);
+		td->td_dbgflags &= old_boundary;
 		PROC_UNLOCK(p);
 		resched_sigs = true;
 	} else {
@@ -1776,18 +1781,13 @@ struct killpg1_ctx {
 };
 
 static void
-killpg1_sendsig(struct proc *p, bool notself, struct killpg1_ctx *arg)
+killpg1_sendsig_locked(struct proc *p, struct killpg1_ctx *arg)
 {
 	int err;
 
-	if (p->p_pid <= 1 || (p->p_flag & P_SYSTEM) != 0 ||
-	    (notself && p == arg->td->td_proc) || p->p_state == PRS_NEW)
-		return;
-	PROC_LOCK(p);
 	err = p_cansignal(arg->td, p, arg->sig);
 	if (err == 0 && arg->sig != 0)
 		pksignal(p, arg->sig, arg->ksi);
-	PROC_UNLOCK(p);
 	if (err != ESRCH)
 		arg->found = true;
 	if (err == 0)
@@ -1796,9 +1796,34 @@ killpg1_sendsig(struct proc *p, bool notself, struct killpg1_ctx *arg)
 		arg->ret = err;
 }
 
+static void
+killpg1_sendsig(struct proc *p, bool notself, struct killpg1_ctx *arg)
+{
+
+	if (p->p_pid <= 1 || (p->p_flag & P_SYSTEM) != 0 ||
+	    (notself && p == arg->td->td_proc) || p->p_state == PRS_NEW)
+		return;
+
+	PROC_LOCK(p);
+	killpg1_sendsig_locked(p, arg);
+	PROC_UNLOCK(p);
+}
+
+static void
+kill_processes_prison_cb(struct proc *p, void *arg)
+{
+	struct killpg1_ctx *ctx = arg;
+
+	if (p->p_pid <= 1 || (p->p_flag & P_SYSTEM) != 0 ||
+	    (p == ctx->td->td_proc) || p->p_state == PRS_NEW)
+		return;
+
+	killpg1_sendsig_locked(p, ctx);
+}
+
 /*
  * Common code for kill process group/broadcast kill.
- * cp is calling process.
+ * td is the calling thread, as usual.
  */
 static int
 killpg1(struct thread *td, int sig, int pgid, int all, ksiginfo_t *ksi)
@@ -1817,12 +1842,10 @@ killpg1(struct thread *td, int sig, int pgid, int all, ksiginfo_t *ksi)
 		/*
 		 * broadcast
 		 */
-		sx_slock(&allproc_lock);
-		FOREACH_PROC_IN_SYSTEM(p) {
-			killpg1_sendsig(p, true, &arg);
-		}
-		sx_sunlock(&allproc_lock);
+		prison_proc_iterate(td->td_ucred->cr_prison,
+		    kill_processes_prison_cb, &arg);
 	} else {
+again:
 		sx_slock(&proctree_lock);
 		if (pgid == 0) {
 			/*
@@ -1838,10 +1861,17 @@ killpg1(struct thread *td, int sig, int pgid, int all, ksiginfo_t *ksi)
 			}
 		}
 		sx_sunlock(&proctree_lock);
+		if (!sx_try_xlock(&pgrp->pg_killsx)) {
+			PGRP_UNLOCK(pgrp);
+			sx_xlock(&pgrp->pg_killsx);
+			sx_xunlock(&pgrp->pg_killsx);
+			goto again;
+		}
 		LIST_FOREACH(p, &pgrp->pg_members, p_pglist) {
 			killpg1_sendsig(p, false, &arg);
 		}
 		PGRP_UNLOCK(pgrp);
+		sx_xunlock(&pgrp->pg_killsx);
 	}
 	MPASS(arg.ret != 0 || arg.found || !arg.sent);
 	if (arg.ret == 0 && !arg.sent)
@@ -1875,8 +1905,12 @@ kern_kill(struct thread *td, pid_t pid, int signum)
 	 * The main rationale behind this is that abort(3) is implemented as
 	 * kill(getpid(), SIGABRT).
 	 */
-	if (IN_CAPABILITY_MODE(td) && pid != td->td_proc->p_pid)
-		return (ECAPMODE);
+	if (pid != td->td_proc->p_pid) {
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_SIGNAL, &signum);
+		if (IN_CAPABILITY_MODE(td))
+			return (ECAPMODE);
+	}
 
 	AUDIT_ARG_SIGNUM(signum);
 	AUDIT_ARG_PID(pid);
@@ -1978,13 +2012,16 @@ sys_sigqueue(struct thread *td, struct sigqueue_args *uap)
 }
 
 int
-kern_sigqueue(struct thread *td, pid_t pid, int signum, union sigval *value)
+kern_sigqueue(struct thread *td, pid_t pid, int signumf, union sigval *value)
 {
 	ksiginfo_t ksi;
 	struct proc *p;
+	struct thread *td2;
+	u_int signum;
 	int error;
 
-	if ((u_int)signum > _SIG_MAXSIG)
+	signum = signumf & ~__SIGQUEUE_TID;
+	if (signum > _SIG_MAXSIG)
 		return (EINVAL);
 
 	/*
@@ -1994,8 +2031,17 @@ kern_sigqueue(struct thread *td, pid_t pid, int signum, union sigval *value)
 	if (pid <= 0)
 		return (EINVAL);
 
-	if ((p = pfind_any(pid)) == NULL)
-		return (ESRCH);
+	if ((signumf & __SIGQUEUE_TID) == 0) {
+		if ((p = pfind_any(pid)) == NULL)
+			return (ESRCH);
+		td2 = NULL;
+	} else {
+		p = td->td_proc;
+		td2 = tdfind((lwpid_t)pid, p->p_pid);
+		if (td2 == NULL)
+			return (ESRCH);
+	}
+
 	error = p_cansignal(td, p, signum);
 	if (error == 0 && signum != 0) {
 		ksiginfo_init(&ksi);
@@ -2005,29 +2051,10 @@ kern_sigqueue(struct thread *td, pid_t pid, int signum, union sigval *value)
 		ksi.ksi_pid = td->td_proc->p_pid;
 		ksi.ksi_uid = td->td_ucred->cr_ruid;
 		ksi.ksi_value = *value;
-		error = pksignal(p, ksi.ksi_signo, &ksi);
+		error = tdsendsignal(p, td2, ksi.ksi_signo, &ksi);
 	}
 	PROC_UNLOCK(p);
 	return (error);
-}
-
-/*
- * Send a signal to a process group.
- */
-void
-gsignal(int pgid, int sig, ksiginfo_t *ksi)
-{
-	struct pgrp *pgrp;
-
-	if (pgid != 0) {
-		sx_slock(&proctree_lock);
-		pgrp = pgfind(pgid);
-		sx_sunlock(&proctree_lock);
-		if (pgrp != NULL) {
-			pgsignal(pgrp, sig, 0, ksi);
-			PGRP_UNLOCK(pgrp);
-		}
-	}
 }
 
 /*
@@ -2145,14 +2172,18 @@ sigtd(struct proc *p, int sig, bool fast_sigblock)
 	if (curproc == p && !SIGISMEMBER(curthread->td_sigmask, sig) &&
 	    (!fast_sigblock || curthread->td_sigblock_val == 0))
 		return (curthread);
+
+	/* Find a non-stopped thread that does not mask the signal. */
 	signal_td = NULL;
 	FOREACH_THREAD_IN_PROC(p, td) {
 		if (!SIGISMEMBER(td->td_sigmask, sig) && (!fast_sigblock ||
-		    td != curthread || td->td_sigblock_val == 0)) {
+		    td != curthread || td->td_sigblock_val == 0) &&
+		    (td->td_flags & TDF_BOUNDARY) == 0) {
 			signal_td = td;
 			break;
 		}
 	}
+	/* Select random (first) thread if no better match was found. */
 	if (signal_td == NULL)
 		signal_td = FIRST_THREAD_IN_PROC(p);
 	return (signal_td);
@@ -2613,38 +2644,137 @@ out:
 }
 
 static void
-ptrace_coredump(struct thread *td)
+ptrace_coredumpreq(struct thread *td, struct proc *p,
+    struct thr_coredump_req *tcq)
+{
+	void *rl_cookie;
+
+	if (p->p_sysent->sv_coredump == NULL) {
+		tcq->tc_error = ENOSYS;
+		return;
+	}
+
+	rl_cookie = vn_rangelock_wlock(tcq->tc_vp, 0, OFF_MAX);
+	tcq->tc_error = p->p_sysent->sv_coredump(td, tcq->tc_vp,
+	    tcq->tc_limit, tcq->tc_flags);
+	vn_rangelock_unlock(tcq->tc_vp, rl_cookie);
+}
+
+static void
+ptrace_syscallreq(struct thread *td, struct proc *p,
+    struct thr_syscall_req *tsr)
+{
+	struct sysentvec *sv;
+	struct sysent *se;
+	register_t rv_saved[2];
+	int error, nerror;
+	int sc;
+	bool audited, sy_thr_static;
+
+	sv = p->p_sysent;
+	if (sv->sv_table == NULL || sv->sv_size < tsr->ts_sa.code) {
+		tsr->ts_ret.sr_error = ENOSYS;
+		return;
+	}
+
+	sc = tsr->ts_sa.code;
+	if (sc == SYS_syscall || sc == SYS___syscall) {
+		sc = tsr->ts_sa.args[0];
+		memmove(&tsr->ts_sa.args[0], &tsr->ts_sa.args[1],
+		    sizeof(register_t) * (tsr->ts_nargs - 1));
+	}
+
+	tsr->ts_sa.callp = se = &sv->sv_table[sc];
+
+	VM_CNT_INC(v_syscall);
+	td->td_pticks = 0;
+	if (__predict_false(td->td_cowgen != atomic_load_int(
+	    &td->td_proc->p_cowgen)))
+		thread_cow_update(td);
+
+	td->td_sa = tsr->ts_sa;
+
+#ifdef CAPABILITY_MODE
+	if ((se->sy_flags & SYF_CAPENABLED) == 0) {
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_SYSCALL, NULL);
+		if (IN_CAPABILITY_MODE(td)) {
+			tsr->ts_ret.sr_error = ECAPMODE;
+			return;
+		}
+	}
+#endif
+
+	sy_thr_static = (se->sy_thrcnt & SY_THR_STATIC) != 0;
+	audited = AUDIT_SYSCALL_ENTER(sc, td) != 0;
+
+	if (!sy_thr_static) {
+		error = syscall_thread_enter(td, &se);
+		sy_thr_static = (se->sy_thrcnt & SY_THR_STATIC) != 0;
+		if (error != 0) {
+			tsr->ts_ret.sr_error = error;
+			return;
+		}
+	}
+
+	rv_saved[0] = td->td_retval[0];
+	rv_saved[1] = td->td_retval[1];
+	nerror = td->td_errno;
+	td->td_retval[0] = 0;
+	td->td_retval[1] = 0;
+
+#ifdef KDTRACE_HOOKS
+	if (se->sy_entry != 0)
+		(*systrace_probe_func)(&tsr->ts_sa, SYSTRACE_ENTRY, 0);
+#endif
+	tsr->ts_ret.sr_error = se->sy_call(td, tsr->ts_sa.args);
+#ifdef KDTRACE_HOOKS
+	if (se->sy_return != 0)
+		(*systrace_probe_func)(&tsr->ts_sa, SYSTRACE_RETURN,
+		    tsr->ts_ret.sr_error != 0 ? -1 : td->td_retval[0]);
+#endif
+
+	tsr->ts_ret.sr_retval[0] = td->td_retval[0];
+	tsr->ts_ret.sr_retval[1] = td->td_retval[1];
+	td->td_retval[0] = rv_saved[0];
+	td->td_retval[1] = rv_saved[1];
+	td->td_errno = nerror;
+
+	if (audited)
+		AUDIT_SYSCALL_EXIT(error, td);
+	if (!sy_thr_static)
+		syscall_thread_exit(td, se);
+}
+
+static void
+ptrace_remotereq(struct thread *td, int flag)
 {
 	struct proc *p;
-	struct thr_coredump_req *tcq;
-	void *rl_cookie;
 
 	MPASS(td == curthread);
 	p = td->td_proc;
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	if ((td->td_dbgflags & TDB_COREDUMPRQ) == 0)
+	if ((td->td_dbgflags & flag) == 0)
 		return;
 	KASSERT((p->p_flag & P_STOPPED_TRACE) != 0, ("not stopped"));
-
-	tcq = td->td_coredump;
-	KASSERT(tcq != NULL, ("td_coredump is NULL"));
-
-	if (p->p_sysent->sv_coredump == NULL) {
-		tcq->tc_error = ENOSYS;
-		goto wake;
-	}
+	KASSERT(td->td_remotereq != NULL, ("td_remotereq is NULL"));
 
 	PROC_UNLOCK(p);
-	rl_cookie = vn_rangelock_wlock(tcq->tc_vp, 0, OFF_MAX);
-
-	tcq->tc_error = p->p_sysent->sv_coredump(td, tcq->tc_vp,
-	    tcq->tc_limit, tcq->tc_flags);
-
-	vn_rangelock_unlock(tcq->tc_vp, rl_cookie);
+	switch (flag) {
+	case TDB_COREDUMPREQ:
+		ptrace_coredumpreq(td, p, td->td_remotereq);
+		break;
+	case TDB_SCREMOTEREQ:
+		ptrace_syscallreq(td, p, td->td_remotereq);
+		break;
+	default:
+		__unreachable();
+	}
 	PROC_LOCK(p);
-wake:
-	td->td_dbgflags &= ~TDB_COREDUMPRQ;
-	td->td_coredump = NULL;
+
+	MPASS((td->td_dbgflags & flag) != 0);
+	td->td_dbgflags &= ~flag;
+	td->td_remotereq = NULL;
 	wakeup(p);
 }
 
@@ -2775,9 +2905,14 @@ stopme:
 			td->td_dbgflags |= TDB_SSWITCH;
 			thread_suspend_switch(td, p);
 			td->td_dbgflags &= ~TDB_SSWITCH;
-			if ((td->td_dbgflags & TDB_COREDUMPRQ) != 0) {
+			if ((td->td_dbgflags & (TDB_COREDUMPREQ |
+			    TDB_SCREMOTEREQ)) != 0) {
+				MPASS((td->td_dbgflags & (TDB_COREDUMPREQ |
+				    TDB_SCREMOTEREQ)) !=
+				    (TDB_COREDUMPREQ | TDB_SCREMOTEREQ));
 				PROC_SUNLOCK(p);
-				ptrace_coredump(td);
+				ptrace_remotereq(td, td->td_dbgflags &
+				    (TDB_COREDUMPREQ | TDB_SCREMOTEREQ));
 				PROC_SLOCK(p);
 				goto stopme;
 			}
@@ -3485,6 +3620,8 @@ void
 sigexit(struct thread *td, int sig)
 {
 	struct proc *p = td->td_proc;
+	const char *coreinfo;
+	int rv;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	proc_set_p2_wexit(p);
@@ -3509,16 +3646,32 @@ sigexit(struct thread *td, int sig)
 		 * XXX : Todo, as well as euid, write out ruid too
 		 * Note that coredump() drops proc lock.
 		 */
-		if (coredump(td) == 0)
+		rv = coredump(td);
+		switch (rv) {
+		case 0:
 			sig |= WCOREFLAG;
+			coreinfo = " (core dumped)";
+			break;
+		case EFAULT:
+			coreinfo = " (no core dump - bad address)";
+			break;
+		case EINVAL:
+			coreinfo = " (no core dump - invalid argument)";
+			break;
+		case EFBIG:
+			coreinfo = " (no core dump - too large)";
+			break;
+		default:
+			coreinfo = " (no core dump - other error)";
+			break;
+		}
 		if (kern_logsigexit)
 			log(LOG_INFO,
 			    "pid %d (%s), jid %d, uid %d: exited on "
 			    "signal %d%s\n", p->p_pid, p->p_comm,
 			    p->p_ucred->cr_prison->pr_id,
 			    td->td_ucred->cr_uid,
-			    sig &~ WCOREFLAG,
-			    sig & WCOREFLAG ? " (core dumped)" : "");
+			    sig &~ WCOREFLAG, coreinfo);
 	} else
 		PROC_UNLOCK(p);
 	exit1(td, 0, sig);
@@ -3837,7 +3990,7 @@ corefile_open(const char *comm, uid_t uid, pid_t pid, struct thread *td,
 				}
 				getcredhostname(td->td_ucred, hostname,
 				    MAXHOSTNAMELEN);
-				sbuf_printf(&sb, "%s", hostname);
+				sbuf_cat(&sb, hostname);
 				break;
 			case 'I':	/* autoincrementing index */
 				if (indexpos != -1) {
@@ -3876,9 +4029,9 @@ corefile_open(const char *comm, uid_t uid, pid_t pid, struct thread *td,
 	sx_sunlock(&corefilename_lock);
 	free(hostname, M_TEMP);
 	if (compress == COMPRESS_GZIP)
-		sbuf_printf(&sb, GZIP_SUFFIX);
+		sbuf_cat(&sb, GZIP_SUFFIX);
 	else if (compress == COMPRESS_ZSTD)
-		sbuf_printf(&sb, ZSTD_SUFFIX);
+		sbuf_cat(&sb, ZSTD_SUFFIX);
 	if (sbuf_error(&sb) != 0) {
 		log(LOG_ERR, "pid %ld (%s), uid (%lu): corename is too "
 		    "long\n", (long)pid, comm, (u_long)uid);
@@ -4034,10 +4187,10 @@ coredump(struct thread *td)
 	sb = sbuf_new_auto();
 	if (vn_fullpath_global(p->p_textvp, &fullpath, &freepath) != 0)
 		goto out2;
-	sbuf_printf(sb, "comm=\"");
+	sbuf_cat(sb, "comm=\"");
 	devctl_safe_quote_sb(sb, fullpath);
 	free(freepath, M_TEMP);
-	sbuf_printf(sb, "\" core=\"");
+	sbuf_cat(sb, "\" core=\"");
 
 	/*
 	 * We can't lookup core file vp directly. When we're replacing a core, and
@@ -4056,7 +4209,7 @@ coredump(struct thread *td)
 		sbuf_putc(sb, '/');
 	}
 	devctl_safe_quote_sb(sb, name);
-	sbuf_printf(sb, "\"");
+	sbuf_putc(sb, '"');
 	if (sbuf_finish(sb) == 0)
 		devctl_notify("kernel", "signal", "coredump", sbuf_data(sb));
 out2:
@@ -4089,9 +4242,11 @@ nosys(struct thread *td, struct nosys_args *args)
 
 	p = td->td_proc;
 
-	PROC_LOCK(p);
-	tdsignal(td, SIGSYS);
-	PROC_UNLOCK(p);
+	if (SV_PROC_FLAG(p, SV_SIGSYS) != 0 && kern_signosys) {
+		PROC_LOCK(p);
+		tdsignal(td, SIGSYS);
+		PROC_UNLOCK(p);
+	}
 	if (kern_lognosys == 1 || kern_lognosys == 3) {
 		uprintf("pid %d comm %s: nosys %d\n", p->p_pid, p->p_comm,
 		    td->td_sa.code);
@@ -4162,9 +4317,7 @@ filt_sigattach(struct knote *kn)
 static void
 filt_sigdetach(struct knote *kn)
 {
-	struct proc *p = kn->kn_ptr.p_proc;
-
-	knlist_remove(p->p_klist, kn, 0);
+	knlist_remove(kn->kn_knlist, kn, 0);
 }
 
 /*

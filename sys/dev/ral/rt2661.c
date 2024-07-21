@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 
 /*-
  * Copyright (c) 2006
@@ -18,8 +17,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*-
  * Ralink Technology RT2561, RT2561S and RT2661 chipset driver
  * http://www.ralinktech.com/
@@ -958,7 +955,6 @@ rt2661_tx_dma_intr(struct rt2661_softc *sc, struct rt2661_tx_ring *txq)
 static void
 rt2661_rx_intr(struct rt2661_softc *sc)
 {
-	struct epoch_tracker et;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct rt2661_rx_desc *desc;
 	struct rt2661_rx_data *data;
@@ -1075,13 +1071,11 @@ rt2661_rx_intr(struct rt2661_softc *sc)
 		/* send the frame to the 802.11 layer */
 		ni = ieee80211_find_rxnode(ic,
 		    (struct ieee80211_frame_min *)wh);
-		NET_EPOCH_ENTER(et);
 		if (ni != NULL) {
 			(void) ieee80211_input(ni, m, rssi, nf);
 			ieee80211_free_node(ni);
 		} else
 			(void) ieee80211_input_all(ic, m, rssi, nf);
-		NET_EPOCH_EXIT(et);
 
 		RAL_LOCK(sc);
 		sc->sc_flags &= ~RAL_INPUT_RUNNING;
@@ -1443,7 +1437,7 @@ rt2661_tx_data(struct rt2661_softc *sc, struct mbuf *m0,
 	}
 	rate &= IEEE80211_RATE_VAL;
 
-	if (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_QOS)
+	if (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_QOS_DATA)
 		noack = !! ieee80211_wme_vap_ac_is_noack(vap, ac);
 
 	if (wh->i_fc[1] & IEEE80211_FC1_PROTECTED) {

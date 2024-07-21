@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -11,6 +10,7 @@
 # include "netinet/ip_scan.h"
 #endif
 #include <sys/ioctl.h>
+#include <sys/param.h>
 #include <syslog.h>
 #ifdef	TEST_LEXER
 # define	NO_YACC
@@ -449,7 +449,7 @@ buildipv6:
 		oc = c;
 
 		if (prior == YY_NUMBER && c == ':') {
-			snprintf(s, sizeof(s), "%d", priornum);
+			snprintf(s, sizeof(ipv6buf), "%d", priornum);
 			s += strlen(s);
 		}
 
@@ -603,8 +603,7 @@ done:
 }
 
 
-static wordtab_t *yyfindkey(key)
-	char *key;
+static wordtab_t *yyfindkey(char *key)
 {
 	wordtab_t *w;
 
@@ -677,7 +676,7 @@ yysetfixeddict(wordtab_t *newdict)
 	if (yydebug)
 		printf("yysetfixeddict(%lx)\n", (u_long)newdict);
 
-	if (yysavedepth == sizeof(yysavewords)/sizeof(yysavewords[0])) {
+	if (yysavedepth == nitems(yysavewords)) {
 		fprintf(stderr, "%d: at maximum dictionary depth\n",
 			yylineNum);
 		return;
@@ -696,7 +695,7 @@ yysetdict(wordtab_t *newdict)
 	if (yydebug)
 		printf("yysetdict(%lx)\n", (u_long)newdict);
 
-	if (yysavedepth == sizeof(yysavewords)/sizeof(yysavewords[0])) {
+	if (yysavedepth == nitems(yysavewords)) {
 		fprintf(stderr, "%d: at maximum dictionary depth\n",
 			yylineNum);
 		return;

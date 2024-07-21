@@ -18,8 +18,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
- *
- * $FreeBSD$
  */
 
 #ifndef _MIXER_H_
@@ -67,12 +65,12 @@ struct mix_dev {
 		float right;			/* right volume */
 	} vol;
 	int nctl;				/* number of controls */
-	TAILQ_HEAD(, mix_ctl) ctls;		/* control list */
+	TAILQ_HEAD(mix_ctlhead, mix_ctl) ctls;	/* control list */
 	TAILQ_ENTRY(mix_dev) devs;
 };
 
 struct mixer {
-	TAILQ_HEAD(, mix_dev) devs;		/* device list */
+	TAILQ_HEAD(mix_devhead, mix_dev) devs;	/* device list */
 	struct mix_dev *dev;			/* selected device */
 	oss_mixerinfo mi;			/* mixer info */
 	oss_card_info ci;			/* audio card info */
@@ -117,6 +115,7 @@ int mixer_get_dunit(void);
 int mixer_set_dunit(struct mixer *, int);
 int mixer_get_mode(int);
 int mixer_get_nmixers(void);
+int mixer_get_path(char *, size_t, int);
 
 __END_DECLS
 

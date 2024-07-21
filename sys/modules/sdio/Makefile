@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${.CURDIR}/../../dev/sdio
 
 KMOD=	sdio

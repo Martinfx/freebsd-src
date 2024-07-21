@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/sume
 
 KMOD=	if_sume

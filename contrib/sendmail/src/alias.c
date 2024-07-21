@@ -15,6 +15,8 @@
 
 SM_RCSID("@(#)$Id: alias.c,v 8.221 2013-11-22 20:51:54 ca Exp $")
 
+#include <sm/sendmail.h>
+
 #define SEPARATOR ':'
 # define ALIAS_SPEC_SEPARATORS	" ,/:"
 
@@ -58,7 +60,7 @@ alias(a, sendq, aliaslevel, e)
 	register char *p;
 	char *owner;
 	auto int status = EX_OK;
-	char obuf[MAXNAME + 7];
+	char obuf[MAXNAME_I + 7];
 
 	if (tTd(27, 1))
 		sm_dprintf("alias(%s)\n", a->q_user);
@@ -186,20 +188,18 @@ alias(a, sendq, aliaslevel, e)
 	e->e_flags |= EF_SENDRECEIPT;
 	a->q_flags |= QDELIVERED|QEXPANDED;
 }
+
 /*
 **  ALIASLOOKUP -- look up a name in the alias file.
 **
 **	Parameters:
-**		name -- the name to look up.
+**		name -- the name to look up [i]
 **		pstat -- a pointer to a place to put the status.
 **		av -- argument for %1 expansion.
 **
 **	Returns:
 **		the value of name.
 **		NULL if unknown.
-**
-**	Side Effects:
-**		none.
 **
 **	Warnings:
 **		The return value will be trashed across calls.
@@ -212,9 +212,15 @@ aliaslookup(name, pstat, av)
 	char *av;
 {
 	static MAP *map = NULL;
+	char *res;
 #if _FFR_ALIAS_DETAIL
 	int i;
 	char *argv[4];
+#else
+# define argv NULL
+#endif
+#if _FFR_8BITENVADDR
+	char buf[MAXNAME];	/* EAI:ok */
 #endif
 
 	if (map == NULL)
@@ -228,8 +234,13 @@ aliaslookup(name, pstat, av)
 	DYNOPENMAP(map);
 
 	/* special case POstMastER -- always use lower case */
-	if (sm_strcasecmp(name, "postmaster") == 0)
+	if (SM_STRCASEEQ(name, "postmaster"))
 		name = "postmaster";
+#if _FFR_8BITENVADDR
+	(void) dequote_internal_chars(name, buf, sizeof(buf));
+	/* check length? */
+	name = buf;
+#endif /* _FFR_8BITENVADDR */
 
 #if _FFR_ALIAS_DETAIL
 	i = 0;
@@ -240,11 +251,14 @@ aliaslookup(name, pstat, av)
 	if (av != NULL && *av == '+')
 		argv[i++] = av + 1;
 	argv[i++] = NULL;
-	return (*map->map_class->map_lookup)(map, name, argv, pstat);
-#else /* _FFR_ALIAS_DETAIL */
-	return (*map->map_class->map_lookup)(map, name, NULL, pstat);
 #endif /* _FFR_ALIAS_DETAIL */
+	res = (*map->map_class->map_lookup)(map, name, argv, pstat);
+#if _FFR_8BITENVADDR
+	/* map_lookup() does a map_rewrite(), so no quoting here */
+#endif
+	return res;
 }
+
 /*
 **  SETALIAS -- set up an alias map
 **
@@ -367,10 +381,11 @@ setalias(spec)
 		}
 	}
 }
+
 /*
 **  ALIASWAIT -- wait for distinguished @:@ token to appear.
 **
-**	This can decide to reopen or rebuild the alias file
+**	This can decide to reopen the alias file
 **
 **	Parameters:
 **		map -- a pointer to the map descriptor for this alias file.
@@ -388,7 +403,7 @@ setalias(spec)
 bool
 aliaswait(map, ext, isopen)
 	MAP *map;
-	char *ext;
+	const char *ext;
 	bool isopen;
 {
 	bool attimeout = false;
@@ -397,13 +412,14 @@ aliaswait(map, ext, isopen)
 	char buf[MAXPATHLEN];
 
 	if (tTd(27, 3))
-		sm_dprintf("aliaswait(%s:%s)\n",
-			   map->map_class->map_cname, map->map_file);
+		sm_dprintf("aliaswait(%s:%s), open=%d, wait=%d\n",
+			   map->map_class->map_cname, map->map_file,
+			   isopen, bitset(MF_ALIASWAIT, map->map_mflags));
 	if (bitset(MF_ALIASWAIT, map->map_mflags))
 		return isopen;
 	map->map_mflags |= MF_ALIASWAIT;
 
-	if (SafeAlias > 0)
+	if (isopen && SafeAlias > 0)
 	{
 		auto int st;
 		unsigned int sleeptime = 2;
@@ -434,7 +450,7 @@ aliaswait(map, ext, isopen)
 
 			map->map_mflags |= MF_CLOSING;
 			map->map_class->map_close(map);
-			map->map_mflags &= ~(MF_OPEN|MF_WRITABLE|MF_CLOSING);
+			map->map_mflags &= ~(MF_OPEN|MF_WRITABLE|MF_CLOSING|MF_CHKED_CHGD);
 			(void) sleep(sleeptime);
 			sleeptime *= 2;
 			if (sleeptime > 60)
@@ -442,6 +458,7 @@ aliaswait(map, ext, isopen)
 			isopen = map->map_class->map_open(map, O_RDONLY);
 		}
 	}
+	map->map_mflags &= ~MF_CHKED_CHGD;
 
 	/* see if we need to go into auto-rebuild mode */
 	if (!bitset(MCF_REBUILDABLE, map->map_class->map_cflags))
@@ -485,20 +502,17 @@ aliaswait(map, ext, isopen)
 **
 **	Parameters:
 **		map -- the database to rebuild.
-**		automatic -- set if this was automatically generated.
 **
 **	Returns:
 **		true if successful; false otherwise.
 **
 **	Side Effects:
-**		Reads the text version of the database, builds the
-**		DBM or DB version.
+**		Reads the text version of the database, builds the map.
 */
 
 bool
-rebuildaliases(map, automatic)
+rebuildaliases(map)
 	register MAP *map;
-	bool automatic;
 {
 	SM_FILE_T *af;
 	bool nolock = false;
@@ -524,7 +538,7 @@ rebuildaliases(map, automatic)
 	{
 		struct stat stb;
 
-		if ((errno != EACCES && errno != EROFS) || automatic ||
+		if ((errno != EACCES && errno != EROFS) ||
 		    (af = safefopen(map->map_file, O_RDONLY, 0, sff)) == NULL)
 		{
 			int saveerr = errno;
@@ -532,7 +546,7 @@ rebuildaliases(map, automatic)
 			if (tTd(27, 1))
 				sm_dprintf("Can't open %s: %s\n",
 					map->map_file, sm_errstring(saveerr));
-			if (!automatic && !bitset(MF_OPTIONAL, map->map_mflags))
+			if (!bitset(MF_OPTIONAL, map->map_mflags))
 				message("newaliases: cannot open %s: %s",
 					map->map_file, sm_errstring(saveerr));
 			errno = 0;
@@ -576,13 +590,12 @@ rebuildaliases(map, automatic)
 		if (LogLevel > 7)
 		{
 			sm_syslog(LOG_NOTICE, NOQID,
-				"alias database %s %srebuilt by %s",
-				map->map_file, automatic ? "auto" : "",
-				username());
+				"alias database %s rebuilt by %s",
+				map->map_file, username());
 		}
 		map->map_mflags |= MF_OPEN|MF_WRITABLE;
 		map->map_pid = CurrentPid;
-		readaliases(map, af, !automatic, true);
+		readaliases(map, af, true, true);
 		success = true;
 	}
 	else
@@ -590,9 +603,8 @@ rebuildaliases(map, automatic)
 		if (tTd(27, 1))
 			sm_dprintf("Can't create database for %s: %s\n",
 				map->map_file, sm_errstring(errno));
-		if (!automatic)
-			syserr("Cannot create database for alias file %s",
-				map->map_file);
+		syserr("Cannot create database for alias file %s",
+			map->map_file);
 	}
 
 	/* close the file, thus releasing locks */
@@ -601,6 +613,18 @@ rebuildaliases(map, automatic)
 	/* add distinguished entries and close the database */
 	if (bitset(MF_OPEN, map->map_mflags))
 	{
+#if _FFR_TESTS
+		if (tTd(78, 101))
+		{
+			int sl;
+
+			sl = tTdlevel(78) - 100;
+			sm_dprintf("rebuildaliases: sleep=%d, file=%s\n",
+				sl, map->map_file);
+			sleep(sl);
+			sm_dprintf("rebuildaliases: done\n");
+		}
+#endif
 		map->map_mflags |= MF_CLOSING;
 		map->map_class->map_close(map);
 		map->map_mflags &= ~(MF_OPEN|MF_WRITABLE|MF_CLOSING);
@@ -614,6 +638,54 @@ rebuildaliases(map, automatic)
 #endif
 	return success;
 }
+
+/*
+**  CONTLINE -- handle potential continuation line
+**
+**	Parameters:
+**		fp -- file to read
+**		line -- current line
+**
+**	Returns:
+**		pointer to end of current line if there is a continuation line
+**		NULL otherwise
+**
+**	Side Effects:
+**		Modifies line if it is a continuation line
+*/
+
+static char *contline __P((SM_FILE_T *, char *));
+static char *
+contline(fp, line)
+	SM_FILE_T *fp;
+	char *line;
+{
+	char *p;
+	int c;
+
+	if ((p = strchr(line, '\n')) != NULL && p > line && p[-1] == '\\')
+	{
+		*p = '\0';
+		*--p = '\0';
+		return p;
+	}
+
+	c = sm_io_getc(fp, SM_TIME_DEFAULT);
+	if (!sm_io_eof(fp))
+		(void) sm_io_ungetc(fp, SM_TIME_DEFAULT, c);
+	if (c == ' ' || c == '\t')
+	{
+		char *nlp;
+
+		p = line;
+		nlp = &p[strlen(p)];
+		if (nlp > p && nlp[-1] == '\n')
+			*--nlp = '\0';
+		return nlp;
+	}
+	return NULL;
+}
+
 /*
 **  READALIASES -- read and process the alias file.
 **
@@ -647,7 +719,13 @@ readaliases(map, af, announcestats, logstats)
 	bool skipping;
 	long naliases, bytes, longest;
 	ADDRESS al, bl;
-	char line[BUFSIZ];
+	char lbuf[BUFSIZ];
+	char *line;
+#if _FFR_8BITENVADDR
+	char lhsbuf[MAXNAME];	/* EAI:ok */
+	char rhsbuf[BUFSIZ];
+	int len;
+#endif
 
 	/*
 	**  Read and interpret lines
@@ -657,40 +735,75 @@ readaliases(map, af, announcestats, logstats)
 	LineNumber = 0;
 	naliases = bytes = longest = 0;
 	skipping = false;
-	while (sm_io_fgets(af, SM_TIME_DEFAULT, line, sizeof(line)) >= 0)
+	line = NULL;
+
+	while (sm_io_fgets(af, SM_TIME_DEFAULT, lbuf, sizeof(lbuf)) >= 0)
 	{
 		int lhssize, rhssize;
 		int c;
+		char *newp;
 
 		LineNumber++;
-		p = strchr(line, '\n');
 
 		/* XXX what if line="a\\" ? */
-		while (p != NULL && p > line && p[-1] == '\\')
+		line = lbuf;
+		p = line;
+		while ((newp = contline(af, line)) != NULL)
 		{
-			p--;
-			if (sm_io_fgets(af, SM_TIME_DEFAULT, p,
-					SPACELEFT(line, p)) < 0)
+			p = newp;
+			if ((c = sm_io_fgets(af, SM_TIME_DEFAULT, p,
+					SPACELEFT(lbuf, p))) < 0)
+			{
 				break;
+			}
 			LineNumber++;
-			p = strchr(p, '\n');
 		}
+#if _FFR_8BITENVADDR
+		if (SMTP_UTF8 || EightBitAddrOK)
+		{
+			if (line != lbuf)
+				SM_FREE(line);
+			line = quote_internal_chars(lbuf, NULL, &len, NULL);
+		}
+		else
+#endif
+		/* "else" in #if code above */
+		line = lbuf;
+
+		p = strchr(line, '\n');
 		if (p != NULL)
 			*p = '\0';
 		else if (!sm_io_eof(af))
 		{
+			int prev;
+			bool cl;
+
 			errno = 0;
 			syserr("554 5.3.0 alias line too long");
 
-			/* flush to end of line */
-			while ((c = sm_io_getc(af, SM_TIME_DEFAULT)) !=
-				SM_IO_EOF && c != '\n')
-				continue;
+			prev = '\0';
+			cl = false;
 
-			/* skip any continuation lines */
-			skipping = true;
+			do {
+				/* flush to end of "virtual" line */
+				while ((c = sm_io_getc(af, SM_TIME_DEFAULT)) !=
+					SM_IO_EOF && c != '\n')
+				{
+					prev = c;
+				}
+				cl = ('\\' == prev && '\n' == c);
+				if (!cl)
+				{
+					c = sm_io_getc(af, SM_TIME_DEFAULT);
+					if (!sm_io_eof(af))
+						(void) sm_io_ungetc(af, SM_TIME_DEFAULT, c);
+					cl = (c == ' ' || c == '\t');
+				}
+			} while (cl);
+
 			continue;
 		}
+
 		switch (line[0])
 		{
 		  case '#':
@@ -723,6 +836,7 @@ readaliases(map, af, announcestats, logstats)
 			syserr("554 5.3.5 missing colon");
 			continue;
 		}
+/* XXX line must be [i] */
 		if (parseaddr(line, &al, RF_COPYALL, ':', NULL, CurEnv, true)
 		    == NULL)
 		{
@@ -739,7 +853,6 @@ readaliases(map, af, announcestats, logstats)
 		while (SM_ISSPACE(*p))
 			p++;
 		rhs = p;
-		for (;;)
 		{
 			register char *nlp;
 
@@ -758,6 +871,7 @@ readaliases(map, af, announcestats, logstats)
 						p++;
 					if (*p == '\0')
 						break;
+/* XXX p must be [i] */
 					if (parseaddr(p, &bl, RF_COPYNONE, ',',
 						      &delimptr, CurEnv, true)
 					    == NULL)
@@ -769,31 +883,7 @@ readaliases(map, af, announcestats, logstats)
 			{
 				p = nlp;
 			}
-
-			/* see if there should be a continuation line */
-			c = sm_io_getc(af, SM_TIME_DEFAULT);
-			if (!sm_io_eof(af))
-				(void) sm_io_ungetc(af, SM_TIME_DEFAULT, c);
-			if (c != ' ' && c != '\t')
-				break;
-
-			/* read continuation line */
-			if (sm_io_fgets(af, SM_TIME_DEFAULT, p,
-					sizeof(line) - (p-line)) < 0)
-				break;
-			LineNumber++;
-
-			/* check for line overflow */
-			if (strchr(p, '\n') == NULL && !sm_io_eof(af))
-			{
-				usrerr("554 5.3.5 alias too long");
-				while ((c = sm_io_getc(af, SM_TIME_DEFAULT))
-				       != SM_IO_EOF && c != '\n')
-					continue;
-				skipping = true;
-				break;
-			}
-		}
+		} while (0);
 
 		if (skipping)
 			continue;
@@ -811,8 +901,8 @@ readaliases(map, af, announcestats, logstats)
 		**	Special case pOStmaStER -- always make it lower case.
 		*/
 
-		if (sm_strcasecmp(al.q_user, "postmaster") == 0)
-			makelower(al.q_user);
+		if (SM_STRCASEEQ(al.q_user, "postmaster"))
+			makelower_a(&al.q_user, CurEnv->e_rpool);
 
 		lhssize = strlen(al.q_user);
 		rhssize = strlen(rhs);
@@ -827,10 +917,19 @@ readaliases(map, af, announcestats, logstats)
 		{
 			syserr("554 5.3.5 %.40s... missing value for alias",
 			       line);
-
 		}
 		else
 		{
+#if _FFR_8BITENVADDR
+			if (SMTP_UTF8 || EightBitAddrOK)
+			{
+				dequote_internal_chars(al.q_user, lhsbuf, sizeof(lhsbuf));
+				dequote_internal_chars(rhs, rhsbuf, sizeof(rhsbuf));
+				map->map_class->map_store(map, lhsbuf, rhsbuf);
+			}
+			else
+#endif
+			/* "else" in #if code above */
 			map->map_class->map_store(map, al.q_user, rhs);
 
 			/* statistics */
@@ -859,8 +958,7 @@ readaliases(map, af, announcestats, logstats)
 **	Parameters:
 **		user -- the name of the user who's mail we would like
 **			to forward to.  It must have been verified --
-**			i.e., the q_home field must have been filled
-**			in.
+**			i.e., the q_home field must have been filled in.
 **		sendq -- a pointer to the head of the send queue to
 **			put this user's aliases in.
 **		aliaslevel -- the current alias nesting depth.
@@ -901,7 +999,16 @@ forward(user, sendq, aliaslevel, e)
 	/* good address -- look for .forward file in home */
 	macdefine(&e->e_macro, A_PERM, 'z', user->q_home);
 	macdefine(&e->e_macro, A_PERM, 'u', user->q_user);
-	macdefine(&e->e_macro, A_PERM, 'h', user->q_host);
+	pp = user->q_host;
+#if _FFR_8BITENVADDR
+	if (NULL != pp)
+	{
+		int len;
+
+		pp = quote_internal_chars(pp, NULL, &len, NULL);
+	}
+#endif
+	macdefine(&e->e_macro, A_PERM, 'h', pp);
 	if (ForwardPath == NULL)
 		ForwardPath = newstr("\201z/.forward");
 

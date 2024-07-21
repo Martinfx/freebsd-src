@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -118,8 +115,6 @@ dtsec_rm_fi_pool_init(struct dtsec_softc *sc)
 	sc->sc_fi_zone = uma_zcreate(sc->sc_fi_zname,
 	    sizeof(struct dtsec_rm_frame_info), NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, 0);
-	if (sc->sc_fi_zone == NULL)
-		return (EIO);
 
 	return (0);
 }
@@ -315,8 +310,6 @@ dtsec_rm_pool_rx_init(struct dtsec_softc *sc)
 
 	sc->sc_rx_zone = uma_zcreate(sc->sc_rx_zname, FM_PORT_BUFFER_SIZE, NULL,
 	    NULL, NULL, NULL, FM_PORT_BUFFER_SIZE - 1, 0);
-	if (sc->sc_rx_zone == NULL)
-		return (EIO);
 
 	sc->sc_rx_pool = bman_pool_create(&sc->sc_rx_bpid, FM_PORT_BUFFER_SIZE,
 	    0, 0, DTSEC_RM_POOL_RX_MAX_SIZE, dtsec_rm_pool_rx_get_buffer,
@@ -389,7 +382,7 @@ dtsec_rm_fqr_rx_callback(t_Handle app, t_Handle fqr, t_Handle portal,
 	m->m_len = DPAA_FD_GET_LENGTH(frame);
 	m_fixhdr(m);
 
-	(*sc->sc_ifnet->if_input)(sc->sc_ifnet, m);
+	if_input(sc->sc_ifnet, m);
 
 	return (e_RX_STORE_RESPONSE_CONTINUE);
 
@@ -555,10 +548,10 @@ dtsec_rm_if_start_locked(struct dtsec_softc *sc)
 	if ((sc->sc_mii->mii_media_status & IFM_ACTIVE) == 0)
 		return;
 
-	if ((sc->sc_ifnet->if_drv_flags & IFF_DRV_RUNNING) != IFF_DRV_RUNNING)
+	if ((if_getdrvflags(sc->sc_ifnet) & IFF_DRV_RUNNING) != IFF_DRV_RUNNING)
 		return;
 
-	while (!IFQ_DRV_IS_EMPTY(&sc->sc_ifnet->if_snd)) {
+	while (!if_sendq_empty(sc->sc_ifnet)) {
 		/* Check length of the TX queue */
 		qlen = qman_fqr_get_counter(sc->sc_tx_fqr, 0,
 		    e_QM_FQR_COUNTERS_FRAME);
@@ -572,7 +565,7 @@ dtsec_rm_if_start_locked(struct dtsec_softc *sc)
 		if (fi == NULL)
 			return;
 
-		IFQ_DRV_DEQUEUE(&sc->sc_ifnet->if_snd, m0);
+		m0 = if_dequeue(sc->sc_ifnet);
 		if (m0 == NULL) {
 			dtsec_rm_fi_free(sc, fi);
 			return;

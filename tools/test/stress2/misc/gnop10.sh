@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Peter Holm <pho@FreeBSD.org>
 #
@@ -31,6 +31,10 @@
 # Variation of gnop8.sh by Kirk McKusick <mckusick@mckusick.com>
 
 # Copy of gnop9.sh. Uses SU instead of SUJ.
+
+# https://people.freebsd.org/~pho/stress/log/log0269.txt
+# https://people.freebsd.org/~pho/stress/log/log0370.txt
+# https://people.freebsd.org/~pho/stress/log/log0396.txt
 
 [ `id -u ` -ne 0 ] && echo "Must be root!" && exit 1
 . ../default.cfg

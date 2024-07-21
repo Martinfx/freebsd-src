@@ -32,8 +32,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_route.h"
@@ -61,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_dl.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/route/route_ctl.h>
@@ -92,21 +91,37 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_IP6NDP, "ip6ndp", "IPv6 Neighbor Discovery");
 
-/* timer values */
-VNET_DEFINE(int, nd6_prune)	= 1;	/* walk list every 1 seconds */
-VNET_DEFINE(int, nd6_delay)	= 5;	/* delay first probe time 5 second */
-VNET_DEFINE(int, nd6_umaxtries)	= 3;	/* maximum unicast query */
-VNET_DEFINE(int, nd6_mmaxtries)	= 3;	/* maximum multicast query */
-VNET_DEFINE(int, nd6_useloopback) = 1;	/* use loopback interface for
-					 * local traffic */
-VNET_DEFINE(int, nd6_gctimer)	= (60 * 60 * 24); /* 1 day: garbage
-					 * collection timer */
+VNET_DEFINE_STATIC(int, nd6_prune) = 1;
+#define	V_nd6_prune	VNET(nd6_prune)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_PRUNE, nd6_prune,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_prune), 0,
+    "Frequency in seconds of checks for expired prefixes and routers");
+
+VNET_DEFINE_STATIC(int, nd6_delay) = 5;
+#define	V_nd6_delay	VNET(nd6_delay)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_DELAY, nd6_delay,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_delay), 0,
+    "Delay in seconds before probing for reachability");
+
+VNET_DEFINE_STATIC(int, nd6_umaxtries) = 3;
+#define	V_nd6_umaxtries	VNET(nd6_umaxtries)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_UMAXTRIES, nd6_umaxtries,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_umaxtries), 0,
+    "Number of ICMPv6 NS messages sent during reachability detection");
+
+VNET_DEFINE(int, nd6_mmaxtries) = 3;
+#define	V_nd6_mmaxtries	VNET(nd6_mmaxtries)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_MMAXTRIES, nd6_mmaxtries,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_mmaxtries), 0,
+    "Number of ICMPv6 NS messages sent during address resolution");
+
+VNET_DEFINE_STATIC(int, nd6_gctimer) = (60 * 60 * 24); /* 1 day: garbage
+							* collection timer */
+#define	V_nd6_gctimer	VNET(nd6_gctimer)
 
 /* preventing too many loops in ND option parsing */
 VNET_DEFINE_STATIC(int, nd6_maxndopt) = 10; /* max # of ND options allowed */
 
-VNET_DEFINE(int, nd6_maxnudhint) = 0;	/* max # of subsequent upper
-					 * layer hints */
 VNET_DEFINE_STATIC(int, nd6_maxqueuelen) = 16; /* max pkts cached in unresolved
 					 * ND entries */
 #define	V_nd6_maxndopt			VNET(nd6_maxndopt)
@@ -117,6 +132,10 @@ VNET_DEFINE(int, nd6_debug) = 1;
 #else
 VNET_DEFINE(int, nd6_debug) = 0;
 #endif
+#define	V_nd6_debug	VNET(nd6_debug)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_DEBUG, nd6_debug,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_debug), 0,
+    "Log NDP debug messages");
 
 static eventhandler_tag lle_event_eh, iflladdr_event_eh, ifnet_link_event_eh;
 
@@ -148,8 +167,6 @@ VNET_DEFINE_STATIC(struct callout, nd6_slowtimo_ch);
 
 VNET_DEFINE_STATIC(struct callout, nd6_timer_ch);
 #define	V_nd6_timer_ch			VNET(nd6_timer_ch)
-
-SYSCTL_DECL(_net_inet6_icmp6);
 
 static void
 nd6_lle_event(void *arg __unused, struct llentry *lle, int evt)
@@ -284,8 +301,8 @@ nd6_ifattach(struct ifnet *ifp)
 	 * default regardless of the V_ip6_auto_linklocal configuration to
 	 * give a reasonable default behavior.
 	 */
-	if ((V_ip6_auto_linklocal && ifp->if_type != IFT_BRIDGE) ||
-	    (ifp->if_flags & IFF_LOOPBACK))
+	if ((V_ip6_auto_linklocal && ifp->if_type != IFT_BRIDGE &&
+	    ifp->if_type != IFT_WIREGUARD) || (ifp->if_flags & IFF_LOOPBACK))
 		nd->flags |= ND6_IFF_AUTO_LINKLOCAL;
 	/*
 	 * A loopback interface does not need to accept RTADV.
@@ -1575,18 +1592,15 @@ nd6_free_redirect(const struct llentry *ln)
 {
 	int fibnum;
 	struct sockaddr_in6 sin6;
-	struct rt_addrinfo info;
 	struct rib_cmd_info rc;
 	struct epoch_tracker et;
 
 	lltable_fill_sa_entry(ln, (struct sockaddr *)&sin6);
-	memset(&info, 0, sizeof(info));
-	info.rti_info[RTAX_DST] = (struct sockaddr *)&sin6;
-	info.rti_filter = nd6_isdynrte;
 
 	NET_EPOCH_ENTER(et);
 	for (fibnum = 0; fibnum < rt_numfibs; fibnum++)
-		rib_action(fibnum, RTM_DELETE, &info, &rc);
+		rib_del_route_px(fibnum, (struct sockaddr *)&sin6, 128,
+		    nd6_isdynrte, NULL, 0, &rc);
 	NET_EPOCH_EXIT(et);
 }
 
@@ -1594,7 +1608,7 @@ nd6_free_redirect(const struct llentry *ln)
  * Updates status of the default router route.
  */
 static void
-check_release_defrouter(struct rib_cmd_info *rc, void *_cbdata)
+check_release_defrouter(const struct rib_cmd_info *rc, void *_cbdata)
 {
 	struct nd_defrouter *dr;
 	struct nhop_object *nh;
@@ -2372,7 +2386,6 @@ nd6_resolve_slow(struct ifnet *ifp, int family, int flags, struct mbuf *m,
 	struct in6_addr *psrc, src;
 	int send_ns, ll_len;
 	char *lladdr;
-	size_t dropped;
 
 	NET_EPOCH_ASSERT();
 
@@ -2439,8 +2452,12 @@ nd6_resolve_slow(struct ifnet *ifp, int family, int flags, struct mbuf *m,
 	 * packet queue in the mbuf.  When it exceeds nd6_maxqueuelen,
 	 * the oldest packet in the queue will be removed.
 	 */
-	dropped = lltable_append_entry_queue(lle, m, V_nd6_maxqueuelen);
-	ICMP6STAT_ADD(icp6s_dropped, dropped);
+	if (m != NULL) {
+		size_t dropped;
+
+		dropped = lltable_append_entry_queue(lle, m, V_nd6_maxqueuelen);
+		ICMP6STAT_ADD(icp6s_dropped, dropped);
+	}
 
 	/*
 	 * If there has been no NS for the neighbor after entering the

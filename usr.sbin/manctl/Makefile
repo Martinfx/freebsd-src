@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SCRIPTS=manctl.sh
 MAN=	manctl.8
 

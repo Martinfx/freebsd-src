@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 CONFS=	auto_master
 PACKAGE=autofs
 PROG=	automountd

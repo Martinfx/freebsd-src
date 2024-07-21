@@ -29,9 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/lock.h>
@@ -177,43 +174,6 @@ struct ccr_port {
 	counter_u64_t stats_completed;
 };
 
-struct ccr_session {
-#ifdef INVARIANTS
-	int pending;
-#endif
-	enum { HASH, HMAC, CIPHER, ETA, GCM, CCM } mode;
-	struct ccr_port *port;
-	union {
-		struct ccr_session_hmac hmac;
-		struct ccr_session_gmac gmac;
-		struct ccr_session_ccm_mac ccm_mac;
-	};
-	struct ccr_session_cipher cipher;
-	struct mtx lock;
-
-	/*
-	 * A fallback software session is used for certain GCM/CCM
-	 * requests that the hardware can't handle such as requests
-	 * with only AAD and no payload.
-	 */
-	crypto_session_t sw_session;
-
-	/*
-	 * Pre-allocate S/G lists used when preparing a work request.
-	 * 'sg_input' contains an sglist describing the entire input
-	 * buffer for a 'struct cryptop'.  'sg_output' contains an
-	 * sglist describing the entire output buffer.  'sg_ulptx' is
-	 * used to describe the data the engine should DMA as input
-	 * via ULPTX_SGL.  'sg_dsgl' is used to describe the
-	 * destination that cipher text and a tag should be written
-	 * to.
-	 */
-	struct sglist *sg_input;
-	struct sglist *sg_output;
-	struct sglist *sg_ulptx;
-	struct sglist *sg_dsgl;
-};
-
 struct ccr_softc {
 	struct adapter *adapter;
 	device_t dev;
@@ -251,6 +211,44 @@ struct ccr_softc {
 	counter_u64_t stats_sw_fallback;
 
 	struct sysctl_ctx_list ctx;
+};
+
+struct ccr_session {
+#ifdef INVARIANTS
+	int pending;
+#endif
+	enum { HASH, HMAC, CIPHER, ETA, GCM, CCM } mode;
+	struct ccr_softc *sc;
+	struct ccr_port *port;
+	union {
+		struct ccr_session_hmac hmac;
+		struct ccr_session_gmac gmac;
+		struct ccr_session_ccm_mac ccm_mac;
+	};
+	struct ccr_session_cipher cipher;
+	struct mtx lock;
+
+	/*
+	 * A fallback software session is used for certain GCM/CCM
+	 * requests that the hardware can't handle such as requests
+	 * with only AAD and no payload.
+	 */
+	crypto_session_t sw_session;
+
+	/*
+	 * Pre-allocate S/G lists used when preparing a work request.
+	 * 'sg_input' contains an sglist describing the entire input
+	 * buffer for a 'struct cryptop'.  'sg_output' contains an
+	 * sglist describing the entire output buffer.  'sg_ulptx' is
+	 * used to describe the data the engine should DMA as input
+	 * via ULPTX_SGL.  'sg_dsgl' is used to describe the
+	 * destination that cipher text and a tag should be written
+	 * to.
+	 */
+	struct sglist *sg_input;
+	struct sglist *sg_output;
+	struct sglist *sg_ulptx;
+	struct sglist *sg_dsgl;
 };
 
 /*
@@ -295,7 +293,7 @@ ccr_populate_sglist(struct sglist *sg, struct crypto_buffer *cb)
 		break;
 	case CRYPTO_BUF_VMPAGE:
 		error = sglist_append_vmpages(sg, cb->cb_vm_page,
-		    cb->cb_vm_page_len, cb->cb_vm_page_offset);
+		    cb->cb_vm_page_offset, cb->cb_vm_page_len);
 		break;
 	default:
 		error = EINVAL;
@@ -1926,7 +1924,7 @@ ccr_init_port(struct ccr_softc *sc, int port)
 	pi = sc->adapter->port[port];
 	sc->ports[port].txq = &sc->adapter->sge.ctrlq[port];
 	sc->ports[port].rxq = &sc->adapter->sge.rxq[pi->vi->first_rxq];
-	sc->ports[port].rx_channel_id = pi->rx_c_chan;
+	sc->ports[port].rx_channel_id = pi->rx_chan;
 	sc->ports[port].tx_channel_id = pi->tx_chan;
 	sc->ports[port].stats_queued = counter_u64_alloc(M_WAITOK);
 	sc->ports[port].stats_completed = counter_u64_alloc(M_WAITOK);
@@ -1964,7 +1962,6 @@ ccr_attach(device_t dev)
 		return (ENXIO);
 	}
 	sc->cid = cid;
-	sc->adapter->ccr_softc = sc;
 
 	/*
 	 * The FID must be the first RXQ for port 0 regardless of
@@ -2043,7 +2040,6 @@ ccr_detach(device_t dev)
 	}
 	sglist_free(sc->sg_iv_aad);
 	free(sc->iv_aad_buf, M_CCR);
-	sc->adapter->ccr_softc = NULL;
 	return (0);
 }
 
@@ -2425,6 +2421,7 @@ ccr_newsession(device_t dev, crypto_session_t cses,
 	}
 
 	sc = device_get_softc(dev);
+	s->sc = sc;
 
 	mtx_lock(&sc->lock);
 	if (sc->detaching) {
@@ -2652,7 +2649,7 @@ static int
 do_cpl6_fw_pld(struct sge_iq *iq, const struct rss_header *rss,
     struct mbuf *m)
 {
-	struct ccr_softc *sc = iq->adapter->ccr_softc;
+	struct ccr_softc *sc;
 	struct ccr_session *s;
 	const struct cpl_fw6_pld *cpl;
 	struct cryptop *crp;
@@ -2672,6 +2669,7 @@ do_cpl6_fw_pld(struct sge_iq *iq, const struct rss_header *rss,
 	else
 		error = 0;
 
+	sc = s->sc;
 #ifdef INVARIANTS
 	mtx_lock(&s->lock);
 	s->pending--;

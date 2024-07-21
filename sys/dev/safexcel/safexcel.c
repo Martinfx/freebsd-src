@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020, 2021 Rubicon Communications, LLC (Netgate)
  * Copyright (c) 2021 The FreeBSD Foundation
@@ -27,9 +27,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -1377,7 +1374,7 @@ safexcel_setkey_xts(const uint8_t *key, int klen, uint8_t *tweakkey)
 }
 
 /*
- * Populate a context record with paramters from a session.  Some consumers
+ * Populate a context record with parameters from a session.  Some consumers
  * specify per-request keys, in which case the context must be re-initialized
  * for each request.
  */

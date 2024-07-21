@@ -32,12 +32,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_resource.c	8.5 (Berkeley) 1/21/94
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -885,11 +880,6 @@ rufetchtd(struct thread *td, struct rusage *ru)
 	calcru1(p, &td->td_rux, &ru->ru_utime, &ru->ru_stime);
 }
 
-/* XXX: the MI version is too slow to use: */
-#ifndef __HAVE_INLINE_FLSLL
-#define	flsll(x)	(fls((x) >> 32) != 0 ? fls((x) >> 32) + 32 : fls(x))
-#endif
-
 static uint64_t
 mul64_by_fraction(uint64_t a, uint64_t b, uint64_t c)
 {
@@ -1274,6 +1264,33 @@ lim_freen(struct plimit *limp, int n)
 
 	if (refcount_releasen(&limp->pl_refcnt, n))
 		free((void *)limp, M_PLIMIT);
+}
+
+void
+limbatch_add(struct limbatch *lb, struct thread *td)
+{
+	struct plimit *limp;
+
+	MPASS(td->td_limit != NULL);
+	limp = td->td_limit;
+
+	if (lb->limp != limp) {
+		if (lb->count != 0) {
+			lim_freen(lb->limp, lb->count);
+			lb->count = 0;
+		}
+		lb->limp = limp;
+	}
+
+	lb->count++;
+}
+
+void
+limbatch_final(struct limbatch *lb)
+{
+
+	MPASS(lb->count != 0);
+	lim_freen(lb->limp, lb->count);
 }
 
 /*

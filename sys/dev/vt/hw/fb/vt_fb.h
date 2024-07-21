@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_VT_HW_FB_VT_FB_H_
@@ -44,6 +42,7 @@ vd_blank_t		vt_fb_blank;
 vd_bitblt_text_t	vt_fb_bitblt_text;
 vd_invalidate_text_t	vt_fb_invalidate_text;
 vd_bitblt_bmp_t		vt_fb_bitblt_bitmap;
+vd_bitblt_argb_t	vt_fb_bitblt_argb;
 vd_drawrect_t		vt_fb_drawrect;
 vd_setpixel_t		vt_fb_setpixel;
 vd_postswitch_t		vt_fb_postswitch;

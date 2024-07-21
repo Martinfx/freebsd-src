@@ -327,7 +327,6 @@ main(void)
 	if (access(tfile, F_OK) == 0) {
 		(void) unlink(tfile);
 	}
-	ret = 0;
 	if ((fd = open(tfile, O_WRONLY | O_CREAT | O_TRUNC, ALL_MODE)) == -1) {
 		(void) fprintf(stderr, "open(%s) failed: %d\n", tfile, errno);
 		return (1);
@@ -363,12 +362,20 @@ main(void)
 			return (1);
 		}
 
-		if (t1 == t2) {
-			(void) fprintf(stderr, "%s: t1(%ld) == t2(%ld)\n",
+
+		/*
+		 * Ideally, time change would be exactly two seconds, but allow
+		 * a little slack in case of scheduling delays or similar.
+		 */
+		long delta = (long)t2 - (long)t1;
+		if (delta < 2 || delta > 4) {
+			(void) fprintf(stderr,
+			    "%s: BAD time change: t1(%ld), t2(%ld)\n",
 			    timetest_table[i].name, (long)t1, (long)t2);
 			return (1);
 		} else {
-			(void) fprintf(stderr, "%s: t1(%ld) != t2(%ld)\n",
+			(void) fprintf(stderr,
+			    "%s: good time change: t1(%ld), t2(%ld)\n",
 			    timetest_table[i].name, (long)t1, (long)t2);
 		}
 	}

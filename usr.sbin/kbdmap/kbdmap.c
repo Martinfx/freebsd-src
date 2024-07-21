@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002 Jonathan Belson <jon@witchspace.com>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/queue.h>
@@ -401,8 +398,7 @@ show_dialog(struct keymap **km_sorted, int num_keymaps)
 	case BSDDIALOG_OK:
 		for (i = 0; i < num_keymaps; i++) {
 			if (listitems[i].on) {
-				printf("ici\n");
-				if (!strcmp(program, "kdbmap"))
+				if (!strcmp(program, "kbdmap"))
 					do_kbdcontrol(km_sorted[i]);
 				else
 					do_vidfont(km_sorted[i]);
@@ -411,7 +407,6 @@ show_dialog(struct keymap **km_sorted, int num_keymaps)
 		}
 		break;
 	default:
-		printf("la\n");
 		if (font != NULL && strcmp(font, font_current))
 			/* Cancelled, restore old font */
 			vidcontrol(font_current);

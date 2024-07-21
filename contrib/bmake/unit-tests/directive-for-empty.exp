@@ -1,9 +1,6 @@
-make: "directive-for-empty.mk" line 21: 2
-make: "directive-for-empty.mk" line 34: Missing argument for ".error"
-make: "directive-for-empty.mk" line 34: Missing argument for ".error"
-make: "directive-for-empty.mk" line 34: Missing argument for ".error"
+make: "directive-for-empty.mk" line 22: 2
 For: end for 1
-For: loop body:
+For: loop body with i = value:
 # The identifier 'empty' can only be used in conditions such as .if, .ifdef or
 # .elif.  In other lines the string 'empty(' must be preserved.
 CPPFLAGS+=	-Dmessage="empty(i)"
@@ -22,6 +19,4 @@ CPPFLAGS+=	-Dmessage="empty(i)"
 # condition directives, they can also occur in the modifier ':?', see
 # varmod-ifelse.mk.
 CPPFLAGS+=	-Dmacro="${empty(i):?empty:not-empty}"
-make: Fatal errors encountered -- cannot continue
-make: stopped in unit-tests
-exit status 1
+exit status 0

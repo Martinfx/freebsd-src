@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/opencrypto
 KMOD	= cryptodev
 SRCS	= cryptodev.c

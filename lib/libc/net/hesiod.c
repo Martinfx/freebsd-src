@@ -43,13 +43,6 @@
  * it uses res_send() and accesses _res.
  */
 
-#include <sys/cdefs.h>
-
-#if 0
-static char *orig_rcsid = "$NetBSD: hesiod.c,v 1.9 1999/02/11 06:16:38 simonb Exp $";
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <netinet/in.h>
@@ -83,8 +76,7 @@ static void	  translate_errors(void);
  *	initialize a hesiod_p.
  */
 int 
-hesiod_init(context)
-	void	**context;
+hesiod_init(void **context)
 {
 	struct hesiod_p	*ctx;
 	const char	*p, *configname;
@@ -92,10 +84,7 @@ hesiod_init(context)
 	ctx = malloc(sizeof(struct hesiod_p));
 	if (ctx) {
 		*context = ctx;
-		if (!issetugid())
-			configname = getenv("HESIOD_CONFIG");
-		else
-			configname = NULL;
+		configname = secure_getenv("HESIOD_CONFIG");
 		if (!configname)
 			configname = _PATH_HESIOD_CONF;
 		if (read_config_file(ctx, configname) >= 0) {
@@ -103,10 +92,7 @@ hesiod_init(context)
 			 * The default rhs can be overridden by an
 			 * environment variable.
 			 */
-			if (!issetugid())
-				p = getenv("HES_DOMAIN");
-			else
-				p = NULL;
+			p = secure_getenv("HES_DOMAIN");
 			if (p) {
 				if (ctx->rhs)
 					free(ctx->rhs);
@@ -138,8 +124,7 @@ hesiod_init(context)
  *	Deallocates the hesiod_p.
  */
 void 
-hesiod_end(context)
-	void	*context;
+hesiod_end(void *context)
 {
 	struct hesiod_p *ctx = (struct hesiod_p *) context;
 
@@ -229,10 +214,7 @@ hesiod_to_bind(void *context, const char *name, const char *type)
  *	by the resolver.
  */
 char **
-hesiod_resolve(context, name, type)
-	void		*context;
-	const char	*name;
-	const char	*type;
+hesiod_resolve(void *context, const char *name, const char *type)
 {
 	struct hesiod_p	*ctx = (struct hesiod_p *) context;
 	char		*bindname, **retvec;
@@ -251,9 +233,7 @@ hesiod_resolve(context, name, type)
 
 /*ARGSUSED*/
 void 
-hesiod_free_list(context, list)
-	void	 *context;
-	char	**list;
+hesiod_free_list(void *context, char **list)
 {
 	char  **p;
 
@@ -271,9 +251,7 @@ hesiod_free_list(context, list)
  *	or ctx->rhs which need to be freed by the caller.
  */
 static int 
-read_config_file(ctx, filename)
-	struct hesiod_p	*ctx;
-	const char	*filename;
+read_config_file(struct hesiod_p *ctx, const char *filename)
 {
 	char	*key, *data, *p, **which;
 	char	 buf[MAXDNAME + 7];
@@ -365,9 +343,7 @@ read_config_file(ctx, filename)
  *	return a list of them.
  */
 static char **
-get_txt_records(qclass, name)
-	int		 qclass;
-	const char	*name;
+get_txt_records(int qclass, const char *name)
 {
 	HEADER		*hp;
 	unsigned char	 qbuf[PACKETSZ], abuf[MAX_HESRESP], *p, *eom, *eor;
@@ -491,16 +467,14 @@ static void	 *context;
 static int	  errval = HES_ER_UNINIT;
 
 int
-hes_init()
+hes_init(void)
 {
 	init_context();
 	return errval;
 }
 
 char *
-hes_to_bind(name, type)
-	const char	*name;
-	const char	*type;
+hes_to_bind(const char *name, const char *type)
 {
 	static	char	*bindname;
 	if (init_context() < 0)
@@ -514,9 +488,7 @@ hes_to_bind(name, type)
 }
 
 char **
-hes_resolve(name, type)
-	const char	*name;
-	const char	*type;
+hes_resolve(const char *name, const char *type)
 {
 	static char	**list;
 
@@ -537,20 +509,19 @@ hes_resolve(name, type)
 }
 
 int
-hes_error()
+hes_error(void)
 {
 	return errval;
 }
 
 void
-hes_free(hp)
-	char **hp;
+hes_free(char **hp)
 {
 	hesiod_free_list(context, hp);
 }
 
 static int
-init_context()
+init_context(void)
 {
 	if (!inited) {
 		inited = 1;
@@ -564,7 +535,7 @@ init_context()
 }
 
 static void
-translate_errors()
+translate_errors(void)
 {
 	switch (errno) {
 	case ENOENT:

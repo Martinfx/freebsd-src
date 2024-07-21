@@ -1,4 +1,3 @@
-# $FreeBSD$
 
 .include <src.opts.mk>
 
@@ -17,8 +16,6 @@ MODULES		+= pam_ksu
 MODULES		+= pam_lastlog
 MODULES		+= pam_login_access
 MODULES		+= pam_nologin
-MODULES		+= pam_opie
-MODULES		+= pam_opieaccess
 MODULES		+= pam_passwdqc
 MODULES		+= pam_permit
 .if ${MK_RADIUS_SUPPORT} != "no"
@@ -33,3 +30,4 @@ MODULES		+= pam_ssh
 .endif
 MODULES		+= pam_tacplus
 MODULES		+= pam_unix
+MODULES		+= pam_xdg

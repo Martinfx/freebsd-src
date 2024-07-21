@@ -1,7 +1,7 @@
 /*	$NetBSD: linux_time.c,v 1.14 2006/05/14 03:40:54 christos Exp $ */
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -32,29 +32,18 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #if 0
 __KERNEL_RCSID(0, "$NetBSD: linux_time.c,v 1.14 2006/05/14 03:40:54 christos Exp $");
 #endif
 
-#include "opt_compat.h"
-
 #include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/lock.h>
-#include <sys/ucred.h>
 #include <sys/limits.h>
-#include <sys/mount.h>
+#include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/resourcevar.h>
-#include <sys/sdt.h>
-#include <sys/signal.h>
-#include <sys/stdint.h>
-#include <sys/syscallsubr.h>
-#include <sys/sysproto.h>
-#include <sys/time.h>
-#include <sys/systm.h>
 #include <sys/proc.h>
+#include <sys/resourcevar.h>
+#include <sys/syscallsubr.h>
+#include <sys/time.h>
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -66,7 +55,7 @@ __KERNEL_RCSID(0, "$NetBSD: linux_time.c,v 1.14 2006/05/14 03:40:54 christos Exp
 
 #include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_misc.h>
-#include <compat/linux/linux_timer.h>
+#include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
 
 /* DTrace init */
@@ -298,7 +287,7 @@ linux_to_native_clockid(clockid_t *n, clockid_t l)
 		*n = CLOCK_REALTIME;
 		break;
 	case LINUX_CLOCK_MONOTONIC:
-		*n = CLOCK_MONOTONIC;
+		*n = CLOCK_UPTIME;
 		break;
 	case LINUX_CLOCK_PROCESS_CPUTIME_ID:
 		*n = CLOCK_PROCESS_CPUTIME_ID;
@@ -311,10 +300,10 @@ linux_to_native_clockid(clockid_t *n, clockid_t l)
 		break;
 	case LINUX_CLOCK_MONOTONIC_COARSE:
 	case LINUX_CLOCK_MONOTONIC_RAW:
-		*n = CLOCK_MONOTONIC_FAST;
+		*n = CLOCK_UPTIME_FAST;
 		break;
 	case LINUX_CLOCK_BOOTTIME:
-		*n = CLOCK_UPTIME;
+		*n = CLOCK_MONOTONIC;
 		break;
 	case LINUX_CLOCK_REALTIME_ALARM:
 	case LINUX_CLOCK_BOOTTIME_ALARM:

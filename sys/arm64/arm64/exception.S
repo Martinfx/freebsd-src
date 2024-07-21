@@ -25,10 +25,10 @@
  *
  */
 
+#include <sys/elf_common.h>
+
 #include <machine/asm.h>
 #include <machine/armreg.h>
-__FBSDID("$FreeBSD$");
-
 #include "assym.inc"
 
 	.text
@@ -41,38 +41,39 @@ __FBSDID("$FreeBSD$");
 .macro	save_registers_head el
 .if \el == 1
 	mov	x18, sp
-	sub	sp, sp, #128
+	stp	x0,  x1,  [sp, #(TF_X - TF_SIZE - 128)]!
+.else
+	stp	x0,  x1,  [sp, #(TF_X - TF_SIZE)]!
 .endif
-	sub	sp, sp, #(TF_SIZE)
-	stp	x28, x29, [sp, #(TF_X + 28 * 8)]
-	stp	x26, x27, [sp, #(TF_X + 26 * 8)]
-	stp	x24, x25, [sp, #(TF_X + 24 * 8)]
-	stp	x22, x23, [sp, #(TF_X + 22 * 8)]
-	stp	x20, x21, [sp, #(TF_X + 20 * 8)]
-	stp	x18, x19, [sp, #(TF_X + 18 * 8)]
-	stp	x16, x17, [sp, #(TF_X + 16 * 8)]
-	stp	x14, x15, [sp, #(TF_X + 14 * 8)]
-	stp	x12, x13, [sp, #(TF_X + 12 * 8)]
-	stp	x10, x11, [sp, #(TF_X + 10 * 8)]
-	stp	x8,  x9,  [sp, #(TF_X + 8  * 8)]
-	stp	x6,  x7,  [sp, #(TF_X + 6  * 8)]
-	stp	x4,  x5,  [sp, #(TF_X + 4  * 8)]
-	stp	x2,  x3,  [sp, #(TF_X + 2  * 8)]
-	stp	x0,  x1,  [sp, #(TF_X + 0  * 8)]
-	mrs	x10, elr_el1
-	mrs	x11, spsr_el1
-	mrs	x12, esr_el1
+	stp	x2,  x3,  [sp, #(2  * 8)]
+	stp	x4,  x5,  [sp, #(4  * 8)]
+	stp	x6,  x7,  [sp, #(6  * 8)]
+	stp	x8,  x9,  [sp, #(8  * 8)]
+	stp	x10, x11, [sp, #(10 * 8)]
+	stp	x12, x13, [sp, #(12 * 8)]
+	stp	x14, x15, [sp, #(14 * 8)]
+	stp	x16, x17, [sp, #(16 * 8)]
+	stp	x18, x19, [sp, #(18 * 8)]
+	stp	x20, x21, [sp, #(20 * 8)]
+	stp	x22, x23, [sp, #(22 * 8)]
+	stp	x24, x25, [sp, #(24 * 8)]
+	stp	x26, x27, [sp, #(26 * 8)]
+	stp	x28, x29, [sp, #(28 * 8)]
 .if \el == 0
 	mrs	x18, sp_el0
 .endif
-	str	x10, [sp, #(TF_ELR)]
-	stp	w11, w12, [sp, #(TF_SPSR)]
-	stp	x18,  lr, [sp, #(TF_SP)]
+	mrs	x10, elr_el1
+	mrs	x11, spsr_el1
+	mrs	x12, esr_el1
+	mrs	x13, far_el1
+	stp	x18,  lr, [sp, #(TF_SP - TF_X)]!
+	stp	x10, x11, [sp, #(TF_ELR)]
+	stp	x12, x13, [sp, #(TF_ESR)]
 	mrs	x18, tpidr_el1
-	add	x29, sp, #(TF_SIZE)
 .endm
 
 .macro	save_registers el
+	add	x29, sp, #(TF_SIZE)
 .if \el == 0
 #if defined(PERTHREAD_SSP)
 	/* Load the SSP canary to sp_el0 */
@@ -177,11 +178,10 @@ __FBSDID("$FreeBSD$");
 
 	/* Read the current thread AST mask */
 	ldr	x1, [x18, #PC_CURTHREAD]	/* Load curthread */
-	add	x1, x1, #(TD_AST)
-	ldr	x1, [x1]
+	ldr	w1, [x1, #(TD_AST)]
 
 	/* Check if we have a non-zero AST mask */
-	cbz	x1, 2f
+	cbz	w1, 2f
 
 	/* Restore interrupts */
 	msr	daif, x19
@@ -195,55 +195,100 @@ __FBSDID("$FreeBSD$");
 2:
 .endm
 
+#ifdef KMSAN
+/*
+ * The KMSAN runtime relies on a TLS block to track initialization and origin
+ * state for function parameters and return values.  To keep this state
+ * consistent in the face of asynchronous kernel-mode traps, the runtime
+ * maintains a stack of blocks: when handling an exception or interrupt,
+ * kmsan_intr_enter() pushes the new block to be used until the handler is
+ * complete, at which point kmsan_intr_leave() restores the previous block.
+ *
+ * Thus, KMSAN_ENTER/LEAVE hooks are required only in handlers for events that
+ * may have happened while in kernel-mode.  In particular, they are not required
+ * around amd64_syscall() or ast() calls.  Otherwise, kmsan_intr_enter() can be
+ * called unconditionally, without distinguishing between entry from user-mode
+ * or kernel-mode.
+ */
+#define	KMSAN_ENTER	bl kmsan_intr_enter
+#define	KMSAN_LEAVE	bl kmsan_intr_leave
+#else
+#define	KMSAN_ENTER
+#define	KMSAN_LEAVE
+#endif
+
 ENTRY(handle_el1h_sync)
 	save_registers 1
+	KMSAN_ENTER
 	ldr	x0, [x18, #PC_CURTHREAD]
 	mov	x1, sp
 	bl	do_el1h_sync
+	KMSAN_LEAVE
 	restore_registers 1
 	ERET
 END(handle_el1h_sync)
 
 ENTRY(handle_el1h_irq)
 	save_registers 1
+	KMSAN_ENTER
 	mov	x0, sp
 	bl	intr_irq_handler
+	KMSAN_LEAVE
 	restore_registers 1
 	ERET
 END(handle_el1h_irq)
 
+ENTRY(handle_el1h_serror)
+	save_registers 1
+	KMSAN_ENTER
+	mov	x0, sp
+1:	bl	do_serror
+	b	1b
+	KMSAN_LEAVE
+END(handle_el1h_serror)
+
 ENTRY(handle_el0_sync)
 	save_registers 0
+	KMSAN_ENTER
 	ldr	x0, [x18, #PC_CURTHREAD]
 	mov	x1, sp
+	mov	x22, x0
 	str	x1, [x0, #TD_FRAME]
 	bl	do_el0_sync
 	do_ast
+	str	xzr, [x22, #TD_FRAME]
+	KMSAN_LEAVE
 	restore_registers 0
 	ERET
 END(handle_el0_sync)
 
 ENTRY(handle_el0_irq)
 	save_registers 0
+	KMSAN_ENTER
 	mov	x0, sp
 	bl	intr_irq_handler
 	do_ast
+	KMSAN_LEAVE
 	restore_registers 0
 	ERET
 END(handle_el0_irq)
 
-ENTRY(handle_serror)
+ENTRY(handle_el0_serror)
 	save_registers 0
+	KMSAN_ENTER
 	mov	x0, sp
 1:	bl	do_serror
 	b	1b
-END(handle_serror)
+	KMSAN_LEAVE
+END(handle_el0_serror)
 
 ENTRY(handle_empty_exception)
 	save_registers 0
+	KMSAN_ENTER
 	mov	x0, sp
 1:	bl	unhandled_exception
 	b	1b
+	KMSAN_LEAVE
 END(handle_empty_exception)
 
 .macro	vector	name, el
@@ -271,15 +316,16 @@ exception_vectors:
 	vector el1h_sync 1	/* Synchronous EL1h */
 	vector el1h_irq 1	/* IRQ EL1h */
 	vempty 1		/* FIQ EL1h */
-	vector serror 1		/* Error EL1h */
+	vector el1h_serror 1	/* Error EL1h */
 
 	vector el0_sync 0	/* Synchronous 64-bit EL0 */
 	vector el0_irq 0	/* IRQ 64-bit EL0 */
 	vempty 0		/* FIQ 64-bit EL0 */
-	vector serror 0		/* Error 64-bit EL0 */
+	vector el0_serror 0	/* Error 64-bit EL0 */
 
 	vector el0_sync 0	/* Synchronous 32-bit EL0 */
 	vector el0_irq 0	/* IRQ 32-bit EL0 */
 	vempty 0		/* FIQ 32-bit EL0 */
-	vector serror 0		/* Error 32-bit EL0 */
+	vector el0_serror 0	/* Error 32-bit EL0 */
 
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

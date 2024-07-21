@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016 Landon Fuller <landon@landonf.org>
  * All rights reserved.
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * ChipCommon attachment support for the bhnd(4) PMU driver.
  * 
@@ -64,7 +62,6 @@ bhnd_pmu_chipc_probe(device_t dev)
 	struct chipc_caps	*ccaps;
 	struct chipc_softc	*chipc_sc;
 	device_t		 chipc;
-	char			 desc[34];
 	int			 error;
 	uint32_t		 pcaps;
 	uint8_t			 rev;
@@ -89,8 +86,7 @@ bhnd_pmu_chipc_probe(device_t dev)
 
 	/* Set description */
 	rev = BHND_PMU_GET_BITS(pcaps, BHND_PMU_CAP_REV);
-	snprintf(desc, sizeof(desc), "Broadcom ChipCommon PMU, rev %hhu", rev);
-	device_set_desc_copy(dev, desc);
+	device_set_descf(dev, "Broadcom ChipCommon PMU, rev %hhu", rev);
 
 	return (BUS_PROBE_NOWILDCARD);
 }

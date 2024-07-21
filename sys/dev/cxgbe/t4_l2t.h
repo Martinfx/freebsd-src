@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Chelsio Communications, Inc.
  * All rights reserved.
@@ -25,8 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
- *
  */
 
 #ifndef __T4_L2T_H
@@ -36,8 +34,6 @@
 #define S_SYNC_WR    12
 #define V_SYNC_WR(x) ((x) << S_SYNC_WR)
 #define F_SYNC_WR    V_SYNC_WR(1)
-
-enum { L2T_SIZE = 4096 };     /* # of L2T entries */
 
 enum {
 	L2T_STATE_VALID,	/* entry is up to date */
@@ -66,7 +62,7 @@ struct l2t_entry {
 	uint32_t addr[4];		/* next hop IP or IPv6 address */
 	uint32_t iqid;			/* iqid for reply to write_l2e */
 	struct sge_wrq *wrq;		/* queue to use for write_l2e */
-	struct ifnet *ifp;		/* outgoing interface */
+	if_t ifp;			/* outgoing interface */
 	uint16_t smt_idx;		/* SMT index */
 	uint16_t vlan;			/* VLAN TCI (id: 0-11, prio: 13-15) */
 	struct l2t_entry *first;	/* start of hash chain */
@@ -96,8 +92,6 @@ struct l2t_entry *t4_l2t_alloc_switching(struct adapter *, uint16_t, uint8_t,
     uint8_t *);
 struct l2t_entry *t4_l2t_alloc_tls(struct adapter *, struct sge_txq *,
     void *, int *, uint16_t, uint8_t, uint8_t *);
-int t4_l2t_set_switching(struct adapter *, struct l2t_entry *, uint16_t,
-    uint8_t, uint8_t *);
 int t4_write_l2e(struct l2t_entry *, int);
 int do_l2t_write_rpl(struct sge_iq *, const struct rss_header *, struct mbuf *);
 

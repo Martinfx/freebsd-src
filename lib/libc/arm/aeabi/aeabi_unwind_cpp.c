@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2011 Andrew Turner
  * All rights reserved.
@@ -33,9 +33,6 @@
  * against. The libgcc_eh.a version will be called so we call abort to
  * check this.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <stdlib.h>
 

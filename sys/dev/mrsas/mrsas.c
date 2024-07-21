@@ -38,8 +38,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <dev/mrsas/mrsas.h>
 #include <dev/mrsas/mrsas_ioctl.h>
 
@@ -1449,7 +1447,14 @@ mrsas_ioctl(struct cdev *dev, u_long cmd, caddr_t arg, int flag,
 	int ret = 0, i = 0;
 	MRSAS_DRV_PCI_INFORMATION *pciDrvInfo;
 
-	sc = mrsas_get_softc_instance(dev, cmd, arg);
+	switch (cmd) {
+	case MFIIO_PASSTHRU:
+                sc = (struct mrsas_softc *)(dev->si_drv1);
+		break;
+	default:
+		sc = mrsas_get_softc_instance(dev, cmd, arg);
+		break;
+        }
 	if (!sc)
 		return ENOENT;
 
@@ -1510,6 +1515,10 @@ do_ioctl:
 		    pciDrvInfo->busNumber, pciDrvInfo->deviceNumber,
 		    pciDrvInfo->functionNumber, pciDrvInfo->domainID);
 		ret = 0;
+		break;
+
+	case MFIIO_PASSTHRU:
+		ret = mrsas_user_command(sc, (struct mfi_ioc_passthru *)arg);
 		break;
 
 	default:
@@ -1723,11 +1732,13 @@ mrsas_complete_cmd(struct mrsas_softc *sc, u_int32_t MSIxIndex)
 						data_length = r1_cmd->io_request->DataLength;
 						sense = r1_cmd->sense;
 					}
+					mtx_lock(&sc->sim_lock);
 					r1_cmd->ccb_ptr = NULL;
 					if (r1_cmd->callout_owner) {
 						callout_stop(&r1_cmd->cm_callout);
 						r1_cmd->callout_owner  = false;
 					}
+					mtx_unlock(&sc->sim_lock);
 					mrsas_release_mpt_cmd(r1_cmd);
 					mrsas_atomic_dec(&sc->fw_outstanding);
 					mrsas_map_mpt_cmd_status(cmd_mpt, cmd_mpt->ccb_ptr, status,
@@ -3980,6 +3991,7 @@ mrsas_issue_blocked_cmd(struct mrsas_softc *sc, struct mrsas_mfi_cmd *cmd)
 			}
 		}
 	}
+	sc->chan = NULL;
 
 	if (cmd->cmd_status == 0xFF) {
 		device_printf(sc->mrsas_dev, "DCMD timed out after %d "

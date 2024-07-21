@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1997-2000 Doug Rabson
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_kld.h"
 #include "opt_hwpmc_hooks.h"
@@ -146,7 +144,7 @@ struct modlist {
 typedef struct modlist *modlist_t;
 static modlisthead_t found_modules;
 
-static int	linker_file_add_dependency(linker_file_t file,
+static void	linker_file_add_dependency(linker_file_t file,
 		    linker_file_t dep);
 static caddr_t	linker_file_lookup_symbol_internal(linker_file_t file,
 		    const char* name, int deps);
@@ -330,6 +328,26 @@ linker_file_register_sysctls(linker_file_t lf, bool enable)
 	sx_xlock(&kld_sx);
 }
 
+/*
+ * Invoke the LINKER_CTF_GET implementation for this file.  Existing
+ * implementations will load CTF info from the filesystem upon the first call
+ * and cache it in the kernel thereafter.
+ */
+static void
+linker_ctf_load_file(linker_file_t file)
+{
+	linker_ctf_t lc;
+	int error;
+
+	error = linker_ctf_get(file, &lc);
+	if (error == 0)
+		return;
+	if (bootverbose) {
+		printf("failed to load CTF for %s: %d\n", file->filename,
+		    error);
+	}
+}
+
 static void
 linker_file_enable_sysctls(linker_file_t lf)
 {
@@ -463,8 +481,11 @@ linker_load_file(const char *filename, linker_file_t *result)
 		 * If we got something other than ENOENT, then it exists but
 		 * we cannot load it for some other reason.
 		 */
-		if (error != ENOENT)
+		if (error != ENOENT) {
 			foundfile = 1;
+			if (error == EEXIST)
+				break;
+		}
 		if (lf) {
 			error = linker_file_register_modules(lf);
 			if (error == EEXIST) {
@@ -473,6 +494,9 @@ linker_load_file(const char *filename, linker_file_t *result)
 			}
 			modules = !TAILQ_EMPTY(&lf->modules);
 			linker_file_register_sysctls(lf, false);
+#ifdef VIMAGE
+			LINKER_PROPAGATE_VNETS(lf);
+#endif
 			linker_file_sysinit(lf);
 			lf->flags |= LINKER_FILE_LINKED;
 
@@ -486,6 +510,11 @@ linker_load_file(const char *filename, linker_file_t *result)
 				return (ENOEXEC);
 			}
 			linker_file_enable_sysctls(lf);
+
+			/*
+			 * Ask the linker to load CTF data for this file.
+			 */
+			linker_ctf_load_file(lf);
 			EVENTHANDLER_INVOKE(kld_load, lf);
 			*result = lf;
 			return (0);
@@ -628,6 +657,7 @@ linker_make_file(const char *pathname, linker_class_t lc)
 		return (NULL);
 	lf->ctors_addr = 0;
 	lf->ctors_size = 0;
+	lf->ctors_invoked = LF_NONE;
 	lf->dtors_addr = 0;
 	lf->dtors_size = 0;
 	lf->refs = 1;
@@ -778,7 +808,36 @@ linker_ctf_get(linker_file_t file, linker_ctf_t *lc)
 	return (LINKER_CTF_GET(file, lc));
 }
 
-static int
+int
+linker_ctf_lookup_typename_ddb(linker_ctf_t *lc, const char *typename)
+{
+#ifdef DDB
+	linker_file_t lf;
+
+	TAILQ_FOREACH (lf, &linker_files, link){
+		if (LINKER_CTF_LOOKUP_TYPENAME(lf, lc, typename) == 0)
+			return (0);
+	}
+#endif
+	return (ENOENT);
+}
+
+int
+linker_ctf_lookup_sym_ddb(const char *symname, c_linker_sym_t *sym,
+    linker_ctf_t *lc)
+{
+#ifdef DDB
+	linker_file_t lf;
+
+	TAILQ_FOREACH (lf, &linker_files, link){
+		if (LINKER_LOOKUP_DEBUG_SYMBOL_CTF(lf, symname, sym, lc) == 0)
+			return (0);
+	}
+#endif
+	return (ENOENT);
+}
+
+static void
 linker_file_add_dependency(linker_file_t file, linker_file_t dep)
 {
 	linker_file_t *newdeps;
@@ -791,7 +850,6 @@ linker_file_add_dependency(linker_file_t file, linker_file_t dep)
 	KLD_DPF(FILE, ("linker_file_add_dependency:"
 	    " adding %s as dependency for %s\n", 
 	    dep->filename, file->filename));
-	return (0);
 }
 
 /*
@@ -847,6 +905,20 @@ linker_file_lookup_symbol_internal(linker_file_t file, const char *name,
 	sx_assert(&kld_sx, SA_XLOCKED);
 	KLD_DPF(SYM, ("linker_file_lookup_symbol: file=%p, name=%s, deps=%d\n",
 	    file, name, deps));
+
+	/*
+	 * Treat the __this_linker_file as a special symbol. This is a
+	 * global that linuxkpi uses to populate the THIS_MODULE
+	 * value.  In this case we can simply return the linker_file_t.
+	 *
+	 * Modules compiled statically into the kernel are assigned NULL.
+	 */
+	if (strcmp(name, "__this_linker_file") == 0) {
+		address = (file == linker_kernel_file) ? NULL : (caddr_t)file;
+		KLD_DPF(SYM, ("linker_file_lookup_symbol: resolving special "
+		    "symbol __this_linker_file to %p\n", address));
+		return (address);
+	}
 
 	if (LINKER_LOOKUP_SYMBOL(file, name, &sym) == 0) {
 		LINKER_SYMBOL_VALUES(file, sym, &symval);
@@ -1221,6 +1293,8 @@ kern_kldunload(struct thread *td, int fileid, int flags)
 			 */
 			printf("kldunload: attempt to unload file that was"
 			    " loaded by the kernel\n");
+			error = EBUSY;
+		} else if (lf->refs > 1) {
 			error = EBUSY;
 		} else {
 			lf->userrefs--;
@@ -1720,10 +1794,7 @@ restart:
 	TAILQ_FOREACH_SAFE(lf, &depended_files, loaded, nlf) {
 		if (linker_kernel_file) {
 			linker_kernel_file->refs++;
-			error = linker_file_add_dependency(lf,
-			    linker_kernel_file);
-			if (error)
-				panic("cannot add dependency");
+			linker_file_add_dependency(lf, linker_kernel_file);
 		}
 		error = linker_file_lookup_set(lf, MDT_SETNAME, &start,
 		    &stop, NULL);
@@ -1745,10 +1816,7 @@ restart:
 				if (lf == mod->container)
 					continue;
 				mod->container->refs++;
-				error = linker_file_add_dependency(lf,
-				    mod->container);
-				if (error)
-					panic("cannot add dependency");
+				linker_file_add_dependency(lf, mod->container);
 			}
 		}
 		/*
@@ -1777,8 +1845,20 @@ fail:
 	sx_xunlock(&kld_sx);
 	/* woohoo! we made it! */
 }
-
 SYSINIT(preload, SI_SUB_KLD, SI_ORDER_MIDDLE, linker_preload, NULL);
+
+static void
+linker_mountroot(void *arg __unused)
+{
+	linker_file_t lf;
+
+	sx_xlock(&kld_sx);
+	TAILQ_FOREACH (lf, &linker_files, link) {
+		linker_ctf_load_file(lf);
+	}
+	sx_xunlock(&kld_sx);
+}
+EVENTHANDLER_DEFINE(mountroot, linker_mountroot, NULL, 0);
 
 /*
  * Handle preload files that failed to load any modules.
@@ -1790,6 +1870,9 @@ linker_preload_finish(void *arg)
 
 	sx_xlock(&kld_sx);
 	TAILQ_FOREACH_SAFE(lf, &linker_files, link, nlf) {
+		if (lf == linker_kernel_file)
+			continue;
+
 		/*
 		 * If all of the modules in this file failed to load, unload
 		 * the file and return an error of ENOEXEC.  (Parity with
@@ -1858,7 +1941,7 @@ linker_lookup_file(const char *path, int pathlen, const char *name,
 	const char * const *cpp, *sep;
 	char *result;
 	int error, len, extlen, reclen, flags;
-	enum vtype type;
+	__enum_uint8(vtype) type;
 
 	extlen = 0;
 	for (cpp = linker_ext_list; *cpp; cpp++) {
@@ -2119,7 +2202,7 @@ linker_hwpmc_list_objects(void)
 	i = 0;
 	TAILQ_FOREACH(lf, &linker_files, link) {
 		/* Save the info for this linker file. */
-		kobase[i].pm_file = lf->filename;
+		kobase[i].pm_file = lf->pathname;
 		kobase[i].pm_address = (uintptr_t)lf->address;
 		i++;
 	}
@@ -2211,11 +2294,8 @@ linker_load_module(const char *kldname, const char *modname,
 			error = ENOENT;
 			break;
 		}
-		if (parent) {
-			error = linker_file_add_dependency(parent, lfdep);
-			if (error)
-				break;
-		}
+		if (parent)
+			linker_file_add_dependency(parent, lfdep);
 		if (lfpp)
 			*lfpp = lfdep;
 	} while (0);
@@ -2244,9 +2324,7 @@ linker_load_dependencies(linker_file_t lf)
 	sx_assert(&kld_sx, SA_XLOCKED);
 	if (linker_kernel_file) {
 		linker_kernel_file->refs++;
-		error = linker_file_add_dependency(lf, linker_kernel_file);
-		if (error)
-			return (error);
+		linker_file_add_dependency(lf, linker_kernel_file);
 	}
 	if (linker_file_lookup_set(lf, MDT_SETNAME, &start, &stop,
 	    NULL) != 0)
@@ -2287,9 +2365,7 @@ linker_load_dependencies(linker_file_t lf)
 		if (mod) {	/* woohoo, it's loaded already */
 			lfdep = mod->container;
 			lfdep->refs++;
-			error = linker_file_add_dependency(lf, lfdep);
-			if (error)
-				break;
+			linker_file_add_dependency(lf, lfdep);
 			continue;
 		}
 		error = linker_load_module(NULL, modname, lf, verinfo, NULL);

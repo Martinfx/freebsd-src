@@ -1,5 +1,3 @@
-#	$FreeBSD$
-
 SHELL=	/bin/sh
 
 PROG=	kttcp

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 ATF_TESTS_C=	sysctl_test
@@ -11,6 +9,9 @@ CFLAGS+=-DWITH_CASPER
 .endif
 LIBADD+=	nv
 
-TEST_METADATA.sysctl_test+=	required_user="root"
+# cap_sysctl tests modify global sysctl values and read them back, so
+# cannot be run in parallel.
+TEST_METADATA.sysctl_test+=	required_user="root" \
+				is_exclusive=true
 
 .include <bsd.test.mk>

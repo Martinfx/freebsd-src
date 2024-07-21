@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LDBL_PREC = 113
 
 # Use a builtin when it generates the needed instruction

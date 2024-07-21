@@ -276,7 +276,7 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	cv_init(&tq->tq_dispatch_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&tq->tq_wait_cv, NULL, CV_DEFAULT, NULL);
 	cv_init(&tq->tq_maxalloc_cv, NULL, CV_DEFAULT, NULL);
-	(void) strncpy(tq->tq_name, name, TASKQ_NAMELEN);
+	(void) strlcpy(tq->tq_name, name, sizeof (tq->tq_name));
 	tq->tq_flags = flags | TASKQ_ACTIVE;
 	tq->tq_active = nthreads;
 	tq->tq_nthreads = nthreads;
@@ -295,8 +295,8 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	}
 
 	for (t = 0; t < nthreads; t++)
-		VERIFY((tq->tq_threadlist[t] = thread_create(NULL, 0,
-		    taskq_thread, tq, 0, &p0, TS_RUN, pri)) != NULL);
+		VERIFY((tq->tq_threadlist[t] = thread_create_named(tq->tq_name,
+		    NULL, 0, taskq_thread, tq, 0, &p0, TS_RUN, pri)) != NULL);
 
 	return (tq);
 }
@@ -319,7 +319,9 @@ taskq_destroy(taskq_t *tq)
 	tq->tq_minalloc = 0;
 	while (tq->tq_nalloc != 0) {
 		ASSERT(tq->tq_freelist != NULL);
-		task_free(tq, task_alloc(tq, KM_SLEEP));
+		taskq_ent_t *tqent_nexttq = tq->tq_freelist->tqent_next;
+		task_free(tq, tq->tq_freelist);
+		tq->tq_freelist = tqent_nexttq;
 	}
 
 	mutex_exit(&tq->tq_lock);
@@ -333,6 +335,36 @@ taskq_destroy(taskq_t *tq)
 	cv_destroy(&tq->tq_maxalloc_cv);
 
 	kmem_free(tq, sizeof (taskq_t));
+}
+
+/*
+ * Create a taskq with a specified number of pool threads. Allocate
+ * and return an array of nthreads kthread_t pointers, one for each
+ * thread in the pool. The array is not ordered and must be freed
+ * by the caller.
+ */
+taskq_t *
+taskq_create_synced(const char *name, int nthreads, pri_t pri,
+    int minalloc, int maxalloc, uint_t flags, kthread_t ***ktpp)
+{
+	taskq_t *tq;
+	kthread_t **kthreads = kmem_zalloc(sizeof (*kthreads) * nthreads,
+	    KM_SLEEP);
+
+	(void) pri; (void) minalloc; (void) maxalloc;
+
+	flags &= ~(TASKQ_DYNAMIC | TASKQ_THREADS_CPU_PCT | TASKQ_DC_BATCH);
+
+	tq = taskq_create(name, nthreads, minclsyspri, nthreads, INT_MAX,
+	    flags | TASKQ_PREPOPULATE);
+	VERIFY(tq != NULL);
+	VERIFY(tq->tq_nthreads == nthreads);
+
+	for (int i = 0; i < nthreads; i++) {
+		kthreads[i] = tq->tq_threadlist[i];
+	}
+	*ktpp = kthreads;
+	return (tq);
 }
 
 int

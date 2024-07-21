@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/arm/freescale/imx
 
 KMOD=	imx_spi

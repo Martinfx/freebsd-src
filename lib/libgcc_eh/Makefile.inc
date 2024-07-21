@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 COMPILERRTDIR=	${SRCTOP}/contrib/llvm-project/compiler-rt
 UNWINDINCDIR=	${SRCTOP}/contrib/llvm-project/libunwind/include
 UNWINDSRCDIR=	${SRCTOP}/contrib/llvm-project/libunwind/src
@@ -18,6 +16,9 @@ SRCS_EXC+=	UnwindRegistersSave.S
 SRCS_EXC+=	libunwind.cpp
 
 SRCS+=		${SRCS_EXC}
+.if ${MACHINE} == "amd64" || ${MACHINE} == "i386" || ${MACHINE} == "powerpc"
+CFLAGS.UnwindLevel1-gcc-ext.c+=	-D_LIBUNWIND_SUPPORT_FRAME_APIS
+.endif
 .for file in ${SRCS_EXC:M*.c}
 CFLAGS.${file}+=	-fno-exceptions -funwind-tables
 .if ${MK_ASAN} != "no"
@@ -43,4 +44,10 @@ STATIC_CXXFLAGS+= -fvisibility=hidden -fPIC
 .if ${MK_DIRDEPS_BUILD} == "yes"
 # Avoid dependency on lib/libc++
 CFLAGS+=	-isystem ${SRCTOP}/contrib/llvm-project/libcxx/include -nostdinc++
+
+# we need this for __config_site
+CFLAGS+=	-I${SRCTOP}/lib/libc++
+.if ${.MAKE.LEVEL} > 0
+GENDIRDEPS_FILTER+= Nlib/libc++
+.endif
 .endif

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2010 The FreeBSD Foundation
  *
@@ -29,8 +29,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_platform.h"
 
 #include <sys/param.h>
@@ -236,7 +234,8 @@ uart_cpu_fdt_probe(struct uart_class **classp, bus_space_tag_t *bst,
 		    (struct uart_class *)uart_fdt_find_by_node(node, 1);
 		if (class == NULL)
 			return (ENXIO);
-		clk = 0;
+		if (uart_fdt_get_clock(node, &clk) != 0)
+			clk = 0;
 	}
 
 	/*

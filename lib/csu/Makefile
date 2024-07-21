@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 .if exists(${.CURDIR}/${MACHINE_ARCH:S/powerpc64le/powerpc64/})

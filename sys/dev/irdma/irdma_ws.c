@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
  *
- * Copyright (c) 2017 - 2021 Intel Corporation
+ * Copyright (c) 2017 - 2023 Intel Corporation
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,7 +31,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*$FreeBSD$*/
 
 #include "osdep.h"
 #include "irdma_hmc.h"
@@ -58,8 +57,8 @@ irdma_alloc_node(struct irdma_sc_vsi *vsi,
 	struct irdma_ws_node *node;
 	u16 node_index = 0;
 
-	ws_mem.size = sizeof(struct irdma_ws_node);
-	ws_mem.va = kzalloc(ws_mem.size, GFP_ATOMIC);
+	ws_mem.size = sizeof(*node);
+	ws_mem.va = kzalloc(ws_mem.size, GFP_KERNEL);
 	if (!ws_mem.va)
 		return NULL;
 
@@ -83,7 +82,6 @@ irdma_alloc_node(struct irdma_sc_vsi *vsi,
 		if (!node->rel_bw)
 			node->rel_bw = 1;
 
-		node->lan_qs_handle = vsi->qos[user_pri].lan_qos_handle;
 		node->prio_type = IRDMA_PRIO_WEIGHTED_RR;
 	} else {
 		node->rel_bw = 1;
@@ -111,7 +109,7 @@ irdma_free_node(struct irdma_sc_vsi *vsi,
 		irdma_free_ws_node_id(vsi->dev, node->index);
 
 	ws_mem.va = node;
-	ws_mem.size = sizeof(struct irdma_ws_node);
+	ws_mem.size = sizeof(*node);
 	kfree(ws_mem.va);
 }
 
@@ -294,13 +292,13 @@ irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 
 	ws_tree_root = vsi->dev->ws_tree_root;
 	if (!ws_tree_root) {
-		irdma_debug(vsi->dev, IRDMA_DEBUG_WS, "Creating root node\n");
 		ws_tree_root = irdma_alloc_node(vsi, user_pri,
 						WS_NODE_TYPE_PARENT, NULL);
 		if (!ws_tree_root) {
 			ret = -ENOMEM;
 			goto exit;
 		}
+		irdma_debug(vsi->dev, IRDMA_DEBUG_WS, "Creating root node = %d\n", ws_tree_root->index);
 
 		ret = irdma_ws_cqp_cmd(vsi, ws_tree_root, IRDMA_OP_WS_ADD_NODE);
 		if (ret) {
@@ -383,7 +381,6 @@ irdma_ws_add(struct irdma_sc_vsi *vsi, u8 user_pri)
 	for (i = 0; i < IRDMA_MAX_USER_PRIORITY; i++) {
 		if (vsi->qos[i].traffic_class == traffic_class) {
 			vsi->qos[i].qs_handle = tc_node->qs_handle;
-			vsi->qos[i].lan_qos_handle = tc_node->lan_qs_handle;
 			vsi->qos[i].l2_sched_node_id = tc_node->l2_sched_node_id;
 			vsi->qos[i].valid = true;
 		}

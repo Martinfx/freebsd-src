@@ -48,9 +48,6 @@
 
 #include "opt_ddb.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/malloc.h>
 #include <sys/queue.h>
@@ -229,8 +226,6 @@ undefinedinstruction(struct trapframe *frame)
 	/* Enable interrupts if they were enabled before the exception. */
 	if (__predict_true(frame->tf_spsr & PSR_I) == 0)
 		enable_interrupts(PSR_I);
-	if (__predict_true(frame->tf_spsr & PSR_F) == 0)
-		enable_interrupts(PSR_F);
 
 	VM_CNT_INC(v_trap);
 
@@ -345,11 +340,11 @@ undefinedinstruction(struct trapframe *frame)
 #else
 			printf("No debugger in kernel.\n");
 #endif
-			return;
-		}
-		else
-			panic("Undefined instruction in kernel (0x%08x).\n",
+		} else if (uh == NULL) {
+			panic("Undefined instruction in kernel (0x%08x)",
 			    fault_instruction);
+		}
+		return;
 	}
 
 	userret(td, frame);

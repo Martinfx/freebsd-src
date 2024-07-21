@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Mariusz Zaborski <oshogbo@FreeBSD.org>
  *
@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/cnv.h>
 #include <sys/dnv.h>
 #include <sys/nv.h>
@@ -107,7 +105,7 @@ hostent_unpack(const nvlist_t *nvl, struct hostent *hp)
 	hp->h_length = (int)nvlist_get_number(nvl, "length");
 
 	nitems = (unsigned int)nvlist_get_number(nvl, "naliases");
-	hp->h_aliases = calloc(sizeof(hp->h_aliases[0]), nitems + 1);
+	hp->h_aliases = calloc(nitems + 1, sizeof(hp->h_aliases[0]));
 	if (hp->h_aliases == NULL)
 		goto fail;
 	for (ii = 0; ii < nitems; ii++) {
@@ -121,7 +119,7 @@ hostent_unpack(const nvlist_t *nvl, struct hostent *hp)
 	hp->h_aliases[ii] = NULL;
 
 	nitems = (unsigned int)nvlist_get_number(nvl, "naddrs");
-	hp->h_addr_list = calloc(sizeof(hp->h_addr_list[0]), nitems + 1);
+	hp->h_addr_list = calloc(nitems + 1, sizeof(hp->h_addr_list[0]));
 	if (hp->h_addr_list == NULL)
 		goto fail;
 	for (ii = 0; ii < nitems; ii++) {
@@ -370,9 +368,9 @@ cap_getnameinfo(cap_channel_t *chan, const struct sockaddr *sa, socklen_t salen,
 	}
 
 	if (host != NULL && nvlist_exists_string(nvl, "host"))
-		strlcpy(host, nvlist_get_string(nvl, "host"), hostlen + 1);
+		strlcpy(host, nvlist_get_string(nvl, "host"), hostlen);
 	if (serv != NULL && nvlist_exists_string(nvl, "serv"))
-		strlcpy(serv, nvlist_get_string(nvl, "serv"), servlen + 1);
+		strlcpy(serv, nvlist_get_string(nvl, "serv"), servlen);
 	nvlist_destroy(nvl);
 	return (0);
 }
@@ -879,14 +877,14 @@ net_getnameinfo(const nvlist_t *limits, const nvlist_t *nvlin, nvlist_t *nvlout)
 	servlen = (size_t)nvlist_get_number(nvlin, "servlen");
 
 	if (hostlen > 0) {
-		host = calloc(1, hostlen + 1);
+		host = calloc(1, hostlen);
 		if (host == NULL) {
 			error = EAI_MEMORY;
 			goto out;
 		}
 	}
 	if (servlen > 0) {
-		serv = calloc(1, servlen + 1);
+		serv = calloc(1, servlen);
 		if (serv == NULL) {
 			error = EAI_MEMORY;
 			goto out;
@@ -1234,7 +1232,7 @@ verify_name2addr_newlimits(const nvlist_t *oldlimits,
 	oldfunclimits = NULL;
 	if (oldlimits != NULL) {
 		oldfunclimits = dnvlist_get_nvlist(oldlimits,
-		    LIMIT_NV_ADDR2NAME, NULL);
+		    LIMIT_NV_NAME2ADDR, NULL);
 	}
 
 	cookie = NULL;

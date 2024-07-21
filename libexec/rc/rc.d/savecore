@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: savecore
@@ -20,11 +19,11 @@ savecore_prestart()
 {
 	# Quit if we have no dump device
 	case ${dumpdev} in
-	[Nn][Oo] | '')
+	[Nn][Oo])
 		debug 'No dump device. Quitting.'
 		return 1
 		;;
-	[Aa][Uu][Tt][Oo])
+	[Aa][Uu][Tt][Oo] | '')
 		if [ ! -L /dev/dumpdev ]; then
 			return 1
 		fi
@@ -79,4 +78,8 @@ savecore_start()
 }
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj
+savecore_svcj="NO"
+
 run_rc_command "$1"

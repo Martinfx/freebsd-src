@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Alexander V. Chernikov
  *
@@ -23,8 +23,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -79,6 +77,7 @@ struct nhop_priv {
 	uint16_t		nh_type;	/* nexthop type */
 	uint32_t		rt_flags;	/* routing flags for the control plane */
 	uint32_t		nh_expire;	/* path expiration time */
+	uint32_t		nh_uidx;	/* userland-provided index */
 	/* nhop lookup comparison end */
 	uint32_t		nh_idx;		/* nexthop index */
 	uint32_t		nh_fibnum;	/* nexthop fib */
@@ -86,6 +85,7 @@ struct nhop_priv {
 	u_int			nh_refcnt;	/* number of references, refcount(9)  */
 	u_int			nh_linked;	/* refcount(9), == 2 if linked to the list */
 	int			nh_finalized;	/* non-zero if finalized() was called */
+	uint8_t			nh_origin;	/* protocol that originated the nexthop */
 	struct nhop_object	*nh;		/* backreference to the dataplane nhop */
 	struct nh_control	*nh_control;	/* backreference to the rnh */
 	struct nhop_priv	*nh_next;	/* hash table membership */

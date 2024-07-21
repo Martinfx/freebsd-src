@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -28,9 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 
 #include <sys/param.h>
@@ -58,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <x86/include/busdma_impl.h>
 #include <dev/iommu/busdma_iommu.h>
 #include <x86/iommu/intel_reg.h>
+#include <x86/iommu/x86_iommu.h>
 #include <x86/iommu/intel_dmar.h>
 
 static bool
@@ -504,13 +502,13 @@ dmar_init_qi(struct dmar_unit *unit)
 
 	/* The invalidation queue reads by DMARs are always coherent. */
 	unit->inv_queue = kmem_alloc_contig(unit->inv_queue_size, M_WAITOK |
-	    M_ZERO, 0, dmar_high, PAGE_SIZE, 0, VM_MEMATTR_DEFAULT);
+	    M_ZERO, 0, iommu_high, PAGE_SIZE, 0, VM_MEMATTR_DEFAULT);
 	unit->inv_waitd_seq_hw_phys = pmap_kextract(
 	    (vm_offset_t)&unit->inv_waitd_seq_hw);
 
 	DMAR_LOCK(unit);
 	dmar_write8(unit, DMAR_IQT_REG, 0);
-	iqa = pmap_kextract(unit->inv_queue);
+	iqa = pmap_kextract((uintptr_t)unit->inv_queue);
 	iqa |= qi_sz;
 	dmar_write8(unit, DMAR_IQA_REG, iqa);
 	dmar_enable_qi(unit);
@@ -552,7 +550,7 @@ dmar_fini_qi(struct dmar_unit *unit)
 	DMAR_UNLOCK(unit);
 
 	kmem_free(unit->inv_queue, unit->inv_queue_size);
-	unit->inv_queue = 0;
+	unit->inv_queue = NULL;
 	unit->inv_queue_size = 0;
 	unit->qi_enabled = 0;
 }

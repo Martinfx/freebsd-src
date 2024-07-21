@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 ATF_TESTS_C=	net_test

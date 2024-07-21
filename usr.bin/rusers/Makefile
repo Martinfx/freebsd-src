@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG = rusers
 
 LIBADD=	rpcsvc

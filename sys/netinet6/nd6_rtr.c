@@ -32,8 +32,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -56,6 +54,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/if_dl.h>
 #include <net/route.h>
@@ -99,10 +98,14 @@ VNET_DEFINE(u_int32_t, ip6_temp_valid_lifetime) = DEF_TEMP_VALID_LIFETIME;
 VNET_DEFINE(int, ip6_temp_regen_advance) = TEMPADDR_REGEN_ADVANCE;
 
 #ifdef EXPERIMENTAL
-VNET_DEFINE(int, nd6_ignore_ipv6_only_ra) = 1;
+VNET_DEFINE_STATIC(int, nd6_ignore_ipv6_only_ra) = 1;
+#define	V_nd6_ignore_ipv6_only_ra	VNET(nd6_ignore_ipv6_only_ra)
+SYSCTL_INT(_net_inet6_icmp6, OID_AUTO,
+    nd6_ignore_ipv6_only_ra, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(nd6_ignore_ipv6_only_ra), 0,
+    "Ignore the 'IPv6-Only flag' in RA messages in compliance with "
+    "draft-ietf-6man-ipv6only-flag");
 #endif
-
-SYSCTL_DECL(_net_inet6_icmp6);
 
 /* RTPREF_MEDIUM has to be 0! */
 #define RTPREF_HIGH	1
@@ -674,30 +677,21 @@ pfxrtr_del(struct nd_pfxrouter *pfr)
 static void
 defrouter_addreq(struct nd_defrouter *new)
 {
-	struct sockaddr_in6 def, mask, gate;
-	struct rt_addrinfo info;
-	struct rib_cmd_info rc;
-	unsigned int fibnum;
-	int error;
-
-	bzero(&def, sizeof(def));
-	bzero(&mask, sizeof(mask));
-	bzero(&gate, sizeof(gate));
-
-	def.sin6_len = mask.sin6_len = gate.sin6_len =
-	    sizeof(struct sockaddr_in6);
-	def.sin6_family = gate.sin6_family = AF_INET6;
-	gate.sin6_addr = new->rtaddr;
-	fibnum = new->ifp->if_fib;
-
-	bzero((caddr_t)&info, sizeof(info));
-	info.rti_flags = RTF_GATEWAY;
-	info.rti_info[RTAX_DST] = (struct sockaddr *)&def;
-	info.rti_info[RTAX_GATEWAY] = (struct sockaddr *)&gate;
-	info.rti_info[RTAX_NETMASK] = (struct sockaddr *)&mask;
+	uint32_t fibnum = new->ifp->if_fib;
+	struct rib_cmd_info rc = {};
+	int error = 0;
 
 	NET_EPOCH_ASSERT();
-	error = rib_action(fibnum, RTM_ADD, &info, &rc);
+
+	struct sockaddr_in6 gw = {
+		.sin6_family = AF_INET6,
+		.sin6_len = sizeof(struct sockaddr_in6),
+		.sin6_addr = new->rtaddr,
+	};
+
+	error = rib_add_default_route(fibnum, AF_INET6, new->ifp,
+	    (struct sockaddr *)&gw, &rc);
+
 	if (error == 0) {
 		struct nhop_object *nh = nhop_select_func(rc.rc_nh_new, 0);
 		rt_routemsg(RTM_ADD, rc.rc_rt, nh, fibnum);
@@ -713,31 +707,25 @@ defrouter_addreq(struct nd_defrouter *new)
 static void
 defrouter_delreq(struct nd_defrouter *dr)
 {
-	struct sockaddr_in6 def, mask, gate;
-	struct rt_addrinfo info;
-	struct rib_cmd_info rc;
+	uint32_t fibnum = dr->ifp->if_fib;
 	struct epoch_tracker et;
-	unsigned int fibnum;
+	struct rib_cmd_info rc;
 	int error;
 
-	bzero(&def, sizeof(def));
-	bzero(&mask, sizeof(mask));
-	bzero(&gate, sizeof(gate));
+	struct sockaddr_in6 dst = {
+		.sin6_family = AF_INET6,
+		.sin6_len = sizeof(struct sockaddr_in6),
+	};
 
-	def.sin6_len = mask.sin6_len = gate.sin6_len =
-	    sizeof(struct sockaddr_in6);
-	def.sin6_family = gate.sin6_family = AF_INET6;
-	gate.sin6_addr = dr->rtaddr;
-	fibnum = dr->ifp->if_fib;
-
-	bzero((caddr_t)&info, sizeof(info));
-	info.rti_flags = RTF_GATEWAY;
-	info.rti_info[RTAX_DST] = (struct sockaddr *)&def;
-	info.rti_info[RTAX_GATEWAY] = (struct sockaddr *)&gate;
-	info.rti_info[RTAX_NETMASK] = (struct sockaddr *)&mask;
+	struct sockaddr_in6 gw = {
+		.sin6_family = AF_INET6,
+		.sin6_len = sizeof(struct sockaddr_in6),
+		.sin6_addr = dr->rtaddr,
+	};
 
 	NET_EPOCH_ENTER(et);
-	error = rib_action(fibnum, RTM_DELETE, &info, &rc);
+	error = rib_del_route_px(fibnum, (struct sockaddr *)&dst, 0,
+		    rib_match_gw, (struct sockaddr *)&gw, 0, &rc);
 	if (error == 0) {
 		struct nhop_object *nh = nhop_select_func(rc.rc_nh_old, 0);
 		rt_routemsg(RTM_DELETE, rc.rc_rt, nh, fibnum);

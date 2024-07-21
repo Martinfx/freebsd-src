@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -346,7 +344,7 @@ acpi_cmbat_get_bix(void *arg)
     bix_buffer.Pointer = NULL;
     bix_buffer.Length = ACPI_ALLOCATE_BUFFER;
 
-    for (n = 0; n < sizeof(bobjs); n++) {
+    for (n = 0; n < nitems(bobjs); n++) {
 	as = AcpiEvaluateObject(h, bobjs[n].name, NULL, &bix_buffer);
 	if (!ACPI_FAILURE(as)) {
 	    res = (ACPI_OBJECT *)bix_buffer.Pointer;
@@ -357,7 +355,7 @@ acpi_cmbat_get_bix(void *arg)
         bix_buffer.Length = ACPI_ALLOCATE_BUFFER;
     }
     /* Both _BIF and _BIX were not found. */
-    if (n == sizeof(bobjs)) {
+    if (n == nitems(bobjs)) {
 	ACPI_VPRINT(dev, acpi_device_get_parent_softc(dev),
 	    "error fetching current battery info -- %s\n",
 	    AcpiFormatException(as));
@@ -533,7 +531,7 @@ acpi_cmbat_init_battery(void *arg)
 
     dev = (device_t)arg;
     ACPI_VPRINT(dev, acpi_device_get_parent_softc(dev),
-	"battery enitialization start\n");
+	"battery initialization start\n");
 
     /*
      * Try repeatedly to get valid data from the battery.  Since the

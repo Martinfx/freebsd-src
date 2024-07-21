@@ -20,8 +20,6 @@
  *
  * Portions Copyright 2006-2008 John Birrell jb@freebsd.org
  *
- * $FreeBSD$
- *
  */
 
 /*
@@ -29,7 +27,6 @@
  * Use is subject to license terms.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 
 #include <sys/dtrace.h>
@@ -57,8 +54,7 @@
 #define	FBT_PATCHVAL		0xf0
 #endif
 
-#define	FBT_ENTRY	"entry"
-#define	FBT_RETURN	"return"
+#define FBT_AFRAMES 2
 
 int
 fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch __unused)
@@ -84,6 +80,16 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch __unused)
 		if ((uintptr_t)fbt->fbtp_patchpoint != addr)
 			continue;
 		fbtrval = fbt->fbtp_rval;
+
+		/*
+		 * Report the address of the breakpoint for the benefit
+		 * of consumers fetching register values with regs[].
+		 */
+#ifdef __i386__
+		frame->tf_eip--;
+#else
+		frame->tf_rip--;
+#endif
 		for (; fbt != NULL; fbt = fbt->fbtp_tracenext) {
 			ASSERT(fbt->fbtp_rval == fbtrval);
 			if (fbt->fbtp_roffset == 0) {
@@ -143,6 +149,12 @@ fbt_invop(uintptr_t addr, struct trapframe *frame, uintptr_t scratch __unused)
 				cpu->cpu_dtrace_caller = 0;
 			}
 		}
+		/* Advance to the instruction following the breakpoint. */
+#ifdef __i386__
+		frame->tf_eip++;
+#else
+		frame->tf_rip++;
+#endif
 		return (fbtrval);
 	}
 
@@ -221,7 +233,7 @@ fbt_provide_module_function(linker_file_t lf, int symindx,
 	fbt = malloc(sizeof (fbt_probe_t), M_FBT, M_WAITOK | M_ZERO);
 	fbt->fbtp_name = name;
 	fbt->fbtp_id = dtrace_probe_create(fbt_id, modname,
-	    name, FBT_ENTRY, 3, fbt);
+	    name, FBT_ENTRY, FBT_AFRAMES, fbt);
 	fbt->fbtp_patchpoint = instr;
 	fbt->fbtp_ctl = lf;
 	fbt->fbtp_loadcnt = lf->loadcnt;
@@ -315,7 +327,7 @@ again:
 
 	if (retfbt == NULL) {
 		fbt->fbtp_id = dtrace_probe_create(fbt_id, modname,
-		    name, FBT_RETURN, 3, fbt);
+		    name, FBT_RETURN, FBT_AFRAMES, fbt);
 	} else {
 		retfbt->fbtp_probenext = fbt;
 		fbt->fbtp_id = retfbt->fbtp_id;

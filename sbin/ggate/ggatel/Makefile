@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${.CURDIR:H}/shared
 
 PROG=	ggatel

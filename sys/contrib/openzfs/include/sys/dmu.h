@@ -27,6 +27,7 @@
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright 2013 Saso Kiselkov. All rights reserved.
  * Copyright (c) 2017, Intel Corporation.
+ * Copyright (c) 2022 Hewlett Packard Enterprise Development LP.
  */
 
 /* Portions Copyright 2010 Robert Milkowski */
@@ -136,18 +137,24 @@ typedef enum dmu_object_byteswap {
 #endif
 
 #define	DMU_OT_IS_METADATA(ot) (((ot) & DMU_OT_NEWTYPE) ? \
-	((ot) & DMU_OT_METADATA) : \
+	(((ot) & DMU_OT_METADATA) != 0) : \
 	DMU_OT_IS_METADATA_IMPL(ot))
 
 #define	DMU_OT_IS_DDT(ot) \
 	((ot) == DMU_OT_DDT_ZAP)
+
+#define	DMU_OT_IS_CRITICAL(ot) \
+	(DMU_OT_IS_METADATA(ot) && \
+	(ot) != DMU_OT_DNODE && \
+	(ot) != DMU_OT_DIRECTORY_CONTENTS && \
+	(ot) != DMU_OT_SA)
 
 /* Note: ztest uses DMU_OT_UINT64_OTHER as a proxy for file blocks */
 #define	DMU_OT_IS_FILE(ot) \
 	((ot) == DMU_OT_PLAIN_FILE_CONTENTS || (ot) == DMU_OT_UINT64_OTHER)
 
 #define	DMU_OT_IS_ENCRYPTED(ot) (((ot) & DMU_OT_NEWTYPE) ? \
-	((ot) & DMU_OT_ENCRYPTED) : \
+	(((ot) & DMU_OT_ENCRYPTED) != 0) : \
 	DMU_OT_IS_ENCRYPTED_IMPL(ot))
 
 /*
@@ -371,6 +378,7 @@ typedef struct dmu_buf {
 #define	DMU_POOL_DDT_STATS		"DDT-statistics"
 #define	DMU_POOL_CREATION_VERSION	"creation_version"
 #define	DMU_POOL_SCAN			"scan"
+#define	DMU_POOL_ERRORSCRUB		"error_scrub"
 #define	DMU_POOL_FREE_BPOBJ		"free_bpobj"
 #define	DMU_POOL_BPTREE_OBJ		"bptree_obj"
 #define	DMU_POOL_EMPTY_BPOBJ		"empty_bpobj"
@@ -564,11 +572,15 @@ int dmu_buf_hold(objset_t *os, uint64_t object, uint64_t offset,
 int dmu_buf_hold_array(objset_t *os, uint64_t object, uint64_t offset,
     uint64_t length, int read, const void *tag, int *numbufsp,
     dmu_buf_t ***dbpp);
+int dmu_buf_hold_noread(objset_t *os, uint64_t object, uint64_t offset,
+    const void *tag, dmu_buf_t **dbp);
 int dmu_buf_hold_by_dnode(dnode_t *dn, uint64_t offset,
     const void *tag, dmu_buf_t **dbp, int flags);
 int dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset,
     uint64_t length, boolean_t read, const void *tag, int *numbufsp,
     dmu_buf_t ***dbpp, uint32_t flags);
+int dmu_buf_hold_noread_by_dnode(dnode_t *dn, uint64_t offset, const void *tag,
+    dmu_buf_t **dbp);
 /*
  * Add a reference to a dmu buffer that has already been held via
  * dmu_buf_hold() in the current context.
@@ -639,6 +651,9 @@ typedef struct dmu_buf_user {
 	 * Asynchronous user eviction callback state.
 	 */
 	taskq_ent_t	dbu_tqent;
+
+	/* Size of user data, for inclusion in dbuf_cache accounting. */
+	uint64_t	dbu_size;
 
 	/*
 	 * This instance's eviction function pointers.
@@ -722,13 +737,21 @@ void *dmu_buf_replace_user(dmu_buf_t *db,
 void *dmu_buf_remove_user(dmu_buf_t *db, dmu_buf_user_t *user);
 
 /*
+ * User data size accounting. This can be used to artifically inflate the size
+ * of the dbuf during cache accounting, so that dbuf_evict_thread evicts enough
+ * to satisfy memory reclaim requests. It's not used for anything else, and
+ * defaults to 0.
+ */
+uint64_t dmu_buf_user_size(dmu_buf_t *db);
+void dmu_buf_add_user_size(dmu_buf_t *db, uint64_t nadd);
+void dmu_buf_sub_user_size(dmu_buf_t *db, uint64_t nsub);
+
+/*
  * Returns the user data (dmu_buf_user_t *) associated with this dbuf.
  */
 void *dmu_buf_get_user(dmu_buf_t *db);
 
 objset_t *dmu_buf_get_objset(dmu_buf_t *db);
-dnode_t *dmu_buf_dnode_enter(dmu_buf_t *db);
-void dmu_buf_dnode_exit(dmu_buf_t *db);
 
 /* Block until any in-progress dmu buf user evictions complete. */
 void dmu_buf_user_evict_wait(void);
@@ -774,6 +797,11 @@ void dmu_buf_set_crypt_params(dmu_buf_t *db_fake, boolean_t byteorder,
 dmu_tx_t *dmu_tx_create(objset_t *os);
 void dmu_tx_hold_write(dmu_tx_t *tx, uint64_t object, uint64_t off, int len);
 void dmu_tx_hold_write_by_dnode(dmu_tx_t *tx, dnode_t *dn, uint64_t off,
+    int len);
+void dmu_tx_hold_append(dmu_tx_t *tx, uint64_t object, uint64_t off, int len);
+void dmu_tx_hold_append_by_dnode(dmu_tx_t *tx, dnode_t *dn, uint64_t off,
+    int len);
+void dmu_tx_hold_clone_by_dnode(dmu_tx_t *tx, dnode_t *dn, uint64_t off,
     int len);
 void dmu_tx_hold_free(dmu_tx_t *tx, uint64_t object, uint64_t off,
     uint64_t len);
@@ -865,13 +893,16 @@ int dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset,
 int dmu_assign_arcbuf_by_dbuf(dmu_buf_t *handle, uint64_t offset,
     struct arc_buf *buf, dmu_tx_t *tx);
 #define	dmu_assign_arcbuf	dmu_assign_arcbuf_by_dbuf
-extern int zfs_max_recordsize;
+extern uint_t zfs_max_recordsize;
 
 /*
  * Asynchronously try to read in the data.
  */
 void dmu_prefetch(objset_t *os, uint64_t object, int64_t level, uint64_t offset,
 	uint64_t len, enum zio_priority pri);
+void dmu_prefetch_by_dnode(dnode_t *dn, int64_t level, uint64_t offset,
+	uint64_t len, enum zio_priority pri);
+void dmu_prefetch_dnode(objset_t *os, uint64_t object, enum zio_priority pri);
 
 typedef struct dmu_object_info {
 	/* All sizes are in bytes unless otherwise indicated. */
@@ -907,7 +938,7 @@ typedef const struct dmu_object_byteswap_info {
 } dmu_object_byteswap_info_t;
 
 extern const dmu_object_type_info_t dmu_ot[DMU_OT_NUMTYPES];
-extern const dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS];
+extern dmu_object_byteswap_info_t dmu_ot_byteswap[DMU_BSWAP_NUMFUNCS];
 
 /*
  * Get information on a DMU object.
@@ -1052,6 +1083,11 @@ int dmu_sync(struct zio *zio, uint64_t txg, dmu_sync_cb_t *done, zgd_t *zgd);
 int dmu_offset_next(objset_t *os, uint64_t object, boolean_t hole,
     uint64_t *off);
 
+int dmu_read_l0_bps(objset_t *os, uint64_t object, uint64_t offset,
+    uint64_t length, struct blkptr *bps, size_t *nbpsp);
+int dmu_brt_clone(objset_t *os, uint64_t object, uint64_t offset,
+    uint64_t length, dmu_tx_t *tx, const struct blkptr *bps, size_t nbps);
+
 /*
  * Initial setup and final teardown.
  */
@@ -1070,7 +1106,7 @@ int dmu_diff(const char *tosnap_name, const char *fromsnap_name,
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
 extern uint64_t zfs_crc64_table[256];
 
-extern int dmu_prefetch_max;
+extern uint_t dmu_prefetch_max;
 
 #ifdef	__cplusplus
 }

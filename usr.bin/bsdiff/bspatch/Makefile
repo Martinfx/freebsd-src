@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	bspatch
 
 LIBADD=	bz2

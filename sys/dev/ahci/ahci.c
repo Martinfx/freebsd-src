@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2012 Alexander Motin <mav@FreeBSD.org>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/module.h>
@@ -643,16 +640,15 @@ ahci_alloc_resource(device_t dev, device_t child, int type, int *rid,
 }
 
 int
-ahci_release_resource(device_t dev, device_t child, int type, int rid,
-    struct resource *r)
+ahci_release_resource(device_t dev, device_t child, struct resource *r)
 {
 
-	switch (type) {
+	switch (rman_get_type(r)) {
 	case SYS_RES_MEMORY:
 		rman_release_resource(r);
 		return (0);
 	case SYS_RES_IRQ:
-		if (rid != ATA_IRQ_RID)
+		if (rman_get_rid(r) != ATA_IRQ_RID)
 			return (ENOENT);
 		return (0);
 	}
@@ -769,7 +765,7 @@ static int
 ahci_ch_probe(device_t dev)
 {
 
-	device_set_desc_copy(dev, "AHCI channel");
+	device_set_desc(dev, "AHCI channel");
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -1484,7 +1480,7 @@ ahci_ch_intr_main(struct ahci_channel *ch, uint32_t istatus)
 			ahci_done(ch, fccb);
 		}
 		for (i = 0; i < ch->numslots; i++) {
-			/* XXX: reqests in loading state. */
+			/* XXX: requests in loading state. */
 			if (((err >> i) & 1) == 0)
 				continue;
 			if (port >= 0 &&
@@ -2179,7 +2175,7 @@ completeall:
 	}
 	xpt_setup_ccb(&ccb->ccb_h, ch->hold[i]->ccb_h.path,
 	    ch->hold[i]->ccb_h.pinfo.priority);
-	if (ccb->ccb_h.func_code == XPT_ATA_IO) {
+	if (ch->hold[i]->ccb_h.func_code == XPT_ATA_IO) {
 		/* READ LOG */
 		ccb->ccb_h.recovery_type = RECOVERY_READ_LOG;
 		ccb->ccb_h.func_code = XPT_ATA_IO;
@@ -2605,10 +2601,14 @@ static int
 ahci_sata_connect(struct ahci_channel *ch)
 {
 	u_int32_t status;
-	int timeout, found = 0;
+	int timeout, timeoutslot, found = 0;
 
-	/* Wait up to 100ms for "connect well" */
-	for (timeout = 0; timeout < 1000 ; timeout++) {
+	/*
+	 * Wait for "connect well", up to 100ms by default and
+	 * up to 500ms for devices with the SLOWDEV quirk.
+	 */
+	timeoutslot = ((ch->quirks & AHCI_Q_SLOWDEV) ? 5000 : 1000);
+	for (timeout = 0; timeout < timeoutslot; timeout++) {
 		status = ATA_INL(ch->r_mem, AHCI_P_SSTS);
 		if ((status & ATA_SS_DET_MASK) != ATA_SS_DET_NO_DEVICE)
 			found = 1;
@@ -2627,7 +2627,7 @@ ahci_sata_connect(struct ahci_channel *ch)
 			break;
 		DELAY(100);
 	}
-	if (timeout >= 1000 || !found) {
+	if (timeout >= timeoutslot || !found) {
 		if (bootverbose) {
 			device_printf(ch->dev,
 			    "SATA connect timeout time=%dus status=%08x\n",

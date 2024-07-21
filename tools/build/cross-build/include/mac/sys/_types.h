@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #pragma once
 #include_next <sys/_types.h>
@@ -43,5 +41,3 @@
  * __darwin_ct_rune_t exists.
  */
 typedef __darwin_ct_rune_t __ct_rune_t;
-/* Needed for opensolaris compat. */
-typedef	__int64_t	off64_t;

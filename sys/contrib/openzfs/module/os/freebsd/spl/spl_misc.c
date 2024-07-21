@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -40,6 +37,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/zfs_context.h>
 
 static struct opensolaris_utsname hw_utsname = {
+	.sysname = ostype,
+	.nodename = prison0.pr_hostname,
+	.release = osrelease,
 	.machine = MACHINE
 };
 
@@ -52,10 +52,6 @@ utsname(void)
 static void
 opensolaris_utsname_init(void *arg)
 {
-
-	hw_utsname.sysname = ostype;
-	hw_utsname.nodename = prison0.pr_hostname;
-	hw_utsname.release = osrelease;
 	snprintf(hw_utsname.version, sizeof (hw_utsname.version),
 	    "%d", osreldate);
 }
@@ -94,7 +90,7 @@ ddi_copyout(const void *from, void *to, size_t len, int flags)
 	return (copyout(from, to, len));
 }
 
-int
+void
 spl_panic(const char *file, const char *func, int line, const char *fmt, ...)
 {
 	va_list ap;

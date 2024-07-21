@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <stand.h>
 #include "bootstrap.h"
 #include "libofw.h"
@@ -54,7 +51,7 @@ struct devsw *devsw[] = {
     &ofwdisk,
 #endif
 #if defined(LOADER_NET_SUPPORT)
-    &netdev,
+    &ofw_netdev,
 #endif
     NULL
 };

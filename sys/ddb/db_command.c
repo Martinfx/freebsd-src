@@ -33,9 +33,6 @@
  * Command dispatcher.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/cons.h>
@@ -126,15 +123,19 @@ static struct db_command db_cmds[] = {
 	DB_CMD("set",		db_set_cmd,		CS_OWN|DB_CMD_MEMSAFE),
 	DB_CMD("write",		db_write_cmd,		CS_MORE|CS_SET_DOT),
 	DB_CMD("w",		db_write_cmd,		CS_MORE|CS_SET_DOT),
-	DB_CMD("delete",	db_delete_cmd,		DB_CMD_MEMSAFE),
-	DB_CMD("d",		db_delete_cmd,		DB_CMD_MEMSAFE),
+	DB_CMD("delete",	db_delete_cmd,		0),
+	DB_CMD("d",		db_delete_cmd,		0),
 	DB_CMD("dump",		db_dump,		DB_CMD_MEMSAFE),
-	DB_CMD("break",		db_breakpoint_cmd,	DB_CMD_MEMSAFE),
-	DB_CMD("b",		db_breakpoint_cmd,	DB_CMD_MEMSAFE),
-	DB_CMD("dwatch",	db_deletewatch_cmd,	DB_CMD_MEMSAFE),
-	DB_CMD("watch",		db_watchpoint_cmd,	CS_MORE|DB_CMD_MEMSAFE),
-	DB_CMD("dhwatch",	db_deletehwatch_cmd,	DB_CMD_MEMSAFE),
-	DB_CMD("hwatch",	db_hwatchpoint_cmd,	DB_CMD_MEMSAFE),
+#ifdef HAS_HW_BREAKPOINT
+	DB_CMD("dhbreak",	db_deletehbreak_cmd,	0),
+	DB_CMD("hbreak",	db_hbreakpoint_cmd,	0),
+#endif
+	DB_CMD("break",		db_breakpoint_cmd,	0),
+	DB_CMD("b",		db_breakpoint_cmd,	0),
+	DB_CMD("dwatch",	db_deletewatch_cmd,	0),
+	DB_CMD("watch",		db_watchpoint_cmd,	CS_MORE),
+	DB_CMD("dhwatch",	db_deletehwatch_cmd,	0),
+	DB_CMD("hwatch",	db_hwatchpoint_cmd,	0),
 	DB_CMD("step",		db_single_step_cmd,	DB_CMD_MEMSAFE),
 	DB_CMD("s",		db_single_step_cmd,	DB_CMD_MEMSAFE),
 	DB_CMD("continue",	db_continue_cmd,	DB_CMD_MEMSAFE),
@@ -166,6 +167,7 @@ static struct db_command db_cmds[] = {
 	DB_CMD("capture",	db_capture_cmd,		CS_OWN|DB_CMD_MEMSAFE),
 	DB_CMD("textdump",	db_textdump_cmd,	CS_OWN|DB_CMD_MEMSAFE),
 	DB_CMD("findstack",	db_findstack_cmd,	0),
+	DB_CMD("pprint",	db_pprint_cmd,		CS_OWN),
 };
 struct db_command_table db_cmd_table = LIST_HEAD_INITIALIZER(db_cmd_table);
 
@@ -578,6 +580,7 @@ db_error(const char *s)
 	    db_printf("%s", s);
 	db_flush_lex();
 	kdb_reenter_silent();
+	panic("%s: did not reenter debugger", __func__);
 }
 
 static void
@@ -745,7 +748,7 @@ out:
 
 static void
 db_reset(db_expr_t addr, bool have_addr, db_expr_t count __unused,
-    char *modif __unused)
+    char *modif)
 {
 	int delay, loop;
 
@@ -768,6 +771,18 @@ db_reset(db_expr_t addr, bool have_addr, db_expr_t count __unused,
 			if (cncheckc() != -1)
 				return;
 		}
+	}
+
+	/*
+	 * Conditionally try the standard reboot path, so any registered
+	 * shutdown/reset handlers have a chance to run first. Some platforms
+	 * may not support the machine-dependent mechanism used by cpu_reset()
+	 * and rely on some other non-standard mechanism to perform the reset.
+	 * For example, the BCM2835 watchdog driver or gpio-poweroff driver.
+	 */
+	if (modif[0] != 's') {
+		kern_reboot(RB_NOSYNC);
+		/* NOTREACHED */
 	}
 
 	cpu_reset();

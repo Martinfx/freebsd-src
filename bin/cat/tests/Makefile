@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 NETBSD_ATF_TESTS_SH=		cat_test

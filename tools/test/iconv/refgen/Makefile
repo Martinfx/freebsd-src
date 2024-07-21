@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${.CURDIR}/../tablegen
 
 PROG=	refgen

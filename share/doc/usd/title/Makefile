@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 VOLUME=	usd
 DOC=	Title
 SRCS=	Title

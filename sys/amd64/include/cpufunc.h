@@ -28,8 +28,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -66,10 +64,6 @@ breakpoint(void)
 #define	bsfl(mask)	__builtin_ctz(mask)
 
 #define	bsfq(mask)	__builtin_ctzl(mask)
-
-#define	bsrl(mask)	(__builtin_clz(mask) ^ 0x1f)
-
-#define	bsrq(mask)	(__builtin_clzl(mask) ^ 0x3f)
 
 static __inline void
 clflush(u_long addr)
@@ -126,43 +120,6 @@ enable_intr(void)
 {
 	__asm __volatile("sti");
 }
-
-#ifdef _KERNEL
-
-#define	HAVE_INLINE_FFS
-#define	ffs(x)		__builtin_ffs(x)
-
-#define	HAVE_INLINE_FFSL
-#define	ffsl(x)		__builtin_ffsl(x)
-
-#define	HAVE_INLINE_FFSLL
-#define	ffsll(x)	__builtin_ffsll(x)
-
-#define	HAVE_INLINE_FLS
-
-static __inline __pure2 int
-fls(int mask)
-{
-	return (mask == 0 ? mask : (int)bsrl((u_int)mask) + 1);
-}
-
-#define	HAVE_INLINE_FLSL
-
-static __inline __pure2 int
-flsl(long mask)
-{
-	return (mask == 0 ? mask : (int)bsrq((u_long)mask) + 1);
-}
-
-#define	HAVE_INLINE_FLSLL
-
-static __inline __pure2 int
-flsll(long long mask)
-{
-	return (flsl((long)mask));
-}
-
-#endif /* _KERNEL */
 
 static __inline void
 halt(void)

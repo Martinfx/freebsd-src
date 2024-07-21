@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #pragma once
 #include <sys/cdefs.h>
@@ -42,17 +40,14 @@
 /*
  * On macOS isxdigit(), etc are defined in _ctype.h, but we have to include the
  * target _ctype.h so that localedef uses the correct values.
- * To fix macOS bootstrap, provide a declaration of isxdigit(), etc. here.
- * However, only do so if they are not already define as a macro (as is the
- * case on Linux).
+ * To fix macOS bootstrap, provide a declaration of isxdigit(), etc. here in
+ * a macro-safe way.
  */
-#ifndef isxdigit
 __BEGIN_DECLS
-int	isalpha(int);
-int	isascii(int);
-int	isdigit(int);
-int	isgraph(int);
-int	islower(int);
-int	isxdigit(int);
+int	(isalpha)(int);
+int	(isascii)(int);
+int	(isdigit)(int);
+int	(isgraph)(int);
+int	(islower)(int);
+int	(isxdigit)(int);
 __END_DECLS
-#endif

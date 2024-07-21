@@ -21,8 +21,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include "opt_rss.h"
@@ -937,7 +935,7 @@ static const char *deliv_status_to_str(u8 status)
 	case MLX5_CMD_DELIVERY_STAT_IN_LENGTH_ERR:
 		return "command input length error";
 	case MLX5_CMD_DELIVERY_STAT_OUT_LENGTH_ERR:
-		return "command ouput length error";
+		return "command output length error";
 	case MLX5_CMD_DELIVERY_STAT_RES_FLD_NOT_CLR_ERR:
 		return "reserved fields not cleared";
 	case MLX5_CMD_DELIVERY_STAT_CMD_DESCR_ERR:
@@ -1115,11 +1113,16 @@ mlx5_alloc_cmd_msg(struct mlx5_core_dev *dev, gfp_t flags, size_t size)
 
 		block = mlx5_fwp_get_virt(msg, i * MLX5_CMD_MBOX_SIZE);
 
-		memset(block, 0, MLX5_CMD_MBOX_SIZE);
-
 		if (i != (n - 1)) {
+			memset(block, 0, MLX5_CMD_MBOX_SIZE);
+
 			u64 dma = mlx5_fwp_get_dma(msg, (i + 1) * MLX5_CMD_MBOX_SIZE);
 			block->next = cpu_to_be64(dma);
+		} else {
+			/* Zero the rest of the page to satisfy KMSAN. */
+			memset(block, 0, MLX5_ADAPTER_PAGE_SIZE -
+			    (i % MLX5_NUM_CMDS_IN_ADAPTER_PAGE) *
+			    MLX5_CMD_MBOX_SIZE);
 		}
 		block->block_num = cpu_to_be32(i);
 	}
@@ -1510,6 +1513,7 @@ alloc_cmd_page(struct mlx5_core_dev *dev, struct mlx5_cmd *cmd)
 	}
 	cmd->dma = mlx5_fwp_get_dma(cmd->cmd_page, 0);
 	cmd->cmd_buf = mlx5_fwp_get_virt(cmd->cmd_page, 0);
+	memset(cmd->cmd_buf, 0, MLX5_ADAPTER_PAGE_SIZE);
 	return (0);
 
 failure_alloc_page:

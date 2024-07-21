@@ -28,7 +28,6 @@
 #endif
 
 #include <dev/sound/pcm/sound.h>
-#include <dev/sound/chip.h>
 
 #include "mixer_if.h"
 
@@ -37,8 +36,6 @@
 #include "interface/vchiq_arm/vchiq.h"
 
 #include "vc_vchi_audioserv_defs.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 /* Audio destination */
 #define	DEST_AUTO		0

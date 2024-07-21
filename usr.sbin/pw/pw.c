@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 1996
  *	David L. Nugent.  All rights reserved.
@@ -25,11 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#ifndef lint
-static const char rcsid[] =
-  "$FreeBSD$";
-#endif /* not lint */
 
 #include <err.h>
 #include <fcntl.h>
@@ -106,13 +101,16 @@ static int (*cmdfunc[W_NUM][M_NUM])(int argc, char **argv, char *_name) = {
 
 struct pwconf conf;
 
+static int	mode = -1;
+static int	which = -1;
+
 static int	getindex(const char *words[], const char *word);
 static void	cmdhelp(int mode, int which);
 
 int
 main(int argc, char *argv[])
 {
-	int		mode = -1, which = -1, tmp;
+	int		tmp;
 	struct stat	st;
 	char		arg, *arg1;
 	bool		relocated, nis;
@@ -380,5 +378,11 @@ cmdhelp(int mode, int which)
 
 		fprintf(stderr, "%s", help[which][mode]);
 	}
-	exit(EXIT_FAILURE);
+	exit(EX_USAGE);
+}
+
+void
+usage(void)
+{
+	cmdhelp(mode, which);
 }

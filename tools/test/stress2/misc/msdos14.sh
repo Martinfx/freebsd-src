@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Peter Holm
 #
@@ -27,7 +27,7 @@
 # SUCH DAMAGE.
 #
 
-# Rename(2) test with msdosfs(5)
+# Rename(2) test with msdosfs(4)
 # Test scenario by kib@
 
 . ../default.cfg

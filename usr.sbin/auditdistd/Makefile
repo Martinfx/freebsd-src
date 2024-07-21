@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 
 OPENBSMDIR=${SRCTOP}/contrib/openbsm
@@ -9,9 +8,12 @@ OPENBSMDIR=${SRCTOP}/contrib/openbsm
 # auditdistd.h.  This seems like a makefile non-feature.
 CFLAGS+=-I${OPENBSMDIR} -I${OPENBSMDIR}/bin/auditdistd
 
+CFLAGS+=-DOPENSSL_API_COMPAT=0x10100000L
+
 NO_WFORMAT=
 NO_WMISSING_VARIABLE_DECLARATIONS=
 
+PACKAGE=audit
 PROG=	auditdistd
 SRCS=	auditdistd.c
 SRCS+=	parse.y pjdlog.c

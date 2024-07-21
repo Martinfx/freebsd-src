@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_kern_tls.h"
 
 #include <sys/param.h>
@@ -57,6 +55,9 @@ __FBSDID("$FreeBSD$");
 #include <net/vnet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <netinet/in_pcb.h>
+#include <netinet/tcp_var.h>
+#include <netinet/tcp_log_buf.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -563,7 +564,6 @@ sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
     struct vnode **vp_res, struct shmfd **shmfd_res, off_t *obj_size,
     int *bsize)
 {
-	struct vattr va;
 	vm_object_t obj;
 	struct vnode *vp;
 	struct shmfd *shmfd;
@@ -602,10 +602,9 @@ sendfile_getobj(struct thread *td, struct file *fp, vm_object_t *obj_res,
 			VM_OBJECT_RLOCK(obj);
 			*obj_size = obj->un_pager.vnp.vnp_size;
 		} else {
-			error = VOP_GETATTR(vp, &va, td->td_ucred);
+			error = vn_getsize_locked(vp, obj_size, td->td_ucred);
 			if (error != 0)
 				goto out;
-			*obj_size = va.va_size;
 			VM_OBJECT_RLOCK(obj);
 		}
 	} else if (fp->f_type == DTYPE_SHM) {
@@ -653,8 +652,7 @@ sendfile_getsock(struct thread *td, int s, struct file **sock_fp,
 	/*
 	 * The socket must be a stream socket and connected.
 	 */
-	error = getsock_cap(td, s, &cap_send_rights,
-	    sock_fp, NULL, NULL);
+	error = getsock(td, s, &cap_send_rights, sock_fp);
 	if (error != 0)
 		return (error);
 	*so = (*sock_fp)->f_data;
@@ -1191,6 +1189,12 @@ prepend_header:
 			    NULL, NULL, td);
 			sendfile_iodone(sfio, NULL, 0, error);
 		}
+#ifdef TCP_REQUEST_TRK
+		if (so->so_proto->pr_protocol == IPPROTO_TCP) {
+			/* log the sendfile call to the TCP log, if enabled */
+			tcp_log_sendfile(so, offset, nbytes, flags);
+		}
+#endif
 		CURVNET_RESTORE();
 
 		m = NULL;
@@ -1324,11 +1328,11 @@ sendfile(struct thread *td, struct sendfile_args *uap, int compat)
 	fdrop(fp, td);
 
 	if (uap->sbytes != NULL)
-		copyout(&sbytes, uap->sbytes, sizeof(off_t));
+		(void)copyout(&sbytes, uap->sbytes, sizeof(off_t));
 
 out:
-	free(hdr_uio, M_IOV);
-	free(trl_uio, M_IOV);
+	freeuio(hdr_uio);
+	freeuio(trl_uio);
 	return (error);
 }
 

@@ -35,9 +35,6 @@
  * From: FreeBSD: src/sys/powerpc/mpc85xx/pci_ocp.c,v 1.9 2010/03/23 23:46:28 marcel
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/ktr.h>
@@ -299,7 +296,9 @@ fsl_pcib_probe(device_t dev)
 	    ofw_bus_is_compatible(dev, "fsl,mpc8540-pcie") ||
 	    ofw_bus_is_compatible(dev, "fsl,mpc8548-pcie") ||
 	    ofw_bus_is_compatible(dev, "fsl,p5020-pcie") ||
+	    ofw_bus_is_compatible(dev, "fsl,p5040-pcie") ||
 	    ofw_bus_is_compatible(dev, "fsl,qoriq-pcie-v2.2") ||
+	    ofw_bus_is_compatible(dev, "fsl,qoriq-pcie-v2.4") ||
 	    ofw_bus_is_compatible(dev, "fsl,qoriq-pcie")))
 		return (ENXIO);
 

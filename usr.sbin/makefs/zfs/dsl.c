@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 The FreeBSD Foundation
  *
@@ -99,16 +99,11 @@ char *
 dsl_dir_get_mountpoint(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 {
 	zfs_dsl_dir_t *pdir;
-	char *mountpoint, *origmountpoint;
+	char *mountpoint;
 
 	if (nvlist_find_string(dir->propsnv, "mountpoint", &mountpoint) == 0) {
 		if (strcmp(mountpoint, "none") == 0)
 			return (NULL);
-
-		/*
-		 * nvlist_find_string() does not make a copy.
-		 */
-		mountpoint = estrdup(mountpoint);
 	} else {
 		/*
 		 * If we don't have a mountpoint, it's inherited from one of our
@@ -116,14 +111,18 @@ dsl_dir_get_mountpoint(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 		 * up our mountpoint along the way.  The mountpoint property is
 		 * always set for the root dataset.
 		 */
-		for (pdir = dir->parent, mountpoint = estrdup(dir->name);;) {
+		for (pdir = dir->parent, mountpoint = estrdup(dir->name);;
+		    pdir = pdir->parent) {
+			char *origmountpoint, *tmp;
+
 			origmountpoint = mountpoint;
 
 			if (nvlist_find_string(pdir->propsnv, "mountpoint",
-			    &mountpoint) == 0) {
-				easprintf(&mountpoint, "%s%s%s", mountpoint,
-				    mountpoint[strlen(mountpoint) - 1] == '/' ?
-				    "" : "/", origmountpoint);
+			    &tmp) == 0) {
+				easprintf(&mountpoint, "%s%s%s", tmp,
+				    tmp[strlen(tmp) - 1] == '/' ?  "" : "/",
+				    origmountpoint);
+				free(tmp);
 				free(origmountpoint);
 				break;
 			}
@@ -131,7 +130,6 @@ dsl_dir_get_mountpoint(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 			easprintf(&mountpoint, "%s/%s", pdir->name,
 			    origmountpoint);
 			free(origmountpoint);
-			pdir = pdir->parent;
 		}
 	}
 	assert(mountpoint[0] == '/');
@@ -425,12 +423,25 @@ dsl_dir_alloc(zfs_opt_t *zfs, const char *name)
 	return (dir);
 }
 
-void
+static void
 dsl_dir_size_add(zfs_dsl_dir_t *dir, uint64_t bytes)
 {
 	dir->phys->dd_used_bytes += bytes;
 	dir->phys->dd_compressed_bytes += bytes;
 	dir->phys->dd_uncompressed_bytes += bytes;
+}
+
+/*
+ * See dsl_dir_root_finalize().
+ */
+void
+dsl_dir_root_finalize(zfs_opt_t *zfs, uint64_t bytes)
+{
+	dsl_dir_size_add(zfs->mosdsldir, bytes);
+	zfs->mosdsldir->phys->dd_used_breakdown[DD_USED_HEAD] += bytes;
+
+	dsl_dir_size_add(zfs->rootdsldir, bytes);
+	zfs->rootdsldir->phys->dd_used_breakdown[DD_USED_CHILD] += bytes;
 }
 
 /*
@@ -479,12 +490,11 @@ dsl_dir_finalize_props(zfs_dsl_dir_t *dir)
 static void
 dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 {
-	char key[32];
 	zfs_dsl_dir_t *cdir;
 	dnode_phys_t *snapnames;
 	zfs_dsl_dataset_t *headds;
 	zfs_objset_t *os;
-	uint64_t bytes, snapnamesid;
+	uint64_t bytes, childbytes, snapnamesid;
 
 	dsl_dir_finalize_props(dir);
 	zap_write(zfs, dir->propszap);
@@ -508,26 +518,31 @@ dsl_dir_finalize(zfs_opt_t *zfs, zfs_dsl_dir_t *dir, void *arg __unused)
 	objset_root_blkptr_copy(os, &headds->phys->ds_bp);
 
 	zfs->snapds->phys->ds_num_children++;
-	snprintf(key, sizeof(key), "%jx", (uintmax_t)headds->dsid);
-	zap_add_uint64(zfs->cloneszap, key, headds->dsid);
+	zap_add_uint64_self(zfs->cloneszap, headds->dsid);
 
 	bytes = objset_space(os);
 	headds->phys->ds_used_bytes = bytes;
 	headds->phys->ds_uncompressed_bytes = bytes;
 	headds->phys->ds_compressed_bytes = bytes;
 
+	childbytes = 0;
 	STAILQ_FOREACH(cdir, &dir->children, next) {
 		/*
 		 * The root directory needs a special case: the amount of
 		 * space used for the MOS isn't known until everything else is
 		 * finalized, so it can't be accounted in the MOS directory's
-		 * parent until then.
+		 * parent until then, at which point dsl_dir_root_finalize() is
+		 * called.
 		 */
 		if (dir == zfs->rootdsldir && cdir == zfs->mosdsldir)
 			continue;
-		bytes += cdir->phys->dd_used_bytes;
+		childbytes += cdir->phys->dd_used_bytes;
 	}
-	dsl_dir_size_add(dir, bytes);
+	dsl_dir_size_add(dir, bytes + childbytes);
+
+	dir->phys->dd_flags |= DD_FLAG_USED_BREAKDOWN;
+	dir->phys->dd_used_breakdown[DD_USED_HEAD] = bytes;
+	dir->phys->dd_used_breakdown[DD_USED_CHILD] = childbytes;
 }
 
 void
@@ -604,7 +619,7 @@ dsl_dataset_alloc(zfs_opt_t *zfs, zfs_dsl_dir_t *dir)
 	ds->phys->ds_creation_txg = TXG - 1;
 	if (ds != zfs->snapds)
 		ds->phys->ds_prev_snap_txg = TXG - 1;
-	ds->phys->ds_guid = ((uint64_t)random() << 32) | random();
+	ds->phys->ds_guid = randomguid();
 	ds->dir = dir;
 
 	return (ds);

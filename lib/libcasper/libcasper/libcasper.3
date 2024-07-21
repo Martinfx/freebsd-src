@@ -26,9 +26,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd November 15, 2021
+.Dd December 6, 2023
 .Dt LIBCASPER 3
 .Os
 .Sh NAME
@@ -213,12 +211,16 @@ Casper supports the following services in the base system:
 .Bl -tag -width "system.random" -compact -offset indent
 .It system.dns
 provides libc compatible DNS API
+.It system.fileargs
+provides an API for opening files specified on a command line
 .It system.grp
 provides a
 .Xr getgrent 3
 compatible API
 .It system.net
 provides a libc compatible network API
+.It system.netdb
+provides libc compatible network proto API
 .It system.pwd
 provides a
 .Xr getpwent 3
@@ -232,6 +234,21 @@ provides a
 .Xr syslog 3
 compatible API
 .El
+.Pp
+.Fn cap_init
+must be called from a single-threaded context.
+.Fn cap_clone ,
+.Fn cap_close ,
+.Fn cap_limit_get ,
+.Fn cap_limit_set ,
+.Fn cap_send_nvlist ,
+.Fn cap_recv_nvlist ,
+and
+.Fn cap_service_open
+are reentrant but not thread-safe.
+That is, they may be called from separate threads only with different
+.Vt cap_channel_t
+arguments or with synchronization.
 .Sh RETURN VALUES
 The
 .Fn cap_clone ,
@@ -271,8 +288,10 @@ functions always succeed.
 .Xr poll 2 ,
 .Xr select 2 ,
 .Xr cap_dns 3 ,
+.Xr cap_fileargs 3 ,
 .Xr cap_grp 3 ,
 .Xr cap_net 3 ,
+.Xr cap_netdb 3 ,
 .Xr cap_pwd 3 ,
 .Xr cap_sysctl 3 ,
 .Xr cap_syslog 3 ,

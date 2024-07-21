@@ -23,8 +23,6 @@
  * LIABILITY, OR TORT (INCLUDING NEIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -127,7 +125,7 @@ struct sbni_softc {
 
 void	sbni_intr(void *);
 int	sbni_probe(struct sbni_softc *);
-int	sbni_attach(struct sbni_softc *, int, struct sbni_flags);
+void	sbni_attach(struct sbni_softc *, int, struct sbni_flags);
 void	sbni_detach(struct sbni_softc *);
 void	sbni_release_resources(struct sbni_softc *);
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,11 +31,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kernfs.h	8.6 (Berkeley) 3/29/95
  * From: FreeBSD: src/sys/miscfs/kernfs/kernfs.h 1.14
- *
- * $FreeBSD$
  */
 
 #ifndef _FS_DEVFS_DEVFS_H_
@@ -185,8 +181,7 @@ extern unsigned devfs_rule_depth;
 #define DEVFS_DMP_HOLD(dmp)	((dmp)->dm_holdcnt++)
 #define DEVFS_DMP_DROP(dmp)	(--(dmp)->dm_holdcnt == 0)
 
-#define	DEVFS_DEL_VNLOCKED	0x01
-#define	DEVFS_DEL_NORECURSE	0x02
+#define	DEVFS_DEL_NORECURSE	0x01
 
 void	devfs_rules_apply(struct devfs_mount *, struct devfs_dirent *);
 void	devfs_rules_cleanup(struct devfs_mount *);

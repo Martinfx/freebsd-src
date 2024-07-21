@@ -41,8 +41,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	from: @(#)vm_pageout.c	7.4 (Berkeley) 5/7/91
- *
  *
  * Copyright (c) 1987, 1990 Carnegie-Mellon University.
  * All rights reserved.
@@ -75,8 +73,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_vm.h"
 
 #include <sys/param.h>
@@ -1405,7 +1401,7 @@ vm_pageout_reinsert_inactive(struct scan_state *ss, struct vm_batchqueue *bq,
 	pq = ss->pq;
 
 	if (m != NULL) {
-		if (vm_batchqueue_insert(bq, m))
+		if (vm_batchqueue_insert(bq, m) != 0)
 			return;
 		vm_pagequeue_lock(pq);
 		delta += vm_pageout_reinsert_inactive_page(pq, marker, m);
@@ -1455,7 +1451,21 @@ vm_pageout_scan_inactive(struct vm_domain *vmd, int page_shortage)
 	pq = &vmd->vmd_pagequeues[PQ_INACTIVE];
 	vm_pagequeue_lock(pq);
 	vm_pageout_init_scan(&ss, pq, marker, NULL, pq->pq_cnt);
-	while (page_shortage > 0 && (m = vm_pageout_next(&ss, true)) != NULL) {
+	while (page_shortage > 0) {
+		/*
+		 * If we need to refill the scan batch queue, release any
+		 * optimistically held object lock.  This gives someone else a
+		 * chance to grab the lock, and also avoids holding it while we
+		 * do unrelated work.
+		 */
+		if (object != NULL && vm_batchqueue_empty(&ss.bq)) {
+			VM_OBJECT_WUNLOCK(object);
+			object = NULL;
+		}
+
+		m = vm_pageout_next(&ss, true);
+		if (m == NULL)
+			break;
 		KASSERT((m->flags & PG_MARKER) == 0,
 		    ("marker page %p was dequeued", m));
 

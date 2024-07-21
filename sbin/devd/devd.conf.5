@@ -21,8 +21,6 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
 .\" The section on comments was taken from named.conf.5, which has the
 .\" following copyright:
 .\" Copyright (c) 1999-2000 by Internet Software Consortium
@@ -40,12 +38,12 @@
 .\" ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
 .\" SOFTWARE.
 .\"
-.Dd November 3, 2021
+.Dd March 6, 2024
 .Dt DEVD.CONF 5
 .Os
 .Sh NAME
 .Nm devd.conf
-.Nd configuration file for
+.Nd configuration file format for
 .Xr devd 8
 .Sh DESCRIPTION
 .Ss General Syntax
@@ -177,8 +175,6 @@ For network devices,
 will match devices that have the given media type.
 Valid media types are:
 .Dq Li Ethernet ,
-.Dq Li Tokenring ,
-.Dq Li FDDI ,
 .Dq Li 802.11 ,
 and
 .Dq Li ATM .
@@ -477,18 +473,38 @@ The network interface address removed.
 .Pp
 .Bl -column "System" "Subsystem" "1234567" -compact
 .Sy "System" Ta Sy "Subsystem" Ta Sy "Type" Ta Sy "Description"
-.It Li kern Ta Li power Ta Li resume Ta
-Notification that the system has woken from the suspended state.
-Note: this notification is deprecated and will be removed in
-.Fx 14.0 .
-.El
-.Pp
-.Bl -column "System" "Subsystem" "1234567" -compact
-.Sy "System" Ta Sy "Subsystem" Ta Sy "Type" Ta Sy "Description"
 .It Li kernel Ta Li signal Ta Li coredump Ta
 Notification that a process has crashed and dumped core.
 .It Li kernel Ta Li power Ta Li resume Ta
 Notification that the system has woken from the suspended state.
+.El
+.Pp
+.Bl -column "System" "Subsystem" "1234567" -compact
+.Sy "System" Ta Sy "Subsystem" Ta Sy "Type" Ta Sy "Description"
+.It Li nvme Ta Li controller Ta Li SMART_ERROR Ta
+A SMART Critical Warning State change has happened.
+$state has a hex bitmask of the bits that changed, as defined
+in the NVMe Standard for Critical Warning field of log page 2
+.Dq SMART / Health Information Log :
+.Bl -column "Bit Value" "Meaning" -compact
+.Sy "Bit Value" Ta Sy "Meaning"
+.It 0x1 Ta Spare capacity below threshold
+.It 0x2 Ta Temperature outside acceptable range
+.It 0x4 Ta Reliability of media degraded
+.It 0x8 Ta Media placed into read-only mode
+.It 0x10 Ta Volatime memory backup failure
+.It 0x20 Ta Persistent memrory read-only or degraded
+.El
+.It Li nvme Ta Li controller Ta Li RESET Ta
+A controller reset event has happened.
+$event is one of
+.Dq start ,
+.Dq success ,
+and
+.Dq timed_out
+representing the start of a controller reset, the successful completion of a
+controller reset, and a timeout while waiting for the controller to reset
+respectively.
 .El
 .Pp
 .Bl -column "System" "Subsystem" "1234567" -compact
@@ -553,7 +569,7 @@ device has detected the lid openinging.
 .It Li PMU Ta Li POWER Ta ACLINE Ta
 The
 .Xr pmc 4
-device has deteted an AC line state ($notify=0x00 is offline, 0x01 is online).
+device has detected an AC line state ($notify=0x00 is offline, 0x01 is online).
 .It Li PMU Ta Li USB Ta overvoltage Ta
 An over-voltage condition on the power lines for the USB power pins.
 .It Li PMU Ta Li USB Ta plugged Ta
@@ -736,6 +752,14 @@ regardless of the value of the variable.
 The
 .Xr devd 8
 configuration file.
+.It Pa /etc/devd
+A directory that
+.Nm devd
+searches for additional configuration files.
+.It Pa /usr/local/etc/devd
+A directory that
+.Nm devd
+searches for additional configuration files.
 .El
 .Sh EXAMPLES
 .Bd -literal

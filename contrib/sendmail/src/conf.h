@@ -78,7 +78,11 @@ struct rusage;	/* forward declaration to get gcc to shut up in wait.h */
 #define SMTPLINELIM	990	/* max SMTP line length */
 #define MAXUDBKEY	128	/* max size of a database key (udb only) */
 #define MAXKEY		1024	/* max size of a database key */
-#define MEMCHUNKSIZE	1024	/* chunk size for memory allocation */
+#define MEMCHUNKSIZE	4096	/* chunk size for memory allocation */
+#if MEMCHUNKSIZE < MAXLINE
+/* see usage in collect.c */
+# error "MEMCHUNKSIZE must be at least MAXLINE"
+#endif
 #define MAXUSERENVIRON	100	/* max envars saved, must be >= 3 */
 #define MAXMAPSTACK	12	/* max # of stacked or sequenced maps */
 #if MILTER
@@ -109,7 +113,7 @@ struct rusage;	/* forward declaration to get gcc to shut up in wait.h */
 #define MAXSHORTSTR	203		/* max short string length */
 #define MAXMACNAMELEN	25		/* max macro name length */
 #define MAXMACROID	0377		/* max macro id number */
-					/* Must match (BITMAPBITS - 1) */
+	/* Must match (BITMAPBITS - 1), checked in macro.c */
 #ifndef MAXHDRSLEN
 # define MAXHDRSLEN	(32 * 1024)	/* max size of message headers */
 #endif
@@ -132,7 +136,7 @@ struct rusage;	/* forward declaration to get gcc to shut up in wait.h */
 	/* must be less than BITMAPBITS for DoQueueRun */
 #endif
 #if MAXQUEUEGROUPS >= BITMAPBITS
-  ERROR _MAXQUEUEGROUPS must be less than _BITMAPBITS
+# error "MAXQUEUEGROUPS must be less than BITMAPBITS"
 #endif
 
 #ifndef MAXWORKGROUPS

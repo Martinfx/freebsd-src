@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/geom/shsec
 
 KMOD=	geom_shsec

@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2022, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2023, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -1033,7 +1033,6 @@ AslLogNewError (
         exit(1);
     }
 
-    AslGbl_ExceptionCount[ASL_ERROR] = 0;
     return;
 }
 

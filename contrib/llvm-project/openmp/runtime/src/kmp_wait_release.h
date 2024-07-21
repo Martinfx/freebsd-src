@@ -105,7 +105,7 @@ template <flag_type FlagType> class kmp_flag {
 protected:
   flag_properties t; /**< "Type" of the flag in loc */
   kmp_info_t *waiting_threads[1]; /**< Threads sleeping on this thread. */
-  kmp_uint32 num_waiting_threads; /**< #threads sleeping on this thread. */
+  kmp_uint32 num_waiting_threads; /**< Num threads sleeping on this thread. */
   std::atomic<bool> *sleepLoc;
 
 public:
@@ -609,7 +609,8 @@ final_spin=FALSE)
       continue;
 
     // Don't suspend if there is a likelihood of new tasks being spawned.
-    if ((task_team != NULL) && TCR_4(task_team->tt.tt_found_tasks))
+    if (task_team != NULL && TCR_4(task_team->tt.tt_found_tasks) &&
+        !__kmp_wpolicy_passive)
       continue;
 
 #if KMP_USE_MONITOR
@@ -623,10 +624,6 @@ final_spin=FALSE)
     // Don't suspend if wait loop designated non-sleepable
     // in template parameters
     if (!Sleepable)
-      continue;
-
-    if (__kmp_dflt_blocktime == KMP_MAX_BLOCKTIME &&
-        __kmp_pause_status != kmp_soft_paused)
       continue;
 
 #if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
@@ -1041,15 +1038,9 @@ static inline void __kmp_null_resume_wrapper(kmp_info_t *thr) {
   case flag_oncore:
     __kmp_resume_oncore(gtid, RCAST(kmp_flag_oncore *, flag));
     break;
-#ifdef KMP_DEBUG
   case flag_unset:
     KF_TRACE(100, ("__kmp_null_resume_wrapper: flag type %d is unset\n", type));
     break;
-  default:
-    KF_TRACE(100, ("__kmp_null_resume_wrapper: flag type %d does not match any "
-                   "known flag type\n",
-                   type));
-#endif
   }
 }
 

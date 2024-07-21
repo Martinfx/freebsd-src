@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018-2021 Emmanuel Vadot <manu@FreeBSD.org>
  *
@@ -25,8 +25,7 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#include "opt_platform.h"
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -109,7 +108,7 @@ rk8xx_poweroff(void *arg, int howto)
 	int error;
 	uint8_t val;
 
-	if ((howto & RB_POWEROFF) == 0)
+	if ((howto & (RB_POWEROFF | RB_POWERCYCLE)) == 0)
 		return;
 
 	device_printf(sc->dev, "Powering off...\n");
@@ -123,7 +122,7 @@ rk8xx_poweroff(void *arg, int howto)
 					device_printf(sc->dev,
 					    "Powercycle PMIC\n");
 				}
-				val |= sc->dev_ctrl.pwr_rst_mask;;
+				val |= sc->dev_ctrl.pwr_rst_mask;
 			} else {
 				/* Poweroff PMIC that can't powercycle */
 				val |= sc->dev_ctrl.pwr_off_mask;

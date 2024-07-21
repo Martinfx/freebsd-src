@@ -204,6 +204,10 @@ sfs_vgetx(struct mount *mp, int flags, uint64_t parent_id, uint64_t id,
 		return (error);
 	}
 
+#if __FreeBSD_version >= 1400077
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
+#endif
+
 	*vpp = vp;
 	return (0);
 }
@@ -675,6 +679,17 @@ zfsctl_root_readdir(struct vop_readdir_args *ap)
 
 	ASSERT3S(vp->v_type, ==, VDIR);
 
+	/*
+	 * FIXME: this routine only ever emits 3 entries and does not tolerate
+	 * being called with a buffer too small to handle all of them.
+	 *
+	 * The check below facilitates the idiom of repeating calls until the
+	 * count to return is 0.
+	 */
+	if (zfs_uio_offset(&uio) == 3 * sizeof(entry)) {
+		return (0);
+	}
+
 	error = sfs_readdir_common(zfsvfs->z_root, ZFSCTL_INO_ROOT, ap, &uio,
 	    &dots_offset);
 	if (error != 0) {
@@ -801,6 +816,9 @@ static struct vop_vector zfsctl_ops_root = {
 	.vop_default =	&default_vnodeops,
 #if __FreeBSD_version >= 1300121
 	.vop_fplookup_vexec = VOP_EAGAIN,
+#endif
+#if __FreeBSD_version >= 1300139
+	.vop_fplookup_symlink = VOP_EAGAIN,
 #endif
 	.vop_open =	zfsctl_common_open,
 	.vop_close =	zfsctl_common_close,
@@ -977,12 +995,13 @@ zfsctl_snapdir_lookup(struct vop_lookup_args *ap)
 		 */
 		VI_LOCK(*vpp);
 		if (((*vpp)->v_iflag & VI_MOUNT) == 0) {
+			VI_UNLOCK(*vpp);
 			/*
 			 * Upgrade to exclusive lock in order to:
 			 * - avoid race conditions
 			 * - satisfy the contract of mount_snapshot()
 			 */
-			err = VOP_LOCK(*vpp, LK_TRYUPGRADE | LK_INTERLOCK);
+			err = VOP_LOCK(*vpp, LK_TRYUPGRADE);
 			if (err == 0)
 				break;
 		} else {
@@ -1007,7 +1026,8 @@ zfsctl_snapdir_lookup(struct vop_lookup_args *ap)
 	    "%s/" ZFS_CTLDIR_NAME "/snapshot/%s",
 	    dvp->v_vfsp->mnt_stat.f_mntonname, name);
 
-	err = mount_snapshot(curthread, vpp, "zfs", mountpoint, fullname, 0);
+	err = mount_snapshot(curthread, vpp, "zfs", mountpoint, fullname, 0,
+	    dvp->v_vfsp);
 	kmem_free(mountpoint, mountpoint_len);
 	if (err == 0) {
 		/*
@@ -1053,7 +1073,8 @@ zfsctl_snapdir_readdir(struct vop_readdir_args *ap)
 		return (error);
 	}
 
-	ZFS_ENTER(zfsvfs);
+	if ((error = zfs_enter(zfsvfs, FTAG)) != 0)
+		return (error);
 	for (;;) {
 		uint64_t cookie;
 		uint64_t id;
@@ -1070,7 +1091,7 @@ zfsctl_snapdir_readdir(struct vop_readdir_args *ap)
 					*eofp = 1;
 				error = 0;
 			}
-			ZFS_EXIT(zfsvfs);
+			zfs_exit(zfsvfs, FTAG);
 			return (error);
 		}
 
@@ -1083,7 +1104,7 @@ zfsctl_snapdir_readdir(struct vop_readdir_args *ap)
 		if (error != 0) {
 			if (error == ENAMETOOLONG)
 				error = 0;
-			ZFS_EXIT(zfsvfs);
+			zfs_exit(zfsvfs, FTAG);
 			return (SET_ERROR(error));
 		}
 		zfs_uio_setoffset(&uio, cookie + dots_offset);
@@ -1101,7 +1122,8 @@ zfsctl_snapdir_getattr(struct vop_getattr_args *ap)
 	uint64_t snap_count;
 	int err;
 
-	ZFS_ENTER(zfsvfs);
+	if ((err = zfs_enter(zfsvfs, FTAG)) != 0)
+		return (err);
 	ds = dmu_objset_ds(zfsvfs->z_os);
 	zfsctl_common_getattr(vp, vap);
 	vap->va_ctime = dmu_objset_snap_cmtime(zfsvfs->z_os);
@@ -1111,14 +1133,14 @@ zfsctl_snapdir_getattr(struct vop_getattr_args *ap)
 		err = zap_count(dmu_objset_pool(ds->ds_objset)->dp_meta_objset,
 		    dsl_dataset_phys(ds)->ds_snapnames_zapobj, &snap_count);
 		if (err != 0) {
-			ZFS_EXIT(zfsvfs);
+			zfs_exit(zfsvfs, FTAG);
 			return (err);
 		}
 		vap->va_nlink += snap_count;
 	}
 	vap->va_size = vap->va_nlink;
 
-	ZFS_EXIT(zfsvfs);
+	zfs_exit(zfsvfs, FTAG);
 	return (0);
 }
 
@@ -1126,6 +1148,9 @@ static struct vop_vector zfsctl_ops_snapdir = {
 	.vop_default =	&default_vnodeops,
 #if __FreeBSD_version >= 1300121
 	.vop_fplookup_vexec = VOP_EAGAIN,
+#endif
+#if __FreeBSD_version >= 1300139
+	.vop_fplookup_symlink = VOP_EAGAIN,
 #endif
 	.vop_open =	zfsctl_common_open,
 	.vop_close =	zfsctl_common_close,
@@ -1150,7 +1175,7 @@ zfsctl_snapshot_inactive(struct vop_inactive_args *ap)
 {
 	vnode_t *vp = ap->a_vp;
 
-	VERIFY3S(vrecycle(vp), ==, 1);
+	vrecycle(vp);
 	return (0);
 }
 
@@ -1234,6 +1259,11 @@ static struct vop_vector zfsctl_ops_snapshot = {
 #if __FreeBSD_version >= 1300121
 	.vop_fplookup_vexec =	VOP_EAGAIN,
 #endif
+#if __FreeBSD_version >= 1300139
+	.vop_fplookup_symlink = VOP_EAGAIN,
+#endif
+	.vop_open =		zfsctl_common_open,
+	.vop_close =		zfsctl_common_close,
 	.vop_inactive =		zfsctl_snapshot_inactive,
 #if __FreeBSD_version >= 1300045
 	.vop_need_inactive = vop_stdneed_inactive,

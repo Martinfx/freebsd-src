@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Atsushi Onoe
  * Copyright (c) 2002-2009 Sam Leffler, Errno Consulting
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_wlan.h"
@@ -48,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_var.h>
 #include <net/if_llc.h>
 #include <net/if_media.h>
+#include <net/if_private.h>
 #include <net/if_vlan_var.h>
 
 #include <net80211/ieee80211_var.h>
@@ -1105,7 +1104,7 @@ ieee80211_send_nulldata(struct ieee80211_node *ni)
 	if (vap->iv_state == IEEE80211_S_CAC) {
 		IEEE80211_NOTE(vap, IEEE80211_MSG_OUTPUT | IEEE80211_MSG_DOTH,
 		    ni, "block %s frame in CAC state", "null data");
-		ieee80211_unref_node(&ni);
+		ieee80211_node_decref(ni);
 		vap->iv_stats.is_tx_badstate++;
 		return EIO;		/* XXX */
 	}
@@ -1123,7 +1122,7 @@ ieee80211_send_nulldata(struct ieee80211_node *ni)
 	m = ieee80211_getmgtframe(&frm, ic->ic_headroom + hdrlen, 0);
 	if (m == NULL) {
 		/* XXX debug msg */
-		ieee80211_unref_node(&ni);
+		ieee80211_node_decref(ni);
 		vap->iv_stats.is_tx_nobuf++;
 		return ENOMEM;
 	}
@@ -1269,9 +1268,14 @@ ieee80211_classify(struct ieee80211_node *ni, struct mbuf *m)
 		v_wme_ac = TID_TO_WME_AC(EVL_PRIOFTAG(ni->ni_vlan));
 	}
 
+	if (eh == NULL)
+		goto no_eh;
+
 	/* XXX m_copydata may be too slow for fast path */
+	switch (ntohs(eh->ether_type)) {
 #ifdef INET
-	if (eh && eh->ether_type == htons(ETHERTYPE_IP)) {
+	case ETHERTYPE_IP:
+	{
 		uint8_t tos;
 		/*
 		 * IP frame, map the DSCP bits from the TOS field.
@@ -1281,10 +1285,12 @@ ieee80211_classify(struct ieee80211_node *ni, struct mbuf *m)
 		    offsetof(struct ip, ip_tos), sizeof(tos), &tos);
 		tos >>= 5;		/* NB: ECN + low 3 bits of DSCP */
 		d_wme_ac = TID_TO_WME_AC(tos);
-	} else {
-#endif /* INET */
+		break;
+	}
+#endif
 #ifdef INET6
-	if (eh && eh->ether_type == htons(ETHERTYPE_IPV6)) {
+	case ETHERTYPE_IPV6:
+	{
 		uint32_t flow;
 		uint8_t tos;
 		/*
@@ -1296,15 +1302,15 @@ ieee80211_classify(struct ieee80211_node *ni, struct mbuf *m)
 		tos = (uint8_t)(ntohl(flow) >> 20);
 		tos >>= 5;		/* NB: ECN + low 3 bits of DSCP */
 		d_wme_ac = TID_TO_WME_AC(tos);
-	} else {
-#endif /* INET6 */
+		break;
+	}
+#endif
+	default:
+no_eh:
 		d_wme_ac = WME_AC_BE;
-#ifdef INET6
+		break;
 	}
-#endif
-#ifdef INET
-	}
-#endif
+
 	/*
 	 * Use highest priority AC.
 	 */
@@ -1809,7 +1815,7 @@ ieee80211_encap(struct ieee80211vap *vap, struct ieee80211_node *ni,
 		else
 #endif
 			qos[1] = 0;
-		wh->i_fc[0] |= IEEE80211_FC0_SUBTYPE_QOS;
+		wh->i_fc[0] |= IEEE80211_FC0_SUBTYPE_QOS_DATA;
 
 		/*
 		 * If this is an A-MSDU then ensure we set the
@@ -2450,7 +2456,7 @@ ieee80211_probereq_ie_len(struct ieee80211vap *vap, struct ieee80211com *ic)
 	                sizeof(struct ieee80211_ie_htcap) : 0)
 #ifdef notyet
 	       + sizeof(struct ieee80211_ie_htinfo)	/* XXX not needed? */
-	       + sizeof(struct ieee80211_ie_vhtcap)
+	       + 2 + sizeof(struct ieee80211_vht_cap)
 #endif
 	       + ((vap->iv_flags & IEEE80211_F_WPA1 && vap->iv_wpa_ie != NULL) ?
 	           vap->iv_wpa_ie[1] : 0)
@@ -2518,12 +2524,12 @@ ieee80211_probereq_ie(struct ieee80211vap *vap, struct ieee80211com *ic,
 	 * VHT channel.
 	 */
 #ifdef notyet
-	if (vap->iv_flags_vht & IEEE80211_FVHT_VHT) {
+	if (vap->iv_vht_flags & IEEE80211_FVHT_VHT) {
 		struct ieee80211_channel *c;
 
 		c = ieee80211_ht_adjust_channel(ic, ic->ic_curchan,
 		    vap->iv_flags_ht);
-		c = ieee80211_vht_adjust_channel(ic, c, vap->iv_flags_vht);
+		c = ieee80211_vht_adjust_channel(ic, c, vap->iv_vht_flags);
 		frm = ieee80211_add_vhtcap_ch(frm, vap, c);
 	}
 #endif
@@ -2815,7 +2821,7 @@ ieee80211_send_mgmt(struct ieee80211_node *ni, int type, int arg)
 		       + 2 + 26
 		       + sizeof(struct ieee80211_wme_info)
 		       + sizeof(struct ieee80211_ie_htcap)
-		       + sizeof(struct ieee80211_ie_vhtcap)
+		       + 2 + sizeof(struct ieee80211_vht_cap)
 		       + 4 + sizeof(struct ieee80211_ie_htcap)
 #ifdef IEEE80211_SUPPORT_SUPERG
 		       + sizeof(struct ieee80211_ath_ie)
@@ -2881,7 +2887,7 @@ ieee80211_send_mgmt(struct ieee80211_node *ni, int type, int arg)
 			frm = ieee80211_add_htcap(frm, ni);
 		}
 
-		if ((vap->iv_flags_vht & IEEE80211_FVHT_VHT) &&
+		if ((vap->iv_vht_flags & IEEE80211_FVHT_VHT) &&
 		    IEEE80211_IS_CHAN_VHT(ni->ni_chan) &&
 		    ni->ni_ies.vhtcap_ie != NULL &&
 		    ni->ni_ies.vhtcap_ie[0] == IEEE80211_ELEMID_VHT_CAP) {
@@ -2889,7 +2895,7 @@ ieee80211_send_mgmt(struct ieee80211_node *ni, int type, int arg)
 		}
 
 		frm = ieee80211_add_wpa(frm, vap);
-		if ((ic->ic_flags & IEEE80211_F_WME) &&
+		if ((vap->iv_flags & IEEE80211_F_WME) &&
 		    ni->ni_ies.wme_ie != NULL)
 			frm = ieee80211_add_wme_info(frm, &ic->ic_wme, ni);
 
@@ -2948,8 +2954,8 @@ ieee80211_send_mgmt(struct ieee80211_node *ni, int type, int arg)
 		       + 2 + (IEEE80211_RATE_MAXSIZE - IEEE80211_RATE_SIZE)
 		       + sizeof(struct ieee80211_ie_htcap) + 4
 		       + sizeof(struct ieee80211_ie_htinfo) + 4
-		       + sizeof(struct ieee80211_ie_vhtcap)
-		       + sizeof(struct ieee80211_ie_vht_operation)
+		       + 2 + sizeof(struct ieee80211_vht_cap)
+		       + 2 + sizeof(struct ieee80211_vht_operation)
 		       + sizeof(struct ieee80211_wme_param)
 #ifdef IEEE80211_SUPPORT_SUPERG
 		       + sizeof(struct ieee80211_ath_ie)
@@ -3107,8 +3113,8 @@ ieee80211_alloc_proberesp(struct ieee80211_node *bss, int legacy)
 	       + sizeof(struct ieee80211_wme_param)
 	       + 4 + sizeof(struct ieee80211_ie_htcap)
 	       + 4 + sizeof(struct ieee80211_ie_htinfo)
-	       +  sizeof(struct ieee80211_ie_vhtcap)
-	       +  sizeof(struct ieee80211_ie_vht_operation)
+	       + 2 + sizeof(struct ieee80211_vht_cap)
+	       + 2 + sizeof(struct ieee80211_vht_operation)
 #ifdef IEEE80211_SUPPORT_SUPERG
 	       + sizeof(struct ieee80211_ath_ie)
 #endif
@@ -3722,8 +3728,8 @@ ieee80211_beacon_alloc(struct ieee80211_node *ni)
 		 /* XXX conditional? */
 		 + 4+2*sizeof(struct ieee80211_ie_htcap)/* HT caps */
 		 + 4+2*sizeof(struct ieee80211_ie_htinfo)/* HT info */
-		 + sizeof(struct ieee80211_ie_vhtcap)/* VHT caps */
-		 + sizeof(struct ieee80211_ie_vht_operation)/* VHT info */
+		 + 2 + sizeof(struct ieee80211_vht_cap)/* VHT caps */
+		 + 2 + sizeof(struct ieee80211_vht_operation)/* VHT info */
 		 + (vap->iv_caps & IEEE80211_C_WME ?	/* WME */
 			sizeof(struct ieee80211_wme_param) : 0)
 #ifdef IEEE80211_SUPPORT_SUPERG

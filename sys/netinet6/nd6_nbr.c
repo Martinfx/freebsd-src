@@ -32,8 +32,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
@@ -61,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_types.h>
 #include <net/if_dl.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/route.h>
 #include <net/vnet.h>
 
@@ -110,6 +109,13 @@ SYSCTL_INT(_net_inet6_ip6, OID_AUTO, dad_enhanced, CTLFLAG_VNET | CTLFLAG_RW,
 VNET_DEFINE_STATIC(int, dad_maxtry) = 15;	/* max # of *tries* to
 						   transmit DAD packet */
 #define	V_dad_maxtry			VNET(dad_maxtry)
+
+VNET_DEFINE_STATIC(int, nd6_onlink_ns_rfc4861) = 0;
+#define	V_nd6_onlink_ns_rfc4861		VNET(nd6_onlink_ns_rfc4861)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_ONLINKNSRFC4861,
+    nd6_onlink_ns_rfc4861, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(nd6_onlink_ns_rfc4861), 0,
+    "Accept 'on-link' ICMPv6 NS messages in compliance with RFC 4861");
 
 /*
  * Input a Neighbor Solicitation Message.
@@ -263,7 +269,7 @@ nd6_ns_input(struct mbuf *m, int off, int icmp6len)
 	}
 	if (ifa == NULL) {
 		/*
-		 * We've got an NS packet, and we don't have that adddress
+		 * We've got an NS packet, and we don't have that address
 		 * assigned for us.  We MUST silently ignore it.
 		 * See RFC2461 7.2.3.
 		 */
@@ -465,6 +471,7 @@ nd6_ns_output_fib(struct ifnet *ifp, const struct in6_addr *saddr6,
 			goto bad;
 	}
 	if (nonce == NULL) {
+		char ip6buf[INET6_ADDRSTRLEN];
 		struct ifaddr *ifa = NULL;
 
 		/*
@@ -480,14 +487,9 @@ nd6_ns_output_fib(struct ifnet *ifp, const struct in6_addr *saddr6,
 		 * (saddr6), if saddr6 belongs to the outgoing interface.
 		 * Otherwise, we perform the source address selection as usual.
 		 */
-
 		if (saddr6 != NULL)
 			ifa = (struct ifaddr *)in6ifa_ifpwithaddr(ifp, saddr6);
-		if (ifa != NULL) {
-			/* ip6_src set already. */
-			ip6->ip6_src = *saddr6;
-			ifa_free(ifa);
-		} else {
+		if (ifa == NULL) {
 			int error;
 			struct in6_addr dst6, src6;
 			uint32_t scopeid;
@@ -496,7 +498,6 @@ nd6_ns_output_fib(struct ifnet *ifp, const struct in6_addr *saddr6,
 			error = in6_selectsrc_addr(fibnum, &dst6,
 			    scopeid, ifp, &src6, NULL);
 			if (error) {
-				char ip6buf[INET6_ADDRSTRLEN];
 				nd6log((LOG_DEBUG, "%s: source can't be "
 				    "determined: dst=%s, error=%d\n", __func__,
 				    ip6_sprintf(ip6buf, &dst6),
@@ -504,7 +505,32 @@ nd6_ns_output_fib(struct ifnet *ifp, const struct in6_addr *saddr6,
 				goto bad;
 			}
 			ip6->ip6_src = src6;
+		} else
+			ip6->ip6_src = *saddr6;
+
+		if (ifp->if_carp != NULL) {
+			/*
+			 * Check that selected source address belongs to
+			 * CARP addresses.
+			 */
+			if (ifa == NULL)
+				ifa = (struct ifaddr *)in6ifa_ifpwithaddr(ifp,
+				    &ip6->ip6_src);
+			/*
+			 * Do not send NS for CARP address if we are not
+			 * the CARP master.
+			 */
+			if (ifa != NULL && ifa->ifa_carp != NULL &&
+			    !(*carp_master_p)(ifa)) {
+				nd6log((LOG_DEBUG,
+				    "nd6_ns_output: NS from BACKUP CARP address %s\n",
+				    ip6_sprintf(ip6buf, &ip6->ip6_src)));
+				ifa_free(ifa);
+				goto bad;
+			}
 		}
+		if (ifa != NULL)
+			ifa_free(ifa);
 	} else {
 		/*
 		 * Source address for DAD packet must always be IPv6
@@ -597,7 +623,7 @@ nd6_ns_output_fib(struct ifnet *ifp, const struct in6_addr *saddr6,
 	    &im6o, NULL, NULL);
 	icmp6_ifstat_inc(ifp, ifs6_out_msg);
 	icmp6_ifstat_inc(ifp, ifs6_out_neighborsolicit);
-	ICMP6STAT_INC(icp6s_outhist[ND_NEIGHBOR_SOLICIT]);
+	ICMP6STAT_INC2(icp6s_outhist, ND_NEIGHBOR_SOLICIT);
 
 	return;
 
@@ -714,15 +740,20 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 		lladdrlen = ndopts.nd_opts_tgt_lladdr->nd_opt_len << 3;
 	}
 
-	/*
-	 * This effectively disables the DAD check on a non-master CARP
-	 * address.
-	 */
-	if (ifp->if_carp)
-		ifa = (*carp_iamatch6_p)(ifp, &taddr6);
-	else
-		ifa = (struct ifaddr *)in6ifa_ifpwithaddr(ifp, &taddr6);
-
+	ifa = (struct ifaddr *)in6ifa_ifpwithaddr(ifp, &taddr6);
+	if (ifa != NULL && ifa->ifa_carp != NULL) {
+		/*
+		 * Silently ignore NAs for CARP addresses if we are not
+		 * the CARP master.
+		 */
+		if (!(*carp_master_p)(ifa)) {
+			nd6log((LOG_DEBUG,
+			    "nd6_na_input: NA for BACKUP CARP address %s\n",
+			    ip6_sprintf(ip6bufs, &taddr6)));
+			ifa_free(ifa);
+			goto freeit;
+		}
+	}
 	/*
 	 * Target address matches one of my interface address.
 	 *
@@ -786,11 +817,11 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 			goto freeit;
 
 		flush_holdchain = true;
-		EVENTHANDLER_INVOKE(lle_event, ln, LLENTRY_RESOLVED);
 		if (is_solicited)
 			nd6_llinfo_setstate(ln, ND6_LLINFO_REACHABLE);
 		else
 			nd6_llinfo_setstate(ln, ND6_LLINFO_STALE);
+		EVENTHANDLER_INVOKE(lle_event, ln, LLENTRY_RESOLVED);
 		if ((ln->ln_router = is_router) != 0) {
 			/*
 			 * This means a router's state has changed from
@@ -1085,7 +1116,7 @@ nd6_na_output_fib(struct ifnet *ifp, const struct in6_addr *daddr6_0,
 	ip6_output(m, NULL, NULL, 0, &im6o, NULL, NULL);
 	icmp6_ifstat_inc(ifp, ifs6_out_msg);
 	icmp6_ifstat_inc(ifp, ifs6_out_neighboradvert);
-	ICMP6STAT_INC(icp6s_outhist[ND_NEIGHBOR_ADVERT]);
+	ICMP6STAT_INC2(icp6s_outhist, ND_NEIGHBOR_ADVERT);
 
 	return;
 

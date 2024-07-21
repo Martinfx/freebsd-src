@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	tcpfullwindowrsttest
 MAN=
 

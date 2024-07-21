@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	locales
 LOCALEDIR=	${SHAREDIR}/locale
 FILESNAME=	LC_TIME

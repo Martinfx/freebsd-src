@@ -1,5 +1,5 @@
-/* 
- * $FreeBSD$
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011, 2012, 2013, 2015, Juniper Networks, Inc.
  * All rights reserved.
@@ -26,7 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <sys/mac.h>

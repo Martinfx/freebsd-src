@@ -15,8 +15,7 @@
 
 SM_RCSID("@(#)$Id: usersmtp.c,v 8.488 2013-11-22 20:51:57 ca Exp $")
 
-#include <sysexits.h>
-
+#include <sm/sendmail.h>
 
 static void	esmtp_check __P((char *, bool, MAILER *, MCI *, ENVELOPE *));
 static void	helo_options __P((char *, bool, MAILER *, MCI *, ENVELOPE *));
@@ -43,6 +42,37 @@ extern void	sm_sasl_free __P((void *));
 static char	SmtpMsgBuffer[MAXLINE];		/* buffer for commands */
 static char	SmtpReplyBuffer[MAXLINE];	/* buffer for replies */
 static bool	SmtpNeedIntro;		/* need "while talking" in transcript */
+
+/*
+**  SMTPCCLRSE -- clear session related data in envelope
+**
+**	Parameters:
+**		e -- the envelope.
+**
+**	Returns:
+**		none.
+*/
+
+void
+smtpclrse(e)
+	ENVELOPE *e;
+{
+	SmtpError[0] = '\0';
+	e->e_rcode = 0;
+	e->e_renhsc[0] = '\0';
+	e->e_text = NULL;
+#if _FFR_LOG_STAGE
+	e->e_estate = -1;
+#endif
+
+	/*
+	**  Reset to avoid access to potentially dangling pointer
+	**  via macvalue().
+	*/
+
+	e->e_mci = NULL;
+}
+
 /*
 **  SMTPINIT -- initialize SMTP.
 **
@@ -73,7 +103,7 @@ smtpinit(m, mci, e, onlyhelo)
 	register char *p;
 	register char *hn;
 #if _FFR_EXPAND_HELONAME
-	char hnbuf[MAXNAME + 1];
+	char hnbuf[MAXNAME + 1];	/* EAI:ok:EHLO name must be ASCII */
 #endif
 	char *enhsc;
 
@@ -98,6 +128,7 @@ smtpinit(m, mci, e, onlyhelo)
 	e->e_rcode = 0;
 	e->e_renhsc[0] = '\0';
 	e->e_text = NULL;
+	maps_reset_chged("client:smtpinit");
 	switch (state)
 	{
 	  case MCIS_MAIL:
@@ -141,7 +172,8 @@ smtpinit(m, mci, e, onlyhelo)
 	SmtpPhase = mci->mci_phase = "client greeting";
 	sm_setproctitle(true, e, "%s %s: %s",
 			qid_printname(e), CurHostName, mci->mci_phase);
-	r = reply(m, mci, e, TimeOuts.to_initial, esmtp_check, NULL, XS_GREET);
+	r = reply(m, mci, e, TimeOuts.to_initial, esmtp_check, NULL, XS_GREET,
+		  NULL);
 	if (r < 0)
 		goto tempfail1;
 	if (REPLYTYPE(r) == 4)
@@ -197,7 +229,7 @@ tryhelo:
 	r = reply(m, mci, e,
 		  bitnset(M_LMTP, m->m_flags) ? TimeOuts.to_lhlo
 					      : TimeOuts.to_helo,
-		  helo_options, NULL, XS_EHLO);
+		  helo_options, NULL, XS_EHLO, NULL);
 	if (r < 0)
 		goto tempfail1;
 	else if (REPLYTYPE(r) == 5)
@@ -225,7 +257,7 @@ tryhelo:
 		*p = '\0';
 	if (!bitnset(M_NOLOOPCHECK, m->m_flags) &&
 	    !bitnset(M_LMTP, m->m_flags) &&
-	    sm_strcasecmp(&SmtpReplyBuffer[4], MyHostName) == 0)
+	    SM_STRCASEEQ(&SmtpReplyBuffer[4], MyHostName))
 	{
 		syserr("553 5.3.5 %s config error: mail loops back to me (MX problem?)",
 			CurHostName);
@@ -248,7 +280,7 @@ tryhelo:
 		/* tell it to be verbose */
 		smtpmessage("VERB", m, mci);
 		r = reply(m, mci, e, TimeOuts.to_miscshort, NULL, &enhsc,
-			XS_DEFAULT);
+			XS_DEFAULT, NULL);
 		if (r < 0)
 			goto tempfail1;
 	}
@@ -340,9 +372,9 @@ str_union(s1, s2, rpool)
 	char *hr, *h1, *h, *res;
 	int l1, l2, rl;
 
-	if (s1 == NULL || *s1 == '\0')
+	if (SM_IS_EMPTY(s1))
 		return s2;
-	if (s2 == NULL || *s2 == '\0')
+	if (SM_IS_EMPTY(s2))
 		return s1;
 	l1 = strlen(s1);
 	l2 = strlen(s2);
@@ -455,43 +487,43 @@ helo_options(line, firstline, m, mci, e)
 	p = strpbrk(line, " =");
 	if (p != NULL)
 		*p++ = '\0';
-	if (sm_strcasecmp(line, "size") == 0)
+	if (SM_STRCASEEQ(line, "size"))
 	{
 		mci->mci_flags |= MCIF_SIZE;
 		if (p != NULL)
 			mci->mci_maxsize = atol(p);
 	}
-	else if (sm_strcasecmp(line, "8bitmime") == 0)
+	else if (SM_STRCASEEQ(line, "8bitmime"))
 	{
 		mci->mci_flags |= MCIF_8BITMIME;
 		mci->mci_flags &= ~MCIF_7BIT;
 	}
-	else if (sm_strcasecmp(line, "expn") == 0)
+	else if (SM_STRCASEEQ(line, "expn"))
 		mci->mci_flags |= MCIF_EXPN;
-	else if (sm_strcasecmp(line, "dsn") == 0)
+	else if (SM_STRCASEEQ(line, "dsn"))
 		mci->mci_flags |= MCIF_DSN;
-	else if (sm_strcasecmp(line, "enhancedstatuscodes") == 0)
+	else if (SM_STRCASEEQ(line, "enhancedstatuscodes"))
 		mci->mci_flags |= MCIF_ENHSTAT;
-	else if (sm_strcasecmp(line, "pipelining") == 0)
+	else if (SM_STRCASEEQ(line, "pipelining"))
 		mci->mci_flags |= MCIF_PIPELINED;
-	else if (sm_strcasecmp(line, "verb") == 0)
+	else if (SM_STRCASEEQ(line, "verb"))
 		mci->mci_flags |= MCIF_VERB;
-#if _FFR_EAI
-	else if (sm_strcasecmp(line, "smtputf8") == 0)
+#if USE_EAI
+	else if (SM_STRCASEEQ(line, "smtputf8"))
 		mci->mci_flags |= MCIF_EAI;
-#endif /* _FFR_EAI */
+#endif
 #if STARTTLS
-	else if (sm_strcasecmp(line, "starttls") == 0)
+	else if (SM_STRCASEEQ(line, "starttls"))
 		mci->mci_flags |= MCIF_TLS;
 #endif
-	else if (sm_strcasecmp(line, "deliverby") == 0)
+	else if (SM_STRCASEEQ(line, "deliverby"))
 	{
 		mci->mci_flags |= MCIF_DLVR_BY;
 		if (p != NULL)
 			mci->mci_min_by = atol(p);
 	}
 #if SASL
-	else if (sm_strcasecmp(line, "auth") == 0)
+	else if (SM_STRCASEEQ(line, "auth"))
 	{
 		if (p != NULL && *p != '\0' &&
 		    !bitset(MCIF_AUTH2, mci->mci_flags))
@@ -745,10 +777,10 @@ readauth(filename, safe, sai, rpool)
 	char *s;
 	char buf[MAXLINE];
 
-	if (filename == NULL || filename[0] == '\0')
+	if (SM_IS_EMPTY(filename))
 		return EX_UNAVAILABLE;
 
-#if !_FFR_ALLOW_SASLINFO
+# if !_FFR_ALLOW_SASLINFO
 	/*
 	**  make sure we don't use a program that is not
 	**  accessible to the user who specified a different authinfo file.
@@ -780,7 +812,8 @@ readauth(filename, safe, sai, rpool)
 				       (void *) &fd, SM_IO_RDONLY, NULL);
 	}
 	else
-#endif /* !_FFR_ALLOW_SASLINFO */
+# endif /* !_FFR_ALLOW_SASLINFO */
+	/* "else" in #if code above */
 	{
 		pid = -1;
 		sff = SFF_REGONLY|SFF_SAFEDIRPATH|SFF_NOWLINK
@@ -790,7 +823,7 @@ readauth(filename, safe, sai, rpool)
 		if (DontLockReadFiles)
 			sff |= SFF_NOLOCK;
 
-#if _FFR_ALLOW_SASLINFO
+# if _FFR_ALLOW_SASLINFO
 		/*
 		**  XXX: make sure we don't read or open files that are not
 		**  accessible to the user who specified a different authinfo
@@ -798,10 +831,10 @@ readauth(filename, safe, sai, rpool)
 		*/
 
 		sff |= SFF_MUSTOWN;
-#else /* _FFR_ALLOW_SASLINFO */
+# else /* _FFR_ALLOW_SASLINFO */
 		if (safe)
 			sff |= SFF_OPENASROOT;
-#endif /* _FFR_ALLOW_SASLINFO */
+# endif /* _FFR_ALLOW_SASLINFO */
 
 		f = safefopen(filename, O_RDONLY, 0, sff);
 	}
@@ -1138,9 +1171,9 @@ getsimple(context, id, result, len)
 	unsigned *len;
 {
 	char *h, *s;
-# if SASL > 10509
+#  if SASL > 10509
 	bool addrealm;
-# endif
+#  endif
 	size_t l;
 	SASL_AI_T *sai;
 	char *authid = NULL;
@@ -1189,10 +1222,10 @@ getsimple(context, id, result, len)
 
 	  case SASL_CB_AUTHNAME:
 		h = (*sai)[SASL_AUTHID];
-# if SASL > 10509
+#  if SASL > 10509
 		/* XXX maybe other mechanisms too?! */
 		addrealm = (*sai)[SASL_MECH] != NULL &&
-			   sm_strcasecmp((*sai)[SASL_MECH], "CRAM-MD5") == 0;
+			   SM_STRCASEEQ((*sai)[SASL_MECH], "cram-md5");
 
 		/*
 		**  Add realm to authentication id unless authid contains
@@ -1238,7 +1271,7 @@ getsimple(context, id, result, len)
 				authid = (*sai)[SASL_ID_REALM];
 		}
 		else
-# endif /* SASL > 10509 */
+#  endif /* SASL > 10509 */
 			authid = h;
 		l = strlen(authid) + 1;
 		s = sm_sasl_malloc(l);
@@ -1325,38 +1358,38 @@ getsecret(conn, context, id, psecret)
 */
 
 int
-#if SASL > 10515
+# if SASL > 10515
 safesaslfile(context, file, type)
-#else
+# else
 safesaslfile(context, file)
-#endif
+# endif
 	void *context;
 # if SASL >= 20000
 	const char *file;
 # else
 	char *file;
 # endif
-#if SASL > 10515
-# if SASL >= 20000
+# if SASL > 10515
+#  if SASL >= 20000
 	sasl_verify_type_t type;
-# else
+#  else
 	int type;
+#  endif
 # endif
-#endif
 {
 	long sff;
 	int r;
-#if SASL <= 10515
+# if SASL <= 10515
 	size_t len;
-#endif
+# endif
 	char *p;
 
-	if (file == NULL || *file == '\0')
+	if (SM_IS_EMPTY(file))
 		return SASL_OK;
 	if (tTd(95, 16))
 		sm_dprintf("safesaslfile=%s\n", file);
 	sff = SFF_SAFEDIRPATH|SFF_NOWLINK|SFF_NOWWFILES|SFF_ROOTOK;
-#if SASL <= 10515
+# if SASL <= 10515
 	if ((p = strrchr(file, '/')) == NULL)
 		p = file;
 	else
@@ -1372,7 +1405,7 @@ safesaslfile(context, file)
 		if (!bitnset(DBS_GROUPWRITABLESASLDBFILE, DontBlameSendmail))
 			sff |= SFF_NOGWFILES;
 	}
-#else /* SASL <= 10515 */
+# else /* SASL <= 10515 */
 	/* files containing passwords should be not readable */
 	if (type == SASL_VRFY_PASSWD)
 	{
@@ -1383,7 +1416,7 @@ safesaslfile(context, file)
 		if (!bitnset(DBS_GROUPWRITABLESASLDBFILE, DontBlameSendmail))
 			sff |= SFF_NOGWFILES;
 	}
-#endif /* SASL <= 10515 */
+# endif /* SASL <= 10515 */
 
 	p = (char *) file;
 	if ((r = safefile(p, RunAsUid, RunAsGid, RunAsUserName, sff,
@@ -1429,7 +1462,7 @@ saslgetrealm(context, id, availrealms, result)
 		sm_syslog(LOG_INFO, NOQID,
 			  "AUTH=client, realm=%s, available realms=%s",
 			  r == NULL ? "<No Realm>" : r,
-			  (availrealms == NULL || *availrealms == NULL)
+			  (NULL == availrealms || SM_IS_EMPTY(*availrealms))
 				? "<No Realms>" : *availrealms);
 
 	/* check whether context is in list */
@@ -1474,9 +1507,9 @@ iteminlist(item, list, delim)
 	char *s;
 	int len;
 
-	if (list == NULL || *list == '\0')
+	if (SM_IS_EMPTY(list))
 		return NULL;
-	if (item == NULL || *item == '\0')
+	if (SM_IS_EMPTY(item))
 		return NULL;
 	s = list;
 	len = strlen(item);
@@ -1516,7 +1549,7 @@ removemech(rem, list, rpool)
 
 	if (list == NULL)
 		return NULL;
-	if (rem == NULL || *rem == '\0')
+	if (SM_IS_EMPTY(rem))
 	{
 		/* take out what? */
 		return NULL;
@@ -1596,9 +1629,9 @@ attemptauth(m, mci, e, sai)
 
 	/* MUST NOT be a multiple of 4: bug in some sasl_encode64() versions */
 	char in64[MAXOUTLEN + 1];
-#if NETINET || (NETINET6 && SASL >= 20000)
+# if NETINET || (NETINET6 && SASL >= 20000)
 	extern SOCKADDR CurHostAddr;
-#endif
+# endif
 
 	/* no mechanism selected (yet) */
 	(*sai)[SASL_MECH] = NULL;
@@ -1633,9 +1666,9 @@ attemptauth(m, mci, e, sai)
 	/* XXX should these be options settable via .cf ? */
 	ssp.max_ssf = MaxSLBits;
 	ssp.maxbufsize = MAXOUTLEN;
-#  if 0
+# if 0
 	ssp.security_flags = SASL_SEC_NOPLAINTEXT;
-#  endif
+# endif
 	saslresult = sasl_setprop(mci->mci_conn, SASL_SEC_PROPS, &ssp);
 	if (saslresult != SASL_OK)
 		return EX_TEMPFAIL;
@@ -1776,8 +1809,8 @@ attemptauth(m, mci, e, sai)
 	if (out == NULL
 		/* login and digest-md5 up to 1.5.28 set out="" */
 	    || (outlen == 0 &&
-		(sm_strcasecmp(mechusing, "LOGIN") == 0 ||
-		 sm_strcasecmp(mechusing, "DIGEST-MD5") == 0))
+		(SM_STRCASEEQ(mechusing, "login") ||
+		 SM_STRCASEEQ(mechusing, "digest-md5")))
 	   )
 	{
 		/* no initial response */
@@ -1812,7 +1845,7 @@ attemptauth(m, mci, e, sai)
 
 	/* get the reply */
 	smtpresult = reply(m, mci, e, TimeOuts.to_auth, getsasldata, NULL,
-			XS_AUTH);
+			XS_AUTH, NULL);
 
 	for (;;)
 	{
@@ -1856,7 +1889,7 @@ attemptauth(m, mci, e, sai)
 			*/
 
 			smtpresult = reply(m, mci, e, TimeOuts.to_auth,
-					   getsasldata, NULL, XS_AUTH);
+					   getsasldata, NULL, XS_AUTH, NULL);
 			return EX_NOPERM;
 		}
 
@@ -1878,7 +1911,7 @@ attemptauth(m, mci, e, sai)
 # endif
 		smtpmessage("%s", m, mci, in64);
 		smtpresult = reply(m, mci, e, TimeOuts.to_auth,
-				   getsasldata, NULL, XS_AUTH);
+				   getsasldata, NULL, XS_AUTH, NULL);
 	}
 	/* NOTREACHED */
 }
@@ -1962,9 +1995,9 @@ smtpauth(m, mci, e)
 	callbacks[CB_USER_IDX].context = (void *) &mci->mci_sai;
 	callbacks[CB_AUTHNAME_IDX].context = (void *) &mci->mci_sai;
 	callbacks[CB_GETREALM_IDX].context = (void *) &mci->mci_sai;
-#if 0
+# if 0
 	callbacks[CB_SAFESASL_IDX].context = (void *) &mci->mci_sai;
-#endif
+# endif
 
 	/* set default value for realm */
 	if ((mci->mci_sai)[SASL_DEFREALM] == NULL)
@@ -2013,6 +2046,9 @@ smtpauth(m, mci, e)
 **		m -- the mailer.
 **		mci -- the mailer connection structure.
 **		e -- the envelope (including the sender to specify).
+**
+**	Returns:
+**		exit status corresponding to mail status.
 */
 
 int
@@ -2025,8 +2061,11 @@ smtpmailfrom(m, mci, e)
 	char *bufp;
 	char *bodytype;
 	char *enhsc;
-	char buf[MAXNAME + 1];
+	char buf[MAXNAME_I + 1];
 	char optbuf[MAXLINE];
+#if _FFR_8BITENVADDR
+	int len, nlen;
+#endif
 
 	if (tTd(18, 2))
 		sm_dprintf("smtpmailfrom: CurHost=%s\n", CurHostName);
@@ -2044,18 +2083,42 @@ smtpmailfrom(m, mci, e)
 		return EX_TEMPFAIL;
 	}
 
-#if _FFR_EAI
-	/*
-	**  Abort right away if the message needs SMTPUTF8 and the
-	**  server does not advertise SMTPUTF8.
-	*/
+#if USE_EAI
+	if (bitset(EF_RESPONSE, e->e_flags) &&
+	    !bitnset(M_NO_NULL_FROM, m->m_flags))
+		buf[0] = '\0';
+	else
+	{
+		expand("\201g", buf, sizeof(buf), e);
+		if (!addr_is_ascii(buf) && !e->e_smtputf8)
+			e->e_smtputf8 = true;
+	}
 
-	if (e->e_smtputf8 && !bitset(MCIF_EAI, mci->mci_flags)) {
-		usrerrenh("5.6.7", "%s does not support SMTPUTF8", CurHostName);
-		mci_setstat(mci, EX_NOTSTICKY, "5.6.7", NULL);
+	if (e->e_smtputf8 && !SMTP_UTF8)
+	{
+		extern char MsgBuf[];
+
+		/* XREF: format must be coordinated with giveresponse() */
+		usrerrenh("5.6.7", "504 SMTPUTF8 required but not enabled");
+		mci_setstat(mci, EX_NOTSTICKY, "5.6.7", MsgBuf);
 		return EX_DATAERR;
 	}
-#endif /* _FFR_EAI */
+
+	/*
+	**  Abort right away if the message needs SMTPUTF8
+	**  but the server does not advertise it.
+	*/
+
+	if (e->e_smtputf8 && !bitset(MCIF_EAI, mci->mci_flags))
+	{
+		extern char MsgBuf[];
+
+		/* XREF: format must be coordinated with giveresponse() */
+		usrerrenh("5.6.7", "504 SMTPUTF8 required but not offered");
+		mci_setstat(mci, EX_NOTSTICKY, "5.6.7", MsgBuf);
+		return EX_DATAERR;
+	}
+#endif /* USE_EAI */
 
 	/* set up appropriate options to include */
 	if (bitset(MCIF_SIZE, mci->mci_flags) && e->e_msgsize > 0)
@@ -2070,13 +2133,14 @@ smtpmailfrom(m, mci, e)
 		bufp = optbuf;
 	}
 
-#if _FFR_EAI
-	if (e->e_smtputf8) {
+#if USE_EAI
+	if (e->e_smtputf8)
+	{
 		(void) sm_snprintf(bufp, SPACELEFT(optbuf, bufp),
 				 " SMTPUTF8");
 		bufp += strlen(bufp);
 	}
-#endif /* _FFR_EAI */
+#endif /* USE_EAI */
 
 	bodytype = e->e_bodytype;
 	if (bitset(MCIF_8BITMIME, mci->mci_flags))
@@ -2189,13 +2253,27 @@ smtpmailfrom(m, mci, e)
 	**	Designates the sender.
 	*/
 
+	maps_reset_chged("client:MAIL");
 	mci->mci_state = MCIS_MAIL;
 
+#if !USE_EAI
 	if (bitset(EF_RESPONSE, e->e_flags) &&
 	    !bitnset(M_NO_NULL_FROM, m->m_flags))
 		buf[0] = '\0';
 	else
 		expand("\201g", buf, sizeof(buf), e);
+#endif /* !USE_EAI */
+#if _FFR_8BITENVADDR
+	if (tTd(18, 11))
+		sm_dprintf("mail_expand=%s\n", buf);
+	len = sizeof(buf);
+	nlen = dequote_internal_chars(buf, buf, len);
+	/* check length! but that's a bit late... */
+	if (nlen > MAXNAME)
+		sm_syslog(LOG_ERR, e->e_id, "MAIL too long: %d", nlen);
+	if (tTd(18, 11))
+		sm_dprintf("mail2=%s\n", buf);
+#endif /* _FFR_8BITENVADDR */
 	if (buf[0] == '<')
 	{
 		/* strip off <angle brackets> (put back on below) */
@@ -2219,7 +2297,7 @@ smtpmailfrom(m, mci, e)
 	SmtpPhase = mci->mci_phase = "client MAIL";
 	sm_setproctitle(true, e, "%s %s: %s", qid_printname(e),
 			CurHostName, mci->mci_phase);
-	r = reply(m, mci, e, TimeOuts.to_mail, NULL, &enhsc, XS_MAIL);
+	r = reply(m, mci, e, TimeOuts.to_mail, NULL, &enhsc, XS_MAIL, NULL);
 	if (r < 0)
 	{
 		/* communications failure */
@@ -2313,6 +2391,14 @@ smtprcpt(to, m, mci, e, ctladdr, xstart)
 {
 	char *bufp;
 	char optbuf[MAXLINE];
+	char *rcpt;
+#if _FFR_8BITENVADDR
+	char buf[MAXNAME + 1];	/* EAI:ok */
+	int len, nlen;
+#endif
+#if PIPELINING
+	char *oldto;
+#endif
 
 #if PIPELINING
 	/*
@@ -2320,20 +2406,24 @@ smtprcpt(to, m, mci, e, ctladdr, xstart)
 	**  This should normally happen because of SMTP pipelining.
 	*/
 
+	oldto = e->e_to;
 	while (mci->mci_nextaddr != NULL &&
 	       sm_io_getinfo(mci->mci_in, SM_IO_IS_READABLE, NULL) > 0)
 	{
 		int r;
 
+		e->e_to = mci->mci_nextaddr->q_paddr;
 		r = smtprcptstat(mci->mci_nextaddr, m, mci, e);
 		if (r != EX_OK)
 		{
 			markfailure(e, mci->mci_nextaddr, mci, r, false);
-			giveresponse(r, mci->mci_nextaddr->q_status,  m, mci,
-				     ctladdr, xstart, e, to);
+			giveresponse(r, mci->mci_nextaddr->q_status, m, mci,
+				     ctladdr, xstart, e, mci->mci_nextaddr);
 		}
 		mci->mci_nextaddr = mci->mci_nextaddr->q_pchain;
+		e->e_to = oldto;
 	}
+	e->e_to = oldto;
 #endif /* PIPELINING */
 
 	/*
@@ -2414,7 +2504,21 @@ smtprcpt(to, m, mci, e, ctladdr, xstart)
 		}
 	}
 
-	smtpmessage("RCPT To:<%s>%s", m, mci, to->q_user, optbuf);
+	rcpt = to->q_user;
+#if _FFR_8BITENVADDR
+	if (tTd(18, 11))
+		sm_dprintf("rcpt=%s\n", rcpt);
+	len = sizeof(buf);
+	nlen = dequote_internal_chars(rcpt, buf, len);
+	rcpt = buf;
+	/* check length! but that's a bit late... */
+	if (nlen > MAXNAME)
+		sm_syslog(LOG_ERR, e->e_id, "RCPT too long: %d", nlen);
+	if (tTd(18, 11))
+		sm_dprintf("rcpt2=%s\n", rcpt);
+#endif /* _FFR_8BITENVADDR */
+
+	smtpmessage("RCPT To:<%s>%s", m, mci, rcpt, optbuf);
 	mci->mci_state = MCIS_RCPT;
 
 	SmtpPhase = mci->mci_phase = "client RCPT";
@@ -2471,9 +2575,9 @@ smtprcptstat(to, m, mci, e)
 	}
 
 	enhsc = NULL;
-	r = reply(m, mci, e, TimeOuts.to_rcpt, NULL, &enhsc, XS_RCPT);
+	r = reply(m, mci, e, TimeOuts.to_rcpt, NULL, &enhsc, XS_RCPT,
+		  &to->q_rstatus);
 	save_errno = errno;
-	to->q_rstatus = sm_rpool_strdup_x(e->e_rpool, SmtpReplyBuffer);
 	to->q_status = ENHSCN_RPOOL(enhsc, smtptodsn(r), e->e_rpool);
 	if (!bitnset(M_LMTP, m->m_flags))
 		to->q_statmta = mci->mci_host;
@@ -2497,9 +2601,7 @@ smtprcptstat(to, m, mci, e)
 			*t = '\0';
 			mci->mci_tolist = t;
 		}
-#if PIPELINING
 		mci->mci_okrcpts++;
-#endif
 		return EX_OK;
 	}
 	else if (r == 550)
@@ -2630,7 +2732,7 @@ smtpdata(m, mci, e, ctladdr, xstart)
 	mci->mci_state = MCIS_DATA;
 	sm_setproctitle(true, e, "%s %s: %s",
 			qid_printname(e), CurHostName, mci->mci_phase);
-	r = reply(m, mci, e, TimeOuts.to_datainit, NULL, &enhsc, XS_DATA);
+	r = reply(m, mci, e, TimeOuts.to_datainit, NULL, &enhsc, XS_DATA, NULL);
 	if (r < 0 || REPLYTYPE(r) == 4)
 	{
 		if (r >= 0)
@@ -2641,11 +2743,8 @@ smtpdata(m, mci, e, ctladdr, xstart)
 	else if (REPLYTYPE(r) == 5)
 	{
 		smtprset(m, mci, e);
-#if PIPELINING
-		if (mci->mci_okrcpts <= 0)
-			return mci->mci_retryrcpt ? EX_TEMPFAIL
-						  : EX_UNAVAILABLE;
-#endif
+		if (mci->mci_okrcpts <= 0 && mci->mci_retryrcpt)
+			return EX_TEMPFAIL;
 		return EX_UNAVAILABLE;
 	}
 	else if (REPLYTYPE(r) != 3)
@@ -2660,59 +2759,49 @@ smtpdata(m, mci, e, ctladdr, xstart)
 		smtprset(m, mci, e);
 		mci_setstat(mci, EX_PROTOCOL, ENHSCN(enhsc, "5.5.1"),
 			    SmtpReplyBuffer);
-#if PIPELINING
-		if (mci->mci_okrcpts <= 0)
-			return mci->mci_retryrcpt ? EX_TEMPFAIL
-						  : EX_PROTOCOL;
-#endif
+		if (mci->mci_okrcpts <= 0 && mci->mci_retryrcpt)
+			return EX_TEMPFAIL;
 		return EX_PROTOCOL;
 	}
 
-#if PIPELINING
 	if (mci->mci_okrcpts > 0)
 	{
-#endif
+		/*
+		**  Set timeout around data writes.  Make it at least
+		**  large enough for DNS timeouts on all recipients
+		**  plus some fudge factor.  The main thing is
+		**  that it should not be infinite.
+		*/
 
-	/*
-	**  Set timeout around data writes.  Make it at least large
-	**  enough for DNS timeouts on all recipients plus some fudge
-	**  factor.  The main thing is that it should not be infinite.
-	*/
+		if (tTd(18, 101))
+		{
+			/* simulate a DATA timeout */
+			timeout = 10;
+		}
+		else
+			timeout = DATA_PROGRESS_TIMEOUT * 1000;
+		sm_io_setinfo(mci->mci_out, SM_IO_WHAT_TIMEOUT, &timeout);
 
-	if (tTd(18, 101))
-	{
-		/* simulate a DATA timeout */
-		timeout = 10;
+		/*
+		**  Output the actual message.
+		*/
+
+		if (!(*e->e_puthdr)(mci, e->e_header, e, M87F_OUTER))
+			goto writeerr;
+
+		if (tTd(18, 101))
+		{
+			/* simulate a DATA timeout */
+			(void) sleep(2);
+		}
+
+		if (!(*e->e_putbody)(mci, e, NULL))
+			goto writeerr;
+
+		/*
+		**  Cleanup after sending message.
+		*/
 	}
-	else
-		timeout = DATA_PROGRESS_TIMEOUT * 1000;
-	sm_io_setinfo(mci->mci_out, SM_IO_WHAT_TIMEOUT, &timeout);
-
-
-	/*
-	**  Output the actual message.
-	*/
-
-	if (!(*e->e_puthdr)(mci, e->e_header, e, M87F_OUTER))
-		goto writeerr;
-
-	if (tTd(18, 101))
-	{
-		/* simulate a DATA timeout */
-		(void) sleep(2);
-	}
-
-	if (!(*e->e_putbody)(mci, e, NULL))
-		goto writeerr;
-
-	/*
-	**  Cleanup after sending message.
-	*/
-
-
-#if PIPELINING
-	}
-#endif
 
 #if _FFR_CATCH_BROKEN_MTAS
 	if (sm_io_getinfo(mci->mci_in, SM_IO_IS_READABLE, NULL) > 0)
@@ -2764,7 +2853,7 @@ smtpdata(m, mci, e, ctladdr, xstart)
 			CurHostName, mci->mci_phase);
 	if (bitnset(M_LMTP, m->m_flags))
 		return EX_OK;
-	r = reply(m, mci, e, TimeOuts.to_datafinal, NULL, &enhsc, XS_EOM);
+	r = reply(m, mci, e, TimeOuts.to_datafinal, NULL, &enhsc, XS_EOM, NULL);
 	if (r < 0)
 		return EX_TEMPFAIL;
 	if (mci->mci_state == MCIS_DATA)
@@ -2852,7 +2941,8 @@ smtpgetstat(m, mci, e)
 	enhsc = NULL;
 
 	/* check for the results of the transaction */
-	r = reply(m, mci, e, TimeOuts.to_datafinal, NULL, &enhsc, XS_DATA2);
+	r = reply(m, mci, e, TimeOuts.to_datafinal, NULL, &enhsc, XS_DATA2,
+		  NULL);
 	if (r < 0)
 		return EX_TEMPFAIL;
 	xstat = EX_NOTSTICKY;
@@ -2918,10 +3008,6 @@ smtpquit(m, mci, e)
 	if (CurHostName == NULL)
 		CurHostName = MyHostName;
 
-#if PIPELINING
-	mci->mci_okrcpts = 0;
-#endif
-
 	/*
 	**	Suppress errors here -- we may be processing a different
 	**	job when we do the quit connection, and we don't want the
@@ -2938,7 +3024,8 @@ smtpquit(m, mci, e)
 		SmtpPhase = "client QUIT";
 		mci->mci_state = MCIS_QUITING;
 		smtpmessage("QUIT", m, mci);
-		(void) reply(m, mci, e, TimeOuts.to_quit, NULL, NULL, XS_QUIT);
+		(void) reply(m, mci, e, TimeOuts.to_quit, NULL, NULL, XS_QUIT,
+			     NULL);
 		SuprErrs = oldSuprErrs;
 		if (mci->mci_state == MCIS_CLOSED)
 			goto end;
@@ -2995,10 +3082,6 @@ smtprset(m, mci, e)
 	if (CurHostName == NULL)
 		CurHostName = MyHostName;
 
-#if PIPELINING
-	mci->mci_okrcpts = 0;
-#endif
-
 	/*
 	**  Check if connection is gone, if so
 	**  it's a tempfail and we use mci_errno
@@ -3013,7 +3096,7 @@ smtprset(m, mci, e)
 
 	SmtpPhase = "client RSET";
 	smtpmessage("RSET", m, mci);
-	r = reply(m, mci, e, TimeOuts.to_rset, NULL, NULL, XS_DEFAULT);
+	r = reply(m, mci, e, TimeOuts.to_rset, NULL, NULL, XS_DEFAULT, NULL);
 	if (r < 0)
 		return;
 
@@ -3062,7 +3145,8 @@ smtpprobe(mci)
 	e = &BlankEnvelope;
 	SmtpPhase = "client probe";
 	smtpmessage("RSET", m, mci);
-	r = reply(m, mci, e, TimeOuts.to_miscshort, NULL, NULL, XS_DEFAULT);
+	r = reply(m, mci, e, TimeOuts.to_miscshort, NULL, NULL, XS_DEFAULT,
+		  NULL);
 	if (REPLYTYPE(r) != 2)
 		smtpquit(m, mci, e);
 	return r;
@@ -3079,16 +3163,18 @@ smtpprobe(mci)
 **			If null, no special processing is done.
 **		enhstat -- optional, returns enhanced error code string (if set)
 **		rtype -- type of SmtpMsgBuffer: does it contains secret data?
+**		rtext -- pointer to where to save first line of reply (if set)
 **
 **	Returns:
 **		reply code it reads.
+**		-1 on I/O errors etc.
 **
 **	Side Effects:
 **		flushes the mail file.
 */
 
 int
-reply(m, mci, e, timeout, pfunc, enhstat, rtype)
+reply(m, mci, e, timeout, pfunc, enhstat, rtype, rtext)
 	MAILER *m;
 	MCI *mci;
 	ENVELOPE *e;
@@ -3096,6 +3182,7 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 	void (*pfunc) __P((char *, bool, MAILER *, MCI *, ENVELOPE *));
 	char **enhstat;
 	int rtype;
+	char **rtext;
 {
 	register char *bufp;
 	register int r;
@@ -3128,7 +3215,13 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 			what = "greeting";
 		else
 			what = "unknown";
-		sm_dprintf("reply to %s\n", what);
+#if PIPELINING
+		if (mci->mci_flags & MCIF_PIPELINED)
+			sm_dprintf("reply to %s:%d [but PIPELINED]\n", what, rtype);
+		else
+#endif
+		/* "else" in #if code above */
+		sm_dprintf("reply to %s:%d\n", what, rtype);
 	}
 
 	/*
@@ -3206,7 +3299,7 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 			mci->mci_errno = errno;
 			oldholderrs = HoldErrs;
 			HoldErrs = true;
-			usrerr("451 4.4.1 reply: read error from %s",
+			usrerr("451 4.4.2 reply: read error from %s",
 			       CURHOSTNAME);
 			mci_setstat(mci, EX_TEMPFAIL, "4.4.2", MsgBuf);
 
@@ -3239,6 +3332,8 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 			return -1;
 		}
 		fixcrlf(bufp, true);
+		if (tTd(18, 4))
+			sm_dprintf("received=%s\n", bufp);
 
 		/* EHLO failure is not a real error */
 		if (e->e_xfp != NULL && (bufp[0] == '4' ||
@@ -3280,6 +3375,9 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 		if (!ISSMTPREPLY(bufp))
 			continue;
 
+		if (NULL != rtext && firstline)
+			*rtext = sm_rpool_strdup_x(e->e_rpool, SmtpReplyBuffer);
+
 		if (bitset(MCIF_ENHSTAT, mci->mci_flags) &&
 		    enhstat != NULL &&
 		    extenhsc(bufp + 4, ' ', enhstatcode) > 0)
@@ -3299,17 +3397,16 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 			continue;
 		}
 		if (REPLYTYPE(r) > 3 && firstline
-# if _FFR_PROXY
+#if _FFR_PROXY
 		    &&
 		    (e->e_sendmode != SM_PROXY
 		     || (e->e_sendmode == SM_PROXY
 			 && (e->e_rcode == 0 || REPLYTYPE(e->e_rcode) < 5))
 		    )
-# endif
+#endif
 		   )
 		{
 			int o = -1;
-# if PIPELINING
 			/*
 			**  ignore error iff: DATA, 5xy error, but we had
 			**  "retryable" recipients. XREF: smtpdata()
@@ -3317,7 +3414,6 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 
 			if (!(rtype == XS_DATA && REPLYTYPE(r) == 5 &&
 			      mci->mci_okrcpts <= 0 && mci->mci_retryrcpt))
-# endif /* PIPELINING */
 			{
 				o = extenhsc(bufp + 4, ' ', enhstatcode);
 				if (o > 0)
@@ -3343,6 +3439,9 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 					e->e_rcode = r;
 					e->e_text = sm_rpool_strdup_x(
 							e->e_rpool, bufp + o);
+#if _FFR_LOG_STAGE
+					e->e_estate = rtype;
+#endif
 				}
 			}
 			if (tTd(87, 2))
@@ -3352,6 +3451,31 @@ reply(m, mci, e, timeout, pfunc, enhstat, rtype)
 					, rtype, e->e_text);
 			}
 		}
+#if _FFR_REPLY_MULTILINE
+# if _FFR_REPLY_MULTILINE > 200
+#  define MLLIMIT _FFR_REPLY_MULTILINE
+# else
+#  define MLLIMIT 1024
+# endif
+		if ((REPLYTYPE(r) > 3 && !firstline && e->e_text != NULL &&
+		    rtype != XS_QUIT) || tTd(87, 101))
+		{
+			int len;
+			char *new;
+
+			/* skip the same stuff or use o? */
+			/* but o is a local variable in the block above */
+			len = strlen(e->e_text) + strlen(bufp) + 3;
+			if (len < MLLIMIT &&
+			    (new = (char *) sm_rpool_malloc(e->e_rpool, len))
+				!= NULL)
+			{
+				sm_strlcpyn(new, len, 3, e->e_text, "; ",
+					bufp /* + o */);
+				e->e_text = new;
+			}
+		}
+#endif /* _FFR_REPLY_MULTILINE */
 
 		firstline = false;
 
@@ -3429,7 +3553,5 @@ smtpmessage(f, m, mci, va_alist)
 							      : m->m_eol);
 	}
 	else if (tTd(18, 1))
-	{
 		sm_dprintf("smtpmessage: NULL mci_out\n");
-	}
 }

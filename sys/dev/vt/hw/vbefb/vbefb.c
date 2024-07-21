@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 The FreeBSD Foundation
  *
@@ -27,9 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -61,6 +58,7 @@ static struct vt_driver vt_vbefb_driver = {
 	.vd_bitblt_text = vt_fb_bitblt_text,
 	.vd_invalidate_text = vt_fb_invalidate_text,
 	.vd_bitblt_bmp = vt_fb_bitblt_bitmap,
+	.vd_bitblt_argb = vt_fb_bitblt_argb,
 	.vd_drawrect = vt_fb_drawrect,
 	.vd_setpixel = vt_fb_setpixel,
 	.vd_fb_ioctl = vt_fb_ioctl,
@@ -159,5 +157,5 @@ vt_vbefb_fini(struct vt_device *vd, void *softc)
 	struct fb_info	*info = softc;
 
 	vt_fb_fini(vd, softc);
-	pmap_unmapdev(info->fb_vbase, info->fb_size);
+	pmap_unmapdev((void *)info->fb_vbase, info->fb_size);
 }

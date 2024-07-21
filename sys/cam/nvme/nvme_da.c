@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2015 Netflix, Inc.
  *
@@ -7,29 +7,26 @@
  * modification, are permitted provided that the following conditions
  * are met:
  * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer,
- *    without modification, immediately at the beginning of the file.
+ *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  *
  * Derived from ata_da.c:
  * Copyright (c) 2009 Alexander Motin <mav@FreeBSD.org>
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 
@@ -149,7 +146,7 @@ static	disk_ioctl_t	ndaioctl;
 static	disk_strategy_t	ndastrategy;
 static	dumper_t	ndadump;
 static	periph_init_t	ndainit;
-static	void		ndaasync(void *callback_arg, u_int32_t code,
+static	void		ndaasync(void *callback_arg, uint32_t code,
 				struct cam_path *path, void *arg);
 static	void		ndasysctlinit(void *context, int pending);
 static	int		ndaflagssysctl(SYSCTL_HANDLER_ARGS);
@@ -159,8 +156,8 @@ static	periph_start_t	ndastart;
 static	periph_oninv_t	ndaoninvalidate;
 static	void		ndadone(struct cam_periph *periph,
 			       union ccb *done_ccb);
-static  int		ndaerror(union ccb *ccb, u_int32_t cam_flags,
-				u_int32_t sense_flags);
+static  int		ndaerror(union ccb *ccb, uint32_t cam_flags,
+				uint32_t sense_flags);
 static void		ndashutdown(void *arg, int howto);
 static void		ndasuspend(void *arg);
 
@@ -440,8 +437,9 @@ ndaioctl(struct disk *dp, u_long cmd, void *data, int fflag,
 		 * Tear down mapping and return status.
 		 */
 		cam_periph_unlock(periph);
-		cam_periph_unmapmem(ccb, &mapinfo);
-		error = (ccb->ccb_h.status == CAM_REQ_CMP) ? 0 : EIO;
+		error = cam_periph_unmapmem(ccb, &mapinfo);
+		if (!cam_ccb_success(ccb))
+			error = EIO;
 out:
 		cam_periph_lock(periph);
 		xpt_release_ccb(ccb);
@@ -646,7 +644,7 @@ ndacleanup(struct cam_periph *periph)
 }
 
 static void
-ndaasync(void *callback_arg, u_int32_t code,
+ndaasync(void *callback_arg, uint32_t code,
 	struct cam_path *path, void *arg)
 {
 	struct cam_periph *periph;
@@ -813,7 +811,7 @@ ndaflagssysctl(SYSCTL_HANDLER_ARGS)
 	if (softc->flags != 0)
 		sbuf_printf(&sbuf, "0x%b", (unsigned)softc->flags, NDA_FLAG_STRING);
 	else
-		sbuf_printf(&sbuf, "0");
+		sbuf_putc(&sbuf, '0');
 	error = sbuf_finish(&sbuf);
 	sbuf_delete(&sbuf);
 
@@ -864,13 +862,6 @@ ndaregister(struct cam_periph *periph, void *arg)
 		return(CAM_REQ_CMP_ERR);
 	}
 
-	if (cam_iosched_init(&softc->cam_iosched, periph) != 0) {
-		printf("ndaregister: Unable to probe new device. "
-		       "Unable to allocate iosched memory\n");
-		free(softc, M_DEVBUF);
-		return(CAM_REQ_CMP_ERR);
-	}
-
 	/* ident_data parsing */
 
 	periph->softc = softc;
@@ -893,7 +884,6 @@ ndaregister(struct cam_periph *periph, void *arg)
 	quirks = softc->quirks;
 	TUNABLE_INT_FETCH(announce_buf, &quirks);
 	softc->quirks = quirks;
-	cam_iosched_set_sort_queue(softc->cam_iosched, 0);
 	softc->disk = disk = disk_alloc();
 	disk->d_rotation_rate = DISK_RR_NON_ROTATING;
 	disk->d_open = ndaopen;
@@ -913,18 +903,15 @@ ndaregister(struct cam_periph *periph, void *arg)
 	else if (maxio > maxphys)
 		maxio = maxphys;	/* for safety */
 	disk->d_maxsize = maxio;
-	flbas_fmt = (nsd->flbas >> NVME_NS_DATA_FLBAS_FORMAT_SHIFT) &
-		NVME_NS_DATA_FLBAS_FORMAT_MASK;
-	lbads = (nsd->lbaf[flbas_fmt] >> NVME_NS_DATA_LBAF_LBADS_SHIFT) &
-		NVME_NS_DATA_LBAF_LBADS_MASK;
+	flbas_fmt = NVMEV(NVME_NS_DATA_FLBAS_FORMAT, nsd->flbas);
+	lbads = NVMEV(NVME_NS_DATA_LBAF_LBADS, nsd->lbaf[flbas_fmt]);
 	disk->d_sectorsize = 1 << lbads;
 	disk->d_mediasize = (off_t)(disk->d_sectorsize * nsd->nsze);
 	disk->d_delmaxsize = disk->d_mediasize;
 	disk->d_flags = DISKFLAG_DIRECT_COMPLETION;
 	if (nvme_ctrlr_has_dataset_mgmt(cd))
 		disk->d_flags |= DISKFLAG_CANDELETE;
-	vwc_present = (cd->vwc >> NVME_CTRLR_DATA_VWC_PRESENT_SHIFT) &
-		NVME_CTRLR_DATA_VWC_PRESENT_MASK;
+	vwc_present = NVMEV(NVME_CTRLR_DATA_VWC_PRESENT, cd->vwc);
 	if (vwc_present)
 		disk->d_flags |= DISKFLAG_CANFLUSHCACHE;
 	if ((cpi.hba_misc & PIM_UNMAPPED) != 0) {
@@ -947,8 +934,8 @@ ndaregister(struct cam_periph *periph, void *arg)
 	disk->d_hba_subdevice = cpi.hba_subdevice;
 	snprintf(disk->d_attachment, sizeof(disk->d_attachment),
 	    "%s%d", cpi.dev_name, cpi.unit_number);
-	if (((nsd->nsfeat >> NVME_NS_DATA_NSFEAT_NPVALID_SHIFT) &
-	    NVME_NS_DATA_NSFEAT_NPVALID_MASK) != 0 && nsd->npwg != 0)
+	if (NVMEV(NVME_NS_DATA_NSFEAT_NPVALID, nsd->nsfeat) != 0 &&
+	    nsd->npwg != 0)
 		disk->d_stripesize = ((nsd->npwg + 1) * disk->d_sectorsize);
 	else
 		disk->d_stripesize = nsd->noiob * disk->d_sectorsize;
@@ -958,6 +945,16 @@ ndaregister(struct cam_periph *periph, void *arg)
 	    DEVSTAT_ALL_SUPPORTED,
 	    DEVSTAT_TYPE_DIRECT | XPORT_DEVSTAT_TYPE(cpi.transport),
 	    DEVSTAT_PRIORITY_DISK);
+
+	if (cam_iosched_init(&softc->cam_iosched, periph, disk,
+	    ndaschedule) != 0) {
+		printf("ndaregister: Unable to probe new device. "
+		       "Unable to allocate iosched memory\n");
+		free(softc, M_DEVBUF);
+		return(CAM_REQ_CMP_ERR);
+	}
+	cam_iosched_set_sort_queue(softc->cam_iosched, 0);
+
 	/*
 	 * Add alias for older nvd drives to ease transition.
 	 */
@@ -1082,7 +1079,17 @@ ndastart(struct cam_periph *periph, union ccb *start_ccb)
 
 			trim = malloc(sizeof(*trim), M_NVMEDA, M_ZERO | M_NOWAIT);
 			if (trim == NULL) {
+				/*
+				 * We have to drop the periph lock when
+				 * returning ENOMEM. g_io_deliver treats these
+				 * request differently and will recursively call
+				 * the start routine which causes us to get into
+				 * ndastrategy with the periph lock held,
+				 * leading to a panic when its acquired again.
+				 */
+				cam_periph_unlock(periph);
 				biofinish(bp, NULL, ENOMEM);
+				cam_periph_lock(periph);
 				xpt_release_ccb(start_ccb);
 				ndaschedule(periph);
 				return;
@@ -1268,7 +1275,7 @@ ndadone(struct cam_periph *periph, union ccb *done_ccb)
 }
 
 static int
-ndaerror(union ccb *ccb, u_int32_t cam_flags, u_int32_t sense_flags)
+ndaerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 {
 #ifdef CAM_IO_STATS
 	struct nda_softc *softc;
@@ -1284,12 +1291,8 @@ ndaerror(union ccb *ccb, u_int32_t cam_flags, u_int32_t sense_flags)
 		softc->timeouts++;
 #endif
 		break;
-	case CAM_REQ_ABORTED:
 	case CAM_REQ_CMP_ERR:
-	case CAM_REQ_TERMIO:
-	case CAM_UNREC_HBA_ERROR:
-	case CAM_DATA_RUN_ERR:
-	case CAM_ATA_STATUS_ERROR:
+	case CAM_NVME_STATUS_ERROR:
 #ifdef CAM_IO_STATS
 		softc->errors++;
 #endif

@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # Start keyserv if we are running Secure RPC
@@ -17,6 +16,8 @@ desc="Server for storing private encryption keys"
 rcvar="keyserv_enable"
 command="/usr/sbin/${name}"
 start_precmd="keyserv_prestart"
+
+: ${keyserv_svcj_options:="net_basic"}
 
 keyserv_prestart()
 {

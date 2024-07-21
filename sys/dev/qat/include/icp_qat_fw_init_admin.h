@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #ifndef _ICP_QAT_FW_INIT_ADMIN_H_
 #define _ICP_QAT_FW_INIT_ADMIN_H_
 
@@ -198,10 +197,6 @@ enum icp_qat_fw_init_admin_init_flag { ICP_QAT_FW_INIT_FLAG_PKE_DISABLED = 0 };
 struct icp_qat_fw_init_admin_hb_cnt {
 	u16 resp_heartbeat_cnt;
 	u16 req_heartbeat_cnt;
-};
-
-struct icp_qat_fw_init_admin_hb_stats {
-	struct icp_qat_fw_init_admin_hb_cnt stats[ADF_NUM_HB_CNT_PER_AE];
 };
 
 #define ICP_QAT_FW_COMN_HEARTBEAT_OK 0

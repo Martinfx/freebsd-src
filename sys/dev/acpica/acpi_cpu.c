@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -153,6 +151,9 @@ static struct sysctl_ctx_list cpu_sysctl_ctx;
 static struct sysctl_oid *cpu_sysctl_tree;
 static int		 cpu_cx_generic;
 static int		 cpu_cx_lowest_lim;
+#if defined(__i386__) || defined(__amd64__)
+static bool		 cppc_notify;
+#endif
 
 static struct acpi_cpu_softc **cpu_softc;
 ACPI_SERIAL_DECL(cpu, "ACPI CPU");
@@ -378,6 +379,14 @@ acpi_cpu_attach(device_t dev)
 	cpu_sysctl_tree = SYSCTL_ADD_NODE(&cpu_sysctl_ctx,
 	    SYSCTL_CHILDREN(acpi_sc->acpi_sysctl_tree), OID_AUTO, "cpu",
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "node for CPU children");
+
+#if defined(__i386__) || defined(__amd64__)
+	/* Add sysctl handler to control registering for CPPC notifications */
+	cppc_notify = 1;
+	SYSCTL_ADD_BOOL(&cpu_sysctl_ctx, SYSCTL_CHILDREN(cpu_sysctl_tree),
+	    OID_AUTO, "cppc_notify", CTLFLAG_RDTUN | CTLFLAG_MPSAFE,
+	    &cppc_notify, 0, "Register for CPPC Notifications");
+#endif
     }
 
     /*
@@ -396,6 +405,13 @@ acpi_cpu_attach(device_t dev)
      */
     if (!acpi_disabled("mwait") && cpu_mwait_usable())
 	sc->cpu_features |= ACPI_CAP_SMP_C1_NATIVE | ACPI_CAP_SMP_C3_NATIVE;
+
+    /*
+     * Work around a lingering SMM bug which leads to freezes when handling
+     * CPPC notifications. Tell the SMM we will handle any CPPC notifications.
+     */
+    if ((cpu_power_eax & CPUTPM1_HWP_NOTIFICATION) && cppc_notify)
+	    sc->cpu_features |= ACPI_CAP_INTR_CPPC;
 #endif
 
     if (devclass_get_drivers(device_get_devclass(dev), &drivers,
@@ -496,6 +512,9 @@ static void
 enable_idle(struct acpi_cpu_softc *sc)
 {
 
+    if (sc->cpu_cx_count > sc->cpu_non_c3 + 1 &&
+	(cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0)
+	    AcpiWriteBitRegister(ACPI_BITREG_BUS_MASTER_RLD, 1);
     sc->cpu_disable_idle = FALSE;
 }
 
@@ -1148,14 +1167,13 @@ acpi_cpu_idle(sbintime_t sbt)
     }
 
     /*
-     * For C3, disable bus master arbitration and enable bus master wake
-     * if BM control is available, otherwise flush the CPU cache.
+     * For C3, disable bus master arbitration if BM control is available.
+     * CPU may have to wake up to handle it. Otherwise flush the CPU cache.
      */
     if (cx_next->type == ACPI_STATE_C3) {
-	if ((cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0) {
+	if ((cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0)
 	    AcpiWriteBitRegister(ACPI_BITREG_ARB_DISABLE, 1);
-	    AcpiWriteBitRegister(ACPI_BITREG_BUS_MASTER_RLD, 1);
-	} else
+	else
 	    ACPI_FLUSH_CPU_CACHE();
     }
 
@@ -1190,12 +1208,10 @@ acpi_cpu_idle(sbintime_t sbt)
     else
 	end_ticks = cpu_ticks();
 
-    /* Enable bus master arbitration and disable bus master wakeup. */
+    /* Enable bus master arbitration. */
     if (cx_next->type == ACPI_STATE_C3 &&
-      (cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0) {
+      (cpu_quirks & CPU_QUIRK_NO_BM_CTRL) == 0)
 	AcpiWriteBitRegister(ACPI_BITREG_ARB_DISABLE, 0);
-	AcpiWriteBitRegister(ACPI_BITREG_BUS_MASTER_RLD, 0);
-    }
     ACPI_ENABLE_IRQS();
 
     if (cx_next->type == ACPI_STATE_C3)

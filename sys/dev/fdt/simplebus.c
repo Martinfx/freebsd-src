@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Nathan Whitehorn
  * All rights reserved.
@@ -26,8 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/module.h>
@@ -89,11 +87,15 @@ static device_method_t	simplebus_methods[] = {
 	DEVMETHOD(bus_activate_resource, bus_generic_activate_resource),
 	DEVMETHOD(bus_deactivate_resource, bus_generic_deactivate_resource),
 	DEVMETHOD(bus_adjust_resource,	bus_generic_adjust_resource),
+	DEVMETHOD(bus_map_resource,	bus_generic_map_resource),
+	DEVMETHOD(bus_unmap_resource,	bus_generic_unmap_resource),
 	DEVMETHOD(bus_set_resource,	bus_generic_rl_set_resource),
 	DEVMETHOD(bus_get_resource,	bus_generic_rl_get_resource),
+	DEVMETHOD(bus_delete_resource,	bus_generic_rl_delete_resource),
 	DEVMETHOD(bus_child_pnpinfo,	ofw_bus_gen_child_pnpinfo),
 	DEVMETHOD(bus_get_resource_list, simplebus_get_resource_list),
 	DEVMETHOD(bus_get_property,	simplebus_get_property),
+	DEVMETHOD(bus_get_device_path,  ofw_bus_gen_get_device_path),
 
 	/* ofw_bus interface */
 	DEVMETHOD(ofw_bus_get_devinfo,	simplebus_get_devinfo),
@@ -357,7 +359,7 @@ static ssize_t
 simplebus_get_property(device_t bus, device_t child, const char *propname,
     void *propvalue, size_t size, device_property_type_t type)
 {
-	phandle_t node = ofw_bus_get_node(child);
+	phandle_t node, xref;
 	ssize_t ret, i;
 	uint32_t *buffer;
 	uint64_t val;
@@ -367,11 +369,13 @@ simplebus_get_property(device_t bus, device_t child, const char *propname,
 	case DEVICE_PROP_BUFFER:
 	case DEVICE_PROP_UINT32:
 	case DEVICE_PROP_UINT64:
+	case DEVICE_PROP_HANDLE:
 		break;
 	default:
 		return (-1);
 	}
 
+	node = ofw_bus_get_node(child);
 	if (propvalue == NULL || size == 0)
 		return (OF_getproplen(node, propname));
 
@@ -402,7 +406,20 @@ simplebus_get_property(device_t bus, device_t child, const char *propname,
 			((uint64_t *)buffer)[i / 2] = val;
 		}
 		return (ret);
-	 }
+	}
+
+	if (type == DEVICE_PROP_HANDLE) {
+		if (size < sizeof(node))
+			return (-1);
+		ret = OF_getencprop(node, propname, &xref, sizeof(xref));
+		if (ret <= 0)
+			return (ret);
+
+		node = OF_node_from_xref(xref);
+		if (propvalue != NULL)
+			*(uint32_t *)propvalue = node;
+		return (ret);
+	}
 
 	return (OF_getprop(node, propname, propvalue, size));
 }
@@ -426,9 +443,6 @@ simplebus_alloc_resource(device_t bus, device_t child, int type, int *rid,
 		if ((di = device_get_ivars(child)) == NULL)
 			return (NULL);
 
-		if (type == SYS_RES_IOPORT)
-			type = SYS_RES_MEMORY;
-
 		rle = resource_list_find(&di->rl, type, *rid);
 		if (rle == NULL) {
 			if (bootverbose)
@@ -440,6 +454,9 @@ simplebus_alloc_resource(device_t bus, device_t child, int type, int *rid,
 		end = rle->end;
 		count = rle->count;
         }
+
+	if (type == SYS_RES_IOPORT)
+		type = SYS_RES_MEMORY;
 
 	if (type == SYS_RES_MEMORY) {
 		/* Remap through ranges property */

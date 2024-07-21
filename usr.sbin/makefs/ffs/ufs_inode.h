@@ -35,9 +35,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)inode.h	8.9 (Berkeley) 5/14/95
- * $FreeBSD$
  */
 
 union dinode {
@@ -46,7 +43,7 @@ union dinode {
 };
 
 struct inode {
-	ino_t	  	i_number;	/* The identity of the inode. */
+	ino_t		i_number;	/* The identity of the inode. */
 	struct vnode	*i_devvp;	/* vnode pointer (contains fsopts) */
 	struct fs	*i_fs;		/* File system */
 	union dinode	i_din;

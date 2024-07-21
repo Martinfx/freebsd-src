@@ -49,9 +49,11 @@ device		vt
 device		kbdmux
 
 device		vt_efifb
+device		vt_simplefb
 
 # Pseudo devices.
 device		crypto			# core crypto support
+device		armv8_rng		# Armv8.5 rndr RNG
 device		loop			# Network loopback
 device		ether			# Ethernet support
 device		vlan			# 802.1Q VLAN support
@@ -68,7 +70,7 @@ device		syscon
 
 # EVDEV support
 device		evdev			# input event device support
-options		EVDEV_SUPPORT		# evdev support in legacy drivers
+options 	EVDEV_SUPPORT		# evdev support in legacy drivers
 device		uinput			# install /dev/uinput cdev
 
 # PCI/PCI-X/PCIe Ethernet NICs that use iflib infrastructure
@@ -86,6 +88,9 @@ device		miibus			# MII bus support
 # Note that 'bpf' is required for DHCP.
 device		bpf		# Berkeley packet filter
 
+# Netmap provides direct access to TX/RX rings on supported NICs
+device		netmap			# netmap(4) support
+
 # USB support
 options 	USB_DEBUG		# enable debug msgs
 options 	USB_HOST_ALIGN=64	# Align usb buffers to cache line size.
@@ -94,7 +99,9 @@ device		uhci			# UHCI USB interface
 device		ehci			# EHCI USB interface (USB 2.0)
 device		xhci			# XHCI USB interface (USB 3.0)
 device		usb			# USB Bus (required)
-device		ukbd			# Keyboard
+device		usbhid			# USB HID Transport
+device		hkbd			# HID Keyboard
+device		ukbd			# USB Keyboard
 device		umass			# Disks/Mass storage - Requires scbus and da
 
 # Sound support
@@ -107,3 +114,7 @@ device		mmcsd			# mmc/sd flash cards
 # HID support
 options 	HID_DEBUG		# enable debug msgs
 device		hid			# Generic HID support
+device		hidbus			# Generic HID Bus
+
+# Firmware
+device		mmio_sram		# Generic on-chip SRAM

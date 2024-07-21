@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2012 Spectra Logic Corporation
  * All rights reserved.
@@ -33,8 +33,6 @@
  *          Ken Merry           (Spectra Logic Corporation)
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /**
  * \file blkback.c
  *
@@ -3779,7 +3777,8 @@ static device_method_t xbb_methods[] = {
 
 	/* Xenbus interface */
 	DEVMETHOD(xenbus_otherend_changed, xbb_frontend_changed),
-	{ 0, 0 }
+
+	DEVMETHOD_END
 };
 
 static driver_t xbb_driver = {

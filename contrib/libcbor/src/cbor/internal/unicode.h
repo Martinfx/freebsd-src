@@ -22,6 +22,7 @@ struct _cbor_unicode_status {
   size_t location;
 };
 
+_CBOR_NODISCARD
 size_t _cbor_unicode_codepoint_count(cbor_data source, size_t source_length,
                                      struct _cbor_unicode_status* status);
 

@@ -29,13 +29,7 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 
-__FBSDID("$FreeBSD$");
-
-#ifdef lint
-static const char sccsid[] = "@(#)netstat.c	8.1 (Berkeley) 6/6/93";
-#endif
 
 /*
  * netstat
@@ -43,6 +37,7 @@ static const char sccsid[] = "@(#)netstat.c	8.1 (Berkeley) 6/6/93";
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/callout.h>
 #define	_WANT_SOCKET
 #include <sys/socketvar.h>
 #include <sys/protosw.h>
@@ -68,7 +63,6 @@ static const char sccsid[] = "@(#)netstat.c	8.1 (Berkeley) 6/6/93";
 #include <netinet/tcp_timer.h>
 #define	_WANT_TCPCB
 #include <netinet/tcp_var.h>
-#include <netinet/tcp_debug.h>
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
 
@@ -174,12 +168,11 @@ fetchnetstat(void)
 static void
 fetchnetstat_kvm(void)
 {
-	struct inpcb *next;
 	struct netinfo *p;
 	struct inpcbhead head;
-	struct inpcb inpcb;
 	struct socket sockb;
 	struct tcpcb tcpcb;
+	struct inpcb *inpcb;
 	void *off;
 	int istcp;
 
@@ -201,40 +194,31 @@ fetchnetstat_kvm(void)
 	}
 again:
 	KREAD(off, &head, sizeof (struct inpcbhead));
-	LIST_FOREACH(next, &head, inp_list) {
-		KREAD(next, &inpcb, sizeof (inpcb));
-		next = &inpcb;
+	LIST_FOREACH(inpcb, &head, inp_list) {
+		KREAD(inpcb, &tcpcb, istcp ? sizeof(tcpcb) : sizeof(inpcb));
+		inpcb = (struct inpcb *)&tcpcb;
 		if (!aflag) {
-			if (inpcb.inp_vflag & INP_IPV4) {
-				if (inpcb.inp_laddr.s_addr == INADDR_ANY)
+			if (inpcb->inp_vflag & INP_IPV4) {
+				if (inpcb->inp_laddr.s_addr == INADDR_ANY)
 					continue;
 			}
 #ifdef INET6
-			else if (inpcb.inp_vflag & INP_IPV6) {
-				if (memcmp(&inpcb.in6p_laddr,
+			else if (inpcb->inp_vflag & INP_IPV6) {
+				if (memcmp(&inpcb->in6p_laddr,
 				    &in6addr_any, sizeof(in6addr_any)) == 0)
 					continue;
 			}
 #endif
 		}
-		if (nhosts && !checkhost(&inpcb.inp_inc))
+		if (nhosts && !checkhost(&inpcb->inp_inc))
 			continue;
-		if (nports && !checkport(&inpcb.inp_inc))
+		if (nports && !checkport(&inpcb->inp_inc))
 			continue;
 		if (istcp) {
-			if (inpcb.inp_flags & INP_TIMEWAIT) {
-				bzero(&sockb, sizeof(sockb));
-				enter_kvm(&inpcb, &sockb, TCPS_TIME_WAIT,
-					 "tcp");
-			} else {
-				KREAD(inpcb.inp_socket, &sockb,
-					sizeof (sockb));
-				KREAD(inpcb.inp_ppcb, &tcpcb, sizeof (tcpcb));
-				enter_kvm(&inpcb, &sockb, tcpcb.t_state,
-					"tcp");
-			}
+			KREAD(inpcb->inp_socket, &sockb, sizeof (sockb));
+			enter_kvm(inpcb, &sockb, tcpcb.t_state, "tcp");
 		} else
-			enter_kvm(&inpcb, &sockb, 0, "udp");
+			enter_kvm(inpcb, &sockb, 0, "udp");
 	}
 	if (istcp && (protos&UDP)) {
 		istcp = 0;

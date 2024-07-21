@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 KMOD=	sfxge
 
 SFXGE= ${SRCTOP}/sys/dev/sfxge

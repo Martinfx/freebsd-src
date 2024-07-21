@@ -62,8 +62,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ip_mroute.c	8.2 (Berkeley) 11/15/93
  *	BSDI ip_mroute.c,v 2.10 1996/11/14 00:29:52 jch Exp
  */
 
@@ -81,8 +79,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet6.h"
 
 #include <sys/param.h>
@@ -108,6 +104,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/vnet.h>
 
@@ -555,12 +552,7 @@ static int
 ip6_mrouter_init(struct socket *so, int v, int cmd)
 {
 
-	MRT6_DLOG(DEBUG_ANY, "so_type = %d, pr_protocol = %d",
-	    so->so_type, so->so_proto->pr_protocol);
-
-	if (so->so_type != SOCK_RAW ||
-	    so->so_proto->pr_protocol != IPPROTO_ICMPV6)
-		return (EOPNOTSUPP);
+	MRT6_DLOG(DEBUG_ANY, "%s: socket %p", __func__, so);
 
 	if (v != 1)
 		return (ENOPROTOOPT);
@@ -1103,8 +1095,7 @@ X_ip6_mforward(struct ip6_hdr *ip6, struct ifnet *ifp, struct mbuf *m)
 	 */
 	if (IN6_IS_ADDR_UNSPECIFIED(&ip6->ip6_src)) {
 		IP6STAT_INC(ip6s_cantforward);
-		if (V_ip6_log_time + V_ip6_log_interval < time_uptime) {
-			V_ip6_log_time = time_uptime;
+		if (V_ip6_log_cannot_forward && ip6_log_ratelimit()) {
 			log(LOG_DEBUG,
 			    "cannot forward "
 			    "from %s to %s nxt %d received on %s\n",

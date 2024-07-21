@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #pragma once
 
@@ -47,3 +45,6 @@
  * Neither GLibc nor macOS define __va_list but many FreeBSD headers require it.
  */
 typedef __builtin_va_list __va_list;
+
+/* Needed for opensolaris compat. */
+typedef	__int64_t	off64_t;

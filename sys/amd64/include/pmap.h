@@ -38,10 +38,6 @@
  * map the page tables using the pagetables themselves. This is done to
  * reduce the impact on kernel virtual memory for lots of sparse address
  * space, and to reduce the cost of memory to each process.
- *
- *	from: hp300: @(#)pmap.h	7.2 (Berkeley) 12/16/90
- *	from: @(#)pmap.h	7.4 (Berkeley) 5/12/91
- * $FreeBSD$
  */
 
 #ifdef __i386__
@@ -130,7 +126,7 @@
  * (PTE) page mappings have identical settings for the following fields:
  */
 #define	PG_PTE_PROMOTE	(PG_NX | PG_MANAGED | PG_W | PG_G | PG_PTE_CACHE | \
-	    PG_M | PG_A | PG_U | PG_RW | PG_V | PG_PKU_MASK)
+	    PG_M | PG_U | PG_RW | PG_V | PG_PKU_MASK)
 
 /*
  * Page Protection Exception bits
@@ -286,11 +282,14 @@
 
 #ifndef LOCORE
 
+#include <sys/kassert.h>
 #include <sys/queue.h>
 #include <sys/_cpuset.h>
 #include <sys/_lock.h>
 #include <sys/_mutex.h>
 #include <sys/_pctrie.h>
+#include <machine/_pmap.h>
+#include <sys/_pv_entry.h>
 #include <sys/_rangeset.h>
 #include <sys/_smr.h>
 
@@ -353,8 +352,6 @@ extern pt_entry_t pg_nx;
 /*
  * Pmap stuff
  */
-struct	pv_entry;
-struct	pv_chunk;
 
 /*
  * Locks
@@ -370,11 +367,6 @@ enum pmap_type {
 	PT_X86,			/* regular x86 page tables */
 	PT_EPT,			/* Intel's nested page tables */
 	PT_RVI,			/* AMD's nested page tables */
-};
-
-struct pmap_pcids {
-	uint32_t	pm_pcid;
-	uint32_t	pm_gen;
 };
 
 /*
@@ -395,7 +387,7 @@ struct pmap {
 	long			pm_eptgen;	/* EPT pmap generation id */
 	smr_t			pm_eptsmr;
 	int			pm_flags;
-	struct pmap_pcids	pm_pcids[MAXCPU];
+	struct pmap_pcid	*pm_pcidp;
 	struct rangeset		pm_pkru;
 };
 
@@ -424,40 +416,6 @@ extern struct pmap	kernel_pmap_store;
 
 int	pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags);
 int	pmap_emulate_accessed_dirty(pmap_t pmap, vm_offset_t va, int ftype);
-#endif
-
-/*
- * For each vm_page_t, there is a list of all currently valid virtual
- * mappings of that page.  An entry is a pv_entry_t, the list is pv_list.
- */
-typedef struct pv_entry {
-	vm_offset_t	pv_va;		/* virtual address for mapping */
-	TAILQ_ENTRY(pv_entry)	pv_next;
-} *pv_entry_t;
-
-/*
- * pv_entries are allocated in chunks per-process.  This avoids the
- * need to track per-pmap assignments.
- */
-#define	_NPCPV	168
-#define	_NPCM	howmany(_NPCPV, 64)
-
-#define	PV_CHUNK_HEADER							\
-	pmap_t			pc_pmap;				\
-	TAILQ_ENTRY(pv_chunk)	pc_list;				\
-	uint64_t		pc_map[_NPCM];	/* bitmap; 1 = free */	\
-	TAILQ_ENTRY(pv_chunk)	pc_lru;
-
-struct pv_chunk_header {
-	PV_CHUNK_HEADER
-};
-
-struct pv_chunk {
-	PV_CHUNK_HEADER
-	struct pv_entry		pc_pventry[_NPCPV];
-};
-
-#ifdef	_KERNEL
 
 extern caddr_t	CADDR1;
 extern pt_entry_t *CMAP1;
@@ -466,6 +424,8 @@ extern vm_offset_t virtual_end;
 extern vm_paddr_t dmaplimit;
 extern int pmap_pcid_enabled;
 extern int invpcid_works;
+extern int pmap_pcid_invlpg_workaround;
+extern int pmap_pcid_invlpg_workaround_uena;
 
 #define	pmap_page_get_memattr(m)	((vm_memattr_t)(m)->md.pat_mode)
 #define	pmap_page_is_write_mapped(m)	(((m)->a.flags & PGA_WRITEABLE) != 0)
@@ -483,10 +443,10 @@ void	pmap_activate_boot(pmap_t pmap);
 void	pmap_activate_sw(struct thread *);
 void	pmap_allow_2m_x_ept_recalculate(void);
 void	pmap_bootstrap(vm_paddr_t *);
-int	pmap_cache_bits(pmap_t pmap, int mode, boolean_t is_pde);
+int	pmap_cache_bits(pmap_t pmap, int mode, bool is_pde);
 int	pmap_change_attr(vm_offset_t, vm_size_t, int);
 int	pmap_change_prot(vm_offset_t, vm_size_t, vm_prot_t);
-void	pmap_demote_DMAP(vm_paddr_t base, vm_size_t len, boolean_t invalidate);
+void	pmap_demote_DMAP(vm_paddr_t base, vm_size_t len, bool invalidate);
 void	pmap_flush_cache_range(vm_offset_t, vm_offset_t);
 void	pmap_flush_cache_phys_range(vm_paddr_t, vm_paddr_t, vm_memattr_t);
 void	pmap_init_pat(void);
@@ -502,13 +462,13 @@ void	*pmap_mapdev(vm_paddr_t, vm_size_t);
 void	*pmap_mapdev_attr(vm_paddr_t, vm_size_t, int);
 void	*pmap_mapdev_pciecfg(vm_paddr_t pa, vm_size_t size);
 bool	pmap_not_in_di(void);
-boolean_t pmap_page_is_mapped(vm_page_t m);
+bool	pmap_page_is_mapped(vm_page_t m);
 void	pmap_page_set_memattr(vm_page_t m, vm_memattr_t ma);
 void	pmap_page_set_memattr_noflush(vm_page_t m, vm_memattr_t ma);
 void	pmap_pinit_pml4(vm_page_t);
 void	pmap_pinit_pml5(vm_page_t);
 bool	pmap_ps_enabled(pmap_t pmap);
-void	pmap_unmapdev(vm_offset_t, vm_size_t);
+void	pmap_unmapdev(void *, vm_size_t);
 void	pmap_invalidate_page(pmap_t, vm_offset_t);
 void	pmap_invalidate_range(pmap_t, vm_offset_t, vm_offset_t);
 void	pmap_invalidate_all(pmap_t);
@@ -517,8 +477,9 @@ void	pmap_invalidate_cache_pages(vm_page_t *pages, int count);
 void	pmap_invalidate_cache_range(vm_offset_t sva, vm_offset_t eva);
 void	pmap_force_invalidate_cache_range(vm_offset_t sva, vm_offset_t eva);
 void	pmap_get_mapping(pmap_t pmap, vm_offset_t va, uint64_t *ptr, int *num);
-boolean_t pmap_map_io_transient(vm_page_t *, vm_offset_t *, int, boolean_t);
-void	pmap_unmap_io_transient(vm_page_t *, vm_offset_t *, int, boolean_t);
+bool	pmap_map_io_transient(vm_page_t *, vm_offset_t *, int, bool);
+void	pmap_unmap_io_transient(vm_page_t *, vm_offset_t *, int, bool);
+void	pmap_map_delete(pmap_t, vm_offset_t, vm_offset_t);
 void	pmap_pti_add_kva(vm_offset_t sva, vm_offset_t eva, bool exec);
 void	pmap_pti_remove_kva(vm_offset_t sva, vm_offset_t eva);
 void	pmap_pti_pcid_invalidate(uint64_t ucr3, uint64_t kcr3);
@@ -534,7 +495,6 @@ void	pmap_page_array_startup(long count);
 vm_page_t pmap_page_alloc_below_4g(bool zeroed);
 
 #if defined(KASAN) || defined(KMSAN)
-void	pmap_san_bootstrap(void);
 void	pmap_san_enter(vm_offset_t);
 #endif
 
@@ -548,6 +508,66 @@ pmap_invalidate_cpu_mask(pmap_t pmap)
 {
 	return (&pmap->pm_active);
 }
+
+#if defined(_SYS_PCPU_H_) && defined(_MACHINE_CPUFUNC_H_)
+/*
+ * It seems that AlderLake+ small cores have some microarchitectural
+ * bug, which results in the INVLPG instruction failing to flush all
+ * global TLB entries when PCID is enabled.  Work around it for now,
+ * by doing global invalidation on small cores instead of INVLPG.
+ */
+static __inline void
+pmap_invlpg(pmap_t pmap, vm_offset_t va)
+{
+	if (pmap == kernel_pmap && PCPU_GET(pcid_invlpg_workaround)) {
+		struct invpcid_descr d = { 0 };
+
+		invpcid(&d, INVPCID_CTXGLOB);
+	} else {
+		invlpg(va);
+	}
+}
+#endif /* sys/pcpu.h && machine/cpufunc.h */
+
+#if defined(_SYS_PCPU_H_)
+/* Return pcid for the pmap pmap on current cpu */
+static __inline uint32_t
+pmap_get_pcid(pmap_t pmap)
+{
+	struct pmap_pcid *pcidp;
+
+	MPASS(pmap_pcid_enabled);
+	pcidp = zpcpu_get(pmap->pm_pcidp);
+	return (pcidp->pm_pcid);
+}
+#endif /* sys/pcpu.h */
+
+/*
+ * Invalidation request.  PCPU pc_smp_tlb_op uses u_int instead of the
+ * enum to avoid both namespace and ABI issues (with enums).
+ */
+enum invl_op_codes {
+	INVL_OP_TLB               = 1,
+	INVL_OP_TLB_INVPCID       = 2,
+	INVL_OP_TLB_INVPCID_PTI   = 3,
+	INVL_OP_TLB_PCID          = 4,
+	INVL_OP_PGRNG             = 5,
+	INVL_OP_PGRNG_INVPCID     = 6,
+	INVL_OP_PGRNG_PCID        = 7,
+	INVL_OP_PG                = 8,
+	INVL_OP_PG_INVPCID        = 9,
+	INVL_OP_PG_PCID           = 10,
+	INVL_OP_CACHE             = 11,
+};
+
+typedef void (*smp_invl_local_cb_t)(struct pmap *, vm_offset_t addr1,
+    vm_offset_t addr2);
+typedef void (*smp_targeted_tlb_shootdown_t)(pmap_t, vm_offset_t, vm_offset_t,
+    smp_invl_local_cb_t, enum invl_op_codes);
+
+void smp_targeted_tlb_shootdown_native(pmap_t, vm_offset_t, vm_offset_t,
+    smp_invl_local_cb_t, enum invl_op_codes);
+extern smp_targeted_tlb_shootdown_t smp_targeted_tlb_shootdown;
 
 #endif /* _KERNEL */
 

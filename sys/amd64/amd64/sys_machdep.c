@@ -28,19 +28,17 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)sys_machdep.c	5.5 (Berkeley) 1/19/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_capsicum.h"
+#include "opt_ktrace.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/capsicum.h>
 #include <sys/kernel.h>
+#include <sys/ktrace.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -189,35 +187,33 @@ sysarch(struct thread *td, struct sysarch_args *uap)
 	 * explicitly indicate whether or not the operation is safe to
 	 * perform in capability mode.
 	 */
-	if (IN_CAPABILITY_MODE(td)) {
-		switch (uap->op) {
-		case I386_GET_LDT:
-		case I386_SET_LDT:
-		case I386_GET_IOPERM:
-		case I386_GET_FSBASE:
-		case I386_SET_FSBASE:
-		case I386_GET_GSBASE:
-		case I386_SET_GSBASE:
-		case I386_GET_XFPUSTATE:
-		case I386_SET_PKRU:
-		case I386_CLEAR_PKRU:
-		case AMD64_GET_FSBASE:
-		case AMD64_SET_FSBASE:
-		case AMD64_GET_GSBASE:
-		case AMD64_SET_GSBASE:
-		case AMD64_GET_XFPUSTATE:
-		case AMD64_SET_PKRU:
-		case AMD64_CLEAR_PKRU:
-			break;
+	switch (uap->op) {
+	case I386_GET_LDT:
+	case I386_SET_LDT:
+	case I386_GET_IOPERM:
+	case I386_GET_FSBASE:
+	case I386_SET_FSBASE:
+	case I386_GET_GSBASE:
+	case I386_SET_GSBASE:
+	case I386_GET_XFPUSTATE:
+	case I386_SET_PKRU:
+	case I386_CLEAR_PKRU:
+	case AMD64_GET_FSBASE:
+	case AMD64_SET_FSBASE:
+	case AMD64_GET_GSBASE:
+	case AMD64_SET_GSBASE:
+	case AMD64_GET_XFPUSTATE:
+	case AMD64_SET_PKRU:
+	case AMD64_CLEAR_PKRU:
+		break;
 
-		case I386_SET_IOPERM:
-		default:
-#ifdef KTRACE
-			if (KTRPOINT(td, KTR_CAPFAIL))
-				ktrcapfail(CAPFAIL_SYSCALL, NULL, NULL);
-#endif
+	case I386_SET_IOPERM:
+	default:
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_SYSCALL, &uap->op);
+		if (IN_CAPABILITY_MODE(td))
 			return (ECAPMODE);
-		}
+		break;
 	}
 #endif
 
@@ -391,9 +387,7 @@ sysarch(struct thread *td, struct sysarch_args *uap)
 }
 
 int
-amd64_set_ioperm(td, uap)
-	struct thread *td;
-	struct i386_ioperm_args *uap;
+amd64_set_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 {
 	char *iomap;
 	struct amd64tss *tssp;
@@ -418,8 +412,7 @@ amd64_set_ioperm(td, uap)
 	 */
 	pcb = td->td_pcb;
 	if (pcb->pcb_tssp == NULL) {
-		tssp = (struct amd64tss *)kmem_malloc(ctob(IOPAGES + 1),
-		    M_WAITOK);
+		tssp = kmem_malloc(ctob(IOPAGES + 1), M_WAITOK);
 		pmap_pti_add_kva((vm_offset_t)tssp, (vm_offset_t)tssp +
 		    ctob(IOPAGES + 1), false);
 		iomap = (char *)&tssp[1];
@@ -448,9 +441,7 @@ amd64_set_ioperm(td, uap)
 }
 
 int
-amd64_get_ioperm(td, uap)
-	struct thread *td;
-	struct i386_ioperm_args *uap;
+amd64_get_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 {
 	int i, state;
 	char *iomap;
@@ -523,8 +514,8 @@ user_ldt_alloc(struct proc *p, int force)
 	mtx_unlock(&dt_lock);
 	new_ldt = malloc(sizeof(struct proc_ldt), M_SUBPROC, M_WAITOK);
 	sz = max_ldt_segment * sizeof(struct user_segment_descriptor);
-	sva = kmem_malloc(sz, M_WAITOK | M_ZERO);
-	new_ldt->ldt_base = (caddr_t)sva;
+	new_ldt->ldt_base = kmem_malloc(sz, M_WAITOK | M_ZERO);
+	sva = (uintptr_t)new_ldt->ldt_base;
 	pmap_pti_add_kva(sva, sva + sz, false);
 	new_ldt->ldt_refcnt = 1;
 	sldt.ssd_base = sva;
@@ -539,7 +530,7 @@ user_ldt_alloc(struct proc *p, int force)
 	pldt = mdp->md_ldt;
 	if (pldt != NULL && !force) {
 		pmap_pti_remove_kva(sva, sva + sz);
-		kmem_free(sva, sz);
+		kmem_free(new_ldt->ldt_base, sz);
 		free(new_ldt, M_SUBPROC);
 		return (pldt);
 	}
@@ -592,7 +583,7 @@ user_ldt_derefl(struct proc_ldt *pldt)
 		sva = (vm_offset_t)pldt->ldt_base;
 		sz = max_ldt_segment * sizeof(struct user_segment_descriptor);
 		pmap_pti_remove_kva(sva, sva + sz);
-		kmem_free(sva, sz);
+		kmem_free(pldt->ldt_base, sz);
 		free(pldt, M_SUBPROC);
 	}
 }

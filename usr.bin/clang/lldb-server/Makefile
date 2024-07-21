@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include "${SRCTOP}/lib/clang/lldb.pre.mk"
 
 PACKAGE=	lldb
@@ -50,5 +48,6 @@ LIBADD+=	ncursesw
 LIBADD+=	panel
 LIBADD+=	pthread
 LIBADD+=	z
+LIBADD+=	zstd
 
 .include <bsd.prog.mk>

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 Alexander Motin <mav@FreeBSD.org>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/module.h>
@@ -108,7 +105,7 @@ static int
 mvs_ch_probe(device_t dev)
 {
 
-	device_set_desc_copy(dev, "Marvell SATA channel");
+	device_set_desc(dev, "Marvell SATA channel");
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -772,7 +769,7 @@ mvs_ch_intr(void *data)
 			}
 			mvs_requeue_frozen(dev);
 			for (i = 0; i < MVS_MAX_SLOTS; i++) {
-				/* XXX: reqests in loading state. */
+				/* XXX: requests in loading state. */
 				if (((ch->rslots >> i) & 1) == 0)
 					continue;
 				if (port >= 0 &&
@@ -1801,7 +1798,7 @@ completeall:
 	}
 	xpt_setup_ccb(&ccb->ccb_h, ch->hold[i]->ccb_h.path,
 	    ch->hold[i]->ccb_h.pinfo.priority);
-	if (ccb->ccb_h.func_code == XPT_ATA_IO) {
+	if (ch->hold[i]->ccb_h.func_code == XPT_ATA_IO) {
 		/* READ LOG */
 		ccb->ccb_h.recovery_type = RECOVERY_READ_LOG;
 		ccb->ccb_h.func_code = XPT_ATA_IO;

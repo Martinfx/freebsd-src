@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/usb/net
 
 KMOD=	if_axge

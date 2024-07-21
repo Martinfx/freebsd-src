@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/geom/vinum
 
 KMOD=	geom_vinum

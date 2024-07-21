@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Isilon Inc http://www.isilon.com/
  * Authors: Doug Rabson <dfr@rabson.org>
@@ -27,10 +27,8 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/kobj.h>
 #include <sys/lock.h>
@@ -53,8 +51,12 @@ gss_release_name(OM_uint32 *minor_status, gss_name_t *input_name)
 
 	*minor_status = 0;
 
-	if (!kgss_gssd_handle)
+	KGSS_CURVNET_SET_QUIET(KGSS_TD_TO_VNET(curthread));
+	if (!KGSS_VNET(kgss_gssd_handle)) {
+		KGSS_CURVNET_RESTORE();
 		return (GSS_S_FAILURE);
+	}
+	KGSS_CURVNET_RESTORE();
 
 	if (*input_name) {
 		name = *input_name;

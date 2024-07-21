@@ -60,9 +60,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/module.h>
@@ -98,6 +95,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_map.h>
 #include <vm/vm_page.h>
 #include <vm/vm_object.h>
+#include <vm/vnode_pager.h>
 
 #include "fuse.h"
 #include "fuse_file.h"
@@ -303,6 +301,7 @@ fuse_write_directbackend(struct vnode *vp, struct uio *uio,
 	struct fuse_write_out *fwo;
 	struct fuse_dispatcher fdi;
 	size_t chunksize;
+	ssize_t r;
 	void *fwi_data;
 	off_t as_written_offset;
 	int diff;
@@ -338,8 +337,11 @@ fuse_write_directbackend(struct vnode *vp, struct uio *uio,
 	if (ioflag & IO_APPEND)
 		uio_setoffset(uio, filesize);
 
-	if (vn_rlimit_fsize(vp, uio, uio->uio_td))
-		return (EFBIG);
+	err = vn_rlimit_fsizex(vp, uio, 0, &r, uio->uio_td);
+	if (err != 0) {
+		vn_rlimit_fsizex_res(uio, r);
+		return (err);
+	}
 
 	fdisp_init(&fdi, 0);
 
@@ -455,6 +457,7 @@ retry:
 	if (wrote_anything)
 		fuse_vnode_undirty_cached_timestamps(vp, false);
 
+	vn_rlimit_fsizex_res(uio, r);
 	return (err);
 }
 
@@ -471,6 +474,7 @@ fuse_write_biobackend(struct vnode *vp, struct uio *uio,
 	struct buf *bp;
 	daddr_t lbn;
 	off_t filesize;
+	ssize_t r;
 	int bcount;
 	int n, on, seqcount, err = 0;
 
@@ -493,8 +497,11 @@ fuse_write_biobackend(struct vnode *vp, struct uio *uio,
 	if (ioflag & IO_APPEND)
 		uio_setoffset(uio, filesize);
 
-	if (vn_rlimit_fsize(vp, uio, uio->uio_td))
-		return (EFBIG);
+	err = vn_rlimit_fsizex(vp, uio, 0, &r, uio->uio_td);
+	if (err != 0) {
+		vn_rlimit_fsizex_res(uio, r);
+		return (err);
+	}
 
 	do {
 		bool direct_append, extending;
@@ -722,6 +729,7 @@ again:
 			break;
 	} while (uio->uio_resid > 0 && n > 0);
 
+	vn_rlimit_fsizex_res(uio, r);
 	return (err);
 }
 
@@ -938,11 +946,7 @@ fuse_io_invalbuf(struct vnode *vp, struct thread *td)
 	}
 	fvdat->flag |= FN_FLUSHINPROG;
 
-	if (vp->v_bufobj.bo_object != NULL) {
-		VM_OBJECT_WLOCK(vp->v_bufobj.bo_object);
-		vm_object_page_clean(vp->v_bufobj.bo_object, 0, 0, OBJPC_SYNC);
-		VM_OBJECT_WUNLOCK(vp->v_bufobj.bo_object);
-	}
+	vnode_pager_clean_sync(vp);
 	error = vinvalbuf(vp, V_SAVE, PCATCH, 0);
 	while (error) {
 		if (error == ERESTART || error == EINTR) {

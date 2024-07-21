@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:  ${SRCTOP}/sys/dev/hyperv/netvsc \
 	${SRCTOP}/sys/dev/hyperv/vmbus
 

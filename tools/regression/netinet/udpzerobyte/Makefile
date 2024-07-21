@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	udpzerobyte
 MAN=
 WARNS?=	2

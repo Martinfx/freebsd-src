@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Gleb Smirnoff <glebius@FreeBSD.org>
  *
@@ -24,9 +24,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/ioctl.h>
@@ -153,8 +150,8 @@ listhooks(int argc __unused, char *argv[] __unused)
 	u_int nhooks, i;
 
 	plh.pio_nhooks = 0;
-	if (ioctl(dev, PFILIOC_LISTHEADS, &plh) != 0)
-		err(1, "ioctl(PFILIOC_LISTHEADS)");
+	if (ioctl(dev, PFILIOC_LISTHOOKS, &plh) != 0)
+		err(1, "ioctl(PFILIOC_LISTHOOKS)");
 retry:
 	plh.pio_hooks = calloc(plh.pio_nhooks, sizeof(struct pfilioc_hook));
 	if (plh.pio_hooks == NULL)

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	juggle
 MAN=
 WARNS?=	3

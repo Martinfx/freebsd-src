@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * Copyright (c) 2014-2017 Alexander Motin <mav@FreeBSD.org>
@@ -31,7 +31,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_backend.h#2 $
- * $FreeBSD$
  */
 /*
  * CTL backend driver definitions
@@ -242,6 +241,17 @@ int ctl_lun_secondary(struct ctl_be_lun *be_lun);
  * Let the backend notify the initiators about changes.
  */
 void ctl_lun_capacity_changed(struct ctl_be_lun *be_lun);
+
+/*
+ * Populate unique ID fields in NVMe namespace data for a LUN.
+ */
+void ctl_lun_nsdata_ids(struct ctl_be_lun *be_lun,
+    struct nvme_namespace_data *nsdata);
+
+/*
+ * Populate the NVMe namespace identification descriptor list for a LUN.
+ */
+void ctl_lun_nvme_ids(struct ctl_be_lun *be_lun, void *data);
 
 #endif /* _KERNEL */
 #endif /* _CTL_BACKEND_H_ */

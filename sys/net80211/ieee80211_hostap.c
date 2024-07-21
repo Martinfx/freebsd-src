@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007-2008 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -25,11 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-__FBSDID("$FreeBSD$");
-#endif
-
 /*
  * IEEE 802.11 HOSTAP mode support.
  */
@@ -53,6 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_var.h>
 #include <net/if_media.h>
 #include <net/if_llc.h>
+#include <net/if_private.h>
 #include <net/ethernet.h>
 
 #include <net/bpf.h>
@@ -423,6 +419,8 @@ hostap_deliver_data(struct ieee80211vap *vap,
 			(void) ieee80211_vap_xmitpkt(vap, mcopy);
 	}
 	if (m != NULL) {
+		struct epoch_tracker et;
+
 		/*
 		 * Mark frame as coming from vap's interface.
 		 */
@@ -439,7 +437,9 @@ hostap_deliver_data(struct ieee80211vap *vap,
 			m->m_pkthdr.ether_vtag = ni->ni_vlan;
 			m->m_flags |= M_VLANTAG;
 		}
+		NET_EPOCH_ENTER(et);
 		ifp->if_input(ifp, m);
+		NET_EPOCH_EXIT(et);
 	}
 }
 
@@ -507,7 +507,7 @@ hostap_input(struct ieee80211_node *ni, struct mbuf *m,
 		wh = mtod(m, struct ieee80211_frame *);
 		type = IEEE80211_FC0_TYPE_DATA;
 		dir = wh->i_fc[1] & IEEE80211_FC1_DIR_MASK;
-		subtype = IEEE80211_FC0_SUBTYPE_QOS;
+		subtype = IEEE80211_FC0_SUBTYPE_QOS_DATA;
 		hdrspace = ieee80211_hdrspace(ic, wh);	/* XXX optimize? */
 		goto resubmit_ampdu;
 	}
@@ -710,7 +710,7 @@ hostap_input(struct ieee80211_node *ni, struct mbuf *m,
 		/*
 		 * Save QoS bits for use below--before we strip the header.
 		 */
-		if (subtype == IEEE80211_FC0_SUBTYPE_QOS)
+		if (subtype == IEEE80211_FC0_SUBTYPE_QOS_DATA)
 			qos = ieee80211_getqos(wh)[0];
 		else
 			qos = 0;
@@ -974,7 +974,7 @@ hostap_auth_open(struct ieee80211_node *ni, struct ieee80211_frame *wh,
 		 */
 		IEEE80211_NOTE_MAC(vap,
 		    IEEE80211_MSG_AUTH | IEEE80211_MSG_ACL, ni->ni_macaddr,
-		    "%s", "station authentication defered (radius acl)");
+		    "%s", "station authentication deferred (radius acl)");
 		ieee80211_notify_node_auth(ni);
 	} else {
 		IEEE80211_SEND_MGMT(ni, IEEE80211_FC0_SUBTYPE_AUTH, seq + 1);
@@ -1124,7 +1124,7 @@ hostap_auth_shared(struct ieee80211_node *ni, struct ieee80211_frame *wh,
 			IEEE80211_NOTE_MAC(vap,
 			    IEEE80211_MSG_AUTH | IEEE80211_MSG_ACL,
 			    ni->ni_macaddr,
-			    "%s", "station authentication defered (radius acl)");
+			    "%s", "station authentication deferred (radius acl)");
 			ieee80211_notify_node_auth(ni);
 			return;
 		}
@@ -1539,9 +1539,14 @@ ieee80211_parse_rsn(struct ieee80211vap *vap, const uint8_t *frm,
 		rsn->rsn_keymgmt = RSN_ASE_8021X_PSK;
 
 	/* optional RSN capabilities */
-	if (len > 2)
+	if (len >= 2) {
 		rsn->rsn_caps = le16dec(frm);
-	/* XXXPMKID */
+		frm += 2, len -= 2;
+	}
+
+	/* XXX PMK Count / PMKID */
+
+	/* XXX Group Cipher Management Suite */
 
 	return 0;
 }
@@ -2125,12 +2130,12 @@ hostap_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0,
 		/* Validate VHT IEs */
 		if (vhtcap != NULL) {
 			IEEE80211_VERIFY_LENGTH(vhtcap[1],
-			    sizeof(struct ieee80211_ie_vhtcap) - 2,
+			    sizeof(struct ieee80211_vht_cap),
 			    return);
 		}
 		if (vhtinfo != NULL) {
 			IEEE80211_VERIFY_LENGTH(vhtinfo[1],
-			    sizeof(struct ieee80211_ie_vht_operation) - 2,
+			    sizeof(struct ieee80211_vht_operation),
 			    return);
 		}
 

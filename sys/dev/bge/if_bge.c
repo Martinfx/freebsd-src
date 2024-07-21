@@ -34,8 +34,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Broadcom BCM57xx(x)/BCM590x NetXtreme and NetLink family Ethernet driver
  *
@@ -130,7 +128,7 @@ MODULE_DEPEND(bge, miibus, 1, 1, 1);
 /*
  * Various supported device vendors/types and their names. Note: the
  * spec seems to indicate that the hardware still has Alteon's vendor
- * ID burned into it, though it will always be overriden by the vendor
+ * ID burned into it, though it will always be overridden by the vendor
  * ID in the EEPROM. Just to be safe, we cover all possibilities.
  */
 static const struct bge_type {
@@ -703,7 +701,7 @@ bge_ape_read_fw_ver(struct bge_softc *sc)
 
 	sc->bge_mfw_flags |= BGE_MFW_ON_APE;
 
-	/* Fetch the APE firwmare type and version. */
+	/* Fetch the APE firmware type and version. */
 	apedata = APE_READ_4(sc, BGE_APE_FW_VERSION);
 	features = APE_READ_4(sc, BGE_APE_FW_FEATURES);
 	if ((features & BGE_APE_FW_FEATURE_NCSI) != 0) {
@@ -1922,6 +1920,7 @@ bge_blockinit(struct bge_softc *sc)
 {
 	struct bge_rcb *rcb;
 	bus_size_t vrcb;
+	caddr_t	lladdr;
 	bge_hostaddr taddr;
 	uint32_t dmactl, rdmareg, val;
 	int i, limit;
@@ -2160,7 +2159,7 @@ bge_blockinit(struct bge_softc *sc)
 	 * The BD ring replenish thresholds control how often the
 	 * hardware fetches new BD's from the producer rings in host
 	 * memory.  Setting the value too low on a busy system can
-	 * starve the hardware and recue the throughpout.
+	 * starve the hardware and reduce the throughput.
 	 *
 	 * Set the BD ring replentish thresholds. The recommended
 	 * values are 1/8th the number of descriptors allocated to
@@ -2268,11 +2267,12 @@ bge_blockinit(struct bge_softc *sc)
 	RCB_WRITE_4(sc, vrcb, bge_maxlen_flags,
 	    BGE_RCB_MAXLEN_FLAGS(sc->bge_return_ring_cnt, 0));
 
+	lladdr = if_getlladdr(sc->bge_ifp);
 	/* Set random backoff seed for TX */
 	CSR_WRITE_4(sc, BGE_TX_RANDOM_BACKOFF,
-	    (IF_LLADDR(sc->bge_ifp)[0] + IF_LLADDR(sc->bge_ifp)[1] +
-	    IF_LLADDR(sc->bge_ifp)[2] + IF_LLADDR(sc->bge_ifp)[3] +
-	    IF_LLADDR(sc->bge_ifp)[4] + IF_LLADDR(sc->bge_ifp)[5]) &
+	    (lladdr[0] + lladdr[1] +
+	    lladdr[2] + lladdr[3] +
+	    lladdr[4] + lladdr[5]) &
 	    BGE_TX_BACKOFF_SEED_MASK);
 
 	/* Set inter-packet gap */
@@ -2295,7 +2295,7 @@ bge_blockinit(struct bge_softc *sc)
 	 */
 	CSR_WRITE_4(sc, BGE_RXLP_CFG, 0x181);
 
-	/* Inialize RX list placement stats mask. */
+	/* Initialize RX list placement stats mask. */
 	CSR_WRITE_4(sc, BGE_RXLP_STATS_ENABLE_MASK, 0x007FFFFF);
 	CSR_WRITE_4(sc, BGE_RXLP_STATS_CTL, 0x1);
 
@@ -2699,7 +2699,6 @@ bge_chipid(device_t dev)
 static int
 bge_probe(device_t dev)
 {
-	char buf[96];
 	char model[64];
 	const struct bge_revision *br;
 	const char *pname;
@@ -2727,9 +2726,8 @@ bge_probe(device_t dev)
 				    br != NULL ? br->br_name :
 				    "NetXtreme/NetLink Ethernet Controller");
 			}
-			snprintf(buf, sizeof(buf), "%s, %sASIC rev. %#08x",
+			device_set_descf(dev, "%s, %sASIC rev. %#08x",
 			    model, br != NULL ? "" : "unknown ", id);
-			device_set_desc_copy(dev, buf);
 			return (BUS_PROBE_DEFAULT);
 		}
 		t++;
@@ -3536,7 +3534,7 @@ bge_attach(device_t dev)
 	 * known bug which can't handle TSO if Ethernet header + IP/TCP
 	 * header is greater than 80 bytes. A workaround for the TSO
 	 * bug exist but it seems it's too expensive than not using
-	 * TSO at all. Some hardwares also have the TSO bug so limit
+	 * TSO at all. Some hardware also have the TSO bug so limit
 	 * the TSO to the controllers that are not affected TSO issues
 	 * (e.g. 5755 or higher).
 	 */
@@ -3714,11 +3712,6 @@ bge_attach(device_t dev)
 
 	/* Set up ifnet structure */
 	ifp = sc->bge_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(sc->bge_dev, "failed to if_alloc()\n");
-		error = ENXIO;
-		goto fail;
-	}
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -5368,7 +5361,7 @@ bge_start_locked(if_t ifp)
 		 * If there's a BPF listener, bounce a copy of this frame
 		 * to him.
 		 */
-		if_bpfmtap(ifp, m_head);
+		bpf_mtap_if(ifp, m_head);
 	}
 
 	if (count > 0)
@@ -5450,7 +5443,7 @@ bge_init_locked(struct bge_softc *sc)
 	    (if_getcapenable(ifp) & IFCAP_VLAN_MTU ? ETHER_VLAN_ENCAP_LEN : 0));
 
 	/* Load our MAC address. */
-	m = (uint16_t *)IF_LLADDR(sc->bge_ifp);
+	m = (uint16_t *)if_getlladdr(sc->bge_ifp);
 	CSR_WRITE_4(sc, BGE_MAC_ADDR1_LO, htons(m[0]));
 	CSR_WRITE_4(sc, BGE_MAC_ADDR1_HI, (htons(m[1]) << 16) | htons(m[2]));
 

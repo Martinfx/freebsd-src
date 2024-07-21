@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/contrib/pnpinfo
 
 PROG=	pnpinfo

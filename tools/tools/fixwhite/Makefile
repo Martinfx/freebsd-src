@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	fixwhite
 BINDIR=	/usr/bin
 

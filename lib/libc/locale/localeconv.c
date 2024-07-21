@@ -35,12 +35,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)localeconv.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <locale.h>
 
 #include "lmonetary.h"
@@ -51,7 +45,7 @@ __FBSDID("$FreeBSD$");
  * monetary and numeric locales.
  *
  * Because localeconv() may be called many times (especially by library
- * routines like printf() & strtod()), the approprate members of the 
+ * routines like printf() & strtod()), the appropriate members of the
  * lconv structure are computed only when the monetary or numeric 
  * locale has been changed.
  */

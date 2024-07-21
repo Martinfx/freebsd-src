@@ -25,14 +25,12 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
-#include "opt_tcpdebug.h"
 #include "opt_ratelimit.h"
 #include "opt_kern_tls.h"
+#if defined(INET) || defined(INET6)
 #include <sys/param.h>
 #include <sys/arb.h>
 #include <sys/module.h>
@@ -89,10 +87,10 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp.h>
 #define	TCPOUTFLAGS
 #include <netinet/tcp_fsm.h>
-#include <netinet/tcp_log_buf.h>
 #include <netinet/tcp_seq.h>
 #include <netinet/tcp_timer.h>
 #include <netinet/tcp_var.h>
+#include <netinet/tcp_log_buf.h>
 #include <netinet/tcp_syncache.h>
 #include <netinet/tcp_hpts.h>
 #include <netinet/tcp_ratelimit.h>
@@ -105,9 +103,6 @@ __FBSDID("$FreeBSD$");
 #ifdef NETFLIX_SHARED_CWND
 #include <netinet/tcp_shared_cwnd.h>
 #endif
-#ifdef TCPDEBUG
-#include <netinet/tcp_debug.h>
-#endif				/* TCPDEBUG */
 #ifdef TCP_OFFLOAD
 #include <netinet/tcp_offload.h>
 #endif
@@ -132,6 +127,7 @@ __FBSDID("$FreeBSD$");
 #endif
 #include "sack_filter.h"
 #include "tcp_rack.h"
+#include "tailq_hash.h"
 #include "rack_bbr_common.h"
 
 uma_zone_t rack_zone;
@@ -146,9 +142,12 @@ VNET_DECLARE(uint32_t, newreno_beta_ecn);
 #define V_newreno_beta VNET(newreno_beta)
 #define V_newreno_beta_ecn VNET(newreno_beta_ecn)
 
+#define	M_TCPFSB	__CONCAT(M_TCPFSB, STACKNAME)
+#define	M_TCPDO		__CONCAT(M_TCPDO, STACKNAME)
 
-MALLOC_DEFINE(M_TCPFSB, "tcp_fsb", "TCP fast send block");
-MALLOC_DEFINE(M_TCPDO, "tcp_do", "TCP deferred options");
+MALLOC_DEFINE(M_TCPFSB, "tcp_fsb_" __XSTRING(STACKNAME), "TCP fast send block");
+MALLOC_DEFINE(M_TCPDO, "tcp_do_" __XSTRING(STACKNAME), "TCP deferred options");
+MALLOC_DEFINE(M_TCPPCM, "tcp_pcm_" __XSTRING(STACKNAME), "TCP PCM measurement information");
 
 struct sysctl_ctx_list rack_sysctl_ctx;
 struct sysctl_oid *rack_sysctl_root;
@@ -194,21 +193,49 @@ static int32_t rack_tlp_use_greater = 1;
 static int32_t rack_reorder_thresh = 2;
 static int32_t rack_reorder_fade = 60000000;	/* 0 - never fade, def 60,000,000
 						 * - 60 seconds */
+static uint16_t rack_policer_rxt_thresh= 0;	/* 499 = 49.9%, 0 is off  */
+static uint8_t rack_policer_avg_thresh = 0; /* 3.2 */
+static uint8_t rack_policer_med_thresh = 0; /* 1 - 16 */
+static uint16_t rack_policer_bucket_reserve = 20; /* How much % is reserved in the bucket */
+static uint64_t rack_pol_min_bw = 125000;	/* 1mbps in Bytes per sec */
+static uint32_t rack_policer_data_thresh = 64000;	/* 64,000 bytes must be sent before we engage */
+static uint32_t rack_policing_do_bw_comp = 1;
+static uint32_t rack_pcm_every_n_rounds = 100;
+static uint32_t rack_pcm_blast = 0;
+static uint32_t rack_pcm_is_enabled = 1;
+static uint8_t rack_req_del_mss = 18;	/* How many segments need to be sent in a recovery episode to do policer_detection */
+static uint8_t rack_ssthresh_rest_rto_rec = 0; /* Do we restore ssthresh when we have rec -> rto -> rec */
+
+static uint32_t rack_gp_gain_req = 1200;		/* Amount percent wise required to gain to record a round has "gaining" */
+static uint32_t rack_rnd_cnt_req = 0x10005;		/* Default number of rounds if we are below rack_gp_gain_req where we exit ss */
+
+
+static int32_t rack_rxt_scoreboard_clear_thresh = 2;
+static int32_t rack_dnd_default = 0;		/* For rr_conf = 3, what is the default for dnd */
+static int32_t rack_rxt_controls = 0;
+static int32_t rack_fill_cw_state = 0;
 static uint8_t rack_req_measurements = 1;
 /* Attack threshold detections */
 static uint32_t rack_highest_sack_thresh_seen = 0;
 static uint32_t rack_highest_move_thresh_seen = 0;
+static uint32_t rack_merge_out_sacks_on_attack = 0;
 static int32_t rack_enable_hw_pacing = 0; /* Due to CCSP keep it off by default */
-static int32_t rack_hw_pace_extra_slots = 2;	/* 2 extra MSS time betweens */
-static int32_t rack_hw_rate_caps = 1; /* 1; */
+static int32_t rack_hw_pace_extra_slots = 0;	/* 2 extra MSS time betweens */
+static int32_t rack_hw_rate_caps = 0; /* 1; */
+static int32_t rack_hw_rate_cap_per = 0;	/* 0 -- off  */
 static int32_t rack_hw_rate_min = 0; /* 1500000;*/
 static int32_t rack_hw_rate_to_low = 0; /* 1200000; */
-static int32_t rack_hw_up_only = 1;
+static int32_t rack_hw_up_only = 0;
 static int32_t rack_stats_gets_ms_rtt = 1;
 static int32_t rack_prr_addbackmax = 2;
 static int32_t rack_do_hystart = 0;
 static int32_t rack_apply_rtt_with_reduced_conf = 0;
+static int32_t rack_hibeta_setting = 0;
+static int32_t rack_default_pacing_divisor = 250;
+static uint16_t rack_pacing_min_seg = 0;
+static int32_t rack_timely_off = 0;
 
+static uint32_t sad_seg_size_per = 800;	/* 80.0 % */
 static int32_t rack_pkt_delay = 1000;
 static int32_t rack_send_a_lot_in_prr = 1;
 static int32_t rack_min_to = 1000;	/* Number of microsecond  min timeout */
@@ -222,25 +249,29 @@ static int32_t rack_use_rsm_rfo = 1;
 static int32_t rack_max_abc_post_recovery = 2;
 static int32_t rack_client_low_buf = 0;
 static int32_t rack_dsack_std_based = 0x3;	/* bit field bit 1 sets rc_rack_tmr_std_based and bit 2 sets rc_rack_use_dsack */
+static int32_t rack_bw_multipler = 0;		/* Limit on fill cw's jump up to be this x gp_est */
 #ifdef TCP_ACCOUNTING
 static int32_t rack_tcp_accounting = 0;
 #endif
 static int32_t rack_limits_scwnd = 1;
 static int32_t rack_enable_mqueue_for_nonpaced = 0;
+static int32_t rack_hybrid_allow_set_maxseg = 0;
 static int32_t rack_disable_prr = 0;
 static int32_t use_rack_rr = 1;
 static int32_t rack_non_rxt_use_cr = 0; /* does a non-rxt in recovery use the configured rate (ss/ca)? */
 static int32_t rack_persist_min = 250000;	/* 250usec */
 static int32_t rack_persist_max = 2000000;	/* 2 Second in usec's */
+static int32_t rack_honors_hpts_min_to =  1;	/* Do we honor the hpts minimum time out for pacing timers */
+static uint32_t rack_max_reduce = 10;		/* Percent we can reduce slot by */
 static int32_t rack_sack_not_required = 1;	/* set to one to allow non-sack to use rack */
-static int32_t rack_default_init_window = 0;	/* Use system default */
 static int32_t rack_limit_time_with_srtt = 0;
 static int32_t rack_autosndbuf_inc = 20;	/* In percentage form */
-static int32_t rack_enobuf_hw_boost_mult = 2;	/* How many times the hw rate we boost slot using time_between */
+static int32_t rack_enobuf_hw_boost_mult = 0;	/* How many times the hw rate we boost slot using time_between */
 static int32_t rack_enobuf_hw_max = 12000;	/* 12 ms in usecs */
 static int32_t rack_enobuf_hw_min = 10000;	/* 10 ms in usecs */
 static int32_t rack_hw_rwnd_factor = 2;		/* How many max_segs the rwnd must be before we hold off sending */
-
+static int32_t rack_hw_check_queue = 0;		/* Do we always pre-check queue depth of a hw queue */
+static int32_t rack_full_buffer_discount = 10;
 /*
  * Currently regular tcp has a rto_min of 30ms
  * the backoff goes 12 times so that ends up
@@ -266,7 +297,6 @@ static int32_t rack_rwnd_block_ends_measure = 0;
 static int32_t rack_def_profile = 0;
 
 static int32_t rack_lower_cwnd_at_tlp = 0;
-static int32_t rack_limited_retran = 0;
 static int32_t rack_always_send_oldest = 0;
 static int32_t rack_tlp_threshold_use = TLP_USE_TWO_ONE;
 
@@ -302,15 +332,28 @@ static int32_t rack_hbp_thresh = 3;		/* what is the divisor max_rtt/min_rtt to d
 /* Part of pacing */
 static int32_t rack_max_per_above = 30;		/* When we go to increment stop if above 100+this% */
 
-/* Timely information */
-/* Combine these two gives the range of 'no change' to bw */
-/* ie the up/down provide the upper and lower bound */
+/* Timely information:
+ *
+ * Here we have various control parameters on how
+ * timely may change the multiplier. rack_gain_p5_ub
+ * is associated with timely but not directly influencing
+ * the rate decision like the other variables. It controls
+ * the way fill-cw interacts with timely and caps how much
+ * timely can boost the fill-cw b/w.
+ *
+ * The other values are various boost/shrink numbers as well
+ * as potential caps when adjustments are made to the timely
+ * gain (returned by rack_get_output_gain(). Remember too that
+ * the gain returned can be overriden by other factors such as
+ * probeRTT as well as fixed-rate-pacing.
+ */
+static int32_t rack_gain_p5_ub = 250;
 static int32_t rack_gp_per_bw_mul_up = 2;	/* 2% */
 static int32_t rack_gp_per_bw_mul_down = 4;	/* 4% */
 static int32_t rack_gp_rtt_maxmul = 3;		/* 3 x maxmin */
 static int32_t rack_gp_rtt_minmul = 1;		/* minrtt + (minrtt/mindiv) is lower rtt */
 static int32_t rack_gp_rtt_mindiv = 4;		/* minrtt + (minrtt * minmul/mindiv) is lower rtt */
-static int32_t rack_gp_decrease_per = 20;	/* 20% decrease in multiplier */
+static int32_t rack_gp_decrease_per = 80;	/* Beta value of timely decrease (.8) = 80 */
 static int32_t rack_gp_increase_per = 2;	/* 2% increase in multiplier */
 static int32_t rack_per_lower_bound = 50;	/* Don't allow to drop below this multiplier */
 static int32_t rack_per_upper_bound_ss = 0;	/* Don't allow SS to grow above this */
@@ -327,13 +370,9 @@ static int32_t rack_timely_no_stopping = 0;
 static int32_t rack_down_raise_thresh = 100;
 static int32_t rack_req_segs = 1;
 static uint64_t rack_bw_rate_cap = 0;
-static uint32_t rack_trace_point_config = 0;
-static uint32_t rack_trace_point_bb_mode = 4;
-static int32_t rack_trace_point_count = 0;
+static uint64_t rack_fillcw_bw_cap = 3750000;	/* Cap fillcw at 30Mbps */
 
 
-/* Weird delayed ack mode */
-static int32_t rack_use_imac_dack = 0;
 /* Rack specific counters */
 counter_u64_t rack_saw_enobuf;
 counter_u64_t rack_saw_enobuf_hw;
@@ -342,6 +381,7 @@ counter_u64_t rack_persists_sends;
 counter_u64_t rack_persists_acks;
 counter_u64_t rack_persists_loss;
 counter_u64_t rack_persists_lost_ends;
+counter_u64_t rack_total_bytes;
 #ifdef INVARIANTS
 counter_u64_t rack_adjust_map_bw;
 #endif
@@ -352,12 +392,15 @@ counter_u64_t rack_tlp_retran;
 counter_u64_t rack_tlp_retran_bytes;
 counter_u64_t rack_to_tot;
 counter_u64_t rack_hot_alloc;
+counter_u64_t tcp_policer_detected;
 counter_u64_t rack_to_alloc;
 counter_u64_t rack_to_alloc_hard;
 counter_u64_t rack_to_alloc_emerg;
 counter_u64_t rack_to_alloc_limited;
 counter_u64_t rack_alloc_limited_conns;
 counter_u64_t rack_split_limited;
+counter_u64_t rack_rxt_clamps_cwnd;
+counter_u64_t rack_rxt_clamps_cwnd_uniq;
 
 counter_u64_t rack_multi_single_eq;
 counter_u64_t rack_proc_non_comp_ack;
@@ -373,6 +416,7 @@ counter_u64_t rack_sack_proc_short;
 counter_u64_t rack_sack_proc_restart;
 counter_u64_t rack_sack_attacks_detected;
 counter_u64_t rack_sack_attacks_reversed;
+counter_u64_t rack_sack_attacks_suspect;
 counter_u64_t rack_sack_used_next_merge;
 counter_u64_t rack_sack_splits;
 counter_u64_t rack_sack_used_prev_merge;
@@ -412,7 +456,7 @@ rack_log_progress_event(struct tcp_rack *rack, struct tcpcb *tp, uint32_t tick, 
 static int
 rack_process_ack(struct mbuf *m, struct tcphdr *th,
     struct socket *so, struct tcpcb *tp, struct tcpopt *to,
-    uint32_t tiwin, int32_t tlen, int32_t * ofia, int32_t thflags, int32_t * ret_val);
+    uint32_t tiwin, int32_t tlen, int32_t * ofia, int32_t thflags, int32_t * ret_val, int32_t orig_tlen);
 static int
 rack_process_data(struct mbuf *m, struct tcphdr *th,
     struct socket *so, struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen,
@@ -426,19 +470,20 @@ static struct rack_sendmap *rack_alloc_limit(struct tcp_rack *rack,
 static struct rack_sendmap *
 rack_check_recovery_mode(struct tcpcb *tp,
     uint32_t tsused);
+static uint32_t
+rack_grab_rtt(struct tcpcb *tp, struct tcp_rack *rack);
 static void
 rack_cong_signal(struct tcpcb *tp,
 		 uint32_t type, uint32_t ack, int );
 static void rack_counter_destroy(void);
 static int
-rack_ctloutput(struct inpcb *inp, struct sockopt *sopt);
+rack_ctloutput(struct tcpcb *tp, struct sockopt *sopt);
 static int32_t rack_ctor(void *mem, int32_t size, void *arg, int32_t how);
 static void
 rack_set_pace_segments(struct tcpcb *tp, struct tcp_rack *rack, uint32_t line, uint64_t *fill_override);
 static void
-rack_do_segment(struct mbuf *m, struct tcphdr *th,
-    struct socket *so, struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen,
-    uint8_t iptos);
+rack_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+    int32_t drop_hdrlen, int32_t tlen, uint8_t iptos);
 static void rack_dtor(void *mem, int32_t size, void *arg);
 static void
 rack_log_alt_to_to_cancel(struct tcp_rack *rack,
@@ -457,50 +502,53 @@ rack_find_high_nonack(struct tcp_rack *rack,
 static struct rack_sendmap *rack_find_lowest_rsm(struct tcp_rack *rack);
 static void rack_free(struct tcp_rack *rack, struct rack_sendmap *rsm);
 static void rack_fini(struct tcpcb *tp, int32_t tcb_is_purged);
-static int rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt);
+static int rack_get_sockopt(struct tcpcb *tp, struct sockopt *sopt);
 static void
 rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			    tcp_seq th_ack, int line, uint8_t quality);
+static void
+rack_log_type_pacing_sizes(struct tcpcb *tp, struct tcp_rack *rack, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint8_t frm);
+
 static uint32_t
 rack_get_pacing_len(struct tcp_rack *rack, uint64_t bw, uint32_t mss);
 static int32_t rack_handoff_ok(struct tcpcb *tp);
-static int32_t rack_init(struct tcpcb *tp);
+static int32_t rack_init(struct tcpcb *tp, void **ptr);
 static void rack_init_sysctls(void);
+
 static void
 rack_log_ack(struct tcpcb *tp, struct tcpopt *to,
-    struct tcphdr *th, int entered_rec, int dup_ack_struck);
+    struct tcphdr *th, int entered_rec, int dup_ack_struck,
+    int *dsack_seen, int *sacks_seen);
 static void
 rack_log_output(struct tcpcb *tp, struct tcpopt *to, int32_t len,
     uint32_t seq_out, uint16_t th_flags, int32_t err, uint64_t ts,
-    struct rack_sendmap *hintrsm, uint16_t add_flags, struct mbuf *s_mb, uint32_t s_moff, int hw_tls);
+    struct rack_sendmap *hintrsm, uint32_t add_flags, struct mbuf *s_mb, uint32_t s_moff, int hw_tls, int segsiz);
+
+static uint64_t rack_get_gp_est(struct tcp_rack *rack);
+
 
 static void
 rack_log_sack_passed(struct tcpcb *tp, struct tcp_rack *rack,
-    struct rack_sendmap *rsm);
+    struct rack_sendmap *rsm, uint32_t cts);
 static void rack_log_to_event(struct tcp_rack *rack, int32_t to_num, struct rack_sendmap *rsm);
 static int32_t rack_output(struct tcpcb *tp);
 
 static uint32_t
 rack_proc_sack_blk(struct tcpcb *tp, struct tcp_rack *rack,
     struct sackblk *sack, struct tcpopt *to, struct rack_sendmap **prsm,
-    uint32_t cts, int *moved_two);
+    uint32_t cts, uint32_t segsiz);
 static void rack_post_recovery(struct tcpcb *tp, uint32_t th_seq);
 static void rack_remxt_tmr(struct tcpcb *tp);
-static int rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt);
+static int rack_set_sockopt(struct tcpcb *tp, struct sockopt *sopt);
 static void rack_set_state(struct tcpcb *tp, struct tcp_rack *rack);
 static int32_t rack_stopall(struct tcpcb *tp);
-static void
-rack_timer_activate(struct tcpcb *tp, uint32_t timer_type,
-    uint32_t delta);
-static int32_t rack_timer_active(struct tcpcb *tp, uint32_t timer_type);
 static void rack_timer_cancel(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, int line);
-static void rack_timer_stop(struct tcpcb *tp, uint32_t timer_type);
 static uint32_t
 rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
-    struct rack_sendmap *rsm, uint64_t ts, int32_t * lenp, uint16_t add_flag);
+    struct rack_sendmap *rsm, uint64_t ts, int32_t * lenp, uint32_t add_flag, int segsiz);
 static void
 rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
-    struct rack_sendmap *rsm, uint64_t ts, uint16_t add_flag);
+    struct rack_sendmap *rsm, uint64_t ts, uint32_t add_flag, int segsiz);
 static int
 rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
     struct rack_sendmap *rsm, struct tcpopt *to, uint32_t cts, int32_t ack_type, tcp_seq th_ack);
@@ -509,6 +557,10 @@ static int
 rack_do_close_wait(struct mbuf *m, struct tcphdr *th,
     struct socket *so, struct tcpcb *tp, struct tcpopt *to, int32_t drop_hdrlen,
     int32_t tlen, uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos);
+
+static void
+rack_peg_rxt(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t segsiz);
+
 static int
 rack_do_closing(struct mbuf *m, struct tcphdr *th,
     struct socket *so, struct tcpcb *tp, struct tcpopt *to, int32_t drop_hdrlen,
@@ -541,6 +593,7 @@ static int
 rack_do_syn_sent(struct mbuf *m, struct tcphdr *th,
     struct socket *so, struct tcpcb *tp, struct tcpopt *to, int32_t drop_hdrlen,
     int32_t tlen, uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos);
+static void rack_chk_req_and_hybrid_on_out(struct tcp_rack *rack, tcp_seq seq, uint32_t len, uint64_t cts);
 struct rack_sendmap *
 tcp_rack_output(struct tcpcb *tp, struct tcp_rack *rack,
     uint32_t tsused);
@@ -555,149 +608,95 @@ rack_apply_deferred_options(struct tcp_rack *rack);
 
 int32_t rack_clear_counter=0;
 
-static inline void
-rack_trace_point(struct tcp_rack *rack, int num)
+static uint64_t
+rack_get_lt_bw(struct tcp_rack *rack)
 {
-	if (((rack_trace_point_config == num)  ||
-	     (rack_trace_point_config = 0xffffffff)) &&
-	    (rack_trace_point_bb_mode != 0) &&
-	    (rack_trace_point_count > 0) &&
-	    (rack->rc_tp->t_logstate == 0)) {
-		int res;
-		res = atomic_fetchadd_int(&rack_trace_point_count, -1);
-		if (res > 0) {
-			rack->rc_tp->t_logstate = rack_trace_point_bb_mode;
-		} else {
-			/* Loss a race assure its zero now */
-			rack_trace_point_count = 0;
-		}
+	struct timeval tv;
+	uint64_t tim, bytes;
+
+	tim = rack->r_ctl.lt_bw_time;
+	bytes = rack->r_ctl.lt_bw_bytes;
+	if (rack->lt_bw_up) {
+		/* Include all the current bytes too */
+		microuptime(&tv);
+		bytes += (rack->rc_tp->snd_una - rack->r_ctl.lt_seq);
+		tim += (tcp_tv_to_lusectick(&tv) - rack->r_ctl.lt_timemark);
 	}
+	if ((bytes != 0) && (tim != 0))
+		return ((bytes * (uint64_t)1000000) / tim);
+	else
+		return (0);
 }
 
 static void
-rack_set_cc_pacing(struct tcp_rack *rack)
+rack_swap_beta_values(struct tcp_rack *rack, uint8_t flex8)
 {
 	struct sockopt sopt;
 	struct cc_newreno_opts opt;
-	struct newreno old, *ptr;
+	struct newreno old;
 	struct tcpcb *tp;
-	int error;
-
-	if (rack->rc_pacing_cc_set)
-		return;
+	int error, failed = 0;
 
 	tp = rack->rc_tp;
-	if (tp->cc_algo == NULL) {
+	if (tp->t_cc == NULL) {
 		/* Tcb is leaving */
 		return;
 	}
 	rack->rc_pacing_cc_set = 1;
-	if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0) {
+	if (strcmp(tp->t_cc->name, CCALGONAME_NEWRENO) != 0) {
 		/* Not new-reno we can't play games with beta! */
+		failed = 1;
 		goto out;
+
 	}
-	ptr = ((struct newreno *)tp->ccv->cc_data);
 	if (CC_ALGO(tp)->ctl_output == NULL)  {
-		/* Huh, why does new_reno no longer have a set function? */
+		/* Huh, not using new-reno so no swaps.? */
+		failed = 2;
 		goto out;
 	}
-	if (ptr == NULL) {
-		/* Just the default values */
-		old.beta = V_newreno_beta_ecn;
-		old.beta_ecn = V_newreno_beta_ecn;
-		old.newreno_flags = 0;
-	} else {
-		old.beta = ptr->beta;
-		old.beta_ecn = ptr->beta_ecn;
-		old.newreno_flags = ptr->newreno_flags;
-	}
+	/* Get the current values out */
 	sopt.sopt_valsize = sizeof(struct cc_newreno_opts);
+	sopt.sopt_dir = SOPT_GET;
+	opt.name = CC_NEWRENO_BETA;
+	error = CC_ALGO(tp)->ctl_output(&tp->t_ccv, &sopt, &opt);
+	if (error)  {
+		failed = 3;
+		goto out;
+	}
+	old.beta = opt.val;
+	opt.name = CC_NEWRENO_BETA_ECN;
+	error = CC_ALGO(tp)->ctl_output(&tp->t_ccv, &sopt, &opt);
+	if (error)  {
+		failed = 4;
+		goto out;
+	}
+	old.beta_ecn = opt.val;
+
+	/* Now lets set in the values we have stored */
 	sopt.sopt_dir = SOPT_SET;
 	opt.name = CC_NEWRENO_BETA;
 	opt.val = rack->r_ctl.rc_saved_beta.beta;
-	error = CC_ALGO(tp)->ctl_output(tp->ccv, &sopt, &opt);
+	error = CC_ALGO(tp)->ctl_output(&tp->t_ccv, &sopt, &opt);
 	if (error)  {
+		failed = 5;
 		goto out;
 	}
-	/*
-	 * Hack alert we need to set in our newreno_flags
-	 * so that Abe behavior is also applied.
-	 */
-	((struct newreno *)tp->ccv->cc_data)->newreno_flags |= CC_NEWRENO_BETA_ECN_ENABLED;
 	opt.name = CC_NEWRENO_BETA_ECN;
 	opt.val = rack->r_ctl.rc_saved_beta.beta_ecn;
-	error = CC_ALGO(tp)->ctl_output(tp->ccv, &sopt, &opt);
+	error = CC_ALGO(tp)->ctl_output(&tp->t_ccv, &sopt, &opt);
 	if (error) {
+		failed = 6;
 		goto out;
 	}
-	/* Save off the original values for restoral */
+	/* Save off the values for restoral */
 	memcpy(&rack->r_ctl.rc_saved_beta, &old, sizeof(struct newreno));
 out:
-	if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
+		struct newreno *ptr;
 
-		ptr = ((struct newreno *)tp->ccv->cc_data);
-		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
-		if (ptr) {
-			log.u_bbr.flex1 = ptr->beta;
-			log.u_bbr.flex2 = ptr->beta_ecn;
-			log.u_bbr.flex3 = ptr->newreno_flags;
-		}
-		log.u_bbr.flex4 = rack->r_ctl.rc_saved_beta.beta;
-		log.u_bbr.flex5 = rack->r_ctl.rc_saved_beta.beta_ecn;
-		log.u_bbr.flex6 = rack->r_ctl.rc_saved_beta.newreno_flags;
-		log.u_bbr.flex7 = rack->gp_ready;
-		log.u_bbr.flex7 <<= 1;
-		log.u_bbr.flex7 |= rack->use_fixed_rate;
-		log.u_bbr.flex7 <<= 1;
-		log.u_bbr.flex7 |= rack->rc_pacing_cc_set;
-		log.u_bbr.pkts_out = rack->r_ctl.rc_prr_sndcnt;
-		log.u_bbr.flex8 = 3;
-		tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, error,
-			       0, &log, false, NULL, NULL, 0, &tv);
-	}
-}
-
-static void
-rack_undo_cc_pacing(struct tcp_rack *rack)
-{
-	struct newreno old, *ptr;
-	struct tcpcb *tp;
-
-	if (rack->rc_pacing_cc_set == 0)
-		return;
-	tp = rack->rc_tp;
-	rack->rc_pacing_cc_set = 0;
-	if (tp->cc_algo == NULL)
-		/* Tcb is leaving */
-		return;
-	if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0) {
-		/* Not new-reno nothing to do! */
-		return;
-	}
-	ptr = ((struct newreno *)tp->ccv->cc_data);
-	if (ptr == NULL) {
-		/*
-		 * This happens at rack_fini() if the
-		 * cc module gets freed on us. In that
-		 * case we loose our "new" settings but
-		 * thats ok, since the tcb is going away anyway.
-		 */
-		return;
-	}
-	/* Grab out our set values */
-	memcpy(&old, ptr, sizeof(struct newreno));
-	/* Copy back in the original values */
-	memcpy(ptr, &rack->r_ctl.rc_saved_beta, sizeof(struct newreno));
-	/* Now save back the values we had set in (for when pacing is restored) */
-	memcpy(&rack->r_ctl.rc_saved_beta, &old, sizeof(struct newreno));
-	if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
-		union tcp_log_stackspecific log;
-		struct timeval tv;
-
-		ptr = ((struct newreno *)tp->ccv->cc_data);
+		ptr = ((struct newreno *)tp->t_ccv.cc_data);
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.flex1 = ptr->beta;
@@ -705,30 +704,98 @@ rack_undo_cc_pacing(struct tcp_rack *rack)
 		log.u_bbr.flex3 = ptr->newreno_flags;
 		log.u_bbr.flex4 = rack->r_ctl.rc_saved_beta.beta;
 		log.u_bbr.flex5 = rack->r_ctl.rc_saved_beta.beta_ecn;
-		log.u_bbr.flex6 = rack->r_ctl.rc_saved_beta.newreno_flags;
+		log.u_bbr.flex6 = failed;
 		log.u_bbr.flex7 = rack->gp_ready;
 		log.u_bbr.flex7 <<= 1;
 		log.u_bbr.flex7 |= rack->use_fixed_rate;
 		log.u_bbr.flex7 <<= 1;
 		log.u_bbr.flex7 |= rack->rc_pacing_cc_set;
 		log.u_bbr.pkts_out = rack->r_ctl.rc_prr_sndcnt;
-		log.u_bbr.flex8 = 4;
-		tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+		log.u_bbr.flex8 = flex8;
+		tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, error,
 			       0, &log, false, NULL, NULL, 0, &tv);
 	}
 }
 
-#ifdef NETFLIX_PEAKRATE
-static inline void
-rack_update_peakrate_thr(struct tcpcb *tp)
+static void
+rack_set_cc_pacing(struct tcp_rack *rack)
 {
-	/* Keep in mind that t_maxpeakrate is in B/s. */
-	uint64_t peak;
-	peak = uqmax((tp->t_maxseg * 2),
-		     (((uint64_t)tp->t_maxpeakrate * (uint64_t)(tp->t_srtt)) / (uint64_t)HPTS_USEC_IN_SEC));
-	tp->t_peakrate_thr = (uint32_t)uqmin(peak, UINT32_MAX);
+	if (rack->rc_pacing_cc_set)
+		return;
+	/*
+	 * Use the swap utility placing in 3 for flex8 to id a
+	 * set of a new set of values.
+	 */
+	rack->rc_pacing_cc_set = 1;
+	rack_swap_beta_values(rack, 3);
 }
-#endif
+
+static void
+rack_undo_cc_pacing(struct tcp_rack *rack)
+{
+	if (rack->rc_pacing_cc_set == 0)
+		return;
+	/*
+	 * Use the swap utility placing in 4 for flex8 to id a
+	 * restoral of the old values.
+	 */
+	rack->rc_pacing_cc_set = 0;
+	rack_swap_beta_values(rack, 4);
+}
+
+static void
+rack_remove_pacing(struct tcp_rack *rack)
+{
+	if (rack->rc_pacing_cc_set)
+		rack_undo_cc_pacing(rack);
+	if (rack->r_ctl.pacing_method & RACK_REG_PACING)
+		tcp_decrement_paced_conn();
+	if (rack->r_ctl.pacing_method & RACK_DGP_PACING)
+		tcp_dec_dgp_pacing_cnt();
+	rack->rc_always_pace = 0;
+	rack->r_ctl.pacing_method = RACK_PACING_NONE;
+	rack->dgp_on = 0;
+	rack->rc_hybrid_mode = 0;
+	rack->use_fixed_rate = 0;
+}
+
+static void
+rack_log_gpset(struct tcp_rack *rack, uint32_t seq_end, uint32_t ack_end_t,
+	       uint32_t send_end_t, int line, uint8_t mode, struct rack_sendmap *rsm)
+{
+	if (tcp_bblogging_on(rack->rc_tp) && (rack_verbose_logging != 0)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log, 0, sizeof(log));
+		log.u_bbr.flex1 = seq_end;
+		log.u_bbr.flex2 = rack->rc_tp->gput_seq;
+		log.u_bbr.flex3 = ack_end_t;
+		log.u_bbr.flex4 = rack->rc_tp->gput_ts;
+		log.u_bbr.flex5 = send_end_t;
+		log.u_bbr.flex6 = rack->rc_tp->gput_ack;
+		log.u_bbr.flex7 = mode;
+		log.u_bbr.flex8 = 69;
+		log.u_bbr.rttProp = rack->r_ctl.rc_gp_cumack_ts;
+		log.u_bbr.delRate = rack->r_ctl.rc_gp_output_ts;
+		log.u_bbr.pkts_out = line;
+		log.u_bbr.cwnd_gain = rack->app_limited_needs_set;
+		log.u_bbr.pkt_epoch = rack->r_ctl.rc_app_limited_cnt;
+		log.u_bbr.epoch = rack->r_ctl.current_round;
+		log.u_bbr.lt_epoch = rack->r_ctl.rc_considered_lost;
+		if (rsm != NULL) {
+			log.u_bbr.applimited = rsm->r_start;
+			log.u_bbr.delivered = rsm->r_end;
+			log.u_bbr.epoch = rsm->r_flags;
+		}
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		TCP_LOG_EVENTP(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    BBR_LOG_HPTSI_CALC, 0,
+		    0, &log, false, &tv);
+	}
+}
 
 static int
 sysctl_rack_clear(SYSCTL_HANDLER_ARGS)
@@ -756,6 +823,7 @@ sysctl_rack_clear(SYSCTL_HANDLER_ARGS)
 		counter_u64_zero(rack_saw_enobuf_hw);
 		counter_u64_zero(rack_saw_enetunreach);
 		counter_u64_zero(rack_persists_sends);
+		counter_u64_zero(rack_total_bytes);
 		counter_u64_zero(rack_persists_acks);
 		counter_u64_zero(rack_persists_loss);
 		counter_u64_zero(rack_persists_lost_ends);
@@ -778,10 +846,13 @@ sysctl_rack_clear(SYSCTL_HANDLER_ARGS)
 		counter_u64_zero(rack_to_alloc_limited);
 		counter_u64_zero(rack_alloc_limited_conns);
 		counter_u64_zero(rack_split_limited);
+		counter_u64_zero(rack_rxt_clamps_cwnd);
+		counter_u64_zero(rack_rxt_clamps_cwnd_uniq);
 		counter_u64_zero(rack_multi_single_eq);
 		counter_u64_zero(rack_proc_non_comp_ack);
 		counter_u64_zero(rack_sack_attacks_detected);
 		counter_u64_zero(rack_sack_attacks_reversed);
+		counter_u64_zero(rack_sack_attacks_suspect);
 		counter_u64_zero(rack_sack_used_next_merge);
 		counter_u64_zero(rack_sack_used_prev_merge);
 		counter_u64_zero(rack_sack_splits);
@@ -796,6 +867,18 @@ sysctl_rack_clear(SYSCTL_HANDLER_ARGS)
 		counter_u64_zero(rack_collapsed_win_rxt);
 		counter_u64_zero(rack_collapsed_win_seen);
 		counter_u64_zero(rack_collapsed_win_rxt_bytes);
+	} else if (stat == 2) {
+#ifdef INVARIANTS
+		printf("Clearing RACK option array\n");
+#endif
+		COUNTER_ARRAY_ZERO(rack_opts_arry, RACK_OPTS_SIZE);
+	} else if (stat == 3) {
+		printf("Rack has no stats counters to clear (use 1 to clear all stats in sysctl node)\n");
+	} else if (stat == 4) {
+#ifdef INVARIANTS
+		printf("Clearing RACK out size array\n");
+#endif
+		COUNTER_ARRAY_ZERO(rack_out_size, TCP_MSS_ACCT_SIZE);
 	}
 	rack_clear_counter = 0;
 	return (0);
@@ -815,7 +898,7 @@ rack_init_sysctls(void)
 	struct sysctl_oid *rack_measure;
 	struct sysctl_oid *rack_probertt;
 	struct sysctl_oid *rack_hw_pacing;
-	struct sysctl_oid *rack_tracepoint;
+	struct sysctl_oid *rack_policing;
 
 	rack_attack = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_sysctl_root),
@@ -946,28 +1029,6 @@ rack_init_sysctls(void)
 	    OID_AUTO, "hbp_threshold", CTLFLAG_RW,
 	    &rack_hbp_thresh, 3,
 	    "We are highly buffered if min_rtt_seen / max_rtt_seen > this-threshold");
-
-	rack_tracepoint = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_sysctl_root),
-	    OID_AUTO,
-	    "tp",
-	    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
-	    "Rack tracepoint facility");
-	SYSCTL_ADD_U32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_tracepoint),
-	    OID_AUTO, "number", CTLFLAG_RW,
-	    &rack_trace_point_config, 0,
-	    "What is the trace point number to activate (0=none, 0xffffffff = all)?");
-	SYSCTL_ADD_U32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_tracepoint),
-	    OID_AUTO, "bbmode", CTLFLAG_RW,
-	    &rack_trace_point_bb_mode, 4,
-	    "What is BB logging mode that is activated?");
-	SYSCTL_ADD_S32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_tracepoint),
-	    OID_AUTO, "count", CTLFLAG_RW,
-	    &rack_trace_point_count, 0,
-	    "How many connections will have BB logging turned on that hit the tracepoint?");
 	/* Pacing related sysctls */
 	rack_pacing = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_sysctl_root),
@@ -975,6 +1036,61 @@ rack_init_sysctls(void)
 	    "pacing",
 	    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 	    "Pacing related Controls");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "pcm_enabled", CTLFLAG_RW,
+	    &rack_pcm_is_enabled, 1,
+	    "Do we by default do PCM measurements?");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "pcm_rnds", CTLFLAG_RW,
+	    &rack_pcm_every_n_rounds, 100,
+	    "How many rounds before we need to do a PCM measurement");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "pcm_blast", CTLFLAG_RW,
+	    &rack_pcm_blast, 0,
+	    "Blast out the full cwnd/rwnd when doing a PCM measurement");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "rnd_gp_gain", CTLFLAG_RW,
+	    &rack_gp_gain_req, 1200,
+	    "How much do we have to increase the GP to record the round 1200 = 120.0");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "dgp_out_of_ss_at", CTLFLAG_RW,
+	    &rack_rnd_cnt_req, 0x10005,
+	    "How many rounds less than rnd_gp_gain will drop us out of SS");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "no_timely", CTLFLAG_RW,
+	    &rack_timely_off, 0,
+	    "Do we not use timely in DGP?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "fullbufdisc", CTLFLAG_RW,
+	    &rack_full_buffer_discount, 10,
+	    "What percentage b/w reduction over the GP estimate for a full buffer (default=0 off)?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "fillcw", CTLFLAG_RW,
+	    &rack_fill_cw_state, 0,
+	    "Enable fillcw on new connections (default=0 off)?");
+	SYSCTL_ADD_U16(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "min_burst", CTLFLAG_RW,
+	    &rack_pacing_min_seg, 0,
+	    "What is the min burst size for pacing (0 disables)?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "divisor", CTLFLAG_RW,
+	    &rack_default_pacing_divisor, 250,
+	    "What is the default divisor given to the rl code?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "fillcw_max_mult", CTLFLAG_RW,
+	    &rack_bw_multipler, 0,
+	    "What is the limit multiplier of the current gp_est that fillcw can increase the b/w too, 200 == 200% (0 = off)?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_pacing),
 	    OID_AUTO, "max_pace_over", CTLFLAG_RW,
@@ -982,19 +1098,14 @@ rack_init_sysctls(void)
 	    "What is the maximum allowable percentage that we can pace above (so 30 = 130% of our goal)");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_pacing),
-	    OID_AUTO, "pace_to_one", CTLFLAG_RW,
+	    OID_AUTO, "allow1mss", CTLFLAG_RW,
 	    &rack_pace_one_seg, 0,
-	    "Do we allow low b/w pacing of 1MSS instead of two");
+	    "Do we allow low b/w pacing of 1MSS instead of two (1.2Meg and less)?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_pacing),
 	    OID_AUTO, "limit_wsrtt", CTLFLAG_RW,
 	    &rack_limit_time_with_srtt, 0,
 	    "Do we limit pacing time based on srtt");
-	SYSCTL_ADD_S32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_pacing),
-	    OID_AUTO, "init_win", CTLFLAG_RW,
-	    &rack_default_init_window, 0,
-	    "Do we have a rack initial window 0 = system default");
 	SYSCTL_ADD_U16(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_pacing),
 	    OID_AUTO, "gp_per_ss", CTLFLAG_RW,
@@ -1030,6 +1141,11 @@ rack_init_sysctls(void)
 	    OID_AUTO, "rate_cap", CTLFLAG_RW,
 	    &rack_bw_rate_cap, 0,
 	    "If set we apply this value to the absolute rate cap used by pacing");
+	SYSCTL_ADD_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_pacing),
+	    OID_AUTO, "fillcw_cap", CTLFLAG_RW,
+	    &rack_fillcw_bw_cap, 3750000,
+	    "Do we have an absolute cap on the amount of b/w fillcw can specify (0 = no)?");
 	SYSCTL_ADD_U8(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_sysctl_root),
 	    OID_AUTO, "req_measure_cnt", CTLFLAG_RW,
@@ -1049,8 +1165,13 @@ rack_init_sysctls(void)
 	    "How many times does snd_wnd need to be bigger than pace_max_seg so we will hold off and get more acks?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
+	    OID_AUTO, "precheck", CTLFLAG_RW,
+	    &rack_hw_check_queue, 0,
+	    "Do we always precheck the hdwr pacing queue to avoid ENOBUF's?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_hw_pacing),
 	    OID_AUTO, "pace_enobuf_mult", CTLFLAG_RW,
-	    &rack_enobuf_hw_boost_mult, 2,
+	    &rack_enobuf_hw_boost_mult, 0,
 	    "By how many time_betweens should we boost the pacing time if we see a ENOBUFS?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
@@ -1070,8 +1191,13 @@ rack_init_sysctls(void)
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
 	    OID_AUTO, "rate_cap", CTLFLAG_RW,
-	    &rack_hw_rate_caps, 1,
+	    &rack_hw_rate_caps, 0,
 	    "Does the highest hardware pacing rate cap the rate we will send at??");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_hw_pacing),
+	    OID_AUTO, "uncap_per", CTLFLAG_RW,
+	    &rack_hw_rate_cap_per, 0,
+	    "If you go over b/w by this amount you will be uncapped (0 = never)");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
 	    OID_AUTO, "rate_min", CTLFLAG_RW,
@@ -1085,12 +1211,12 @@ rack_init_sysctls(void)
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
 	    OID_AUTO, "up_only", CTLFLAG_RW,
-	    &rack_hw_up_only, 1,
+	    &rack_hw_up_only, 0,
 	    "Do we allow hw pacing to lower the rate selected?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_hw_pacing),
 	    OID_AUTO, "extra_mss_precise", CTLFLAG_RW,
-	    &rack_hw_pace_extra_slots, 2,
+	    &rack_hw_pace_extra_slots, 0,
 	    "If the rates between software and hardware match precisely how many extra time_betweens do we get?");
 	rack_timely = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_sysctl_root),
@@ -1127,8 +1253,8 @@ rack_init_sysctls(void)
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "decrease", CTLFLAG_RW,
-	    &rack_gp_decrease_per, 20,
-	    "Rack timely decrease percentage of our GP multiplication factor");
+	    &rack_gp_decrease_per, 80,
+	    "Rack timely Beta value 80 = .8 (scaled by 100)");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "increase", CTLFLAG_RW,
@@ -1139,6 +1265,12 @@ rack_init_sysctls(void)
 	    OID_AUTO, "lowerbound", CTLFLAG_RW,
 	    &rack_per_lower_bound, 50,
 	    "Rack timely lowest percentage we allow GP multiplier to fall to");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_timely),
+	    OID_AUTO, "p5_upper", CTLFLAG_RW,
+	    &rack_gain_p5_ub, 250,
+	    "Profile 5 upper bound to timely gain");
+
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "upperboundss", CTLFLAG_RW,
@@ -1254,11 +1386,6 @@ rack_init_sysctls(void)
 	    "Should we always send the oldest TLP and RACK-TLP");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_tlp),
-	    OID_AUTO, "rack_tlimit", CTLFLAG_RW,
-	    &rack_limited_retran, 0,
-	    "How many times can a rack timeout drive out sends");
-	SYSCTL_ADD_S32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_tlp),
 	    OID_AUTO, "tlp_cwnd_flag", CTLFLAG_RW,
 	    &rack_lower_cwnd_at_tlp, 0,
 	    "When a TLP completes a retran should we enter recovery");
@@ -1290,6 +1417,26 @@ rack_init_sysctls(void)
 	    "timers",
 	    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 	    "Timer related controls");
+	SYSCTL_ADD_U8(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_timers),
+	    OID_AUTO, "reset_ssth_rec_rto", CTLFLAG_RW,
+	    &rack_ssthresh_rest_rto_rec, 0,
+	    "When doing recovery -> rto -> recovery do we reset SSthresh?");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_timers),
+	    OID_AUTO, "scoreboard_thresh", CTLFLAG_RW,
+	    &rack_rxt_scoreboard_clear_thresh, 2,
+	    "How many RTO's are allowed before we clear the scoreboard");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_timers),
+	    OID_AUTO, "honor_hpts_min", CTLFLAG_RW,
+	    &rack_honors_hpts_min_to, 1,
+	    "Do rack pacing timers honor hpts min timeout");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_timers),
+	    OID_AUTO, "hpts_max_reduce", CTLFLAG_RW,
+	    &rack_max_reduce, 10,
+	    "Max percentage we will reduce slot by for pacing when we are behind");
 	SYSCTL_ADD_U32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timers),
 	    OID_AUTO, "persmin", CTLFLAG_RW,
@@ -1371,6 +1518,11 @@ rack_init_sysctls(void)
 	    "Feature controls");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_features),
+	    OID_AUTO, "hybrid_set_maxseg", CTLFLAG_RW,
+	    &rack_hybrid_allow_set_maxseg, 0,
+	    "Should hybrid pacing allow the setmss command");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_features),
 	    OID_AUTO, "cmpack", CTLFLAG_RW,
 	    &rack_use_cmp_acks, 1,
 	    "Should RACK have LRO send compressed acks");
@@ -1399,6 +1551,53 @@ rack_init_sysctls(void)
 	    OID_AUTO, "hystartplusplus", CTLFLAG_RW,
 	    &rack_do_hystart, 0,
 	    "Should RACK enable HyStart++ on connections?");
+	/* Policer detection */
+	rack_policing = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_sysctl_root),
+	    OID_AUTO,
+	    "policing",
+	    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+	    "policer detection");
+	SYSCTL_ADD_U16(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "rxt_thresh", CTLFLAG_RW,
+	    &rack_policer_rxt_thresh, 0,
+	   "Percentage of retransmits we need to be a possible policer (499 = 49.9 percent)");
+	SYSCTL_ADD_U8(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "avg_thresh", CTLFLAG_RW,
+	    &rack_policer_avg_thresh, 0,
+	    "What threshold of average retransmits needed to recover a lost packet (1 - 169 aka 21 = 2.1)?");
+	SYSCTL_ADD_U8(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "med_thresh", CTLFLAG_RW,
+	    &rack_policer_med_thresh, 0,
+	    "What threshold of Median retransmits needed to recover a lost packet (1 - 16)?");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "data_thresh", CTLFLAG_RW,
+	    &rack_policer_data_thresh, 64000,
+	    "How many bytes must have gotten through before we can start doing policer detection?");
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "bwcomp", CTLFLAG_RW,
+	    &rack_policing_do_bw_comp, 1,
+	    "Do we raise up low b/w so that at least pace_max_seg can be sent in the srtt?");
+	SYSCTL_ADD_U8(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "recmss", CTLFLAG_RW,
+	    &rack_req_del_mss, 18,
+	    "How many MSS must be delivered during recovery to engage policer detection?");
+	SYSCTL_ADD_U16(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "res_div", CTLFLAG_RW,
+	    &rack_policer_bucket_reserve, 20,
+	    "What percentage is reserved in the policer bucket?");
+	SYSCTL_ADD_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_policing),
+	    OID_AUTO, "min_comp_bw", CTLFLAG_RW,
+	    &rack_pol_min_bw, 125000,
+	    "Do we have a min b/w for b/w compensation (0 = no)?");
 	/* Misc rack controls */
 	rack_misc = SYSCTL_ADD_NODE(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_sysctl_root),
@@ -1413,6 +1612,26 @@ rack_init_sysctls(void)
 	    &rack_tcp_accounting, 0,
 	    "Should we turn on TCP accounting for all rack sessions?");
 #endif
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_misc),
+	    OID_AUTO, "dnd", CTLFLAG_RW,
+	    &rack_dnd_default, 0,
+	    "Do not disturb default for rack_rrr = 3");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_misc),
+	    OID_AUTO, "sad_seg_per", CTLFLAG_RW,
+	    &sad_seg_size_per, 800,
+	    "Percentage of segment size needed in a sack 800 = 80.0?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_misc),
+	    OID_AUTO, "rxt_controls", CTLFLAG_RW,
+	    &rack_rxt_controls, 0,
+	    "Retransmit sending size controls (valid  values 0, 1, 2 default=1)?");
+	SYSCTL_ADD_S32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_misc),
+	    OID_AUTO, "rack_hibeta", CTLFLAG_RW,
+	    &rack_hibeta_setting, 0,
+	    "Do we ue a high beta (80 instead of 50)?");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_misc),
 	    OID_AUTO, "apply_rtt_with_low_conf", CTLFLAG_RW,
@@ -1455,11 +1674,6 @@ rack_init_sysctls(void)
 	    "Should RACK place low end time limits on the shared cwnd feature");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_misc),
-	    OID_AUTO, "iMac_dack", CTLFLAG_RW,
-	    &rack_use_imac_dack, 0,
-	    "Should RACK try to emulate iMac delayed ack");
-	SYSCTL_ADD_S32(&rack_sysctl_ctx,
-	    SYSCTL_CHILDREN(rack_misc),
 	    OID_AUTO, "no_prr", CTLFLAG_RW,
 	    &rack_disable_prr, 0,
 	    "Should RACK not use prr and only pace (must have pacing on)");
@@ -1488,7 +1702,15 @@ rack_init_sysctls(void)
 	    OID_AUTO, "autoscale", CTLFLAG_RW,
 	    &rack_autosndbuf_inc, 20,
 	    "What percentage should rack scale up its snd buffer by?");
+
+
 	/* Sack Attacker detection stuff */
+	SYSCTL_ADD_U32(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_attack),
+	    OID_AUTO, "merge_out", CTLFLAG_RW,
+	    &rack_merge_out_sacks_on_attack, 0,
+	    "Do we merge the sendmap when we decide we are being attacked?");
+
 	SYSCTL_ADD_U32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_attack),
 	    OID_AUTO, "detect_highsackratio", CTLFLAG_RW,
@@ -1541,6 +1763,13 @@ rack_init_sysctls(void)
 	    OID_AUTO, "reversed", CTLFLAG_RD,
 	    &rack_sack_attacks_reversed,
 	    "Total number of SACK attackers that were later determined false positive");
+	rack_sack_attacks_suspect = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_attack),
+	    OID_AUTO, "suspect", CTLFLAG_RD,
+	    &rack_sack_attacks_suspect,
+	    "Total number of SACKs that triggered early detection");
+
 	rack_sack_used_next_merge = counter_u64_alloc(M_WAITOK);
 	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_attack),
@@ -1554,6 +1783,12 @@ rack_init_sysctls(void)
 	    &rack_sack_used_prev_merge,
 	    "Total number of times we used the prev merge");
 	/* Counters */
+	rack_total_bytes = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_counters),
+	    OID_AUTO, "totalbytes", CTLFLAG_RD,
+	    &rack_total_bytes,
+	    "Total number of bytes sent");
 	rack_fto_send = counter_u64_alloc(M_WAITOK);
 	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_counters),
@@ -1645,6 +1880,13 @@ rack_init_sysctls(void)
 	    OID_AUTO, "alloc_hot", CTLFLAG_RD,
 	    &rack_hot_alloc,
 	    "Total allocations from the top of our list");
+	tcp_policer_detected = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_counters),
+	    OID_AUTO, "policer_detected", CTLFLAG_RD,
+	    &tcp_policer_detected,
+	    "Total policer_detections");
+
 	rack_to_alloc = counter_u64_alloc(M_WAITOK);
 	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_counters),
@@ -1681,6 +1923,18 @@ rack_init_sysctls(void)
 	    OID_AUTO, "split_limited", CTLFLAG_RD,
 	    &rack_split_limited,
 	    "Split allocations dropped due to limit");
+	rack_rxt_clamps_cwnd = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_counters),
+	    OID_AUTO, "rxt_clamps_cwnd", CTLFLAG_RD,
+	    &rack_rxt_clamps_cwnd,
+	    "Number of times that excessive rxt clamped the cwnd down");
+	rack_rxt_clamps_cwnd_uniq = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
+	    SYSCTL_CHILDREN(rack_counters),
+	    OID_AUTO, "rxt_clamps_cwnd_uniq", CTLFLAG_RD,
+	    &rack_rxt_clamps_cwnd_uniq,
+	    "Number of connections that have had excessive rxt clamped the cwnd down");
 	rack_persists_sends = counter_u64_alloc(M_WAITOK);
 	SYSCTL_ADD_COUNTER_U64(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_counters),
@@ -1808,63 +2062,11 @@ rack_init_sysctls(void)
 	    &rack_clear_counter, 0, sysctl_rack_clear, "IU", "Clear counters");
 }
 
-static __inline int
-rb_map_cmp(struct rack_sendmap *b, struct rack_sendmap *a)
-{
-	if (SEQ_GEQ(b->r_start, a->r_start) &&
-	    SEQ_LT(b->r_start, a->r_end)) {
-		/*
-		 * The entry b is within the
-		 * block a. i.e.:
-		 * a --   |-------------|
-		 * b --   |----|
-		 * <or>
-		 * b --       |------|
-		 * <or>
-		 * b --       |-----------|
-		 */
-		return (0);
-	} else if (SEQ_GEQ(b->r_start, a->r_end)) {
-		/*
-		 * b falls as either the next
-		 * sequence block after a so a
-		 * is said to be smaller than b.
-		 * i.e:
-		 * a --   |------|
-		 * b --          |--------|
-		 * or
-		 * b --              |-----|
-		 */
-		return (1);
-	}
-	/*
-	 * Whats left is where a is
-	 * larger than b. i.e:
-	 * a --         |-------|
-	 * b --  |---|
-	 * or even possibly
-	 * b --   |--------------|
-	 */
-	return (-1);
-}
-
-RB_PROTOTYPE(rack_rb_tree_head, rack_sendmap, r_next, rb_map_cmp);
-RB_GENERATE(rack_rb_tree_head, rack_sendmap, r_next, rb_map_cmp);
-
 static uint32_t
 rc_init_window(struct tcp_rack *rack)
 {
-	uint32_t win;
+	return (tcp_compute_initwnd(tcp_maxseg(rack->rc_tp)));
 
-	if (rack->rc_init_win == 0) {
-		/*
-		 * Nothing set by the user, use the system stack
-		 * default.
-		 */
-		return (tcp_compute_initwnd(tcp_maxseg(rack->rc_tp)));
-	}
-	win = ctf_fixed_maxseg(rack->rc_tp) * rack->rc_init_win;
-	return (win);
 }
 
 static uint64_t
@@ -1878,14 +2080,382 @@ rack_get_fixed_pacing_bw(struct tcp_rack *rack)
 		return (rack->r_ctl.rc_fixed_pacing_rate_ca);
 }
 
-static uint64_t
-rack_get_bw(struct tcp_rack *rack)
+static void
+rack_log_hybrid_bw(struct tcp_rack *rack, uint32_t seq, uint64_t cbw, uint64_t tim,
+	uint64_t data, uint8_t mod, uint16_t aux,
+	struct tcp_sendfile_track *cur, int line)
 {
-	if (rack->use_fixed_rate) {
-		/* Return the fixed pacing rate */
-		return (rack_get_fixed_pacing_bw(rack));
+#ifdef TCP_REQUEST_TRK
+	int do_log = 0;
+
+	/*
+	 * The rate cap one is noisy and only should come out when normal BB logging
+	 * is enabled, the other logs (not RATE_CAP and NOT CAP_CALC) only come out
+	 * once per chunk and make up the BBpoint that can be turned on by the client.
+	 */
+	if ((mod == HYBRID_LOG_RATE_CAP) || (mod == HYBRID_LOG_CAP_CALC)) {
+		/*
+		 * The very noisy two need to only come out when
+		 * we have verbose logging on.
+		 */
+		if (rack_verbose_logging != 0)
+			do_log = tcp_bblogging_on(rack->rc_tp);
+		else
+			do_log = 0;
+	} else if (mod != HYBRID_LOG_BW_MEASURE) {
+		/*
+		 * All other less noisy logs here except the measure which
+		 * also needs to come out on the point and the log.
+		 */
+		do_log = tcp_bblogging_on(rack->rc_tp);
+	} else {
+		do_log = tcp_bblogging_point_on(rack->rc_tp, TCP_BBPOINT_REQ_LEVEL_LOGGING);
 	}
-	if (rack->r_ctl.gp_bw == 0) {
+
+	if (do_log) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+		uint64_t lt_bw;
+
+		/* Convert our ms to a microsecond */
+		memset(&log, 0, sizeof(log));
+
+		log.u_bbr.cwnd_gain = line;
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.rttProp = tim;
+		log.u_bbr.bw_inuse = cbw;
+		log.u_bbr.delRate = rack_get_gp_est(rack);
+		lt_bw = rack_get_lt_bw(rack);
+		log.u_bbr.flex1 = seq;
+		log.u_bbr.pacing_gain = aux;
+		/* lt_bw = < flex3 | flex2 > */
+		log.u_bbr.flex2 = (uint32_t)(lt_bw & 0x00000000ffffffff);
+		log.u_bbr.flex3 = (uint32_t)((lt_bw >> 32) & 0x00000000ffffffff);
+		/* Record the last obtained us rtt in inflight */
+		if (cur == NULL) {
+			/* Make sure we are looking at the right log if an overide comes in */
+			cur = rack->r_ctl.rc_last_sft;
+		}
+		if (rack->r_ctl.rack_rs.rs_flags != RACK_RTT_EMPTY)
+			log.u_bbr.inflight = rack->r_ctl.rack_rs.rs_us_rtt;
+		else {
+			/* Use the last known rtt i.e. the rack-rtt */
+			log.u_bbr.inflight = rack->rc_rack_rtt;
+		}
+		if (cur != NULL) {
+			uint64_t off;
+
+			log.u_bbr.cur_del_rate = cur->deadline;
+			if ((mod == HYBRID_LOG_RATE_CAP) || (mod == HYBRID_LOG_CAP_CALC)) {
+				/* start = < lost | pkt_epoch > */
+				log.u_bbr.pkt_epoch = (uint32_t)(cur->start & 0x00000000ffffffff);
+				log.u_bbr.lost = (uint32_t)((cur->start >> 32) & 0x00000000ffffffff);
+				log.u_bbr.flex6 = cur->start_seq;
+				log.u_bbr.pkts_out = cur->end_seq;
+			} else {
+				/* start = < lost | pkt_epoch > */
+				log.u_bbr.pkt_epoch = (uint32_t)(cur->start & 0x00000000ffffffff);
+				log.u_bbr.lost = (uint32_t)((cur->start >> 32) & 0x00000000ffffffff);
+				/* end = < pkts_out | flex6 > */
+				log.u_bbr.flex6 = (uint32_t)(cur->end & 0x00000000ffffffff);
+				log.u_bbr.pkts_out = (uint32_t)((cur->end >> 32) & 0x00000000ffffffff);
+			}
+			/* first_send = <lt_epoch | epoch> */
+			log.u_bbr.epoch = (uint32_t)(cur->first_send & 0x00000000ffffffff);
+			log.u_bbr.lt_epoch = (uint32_t)((cur->first_send >> 32) & 0x00000000ffffffff);
+			/* localtime = <delivered | applimited>*/
+			log.u_bbr.applimited = (uint32_t)(cur->localtime & 0x00000000ffffffff);
+			log.u_bbr.delivered = (uint32_t)((cur->localtime >> 32) & 0x00000000ffffffff);
+#ifdef TCP_REQUEST_TRK
+			off = (uint64_t)(cur) - (uint64_t)(&rack->rc_tp->t_tcpreq_info[0]);
+			log.u_bbr.bbr_substate = (uint8_t)(off / sizeof(struct tcp_sendfile_track));
+#endif
+			log.u_bbr.inhpts = 1;
+			log.u_bbr.flex4 = (uint32_t)(rack->rc_tp->t_sndbytes - cur->sent_at_fs);
+			log.u_bbr.flex5 = (uint32_t)(rack->rc_tp->t_snd_rxt_bytes - cur->rxt_at_fs);
+			log.u_bbr.flex7 = (uint16_t)cur->hybrid_flags;
+		} else {
+			log.u_bbr.flex7 = 0xffff;
+			log.u_bbr.cur_del_rate = 0xffffffffffffffff;
+		}
+		/*
+		 * Compose bbr_state to be a bit wise 0000ADHF
+		 * where A is the always_pace flag
+		 * where D is the dgp_on flag
+		 * where H is the hybrid_mode on flag
+		 * where F is the use_fixed_rate flag.
+		 */
+		log.u_bbr.bbr_state = rack->rc_always_pace;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->dgp_on;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->rc_hybrid_mode;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->use_fixed_rate;
+		log.u_bbr.flex8 = mod;
+		tcp_log_event(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    TCP_HYBRID_PACING_LOG, 0,
+		    0, &log, false, NULL, __func__, __LINE__, &tv);
+
+	}
+#endif
+}
+
+#ifdef TCP_REQUEST_TRK
+static void
+rack_log_hybrid_sends(struct tcp_rack *rack, struct tcp_sendfile_track *cur, int line)
+{
+	if (tcp_bblogging_point_on(rack->rc_tp, TCP_BBPOINT_REQ_LEVEL_LOGGING)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+		uint64_t off;
+
+		/* Convert our ms to a microsecond */
+		memset(&log, 0, sizeof(log));
+
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.delRate = cur->sent_at_fs;
+
+		if ((cur->flags & TCP_TRK_TRACK_FLG_LSND) == 0) {
+			/*
+			 * We did not get a new Rules Applied to set so
+			 * no overlapping send occured, this means the
+			 * current byte counts are correct.
+			 */
+			log.u_bbr.cur_del_rate = rack->rc_tp->t_sndbytes;
+			log.u_bbr.rttProp = rack->rc_tp->t_snd_rxt_bytes;
+		} else {
+			/*
+			 * Overlapping send case, we switched to a new
+			 * send and did a rules applied.
+			 */
+			log.u_bbr.cur_del_rate = cur->sent_at_ls;
+			log.u_bbr.rttProp = cur->rxt_at_ls;
+		}
+		log.u_bbr.bw_inuse = cur->rxt_at_fs;
+		log.u_bbr.cwnd_gain = line;
+		off = (uint64_t)(cur) - (uint64_t)(&rack->rc_tp->t_tcpreq_info[0]);
+		log.u_bbr.bbr_substate = (uint8_t)(off / sizeof(struct tcp_sendfile_track));
+		/* start = < flex1 | flex2 > */
+		log.u_bbr.flex2 = (uint32_t)(cur->start & 0x00000000ffffffff);
+		log.u_bbr.flex1 = (uint32_t)((cur->start >> 32) & 0x00000000ffffffff);
+		/* end = < flex3 | flex4 > */
+		log.u_bbr.flex4 = (uint32_t)(cur->end & 0x00000000ffffffff);
+		log.u_bbr.flex3 = (uint32_t)((cur->end >> 32) & 0x00000000ffffffff);
+
+		/* localtime = <delivered | applimited>*/
+		log.u_bbr.applimited = (uint32_t)(cur->localtime & 0x00000000ffffffff);
+		log.u_bbr.delivered = (uint32_t)((cur->localtime >> 32) & 0x00000000ffffffff);
+		/* client timestamp = <lt_epoch | epoch>*/
+		log.u_bbr.epoch = (uint32_t)(cur->timestamp & 0x00000000ffffffff);
+		log.u_bbr.lt_epoch = (uint32_t)((cur->timestamp >> 32) & 0x00000000ffffffff);
+		/* now set all the flags in */
+		log.u_bbr.pkts_out = cur->hybrid_flags;
+		log.u_bbr.lost = cur->playout_ms;
+		log.u_bbr.flex6 = cur->flags;
+		/*
+		 * Last send time  = <flex5 | pkt_epoch>  note we do not distinguish cases
+		 * where a false retransmit occurred so first_send  <-> lastsend may
+		 * include longer time then it actually took if we have a false rxt.
+		 */
+		log.u_bbr.pkt_epoch = (uint32_t)(rack->r_ctl.last_tmit_time_acked & 0x00000000ffffffff);
+		log.u_bbr.flex5 = (uint32_t)((rack->r_ctl.last_tmit_time_acked >> 32) & 0x00000000ffffffff);
+		/*
+		 * Compose bbr_state to be a bit wise 0000ADHF
+		 * where A is the always_pace flag
+		 * where D is the dgp_on flag
+		 * where H is the hybrid_mode on flag
+		 * where F is the use_fixed_rate flag.
+		 */
+		log.u_bbr.bbr_state = rack->rc_always_pace;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->dgp_on;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->rc_hybrid_mode;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->use_fixed_rate;
+
+		log.u_bbr.flex8 = HYBRID_LOG_SENT_LOST;
+		tcp_log_event(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    TCP_HYBRID_PACING_LOG, 0,
+		    0, &log, false, NULL, __func__, __LINE__, &tv);
+	}
+}
+#endif
+
+static inline uint64_t
+rack_compensate_for_linerate(struct tcp_rack *rack, uint64_t bw)
+{
+	uint64_t ret_bw, ether;
+	uint64_t u_segsiz;
+
+	ether = rack->rc_tp->t_maxseg + sizeof(struct tcphdr);
+	if (rack->r_is_v6){
+#ifdef INET6
+		ether += sizeof(struct ip6_hdr);
+#endif
+		ether += 14;	/* eheader size 6+6+2 */
+	} else {
+#ifdef INET
+		ether += sizeof(struct ip);
+#endif
+		ether += 14;	/* eheader size 6+6+2 */
+	}
+	u_segsiz = (uint64_t)min(ctf_fixed_maxseg(rack->rc_tp), rack->r_ctl.rc_pace_min_segs);
+	ret_bw = bw;
+	ret_bw *= ether;
+	ret_bw /= u_segsiz;
+	return (ret_bw);
+}
+
+static void
+rack_rate_cap_bw(struct tcp_rack *rack, uint64_t *bw, int *capped)
+{
+#ifdef TCP_REQUEST_TRK
+	struct timeval tv;
+	uint64_t timenow, timeleft, lenleft, lengone, calcbw;
+#endif
+
+	if (rack->r_ctl.bw_rate_cap == 0)
+		return;
+#ifdef TCP_REQUEST_TRK
+	if (rack->rc_catch_up && rack->rc_hybrid_mode &&
+	    (rack->r_ctl.rc_last_sft != NULL)) {
+		/*
+		 * We have a dynamic cap. The original target
+		 * is in bw_rate_cap, but we need to look at
+		 * how long it is until we hit the deadline.
+		 */
+		struct tcp_sendfile_track *ent;
+
+      		ent = rack->r_ctl.rc_last_sft;
+		microuptime(&tv);
+		timenow = tcp_tv_to_lusectick(&tv);
+		if (timenow >= ent->deadline) {
+			/* No time left we do DGP only */
+			rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+					   0, 0, 0, HYBRID_LOG_OUTOFTIME, 0, ent, __LINE__);
+			rack->r_ctl.bw_rate_cap = 0;
+			return;
+		}
+		/* We have the time */
+		timeleft = rack->r_ctl.rc_last_sft->deadline - timenow;
+		if (timeleft < HPTS_MSEC_IN_SEC) {
+			/* If there is less than a ms left just use DGPs rate */
+			rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+					   0, timeleft, 0, HYBRID_LOG_OUTOFTIME, 0, ent, __LINE__);
+			rack->r_ctl.bw_rate_cap = 0;
+			return;
+		}
+		/*
+		 * Now lets find the amount of data left to send.
+		 *
+		 * Now ideally we want to use the end_seq to figure out how much more
+		 * but it might not be possible (only if we have the TRACK_FG_COMP on the entry..
+		 */
+		if (ent->flags & TCP_TRK_TRACK_FLG_COMP) {
+			if (SEQ_GT(ent->end_seq, rack->rc_tp->snd_una))
+				lenleft = ent->end_seq - rack->rc_tp->snd_una;
+			else {
+				/* TSNH, we should catch it at the send */
+				rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+						   0, timeleft, 0, HYBRID_LOG_CAPERROR, 0, ent, __LINE__);
+				rack->r_ctl.bw_rate_cap = 0;
+				return;
+			}
+		} else {
+			/*
+			 * The hard way, figure out how much is gone and then
+			 * take that away from the total the client asked for
+			 * (thats off by tls overhead if this is tls).
+			 */
+			if (SEQ_GT(rack->rc_tp->snd_una, ent->start_seq))
+				lengone = rack->rc_tp->snd_una - ent->start_seq;
+			else
+				lengone = 0;
+			if (lengone < (ent->end - ent->start))
+				lenleft = (ent->end - ent->start) - lengone;
+			else {
+				/* TSNH, we should catch it at the send */
+				rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+						   0, timeleft, lengone, HYBRID_LOG_CAPERROR, 0, ent, __LINE__);
+				rack->r_ctl.bw_rate_cap = 0;
+				return;
+			}
+		}
+		if (lenleft == 0) {
+			/* We have it all sent */
+			rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+					   0, timeleft, lenleft, HYBRID_LOG_ALLSENT, 0, ent, __LINE__);
+			if (rack->r_ctl.bw_rate_cap)
+				goto normal_ratecap;
+			else
+				return;
+		}
+		calcbw = lenleft * HPTS_USEC_IN_SEC;
+		calcbw /= timeleft;
+		/* Now we must compensate for IP/TCP overhead */
+		calcbw = rack_compensate_for_linerate(rack, calcbw);
+		/* Update the bit rate cap */
+		rack->r_ctl.bw_rate_cap = calcbw;
+		if ((rack->r_ctl.rc_last_sft->hybrid_flags & TCP_HYBRID_PACING_S_MSS) &&
+		    (rack_hybrid_allow_set_maxseg == 1) &&
+		    ((rack->r_ctl.rc_last_sft->hybrid_flags & TCP_HYBRID_PACING_SETMSS) == 0)) {
+			/* Lets set in a smaller mss possibly here to match our rate-cap */
+			uint32_t orig_max;
+
+			orig_max = rack->r_ctl.rc_pace_max_segs;
+			rack->r_ctl.rc_last_sft->hybrid_flags |= TCP_HYBRID_PACING_SETMSS;
+			rack->r_ctl.rc_pace_max_segs = rack_get_pacing_len(rack, calcbw, ctf_fixed_maxseg(rack->rc_tp));
+			rack_log_type_pacing_sizes(rack->rc_tp, rack, rack->r_ctl.client_suggested_maxseg, orig_max, __LINE__, 5);
+		}
+		rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+				   calcbw, timeleft, lenleft, HYBRID_LOG_CAP_CALC, 0, ent, __LINE__);
+		if ((calcbw > 0) && (*bw > calcbw)) {
+			rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+					   *bw, ent->deadline, lenleft, HYBRID_LOG_RATE_CAP, 0, ent, __LINE__);
+			*capped = 1;
+			*bw = calcbw;
+		}
+		return;
+	}
+normal_ratecap:
+#endif
+	if ((rack->r_ctl.bw_rate_cap > 0) && (*bw > rack->r_ctl.bw_rate_cap)) {
+#ifdef TCP_REQUEST_TRK
+		if (rack->rc_hybrid_mode &&
+		    rack->rc_catch_up &&
+		    (rack->r_ctl.rc_last_sft != NULL) &&
+		    (rack->r_ctl.rc_last_sft->hybrid_flags & TCP_HYBRID_PACING_S_MSS) &&
+		    (rack_hybrid_allow_set_maxseg == 1) &&
+		    ((rack->r_ctl.rc_last_sft->hybrid_flags & TCP_HYBRID_PACING_SETMSS) == 0)) {
+			/* Lets set in a smaller mss possibly here to match our rate-cap */
+			uint32_t orig_max;
+
+			orig_max = rack->r_ctl.rc_pace_max_segs;
+			rack->r_ctl.rc_last_sft->hybrid_flags |= TCP_HYBRID_PACING_SETMSS;
+			rack->r_ctl.rc_pace_max_segs = rack_get_pacing_len(rack, rack->r_ctl.bw_rate_cap, ctf_fixed_maxseg(rack->rc_tp));
+			rack_log_type_pacing_sizes(rack->rc_tp, rack, rack->r_ctl.client_suggested_maxseg, orig_max, __LINE__, 5);
+		}
+#endif
+		*capped = 1;
+		*bw = rack->r_ctl.bw_rate_cap;
+		rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+				   *bw, 0, 0,
+				   HYBRID_LOG_RATE_CAP, 1, NULL, __LINE__);
+	}
+}
+
+static uint64_t
+rack_get_gp_est(struct tcp_rack *rack)
+{
+	uint64_t bw, lt_bw, ret_bw;
+
+	if (rack->rc_gp_filled == 0) {
 		/*
 		 * We have yet no b/w measurement,
 		 * if we have a user set initial bw
@@ -1897,15 +2467,23 @@ rack_get_bw(struct tcp_rack *rack)
 		 * so if we have like IW=30, we are not
 		 * calculating a "huge" b/w.
 		 */
-		uint64_t bw, srtt;
+		uint64_t srtt;
+
+		if (rack->dis_lt_bw == 1)
+			lt_bw = 0;
+		else
+			lt_bw = rack_get_lt_bw(rack);
+		if (lt_bw) {
+			/*
+			 * No goodput bw but a long-term b/w does exist
+			 * lets use that.
+			 */
+			ret_bw = lt_bw;
+			goto compensate;
+		}
 		if (rack->r_ctl.init_rate)
 			return (rack->r_ctl.init_rate);
 
-		/* Has the user set a max peak rate? */
-#ifdef NETFLIX_PEAKRATE
-		if (rack->rc_tp->t_maxpeakrate)
-			return (rack->rc_tp->t_maxpeakrate);
-#endif
 		/* Ok lets come up with the IW guess, if we have a srtt */
 		if (rack->rc_tp->t_srtt == 0) {
 			/*
@@ -1919,32 +2497,65 @@ rack_get_bw(struct tcp_rack *rack)
 		srtt = (uint64_t)rack->rc_tp->t_srtt;
 		bw *= (uint64_t)USECS_IN_SECOND;
 		bw /= srtt;
-		if (rack->r_ctl.bw_rate_cap && (bw > rack->r_ctl.bw_rate_cap))
-			bw = rack->r_ctl.bw_rate_cap;
-		return (bw);
-	} else {
-		uint64_t bw;
+		ret_bw = bw;
+		goto compensate;
 
-		if (rack->r_ctl.num_measurements >= RACK_REQ_AVG) {
-			/* Averaging is done, we can return the value */
-			bw = rack->r_ctl.gp_bw;
-		} else {
-			/* Still doing initial average must calculate */
-			bw = rack->r_ctl.gp_bw / rack->r_ctl.num_measurements;
-		}
-#ifdef NETFLIX_PEAKRATE
-		if ((rack->rc_tp->t_maxpeakrate) &&
-		    (bw > rack->rc_tp->t_maxpeakrate)) {
-			/* The user has set a peak rate to pace at
-			 * don't allow us to pace faster than that.
-			 */
-			return (rack->rc_tp->t_maxpeakrate);
-		}
-#endif
-		if (rack->r_ctl.bw_rate_cap && (bw > rack->r_ctl.bw_rate_cap))
-			bw = rack->r_ctl.bw_rate_cap;
-		return (bw);
 	}
+	if (rack->r_ctl.num_measurements >= RACK_REQ_AVG) {
+		/* Averaging is done, we can return the value */
+		bw = rack->r_ctl.gp_bw;
+	} else {
+		/* Still doing initial average must calculate */
+		bw = rack->r_ctl.gp_bw / max(rack->r_ctl.num_measurements, 1);
+	}
+	if (rack->dis_lt_bw) {
+		/* We are not using lt-bw */
+		ret_bw = bw;
+		goto compensate;
+	}
+	lt_bw = rack_get_lt_bw(rack);
+	if (lt_bw == 0) {
+		/* If we don't have one then equate it to the gp_bw */
+		lt_bw = rack->r_ctl.gp_bw;
+	}
+	if (rack->use_lesser_lt_bw) {
+		if (lt_bw < bw)
+			ret_bw = lt_bw;
+		else
+			ret_bw = bw;
+	} else {
+		if (lt_bw > bw)
+			ret_bw = lt_bw;
+		else
+			ret_bw = bw;
+	}
+	/*
+	 * Now lets compensate based on the TCP/IP overhead. Our
+	 * Goodput estimate does not include this so we must pace out
+	 * a bit faster since our pacing calculations do. The pacing
+	 * calculations use the base ETHERNET_SEGMENT_SIZE and the segsiz
+	 * we are using to do this, so we do that here in the opposite
+	 * direction as well. This means that if we are tunneled and the
+	 * segsiz is say 1200 bytes we will get quite a boost, but its
+	 * compensated for in the pacing time the opposite way.
+	 */
+compensate:
+	ret_bw = rack_compensate_for_linerate(rack, ret_bw);
+	return(ret_bw);
+}
+
+
+static uint64_t
+rack_get_bw(struct tcp_rack *rack)
+{
+	uint64_t bw;
+
+	if (rack->use_fixed_rate) {
+		/* Return the fixed pacing rate */
+		return (rack_get_fixed_pacing_bw(rack));
+	}
+	bw = rack_get_gp_est(rack);
+	return (bw);
 }
 
 static uint16_t
@@ -1995,7 +2606,7 @@ rack_log_dsack_event(struct tcp_rack *rack, uint8_t mod, uint32_t flex4, uint32_
 	 * 5 = Socket option set changing the control flags rc_rack_tmr_std_based, rc_rack_use_dsack
 	 * 6 = Final rack rtt, flex4 is srtt and flex6 is final limited thresh.
 	 */
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2013,6 +2624,8 @@ rack_log_dsack_event(struct tcp_rack *rack, uint8_t mod, uint32_t flex4, uint32_
 		log.u_bbr.flex7 = rack->r_ctl.dsack_persist;
 		log.u_bbr.flex8 = mod;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.epoch = rack->r_ctl.current_round;
+		log.u_bbr.lt_epoch = rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2026,10 +2639,11 @@ rack_log_hdwr_pacing(struct tcp_rack *rack,
 		     uint64_t rate, uint64_t hw_rate, int line,
 		     int error, uint16_t mod)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 		const struct ifnet *ifp;
+		uint64_t ifp64;
 
 		memset(&log, 0, sizeof(log));
 		log.u_bbr.flex1 = ((hw_rate >> 32) & 0x00000000ffffffff);
@@ -2042,8 +2656,9 @@ rack_log_hdwr_pacing(struct tcp_rack *rack,
 		} else
 			ifp = NULL;
 		if (ifp) {
-			log.u_bbr.flex3 = (((uint64_t)ifp  >> 32) & 0x00000000ffffffff);
-			log.u_bbr.flex4 = ((uint64_t)ifp & 0x00000000ffffffff);
+			ifp64 = (uintptr_t)ifp;
+			log.u_bbr.flex3 = ((ifp64  >> 32) & 0x00000000ffffffff);
+			log.u_bbr.flex4 = (ifp64 & 0x00000000ffffffff);
 		}
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.bw_inuse = rate;
@@ -2061,6 +2676,8 @@ rack_log_hdwr_pacing(struct tcp_rack *rack,
 		else
 			log.u_bbr.cur_del_rate = 0;
 		log.u_bbr.rttProp = rack->r_ctl.last_hw_bw_req;
+		log.u_bbr.epoch = rack->r_ctl.current_round;
+		log.u_bbr.lt_epoch = rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2091,6 +2708,11 @@ rack_get_output_bw(struct tcp_rack *rack, uint64_t bw, struct rack_sendmap *rsm,
 			high_rate = tcp_hw_highest_rate(rack->r_ctl.crte);
 			if (bw_est >= high_rate) {
 				/* We are capping bw at the highest rate table entry */
+				if (rack_hw_rate_cap_per &&
+				    (((high_rate * (100 + rack_hw_rate_cap_per)) / 100) < bw_est)) {
+					rack->r_rack_hw_rate_caps = 0;
+					goto done;
+				}
 				rack_log_hdwr_pacing(rack,
 						     bw_est, high_rate, __LINE__,
 						     0, 3);
@@ -2121,17 +2743,18 @@ rack_get_output_bw(struct tcp_rack *rack, uint64_t bw, struct rack_sendmap *rsm,
 			}
 		}
 	}
+done:
 	return (bw_est);
 }
 
 static void
 rack_log_retran_reason(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t tsused, uint32_t thresh, int mod)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
-		if ((mod != 1) && (rack_verbose_logging == 0)) {
+		if ((mod != 1) && (rack_verbose_logging == 0))  {
 			/*
 			 * We get 3 values currently for mod
 			 * 1 - We are retransmitting and this tells the reason.
@@ -2151,12 +2774,14 @@ rack_log_retran_reason(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t
 		log.u_bbr.flex5 = rsm->r_start;
 		log.u_bbr.flex6 = rsm->r_end;
 		log.u_bbr.flex8 = mod;
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
+		log.u_bbr.epoch = rack->r_ctl.current_round;
+		log.u_bbr.lt_epoch = rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2168,7 +2793,7 @@ rack_log_retran_reason(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t
 static void
 rack_log_to_start(struct tcp_rack *rack, uint32_t cts, uint32_t to, int32_t slot, uint8_t which)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2177,7 +2802,7 @@ rack_log_to_start(struct tcp_rack *rack, uint32_t cts, uint32_t to, int32_t slot
 		log.u_bbr.flex2 = to;
 		log.u_bbr.flex3 = rack->r_ctl.rc_hpts_flags;
 		log.u_bbr.flex4 = slot;
-		log.u_bbr.flex5 = rack->rc_inp->inp_hptsslot;
+		log.u_bbr.flex5 = rack->rc_tp->t_hpts_slot;
 		log.u_bbr.flex6 = rack->rc_tp->t_rxtcur;
 		log.u_bbr.flex7 = rack->rc_in_persist;
 		log.u_bbr.flex8 = which;
@@ -2185,15 +2810,21 @@ rack_log_to_start(struct tcp_rack *rack, uint32_t cts, uint32_t to, int32_t slot
 			log.u_bbr.pkts_out = 0;
 		else
 			log.u_bbr.pkts_out = rack->r_ctl.rc_prr_sndcnt;
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
-		log.u_bbr.cwnd_gain = rack->rc_has_collapsed;
+		log.u_bbr.cwnd_gain = rack->rack_deferred_inited;
+		log.u_bbr.pkt_epoch = rack->rc_has_collapsed;
 		log.u_bbr.lt_epoch = rack->rc_tp->t_rxtshift;
 		log.u_bbr.lost = rack_rto_min;
+		log.u_bbr.epoch = rack->r_ctl.roundends;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
+		log.u_bbr.applimited = rack->rc_tp->t_flags2;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2205,12 +2836,12 @@ rack_log_to_start(struct tcp_rack *rack, uint32_t cts, uint32_t to, int32_t slot
 static void
 rack_log_to_event(struct tcp_rack *rack, int32_t to_num, struct rack_sendmap *rsm)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex8 = to_num;
 		log.u_bbr.flex1 = rack->r_ctl.rc_rack_min_rtt;
 		log.u_bbr.flex2 = rack->rc_rack_rtt;
@@ -2227,6 +2858,9 @@ rack_log_to_event(struct tcp_rack *rack, int32_t to_num, struct rack_sendmap *rs
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2242,16 +2876,16 @@ rack_log_map_chg(struct tcpcb *tp, struct tcp_rack *rack,
 		 struct rack_sendmap *next,
 		 int flag, uint32_t th_ack, int line)
 {
-	if (rack_verbose_logging && (tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
 		log.u_bbr.flex8 = flag;
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
-		log.u_bbr.cur_del_rate = (uint64_t)prev;
-		log.u_bbr.delRate = (uint64_t)rsm;
-		log.u_bbr.rttProp = (uint64_t)next;
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
+		log.u_bbr.cur_del_rate = (uintptr_t)prev;
+		log.u_bbr.delRate = (uintptr_t)rsm;
+		log.u_bbr.rttProp = (uintptr_t)next;
 		log.u_bbr.flex7 = 0;
 		if (prev) {
 			log.u_bbr.flex1 = prev->r_start;
@@ -2276,6 +2910,9 @@ rack_log_map_chg(struct tcpcb *tp, struct tcp_rack *rack,
 			log.u_bbr.lost = 0;
 		else
 			log.u_bbr.lost = rack->r_ctl.rc_prr_sndcnt;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2288,11 +2925,11 @@ static void
 rack_log_rtt_upd(struct tcpcb *tp, struct tcp_rack *rack, uint32_t t, uint32_t len,
 		 struct rack_sendmap *rsm, int conf)
 {
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = t;
 		log.u_bbr.flex2 = len;
 		log.u_bbr.flex3 = rack->r_ctl.rc_rack_min_rtt;
@@ -2362,20 +2999,15 @@ rack_log_rtt_sample(struct tcp_rack *rack, uint32_t rtt)
 	 * applying to the srtt algorithm in
 	 * useconds.
 	 */
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		/* Convert our ms to a microsecond */
 		memset(&log, 0, sizeof(log));
 		log.u_bbr.flex1 = rtt;
-		log.u_bbr.flex2 = rack->r_ctl.ack_count;
-		log.u_bbr.flex3 = rack->r_ctl.sack_count;
-		log.u_bbr.flex4 = rack->r_ctl.sack_noextra_move;
-		log.u_bbr.flex5 = rack->r_ctl.sack_moved_extra;
 		log.u_bbr.flex6 = rack->rc_tp->t_rxtcur;
 		log.u_bbr.flex7 = 1;
-		log.u_bbr.flex8 = rack->sack_attack_disable;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
@@ -2411,7 +3043,7 @@ rack_log_rtt_sample(struct tcp_rack *rack, uint32_t rtt)
 static void
 rack_log_rtt_sample_calc(struct tcp_rack *rack, uint32_t rtt, uint32_t send_time, uint32_t ack_time, int where)
 {
-	if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2423,6 +3055,9 @@ rack_log_rtt_sample_calc(struct tcp_rack *rack, uint32_t rtt, uint32_t send_time
 		log.u_bbr.flex4 = where;
 		log.u_bbr.flex7 = 2;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2432,16 +3067,42 @@ rack_log_rtt_sample_calc(struct tcp_rack *rack, uint32_t rtt, uint32_t send_time
 }
 
 
+static void
+rack_log_rtt_sendmap(struct tcp_rack *rack, uint32_t idx, uint64_t tsv, uint32_t tsecho)
+{
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		/* Convert our ms to a microsecond */
+		memset(&log, 0, sizeof(log));
+		log.u_bbr.flex1 = idx;
+		log.u_bbr.flex2 = rack_ts_to_msec(tsv);
+		log.u_bbr.flex3 = tsecho;
+		log.u_bbr.flex7 = 3;
+		log.u_bbr.rttProp = tsv;
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
+		TCP_LOG_EVENTP(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    TCP_LOG_RTT, 0,
+		    0, &log, false, &tv);
+	}
+}
+
 
 static inline void
 rack_log_progress_event(struct tcp_rack *rack, struct tcpcb *tp, uint32_t tick,  int event, int line)
 {
-	if (rack_verbose_logging && (tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = line;
 		log.u_bbr.flex2 = tick;
 		log.u_bbr.flex3 = tp->t_maxunacktime;
@@ -2452,6 +3113,9 @@ rack_log_progress_event(struct tcp_rack *rack, struct tcpcb *tp, uint32_t tick, 
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2461,18 +3125,20 @@ rack_log_progress_event(struct tcp_rack *rack, struct tcpcb *tp, uint32_t tick, 
 }
 
 static void
-rack_log_type_bbrsnd(struct tcp_rack *rack, uint32_t len, uint32_t slot, uint32_t cts, struct timeval *tv)
+rack_log_type_bbrsnd(struct tcp_rack *rack, uint32_t len, uint32_t slot, uint32_t cts, struct timeval *tv, int line)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = slot;
 		if (rack->rack_no_prr)
 			log.u_bbr.flex2 = 0;
 		else
 			log.u_bbr.flex2 = rack->r_ctl.rc_prr_sndcnt;
+		log.u_bbr.flex4 = rack->r_ctl.rc_hpts_flags;
+		log.u_bbr.flex6 = line;
 		log.u_bbr.flex7 = (0x0000ffff & rack->r_ctl.rc_hpts_flags);
 		log.u_bbr.flex8 = rack->rc_in_persist;
 		log.u_bbr.timeStamp = cts;
@@ -2491,7 +3157,7 @@ rack_log_type_bbrsnd(struct tcp_rack *rack, uint32_t len, uint32_t slot, uint32_
 static void
 rack_log_doseg_done(struct tcp_rack *rack, uint32_t cts, int32_t nxt_pkt, int32_t did_out, int way_out, int nsegs)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2512,7 +3178,7 @@ rack_log_doseg_done(struct tcp_rack *rack, uint32_t cts, int32_t nxt_pkt, int32_
 		log.u_bbr.flex7 <<= 1;
 		log.u_bbr.flex7 |= rack->r_wanted_output;	/* Do we want output */
 		log.u_bbr.flex8 = rack->rc_in_persist;
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.use_lt_bw = rack->r_ent_rec_ns;
@@ -2521,6 +3187,13 @@ rack_log_doseg_done(struct tcp_rack *rack, uint32_t cts, int32_t nxt_pkt, int32_
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
+		log.u_bbr.epoch = rack->rc_inp->inp_socket->so_snd.sb_hiwat;
+		log.u_bbr.lt_epoch = rack->rc_inp->inp_socket->so_rcv.sb_hiwat;
+		log.u_bbr.lost = rack->rc_tp->t_srtt;
+		log.u_bbr.pkt_epoch = rack->rc_tp->rfbuf_cnt;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2532,7 +3205,7 @@ rack_log_doseg_done(struct tcp_rack *rack, uint32_t cts, int32_t nxt_pkt, int32_
 static void
 rack_log_type_pacing_sizes(struct tcpcb *tp, struct tcp_rack *rack, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint8_t frm)
 {
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2541,6 +3214,7 @@ rack_log_type_pacing_sizes(struct tcpcb *tp, struct tcp_rack *rack, uint32_t arg
 		log.u_bbr.flex3 = rack->r_ctl.rc_pace_max_segs;
 		log.u_bbr.flex4 = arg1;
 		log.u_bbr.flex5 = arg2;
+		log.u_bbr.flex7 = rack->r_ctl.rc_user_set_min_segs;
 		log.u_bbr.flex6 = arg3;
 		log.u_bbr.flex8 = frm;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
@@ -2549,11 +3223,9 @@ rack_log_type_pacing_sizes(struct tcpcb *tp, struct tcp_rack *rack, uint32_t arg
 		log.u_bbr.applimited = rack->r_ctl.rc_sacked;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
-		TCP_LOG_EVENTP(tp, NULL,
-		    &tp->t_inpcb->inp_socket->so_rcv,
-		    &tp->t_inpcb->inp_socket->so_snd,
-		    TCP_HDWR_PACE_SIZE, 0,
-		    0, &log, false, &tv);
+		TCP_LOG_EVENTP(tp, NULL, &tptosocket(tp)->so_rcv,
+		    &tptosocket(tp)->so_snd,
+		    TCP_HDWR_PACE_SIZE, 0, 0, &log, false, &tv);
 	}
 }
 
@@ -2561,12 +3233,12 @@ static void
 rack_log_type_just_return(struct tcp_rack *rack, uint32_t cts, uint32_t tlen, uint32_t slot,
 			  uint8_t hpts_calling, int reason, uint32_t cwnd_to_use)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = slot;
 		log.u_bbr.flex2 = rack->r_ctl.rc_hpts_flags;
 		log.u_bbr.flex4 = reason;
@@ -2583,6 +3255,9 @@ rack_log_type_just_return(struct tcp_rack *rack, uint32_t cts, uint32_t tlen, ui
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
 		log.u_bbr.cwnd_gain = rack->rc_has_collapsed;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2595,11 +3270,11 @@ static void
 rack_log_to_cancel(struct tcp_rack *rack, int32_t hpts_removed, int line, uint32_t us_cts,
 		   struct timeval *tv, uint32_t flags_on_entry)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = line;
 		log.u_bbr.flex2 = rack->r_ctl.rc_last_output_to;
 		log.u_bbr.flex3 = flags_on_entry;
@@ -2617,6 +3292,9 @@ rack_log_to_cancel(struct tcp_rack *rack, int32_t hpts_removed, int line, uint32
 		log.u_bbr.pkts_out = rack->r_ctl.rc_out_at_rto;
 		log.u_bbr.delivered = rack->r_ctl.rc_snd_max_at_rto;
 		log.u_bbr.pacing_gain = rack->r_must_retran;
+		log.u_bbr.bw_inuse = rack->r_ctl.current_round;
+		log.u_bbr.bw_inuse <<= 32;
+		log.u_bbr.bw_inuse |= rack->r_ctl.rc_considered_lost;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -2632,7 +3310,7 @@ rack_log_alt_to_to_cancel(struct tcp_rack *rack,
 			  uint32_t flex5, uint32_t flex6,
 			  uint16_t flex7, uint8_t mod)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2661,7 +3339,7 @@ rack_log_alt_to_to_cancel(struct tcp_rack *rack,
 static void
 rack_log_to_processing(struct tcp_rack *rack, uint32_t cts, int32_t ret, int32_t timers)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2691,7 +3369,7 @@ rack_log_to_processing(struct tcp_rack *rack, uint32_t cts, int32_t ret, int32_t
 static void
 rack_log_to_prr(struct tcp_rack *rack, int frm, int orig_cwnd, int line)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -2721,42 +3399,10 @@ rack_log_to_prr(struct tcp_rack *rack, int frm, int orig_cwnd, int line)
 	}
 }
 
-#ifdef NETFLIX_EXP_DETECTION
-static void
-rack_log_sad(struct tcp_rack *rack, int event)
-{
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
-		union tcp_log_stackspecific log;
-		struct timeval tv;
-
-		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.flex1 = rack->r_ctl.sack_count;
-		log.u_bbr.flex2 = rack->r_ctl.ack_count;
-		log.u_bbr.flex3 = rack->r_ctl.sack_moved_extra;
-		log.u_bbr.flex4 = rack->r_ctl.sack_noextra_move;
-		log.u_bbr.flex5 = rack->r_ctl.rc_num_maps_alloced;
-		log.u_bbr.flex6 = tcp_sack_to_ack_thresh;
-		log.u_bbr.pkts_out = tcp_sack_to_move_thresh;
-		log.u_bbr.lt_epoch = (tcp_force_detection << 8);
-		log.u_bbr.lt_epoch |= rack->do_detection;
-		log.u_bbr.applimited = tcp_map_minimum;
-		log.u_bbr.flex7 = rack->sack_attack_disable;
-		log.u_bbr.flex8 = event;
-		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
-		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
-		log.u_bbr.delivered = tcp_sad_decay_val;
-		TCP_LOG_EVENTP(rack->rc_tp, NULL,
-		    &rack->rc_inp->inp_socket->so_rcv,
-		    &rack->rc_inp->inp_socket->so_snd,
-		    TCP_SAD_DETECTION, 0,
-		    0, &log, false, &tv);
-	}
-}
-#endif
-
 static void
 rack_counter_destroy(void)
 {
+	counter_u64_free(rack_total_bytes);
 	counter_u64_free(rack_fto_send);
 	counter_u64_free(rack_fto_rsm_send);
 	counter_u64_free(rack_nfto_resend);
@@ -2771,6 +3417,7 @@ rack_counter_destroy(void)
 	counter_u64_free(rack_move_some);
 	counter_u64_free(rack_sack_attacks_detected);
 	counter_u64_free(rack_sack_attacks_reversed);
+	counter_u64_free(rack_sack_attacks_suspect);
 	counter_u64_free(rack_sack_used_next_merge);
 	counter_u64_free(rack_sack_used_prev_merge);
 	counter_u64_free(rack_tlp_tot);
@@ -2782,6 +3429,7 @@ rack_counter_destroy(void)
 	counter_u64_free(rack_saw_enobuf_hw);
 	counter_u64_free(rack_saw_enetunreach);
 	counter_u64_free(rack_hot_alloc);
+	counter_u64_free(tcp_policer_detected);
 	counter_u64_free(rack_to_alloc);
 	counter_u64_free(rack_to_alloc_hard);
 	counter_u64_free(rack_to_alloc_emerg);
@@ -2789,6 +3437,8 @@ rack_counter_destroy(void)
 	counter_u64_free(rack_alloc_limited_conns);
 	counter_u64_free(rack_split_limited);
 	counter_u64_free(rack_multi_single_eq);
+	counter_u64_free(rack_rxt_clamps_cwnd);
+	counter_u64_free(rack_rxt_clamps_cwnd_uniq);
 	counter_u64_free(rack_proc_non_comp_ack);
 	counter_u64_free(rack_sack_proc_all);
 	counter_u64_free(rack_sack_proc_restart);
@@ -2858,7 +3508,6 @@ static struct rack_sendmap *
 rack_alloc_full_limit(struct tcp_rack *rack)
 {
 	if ((V_tcp_map_entries_limit > 0) &&
-	    (rack->do_detection == 0) &&
 	    (rack->r_ctl.rc_num_maps_alloced >= V_tcp_map_entries_limit)) {
 		counter_u64_add(rack_to_alloc_limited, 1);
 		if (!rack->alloc_limit_reported) {
@@ -2878,9 +3527,8 @@ rack_alloc_limit(struct tcp_rack *rack, uint8_t limit_type)
 
 	if (limit_type) {
 		/* currently there is only one limit type */
-		if (V_tcp_map_split_limit > 0 &&
-		    (rack->do_detection == 0) &&
-		    rack->r_ctl.rc_num_split_allocs >= V_tcp_map_split_limit) {
+		if (rack->r_ctl.rc_split_limit > 0 &&
+		    rack->r_ctl.rc_num_split_allocs >= rack->r_ctl.rc_split_limit) {
 			counter_u64_add(rack_split_limited, 1);
 			if (!rack->alloc_limit_reported) {
 				rack->alloc_limit_reported = 1;
@@ -2900,42 +3548,6 @@ rack_alloc_limit(struct tcp_rack *rack, uint8_t limit_type)
 }
 
 static void
-rack_free(struct tcp_rack *rack, struct rack_sendmap *rsm)
-{
-	if (rsm->r_flags & RACK_APP_LIMITED) {
-		if (rack->r_ctl.rc_app_limited_cnt > 0) {
-			rack->r_ctl.rc_app_limited_cnt--;
-		}
-	}
-	if (rsm->r_limit_type) {
-		/* currently there is only one limit type */
-		rack->r_ctl.rc_num_split_allocs--;
-	}
-	if (rsm == rack->r_ctl.rc_first_appl) {
-		if (rack->r_ctl.rc_app_limited_cnt == 0)
-			rack->r_ctl.rc_first_appl = NULL;
-		else {
-			/* Follow the next one out */
-			struct rack_sendmap fe;
-
-			fe.r_start = rsm->r_nseq_appl;
-			rack->r_ctl.rc_first_appl = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
-		}
-	}
-	if (rsm == rack->r_ctl.rc_resend)
-		rack->r_ctl.rc_resend = NULL;
-	if (rsm == rack->r_ctl.rc_end_appl)
-		rack->r_ctl.rc_end_appl = NULL;
-	if (rack->r_ctl.rc_tlpsend == rsm)
-		rack->r_ctl.rc_tlpsend = NULL;
-	if (rack->r_ctl.rc_sacklast == rsm)
-		rack->r_ctl.rc_sacklast = NULL;
-	memset(rsm, 0, sizeof(struct rack_sendmap));
-	TAILQ_INSERT_HEAD(&rack->r_ctl.rc_free, rsm, r_tnext);
-	rack->rc_free_cnt++;
-}
-
-static void
 rack_free_trim(struct tcp_rack *rack)
 {
 	struct rack_sendmap *rsm;
@@ -2948,10 +3560,47 @@ rack_free_trim(struct tcp_rack *rack)
 		rsm = TAILQ_LAST(&rack->r_ctl.rc_free, rack_head);
 		TAILQ_REMOVE(&rack->r_ctl.rc_free, rsm, r_tnext);
 		rack->rc_free_cnt--;
+		rack->r_ctl.rc_num_maps_alloced--;
 		uma_zfree(rack_zone, rsm);
 	}
 }
 
+static void
+rack_free(struct tcp_rack *rack, struct rack_sendmap *rsm)
+{
+	if (rsm->r_flags & RACK_APP_LIMITED) {
+		if (rack->r_ctl.rc_app_limited_cnt > 0) {
+			rack->r_ctl.rc_app_limited_cnt--;
+		}
+	}
+	if (rsm->r_limit_type) {
+		/* currently there is only one limit type */
+		rack->r_ctl.rc_num_split_allocs--;
+	}
+	if (rsm == rack->r_ctl.rc_first_appl) {
+		rack->r_ctl.cleared_app_ack_seq = rsm->r_start + (rsm->r_end - rsm->r_start);
+		rack->r_ctl.cleared_app_ack = 1;
+		if (rack->r_ctl.rc_app_limited_cnt == 0)
+			rack->r_ctl.rc_first_appl = NULL;
+		else
+			rack->r_ctl.rc_first_appl = tqhash_find(rack->r_ctl.tqh, rsm->r_nseq_appl);
+	}
+	if (rsm == rack->r_ctl.rc_resend)
+		rack->r_ctl.rc_resend = NULL;
+	if (rsm == rack->r_ctl.rc_end_appl)
+		rack->r_ctl.rc_end_appl = NULL;
+	if (rack->r_ctl.rc_tlpsend == rsm)
+		rack->r_ctl.rc_tlpsend = NULL;
+	if (rack->r_ctl.rc_sacklast == rsm)
+		rack->r_ctl.rc_sacklast = NULL;
+	memset(rsm, 0, sizeof(struct rack_sendmap));
+	/* Make sure we are not going to overrun our count limit of 0xff */
+	if ((rack->rc_free_cnt + 1) > RACK_FREE_CNT_MAX) {
+		rack_free_trim(rack);
+	}
+	TAILQ_INSERT_HEAD(&rack->r_ctl.rc_free, rsm, r_tnext);
+	rack->rc_free_cnt++;
+}
 
 static uint32_t
 rack_get_measure_window(struct tcpcb *tp, struct tcp_rack *rack)
@@ -3040,15 +3689,34 @@ rack_enough_for_measurement(struct tcpcb *tp, struct tcp_rack *rack, tcp_seq th_
 	/*
 	 * Has enough time passed for the GP measurement to be valid?
 	 */
-	if ((tp->snd_max == tp->snd_una) ||
-	    (th_ack == tp->snd_max)){
-		/* All is acked */
-		*quality = RACK_QUALITY_ALLACKED;
-		return (1);
-	}
 	if (SEQ_LT(th_ack, tp->gput_seq)) {
 		/* Not enough bytes yet */
 		return (0);
+	}
+	if ((tp->snd_max == tp->snd_una) ||
+	    (th_ack == tp->snd_max)){
+		/*
+		 * All is acked quality of all acked is
+		 * usually low or medium, but we in theory could split
+		 * all acked into two cases, where you got
+		 * a signifigant amount of your window and
+		 * where you did not. For now we leave it
+		 * but it is something to contemplate in the
+		 * future. The danger here is that delayed ack
+		 * is effecting the last byte (which is a 50:50 chance).
+		 */
+		*quality = RACK_QUALITY_ALLACKED;
+		return (1);
+	}
+	if (SEQ_GEQ(th_ack,  tp->gput_ack)) {
+		/*
+		 * We obtained our entire window of data we wanted
+		 * no matter if we are in recovery or not then
+		 * its ok since expanding the window does not
+		 * make things fuzzy (or at least not as much).
+		 */
+		*quality = RACK_QUALITY_HIGH;
+		return (1);
 	}
 	segsiz = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
 	if (SEQ_LT(th_ack, tp->gput_ack) &&
@@ -3068,7 +3736,13 @@ rack_enough_for_measurement(struct tcpcb *tp, struct tcp_rack *rack, tcp_seq th_
 	/* Now what about time? */
 	srtts = (rack->r_ctl.rc_gp_srtt * rack_min_srtts);
 	tim = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time) - tp->gput_ts;
-	if (tim >= srtts) {
+	if ((tim >= srtts) && (IN_RECOVERY(rack->rc_tp->t_flags) == 0)) {
+		/*
+		 * We do not allow a measurement if we are in recovery
+		 * that would shrink the goodput window we wanted.
+		 * This is to prevent cloudyness of when the last send
+		 * was actually made.
+		 */
 		*quality = RACK_QUALITY_HIGH;
 		return (1);
 	}
@@ -3081,7 +3755,7 @@ rack_log_timely(struct tcp_rack *rack,
 		uint32_t logged, uint64_t cur_bw, uint64_t low_bnd,
 		uint64_t up_bnd, int line, uint8_t method)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -3237,6 +3911,8 @@ rack_increase_bw_mul(struct tcp_rack *rack, int timely_says, uint64_t cur_bw, ui
 
 	logged = 0;
 
+	if (rack->rc_skip_timely)
+		return;
 	if (override) {
 		/*
 		 * override is passed when we are
@@ -3272,10 +3948,10 @@ extra_boost:
 			calc = 0xffff;
 		logged |= 1;
 		rack->r_ctl.rack_per_of_gp_rec = (uint16_t)calc;
-		if (rack_per_upper_bound_ss &&
+		if (rack->r_ctl.rack_per_upper_bound_ca &&
 		    (rack->rc_dragged_bottom == 0) &&
-		    (rack->r_ctl.rack_per_of_gp_rec > rack_per_upper_bound_ss))
-			rack->r_ctl.rack_per_of_gp_rec = rack_per_upper_bound_ss;
+		    (rack->r_ctl.rack_per_of_gp_rec > rack->r_ctl.rack_per_upper_bound_ca))
+			rack->r_ctl.rack_per_of_gp_rec = rack->r_ctl.rack_per_upper_bound_ca;
 	}
 	if (rack->rc_gp_saw_ca &&
 	    (rack->rc_gp_saw_ss == 0) &&
@@ -3287,10 +3963,10 @@ extra_boost:
 			calc = 0xffff;
 		logged |= 2;
 		rack->r_ctl.rack_per_of_gp_ca = (uint16_t)calc;
-		if (rack_per_upper_bound_ca &&
+		if (rack->r_ctl.rack_per_upper_bound_ca &&
 		    (rack->rc_dragged_bottom == 0) &&
-		    (rack->r_ctl.rack_per_of_gp_ca > rack_per_upper_bound_ca))
-			rack->r_ctl.rack_per_of_gp_ca = rack_per_upper_bound_ca;
+		    (rack->r_ctl.rack_per_of_gp_ca > rack->r_ctl.rack_per_upper_bound_ca))
+			rack->r_ctl.rack_per_of_gp_ca = rack->r_ctl.rack_per_upper_bound_ca;
 	}
 	if (rack->rc_gp_saw_ss &&
 	    rack_bw_can_be_raised(rack, cur_bw, last_bw_est,
@@ -3300,10 +3976,10 @@ extra_boost:
 		if (calc > 0xffff)
 			calc = 0xffff;
 		rack->r_ctl.rack_per_of_gp_ss = (uint16_t)calc;
-		if (rack_per_upper_bound_ss &&
+		if (rack->r_ctl.rack_per_upper_bound_ss &&
 		    (rack->rc_dragged_bottom == 0) &&
-		    (rack->r_ctl.rack_per_of_gp_ss > rack_per_upper_bound_ss))
-			rack->r_ctl.rack_per_of_gp_ss = rack_per_upper_bound_ss;
+		    (rack->r_ctl.rack_per_of_gp_ss > rack->r_ctl.rack_per_upper_bound_ss))
+			rack->r_ctl.rack_per_of_gp_ss = rack->r_ctl.rack_per_upper_bound_ss;
 		logged |= 4;
 	}
 	if (logged &&
@@ -3324,15 +4000,30 @@ extra_boost:
 static uint32_t
 rack_get_decrease(struct tcp_rack *rack, uint32_t curper, int32_t rtt_diff)
 {
-	/*
+	/*-
 	 * norm_grad = rtt_diff / minrtt;
 	 * new_per = curper * (1 - B * norm_grad)
 	 *
-	 * B = rack_gp_decrease_per (default 10%)
+	 * B = rack_gp_decrease_per (default 80%)
 	 * rtt_dif = input var current rtt-diff
 	 * curper = input var current percentage
 	 * minrtt = from rack filter
 	 *
+	 * In order to do the floating point calculations above we
+	 * do an integer conversion. The code looks confusing so let me
+	 * translate it into something that use more variables and
+	 * is clearer for us humans :)
+	 *
+	 * uint64_t norm_grad, inverse, reduce_by, final_result;
+	 * uint32_t perf;
+	 *
+	 * norm_grad = (((uint64_t)rtt_diff * 1000000) /
+	 *             (uint64_t)get_filter_small(&rack->r_ctl.rc_gp_min_rtt));
+	 * inverse = ((uint64_t)rack_gp_decrease * (uint64_t)1000000) * norm_grad;
+	 * inverse /= 1000000;
+	 * reduce_by = (1000000 - inverse);
+	 * final_result = (cur_per * reduce_by) / 1000000;
+	 * perf = (uint32_t)final_result;
 	 */
 	uint64_t perf;
 
@@ -3357,7 +4048,7 @@ rack_decrease_highrtt(struct tcp_rack *rack, uint32_t curper, uint32_t rtt)
 	 * result = curper * (1 - (B * ( 1 -  ------          ))
 	 *                                     gp_srtt
 	 *
-	 * B = rack_gp_decrease_per (default 10%)
+	 * B = rack_gp_decrease_per (default .8 i.e. 80)
 	 * highrttthresh = filter_min * rack_gp_rtt_maxmul
 	 */
 	uint64_t perf;
@@ -3369,6 +4060,20 @@ rack_decrease_highrtt(struct tcp_rack *rack, uint32_t curper, uint32_t rtt)
 				     ((uint64_t)rack_gp_decrease_per * ((uint64_t)1000000 -
 					((uint64_t)highrttthresh * (uint64_t)1000000) /
 						    (uint64_t)rtt)) / 100)) /(uint64_t)1000000);
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		uint64_t log1;
+
+		log1 = rtt;
+		log1 <<= 32;
+		log1 |= highrttthresh;
+		rack_log_timely(rack,
+				rack_gp_decrease_per,
+				(uint64_t)curper,
+				log1,
+				perf,
+				__LINE__,
+				15);
+	}
 	return (perf);
 }
 
@@ -3378,6 +4083,8 @@ rack_decrease_bw_mul(struct tcp_rack *rack, int timely_says, uint32_t rtt, int32
 	uint64_t logvar, logvar2, logvar3;
 	uint32_t logged, new_per, ss_red, ca_red, rec_red, alt, val;
 
+	if (rack->rc_skip_timely)
+		return;
 	if (rack->rc_gp_incr) {
 		/* Turn off increment counting */
 		rack->rc_gp_incr = 0;
@@ -3416,7 +4123,7 @@ rack_decrease_bw_mul(struct tcp_rack *rack, int timely_says, uint32_t rtt, int32
 		/* Sent in SS */
 		if (timely_says == 2) {
 			new_per = rack_decrease_highrtt(rack, rack->r_ctl.rack_per_of_gp_ss, rtt);
-			alt = rack_get_decrease(rack, rack->r_ctl.rack_per_of_gp_rec, rtt_diff);
+			alt = rack_get_decrease(rack, rack->r_ctl.rack_per_of_gp_ss, rtt_diff);
 			if (alt < new_per)
 				val = alt;
 			else
@@ -3449,7 +4156,7 @@ rack_decrease_bw_mul(struct tcp_rack *rack, int timely_says, uint32_t rtt, int32
 		/* Sent in CA */
 		if (timely_says == 2) {
 			new_per = rack_decrease_highrtt(rack, rack->r_ctl.rack_per_of_gp_ca, rtt);
-			alt = rack_get_decrease(rack, rack->r_ctl.rack_per_of_gp_rec, rtt_diff);
+			alt = rack_get_decrease(rack, rack->r_ctl.rack_per_of_gp_ca, rtt_diff);
 			if (alt < new_per)
 				val = alt;
 			else
@@ -3496,7 +4203,7 @@ static void
 rack_log_rtt_shrinks(struct tcp_rack *rack, uint32_t us_cts,
 		     uint32_t rtt, uint32_t line, uint8_t reas)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -3579,6 +4286,7 @@ rack_enter_probertt(struct tcp_rack *rack, uint32_t us_cts)
 	 */
 	uint32_t segsiz;
 
+	rack->r_ctl.rc_lower_rtt_us_cts = us_cts;
 	if (rack->rc_gp_dyn_mul == 0)
 		return;
 
@@ -3605,7 +4313,6 @@ rack_enter_probertt(struct tcp_rack *rack, uint32_t us_cts)
 		     rack->r_ctl.rc_pace_min_segs);
 	rack->in_probe_rtt = 1;
 	rack->measure_saw_probe_rtt = 1;
-	rack->r_ctl.rc_lower_rtt_us_cts = us_cts;
 	rack->r_ctl.rc_time_probertt_starts = 0;
 	rack->r_ctl.rc_entry_gp_rtt = rack->r_ctl.rc_gp_srtt;
 	if (rack_probertt_use_min_rtt_entry)
@@ -3653,7 +4360,7 @@ rack_exit_probertt(struct tcp_rack *rack, uint32_t us_cts)
 	 * We need to mark these as app-limited so we
 	 * don't collapse the b/w.
 	 */
-	rsm = RB_MAX(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+	rsm = tqhash_max(rack->r_ctl.tqh);
 	if (rsm && ((rsm->r_flags & RACK_APP_LIMITED) == 0)) {
 		if (rack->r_ctl.rc_app_limited_cnt == 0)
 			rack->r_ctl.rc_end_appl = rack->r_ctl.rc_first_appl = rsm;
@@ -3702,7 +4409,7 @@ rack_exit_probertt(struct tcp_rack *rack, uint32_t us_cts)
 
 	/* Clear all flags so we start fresh */
 	rack->rc_tp->t_bytes_acked = 0;
-	rack->rc_tp->ccv->flags &= ~CCF_ABC_SENTAWND;
+	rack->rc_tp->t_ccv.flags &= ~CCF_ABC_SENTAWND;
 	/*
 	 * If configured to, set the cwnd and ssthresh to
 	 * our targets.
@@ -3789,6 +4496,7 @@ static void
 rack_check_probe_rtt(struct tcp_rack *rack, uint32_t us_cts)
 {
 	/* Check in on probe-rtt */
+
 	if (rack->rc_gp_filled == 0) {
 		/* We do not do p-rtt unless we have gp measurements */
 		return;
@@ -3833,7 +4541,10 @@ no_exit:
 			if (calc) {
 				/* Maybe */
 				calc *= rack_per_of_gp_probertt_reduce;
-				rack->r_ctl.rack_per_of_gp_probertt = rack_per_of_gp_probertt - calc;
+				if (calc > rack_per_of_gp_probertt)
+					rack->r_ctl.rack_per_of_gp_probertt = rack_per_of_gp_lowthresh;
+				else
+					rack->r_ctl.rack_per_of_gp_probertt = rack_per_of_gp_probertt - calc;
 				/* Limit it too */
 				if (rack->r_ctl.rack_per_of_gp_probertt < rack_per_of_gp_lowthresh)
 					rack->r_ctl.rack_per_of_gp_probertt = rack_per_of_gp_lowthresh;
@@ -3874,7 +4585,9 @@ no_exit:
 			rack_exit_probertt(rack, us_cts);
 		}
 
-	} else if ((us_cts - rack->r_ctl.rc_lower_rtt_us_cts) >= rack_time_between_probertt) {
+	} else if ((rack->rc_skip_timely == 0) &&
+		   (TSTMP_GT(us_cts, rack->r_ctl.rc_lower_rtt_us_cts)) &&
+		   ((us_cts - rack->r_ctl.rc_lower_rtt_us_cts) >= rack_time_between_probertt)) {
 		/* Go into probertt, its been too long since we went lower */
 		rack_enter_probertt(rack, us_cts);
 	}
@@ -3920,7 +4633,7 @@ rack_update_multiplier(struct tcp_rack *rack, int32_t timely_says, uint64_t last
 		if (rack->r_ctl.rc_no_push_at_mrtt > 1)
 			rack_validate_multipliers_at_or_below_100(rack);
 		rack_decrease_bw_mul(rack, timely_says, rtt, rtt_diff);
-	} else if ((last_bw_est < low_bnd) && !losses) {
+	} else if ((timely_says != 0) && (last_bw_est < low_bnd) && !losses) {
 		/*
 		 * We are decreasing this is a bit complicated this
 		 * means we are loosing ground. This could be
@@ -3942,8 +4655,7 @@ rack_update_multiplier(struct tcp_rack *rack, int32_t timely_says, uint64_t last
 			rack->rc_gp_bwred = 1;
 			rack->rc_gp_timely_dec_cnt = 0;
 		}
-		if ((rack->rc_gp_timely_dec_cnt < rack_timely_max_push_drop) ||
-		    (timely_says == 0)) {
+		if (rack->rc_gp_timely_dec_cnt < rack_timely_max_push_drop) {
 			/*
 			 * Push another time with a faster pacing
 			 * to try to gain back (we include override to
@@ -3989,8 +4701,8 @@ rack_update_multiplier(struct tcp_rack *rack, int32_t timely_says, uint64_t last
 				__LINE__, 3);
 		rack->r_ctl.last_gp_comp_bw = cur_bw;
 		if (rack->rc_gp_saw_ss &&
-		    rack_per_upper_bound_ss &&
-		     (rack->r_ctl.rack_per_of_gp_ss == rack_per_upper_bound_ss)) {
+		    rack->r_ctl.rack_per_upper_bound_ss &&
+		     (rack->r_ctl.rack_per_of_gp_ss == rack->r_ctl.rack_per_upper_bound_ss)) {
 			    /*
 			     * In cases where we can't go higher
 			     * we should just use timely.
@@ -3998,8 +4710,8 @@ rack_update_multiplier(struct tcp_rack *rack, int32_t timely_says, uint64_t last
 			    goto use_timely;
 		}
 		if (rack->rc_gp_saw_ca &&
-		    rack_per_upper_bound_ca &&
-		    (rack->r_ctl.rack_per_of_gp_ca == rack_per_upper_bound_ca)) {
+		    rack->r_ctl.rack_per_upper_bound_ca &&
+		    (rack->r_ctl.rack_per_of_gp_ca == rack->r_ctl.rack_per_upper_bound_ca)) {
 			    /*
 			     * In cases where we can't go higher
 			     * we should just use timely.
@@ -4111,11 +4823,160 @@ rack_make_timely_judgement(struct tcp_rack *rack, uint32_t rtt, int32_t rtt_diff
 	return (timely_says);
 }
 
+static __inline int
+rack_in_gp_window(struct tcpcb *tp, struct rack_sendmap *rsm)
+{
+	if (SEQ_GEQ(rsm->r_start, tp->gput_seq) &&
+	    SEQ_LEQ(rsm->r_end, tp->gput_ack)) {
+		/**
+		 * This covers the case that the
+		 * resent is completely inside
+		 * the gp range or up to it.
+		 *      |----------------|
+		 *      |-----| <or>
+		 *            |----|
+		 *            <or>   |---|
+		 */
+		return (1);
+	} else if (SEQ_LT(rsm->r_start, tp->gput_seq) &&
+		   SEQ_GT(rsm->r_end, tp->gput_seq)){
+		/**
+		 * This covers the case of
+		 *      |--------------|
+		 *  |-------->|
+		 */
+		return (1);
+	} else if (SEQ_GEQ(rsm->r_start, tp->gput_seq) &&
+		   SEQ_LT(rsm->r_start, tp->gput_ack) &&
+		   SEQ_GEQ(rsm->r_end, tp->gput_ack)) {
+
+		/**
+		 * This covers the case of
+		 *      |--------------|
+		 *              |-------->|
+		 */
+		return (1);
+	}
+	return (0);
+}
+
+static __inline void
+rack_mark_in_gp_win(struct tcpcb *tp, struct rack_sendmap *rsm)
+{
+
+	if ((tp->t_flags & TF_GPUTINPROG) == 0)
+		return;
+	/*
+	 * We have a Goodput measurement in progress. Mark
+	 * the send if its within the window. If its not
+	 * in the window make sure it does not have the mark.
+	 */
+	if (rack_in_gp_window(tp, rsm))
+		rsm->r_flags |= RACK_IN_GP_WIN;
+	else
+		rsm->r_flags &= ~RACK_IN_GP_WIN;
+}
+
+static __inline void
+rack_clear_gp_marks(struct tcpcb *tp, struct tcp_rack *rack)
+{
+	/* A GP measurement is ending, clear all marks on the send map*/
+	struct rack_sendmap *rsm = NULL;
+
+	rsm = tqhash_find(rack->r_ctl.tqh, tp->gput_seq);
+	if (rsm == NULL) {
+		rsm = tqhash_min(rack->r_ctl.tqh);
+	}
+	/* Nothing left? */
+	while ((rsm != NULL) && (SEQ_GEQ(tp->gput_ack, rsm->r_start))){
+		rsm->r_flags &= ~RACK_IN_GP_WIN;
+		rsm = tqhash_next(rack->r_ctl.tqh, rsm);
+	}
+}
+
+
+static __inline void
+rack_tend_gp_marks(struct tcpcb *tp, struct tcp_rack *rack)
+{
+	struct rack_sendmap *rsm = NULL;
+
+	if (tp->snd_una == tp->snd_max) {
+		/* Nothing outstanding yet, nothing to do here */
+		return;
+	}
+	if (SEQ_GT(tp->gput_seq, tp->snd_una)) {
+		/*
+		 * We are measuring ahead of some outstanding
+		 * data. We need to walk through up until we get
+		 * to gp_seq marking so that no rsm is set incorrectly
+		 * with RACK_IN_GP_WIN.
+		 */
+		rsm = tqhash_min(rack->r_ctl.tqh);
+		while (rsm != NULL) {
+			rack_mark_in_gp_win(tp, rsm);
+			if (SEQ_GEQ(rsm->r_end, tp->gput_seq))
+				break;
+			rsm = tqhash_next(rack->r_ctl.tqh, rsm);
+		}
+	}
+	if (rsm == NULL) {
+		/*
+		 * Need to find the GP seq, if rsm is
+		 * set we stopped as we hit it.
+		 */
+		rsm = tqhash_find(rack->r_ctl.tqh, tp->gput_seq);
+		if (rsm == NULL)
+			return;
+		rack_mark_in_gp_win(tp, rsm);
+	}
+	/*
+	 * Now we may need to mark already sent rsm, ahead of
+	 * gput_seq in the window since they may have been sent
+	 * *before* we started our measurment. The rsm, if non-null
+	 * has been marked (note if rsm would have been NULL we would have
+	 * returned in the previous block). So we go to the next, and continue
+	 * until we run out of entries or we exceed the gp_ack value.
+	 */
+	rsm = tqhash_next(rack->r_ctl.tqh, rsm);
+	while (rsm) {
+		rack_mark_in_gp_win(tp, rsm);
+		if (SEQ_GT(rsm->r_end, tp->gput_ack))
+			break;
+		rsm = tqhash_next(rack->r_ctl.tqh, rsm);
+	}
+}
+
+static void
+rack_log_gp_calc(struct tcp_rack *rack, uint32_t add_part, uint32_t sub_part, uint32_t srtt, uint64_t meas_bw, uint64_t utim, uint8_t meth, uint32_t line)
+{
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.flex1 = add_part;
+		log.u_bbr.flex2 = sub_part;
+		log.u_bbr.flex3 = rack_wma_divisor;
+		log.u_bbr.flex4 = srtt;
+		log.u_bbr.flex7 = (uint16_t)line;
+		log.u_bbr.flex8 = meth;
+		log.u_bbr.delRate = rack->r_ctl.gp_bw;
+		log.u_bbr.cur_del_rate = meas_bw;
+		log.u_bbr.rttProp = utim;
+		TCP_LOG_EVENTP(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    BBR_LOG_THRESH_CALC, 0,
+		    0, &log, false, &rack->r_ctl.act_rcv_time);
+	}
+}
+
 static void
 rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			    tcp_seq th_ack, int line, uint8_t quality)
 {
-	uint64_t tim, bytes_ps, ltim, stim, utim;
+	uint64_t tim, bytes_ps, stim, utim;
 	uint32_t segsiz, bytes, reqbytes, us_cts;
 	int32_t gput, new_rtt_diff, timely_says;
 	uint64_t  resid_bw, subpart = 0, addpart = 0, srtt;
@@ -4142,10 +5003,8 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		utim = max(tim, 1);
 	else
 		utim = max(stim, 1);
-	/* Lets get a msec time ltim too for the old stuff */
-	ltim = max(1, (utim / HPTS_USEC_IN_MSEC));
-	gput = (((uint64_t) (th_ack - tp->gput_seq)) << 3) / ltim;
 	reqbytes = min(rc_init_window(rack), (MIN_GP_WIN * segsiz));
+	rack_log_gpset(rack, th_ack, us_cts, rack->r_ctl.rc_gp_cumack_ts, __LINE__, 3, NULL);
 	if ((tim == 0) && (stim == 0)) {
 		/*
 		 * Invalid measurement time, maybe
@@ -4255,10 +5114,10 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		}
 	}
 	timely_says = rack_make_timely_judgement(rack,
-		rack->r_ctl.rc_gp_srtt,
-		rack->r_ctl.rc_rtt_diff,
-	        rack->r_ctl.rc_prev_gp_srtt
-		);
+	    rack->r_ctl.rc_gp_srtt,
+	    rack->r_ctl.rc_rtt_diff,
+	    rack->r_ctl.rc_prev_gp_srtt
+	);
 	bytes_ps *= HPTS_USEC_IN_SEC;
 	bytes_ps /= utim;
 	if (bytes_ps > rack->r_ctl.last_max_bw) {
@@ -4289,7 +5148,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 						   rack->r_ctl.rc_app_limited_cnt,
 						   0, 0, 10, __LINE__, NULL, quality);
 		}
-		if (tcp_in_hpts(rack->rc_inp) &&
+		if (tcp_in_hpts(rack->rc_tp) &&
 		    (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT)) {
 			/*
 			 * Ok we can't trust the pacer in this case
@@ -4299,7 +5158,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			 * Stop the pacer and clear up all the aggregate
 			 * delays etc.
 			 */
-			tcp_hpts_remove(rack->rc_inp);
+			tcp_hpts_remove(rack->rc_tp);
 			rack->r_ctl.rc_hpts_flags = 0;
 			rack->r_ctl.rc_last_output_to = 0;
 		}
@@ -4313,6 +5172,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			/* We have collected enough to move forward */
 			rack->r_ctl.gp_bw /= (uint64_t)rack->r_ctl.num_measurements;
 		}
+		rack_set_pace_segments(tp, rack, __LINE__, NULL);
 		did_add = 3;
 	} else {
 		/*
@@ -4327,6 +5187,8 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		 * other hand if we get a measurement over 1ms with a
 		 * 10ms rtt we only want to take a much smaller portion.
 		 */
+		uint8_t meth;
+
 		if (rack->r_ctl.num_measurements < 0xff) {
 			rack->r_ctl.num_measurements++;
 		}
@@ -4367,6 +5229,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 				 */
 				addpart = bytes_ps * utim;
 				addpart /= (srtt * 8);
+				meth = 1;
 			} else {
 				/*
 				 * Don't allow a single measurement
@@ -4379,7 +5242,9 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 				 */
 				subpart = rack->r_ctl.gp_bw / 2;
 				addpart = bytes_ps / 2;
+				meth = 2;
 			}
+			rack_log_gp_calc(rack, addpart, subpart, srtt, bytes_ps, utim, meth, __LINE__);
 			resid_bw = rack->r_ctl.gp_bw - subpart;
 			rack->r_ctl.gp_bw = resid_bw + addpart;
 			did_add = 1;
@@ -4397,6 +5262,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 				subpart /= (srtt * rack_wma_divisor);
 				addpart = bytes_ps * utim;
 				addpart /= (srtt * rack_wma_divisor);
+				meth = 3;
 			} else {
 				/*
 				 * The scaled measurement was long
@@ -4405,6 +5271,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 				 */
 				subpart = rack->r_ctl.gp_bw / rack_wma_divisor;
 				addpart = bytes_ps / rack_wma_divisor;
+				meth = 4;
 			}
 			if ((rack->measure_saw_probe_rtt == 0) ||
 		            (bytes_ps > rack->r_ctl.gp_bw)) {
@@ -4414,8 +5281,80 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 				 * add in.
 				 */
 				did_add = 1;
+				rack_log_gp_calc(rack, addpart, subpart, srtt, bytes_ps, utim, meth, __LINE__);
 				resid_bw = rack->r_ctl.gp_bw - subpart;
 				rack->r_ctl.gp_bw = resid_bw + addpart;
+			}
+		}
+		rack_set_pace_segments(tp, rack, __LINE__, NULL);
+	}
+	/*
+	 * We only watch the growth of the GP during the initial startup
+	 * or first-slowstart that ensues. If we ever needed to watch
+	 * growth of gp outside of that period all we need to do is
+	 * remove the first clause of this if (rc_initial_ss_comp).
+	 */
+	if ((rack->rc_initial_ss_comp == 0) &&
+	    (rack->r_ctl.num_measurements >= RACK_REQ_AVG)) {
+		uint64_t gp_est;
+
+		gp_est = bytes_ps;
+		if (tcp_bblogging_on(rack->rc_tp)) {
+			union tcp_log_stackspecific log;
+			struct timeval tv;
+
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+			log.u_bbr.flex1 = rack->r_ctl.current_round;
+			log.u_bbr.flex2 = rack->r_ctl.last_rnd_of_gp_rise;
+			log.u_bbr.delRate = gp_est;
+			log.u_bbr.cur_del_rate = rack->r_ctl.last_gpest;
+			log.u_bbr.flex8 = 41;
+			(void)tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+					    0, &log, false, NULL, __func__, __LINE__,&tv);
+		}
+		if ((rack->r_ctl.num_measurements == RACK_REQ_AVG) ||
+		    (rack->r_ctl.last_gpest == 0)) {
+			/*
+			 * The round we get our measurement averaging going
+			 * is the base round so it always is the source point
+			 * for when we had our first increment. From there on
+			 * we only record the round that had a rise.
+			 */
+			rack->r_ctl.last_rnd_of_gp_rise = rack->r_ctl.current_round;
+			rack->r_ctl.last_gpest = rack->r_ctl.gp_bw;
+		} else if (gp_est >= rack->r_ctl.last_gpest) {
+			/*
+			 * Test to see if its gone up enough
+			 * to set the round count up to now. Note
+			 * that on the seeding of the 4th measurement we
+			 */
+			gp_est *= 1000;
+			gp_est /= rack->r_ctl.last_gpest;
+			if ((uint32_t)gp_est > rack->r_ctl.gp_gain_req) {
+				/*
+				 * We went up enough to record the round.
+				 */
+				if (tcp_bblogging_on(rack->rc_tp)) {
+					union tcp_log_stackspecific log;
+					struct timeval tv;
+
+					memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+					log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+					log.u_bbr.flex1 = rack->r_ctl.current_round;
+					log.u_bbr.flex2 = (uint32_t)gp_est;
+					log.u_bbr.flex3 = rack->r_ctl.gp_gain_req;
+					log.u_bbr.delRate = gp_est;
+					log.u_bbr.cur_del_rate = rack->r_ctl.last_gpest;
+					log.u_bbr.flex8 = 42;
+					(void)tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+							    0, &log, false, NULL, __func__, __LINE__,&tv);
+				}
+				rack->r_ctl.last_rnd_of_gp_rise = rack->r_ctl.current_round;
+				if (rack->r_ctl.use_gp_not_last == 1)
+					rack->r_ctl.last_gpest = rack->r_ctl.gp_bw;
+				else
+					rack->r_ctl.last_gpest = bytes_ps;
 			}
 		}
 	}
@@ -4423,23 +5362,38 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 	    (rack->r_ctl.num_measurements >= rack->r_ctl.req_measurements)) {
 		/* We have enough measurements now */
 		rack->gp_ready = 1;
-		rack_set_cc_pacing(rack);
+		if (rack->dgp_on ||
+		    rack->rack_hibeta)
+			rack_set_cc_pacing(rack);
 		if (rack->defer_options)
 			rack_apply_deferred_options(rack);
 	}
 	rack_log_pacing_delay_calc(rack, subpart, addpart, bytes_ps, stim,
 				   rack_get_bw(rack), 22, did_add, NULL, quality);
 	/* We do not update any multipliers if we are in or have seen a probe-rtt */
-	if ((rack->measure_saw_probe_rtt == 0) && rack->rc_gp_rtt_set)
-		rack_update_multiplier(rack, timely_says, bytes_ps,
-				       rack->r_ctl.rc_gp_srtt,
-				       rack->r_ctl.rc_rtt_diff);
+
+	if ((rack->measure_saw_probe_rtt == 0) &&
+	    rack->rc_gp_rtt_set) {
+		if (rack->rc_skip_timely == 0) {
+			rack_update_multiplier(rack, timely_says, bytes_ps,
+					       rack->r_ctl.rc_gp_srtt,
+					       rack->r_ctl.rc_rtt_diff);
+		}
+	}
 	rack_log_pacing_delay_calc(rack, bytes, tim, bytes_ps, stim,
 				   rack_get_bw(rack), 3, line, NULL, quality);
+	rack_log_pacing_delay_calc(rack,
+				   bytes, /* flex2 */
+				   tim, /* flex1 */
+				   bytes_ps, /* bw_inuse */
+				   rack->r_ctl.gp_bw, /* delRate */
+				   rack_get_lt_bw(rack), /* rttProp */
+				   20, line, NULL, 0);
 	/* reset the gp srtt and setup the new prev */
 	rack->r_ctl.rc_prev_gp_srtt = rack->r_ctl.rc_gp_srtt;
 	/* Record the lost count for the next measurement */
 	rack->r_ctl.rc_loss_at_start = rack->r_ctl.rc_loss_count;
+skip_measurement:
 	/*
 	 * We restart our diffs based on the gpsrtt in the
 	 * measurement window.
@@ -4449,24 +5403,29 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 	rack->rc_gp_saw_ca = 0;
 	rack->rc_gp_saw_ss = 0;
 	rack->rc_dragged_bottom = 0;
-skip_measurement:
-
+	if (quality == RACK_QUALITY_HIGH) {
+		/*
+		 * Gput in the stats world is in kbps where bytes_ps is
+		 * bytes per second so we do ((x * 8)/ 1000).
+		 */
+		gput = (int32_t)((bytes_ps << 3) / (uint64_t)1000);
 #ifdef STATS
-	stats_voi_update_abs_u32(tp->t_stats, VOI_TCP_GPUT,
-				 gput);
-	/*
-	 * XXXLAS: This is a temporary hack, and should be
-	 * chained off VOI_TCP_GPUT when stats(9) grows an
-	 * API to deal with chained VOIs.
-	 */
-	if (tp->t_stats_gput_prev > 0)
-		stats_voi_update_abs_s32(tp->t_stats,
-					 VOI_TCP_GPUT_ND,
-					 ((gput - tp->t_stats_gput_prev) * 100) /
-					 tp->t_stats_gput_prev);
+		stats_voi_update_abs_u32(tp->t_stats, VOI_TCP_GPUT,
+					 gput);
+		/*
+		 * XXXLAS: This is a temporary hack, and should be
+		 * chained off VOI_TCP_GPUT when stats(9) grows an
+		 * API to deal with chained VOIs.
+		 */
+		if (tp->t_stats_gput_prev > 0)
+			stats_voi_update_abs_s32(tp->t_stats,
+						 VOI_TCP_GPUT_ND,
+						 ((gput - tp->t_stats_gput_prev) * 100) /
+						 tp->t_stats_gput_prev);
 #endif
+		tp->t_stats_gput_prev = gput;
+	}
 	tp->t_flags &= ~TF_GPUTINPROG;
-	tp->t_stats_gput_prev = gput;
 	/*
 	 * Now are we app limited now and there is space from where we
 	 * were to where we want to go?
@@ -4483,7 +5442,7 @@ skip_measurement:
 		/*
 		 * Yep there is enough outstanding to make a measurement here.
 		 */
-		struct rack_sendmap *rsm, fe;
+		struct rack_sendmap *rsm;
 
 		rack->r_ctl.rc_gp_lowrtt = 0xffffffff;
 		rack->r_ctl.rc_gp_high_rwnd = rack->rc_tp->snd_wnd;
@@ -4517,7 +5476,7 @@ skip_measurement:
 			 * this means we need to have the data available
 			 * before we start a measurement.
 			 */
-			if (sbavail(&tp->t_inpcb->inp_socket->so_snd) < (tp->gput_ack - tp->gput_seq)) {
+			if (sbavail(&tptosocket(tp)->so_snd) < (tp->gput_ack - tp->gput_seq)) {
 				/* Nope not enough data. */
 				return;
 			}
@@ -4527,8 +5486,8 @@ skip_measurement:
 		 * Now we need to find the timestamp of the send at tp->gput_seq
 		 * for the send based measurement.
 		 */
-		fe.r_start = tp->gput_seq;
-		rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
+		rack->r_ctl.rc_gp_cumack_ts = 0;
+		rsm = tqhash_find(rack->r_ctl.tqh, tp->gput_seq);
 		if (rsm) {
 			/* Ok send-based limit is set */
 			if (SEQ_LT(rsm->r_start, tp->gput_seq)) {
@@ -4540,11 +5499,21 @@ skip_measurement:
 				 */
 				tp->gput_seq = rsm->r_start;
 			}
-			if (rsm->r_flags & RACK_ACKED)
+			if (rsm->r_flags & RACK_ACKED) {
+				struct rack_sendmap *nrsm;
+
 				tp->gput_ts = (uint32_t)rsm->r_ack_arrival;
-			else
+				tp->gput_seq = rsm->r_end;
+				nrsm = tqhash_next(rack->r_ctl.tqh, rsm);
+				if (nrsm)
+					rsm = nrsm;
+				else {
+					rack->app_limited_needs_set = 1;
+				}
+			} else
 				rack->app_limited_needs_set = 1;
-			rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
+			/* We always go from the first send */
+			rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[0];
 		} else {
 			/*
 			 * If we don't find the rsm due to some
@@ -4556,14 +5525,22 @@ skip_measurement:
 			microuptime(&tv);
 			rack->r_ctl.rc_gp_output_ts = rack_to_usec_ts(&tv);
 		}
+		rack_tend_gp_marks(tp, rack);
 		rack_log_pacing_delay_calc(rack,
 					   tp->gput_seq,
 					   tp->gput_ack,
-					   (uint64_t)rsm,
+					   (uintptr_t)rsm,
 					   tp->gput_ts,
-					   rack->r_ctl.rc_app_limited_cnt,
+					   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) | (uint64_t)rack->r_ctl.rc_gp_output_ts),
 					   9,
-					   __LINE__, NULL, quality);
+					   __LINE__, rsm, quality);
+		rack_log_gpset(rack, tp->gput_ack, 0, 0, __LINE__, 1, NULL);
+	} else {
+		/*
+		 * To make sure proper timestamp merging occurs, we need to clear
+		 * all GP marks if we don't start a measurement.
+		 */
+		rack_clear_gp_marks(tp, rack);
 	}
 }
 
@@ -4572,91 +5549,98 @@ skip_measurement:
  */
 static void
 rack_ack_received(struct tcpcb *tp, struct tcp_rack *rack, uint32_t th_ack, uint16_t nsegs,
-    uint16_t type, int32_t recovery)
+    uint16_t type, int32_t post_recovery)
 {
 	uint32_t prior_cwnd, acked;
 	struct tcp_log_buffer *lgb = NULL;
 	uint8_t labc_to_use, quality;
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
-	tp->ccv->nsegs = nsegs;
-	acked = tp->ccv->bytes_this_ack = (th_ack - tp->snd_una);
-	if ((recovery) && (rack->r_ctl.rc_early_recovery_segs)) {
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
+	tp->t_ccv.nsegs = nsegs;
+	acked = tp->t_ccv.bytes_this_ack = (th_ack - tp->snd_una);
+	if ((post_recovery) && (rack->r_ctl.rc_early_recovery_segs)) {
 		uint32_t max;
 
 		max = rack->r_ctl.rc_early_recovery_segs * ctf_fixed_maxseg(tp);
-		if (tp->ccv->bytes_this_ack > max) {
-			tp->ccv->bytes_this_ack = max;
+		if (tp->t_ccv.bytes_this_ack > max) {
+			tp->t_ccv.bytes_this_ack = max;
 		}
 	}
 #ifdef STATS
 	stats_voi_update_abs_s32(tp->t_stats, VOI_TCP_CALCFRWINDIFF,
 	    ((int32_t)rack->r_ctl.cwnd_to_use) - tp->snd_wnd);
 #endif
+	if ((th_ack == tp->snd_max) && rack->lt_bw_up) {
+		/*
+		 * We will ack all the data, time to end any
+		 * lt_bw_up we have running until something
+		 * new is sent. Note we need to use the actual
+		 * ack_rcv_time which with pacing may be different.
+		 */
+		uint64_t tmark;
+
+		rack->r_ctl.lt_bw_bytes += (tp->snd_max - rack->r_ctl.lt_seq);
+		rack->r_ctl.lt_seq = tp->snd_max;
+		tmark = tcp_tv_to_lusectick(&rack->r_ctl.act_rcv_time);
+		if (tmark >= rack->r_ctl.lt_timemark) {
+			rack->r_ctl.lt_bw_time += (tmark - rack->r_ctl.lt_timemark);
+		}
+		rack->r_ctl.lt_timemark = tmark;
+		rack->lt_bw_up = 0;
+	}
 	quality = RACK_QUALITY_NONE;
 	if ((tp->t_flags & TF_GPUTINPROG) &&
 	    rack_enough_for_measurement(tp, rack, th_ack, &quality)) {
 		/* Measure the Goodput */
 		rack_do_goodput_measurement(tp, rack, th_ack, __LINE__, quality);
-#ifdef NETFLIX_PEAKRATE
-		if ((type == CC_ACK) &&
-		    (tp->t_maxpeakrate)) {
-			/*
-			 * We update t_peakrate_thr. This gives us roughly
-			 * one update per round trip time. Note
-			 * it will only be used if pace_always is off i.e
-			 * we don't do this for paced flows.
-			 */
-			rack_update_peakrate_thr(tp);
-		}
-#endif
 	}
 	/* Which way our we limited, if not cwnd limited no advance in CA */
 	if (tp->snd_cwnd <= tp->snd_wnd)
-		tp->ccv->flags |= CCF_CWND_LIMITED;
+		tp->t_ccv.flags |= CCF_CWND_LIMITED;
 	else
-		tp->ccv->flags &= ~CCF_CWND_LIMITED;
+		tp->t_ccv.flags &= ~CCF_CWND_LIMITED;
 	if (tp->snd_cwnd > tp->snd_ssthresh) {
-		tp->t_bytes_acked += min(tp->ccv->bytes_this_ack,
+		tp->t_bytes_acked += min(tp->t_ccv.bytes_this_ack,
 			 nsegs * V_tcp_abc_l_var * ctf_fixed_maxseg(tp));
 		/* For the setting of a window past use the actual scwnd we are using */
 		if (tp->t_bytes_acked >= rack->r_ctl.cwnd_to_use) {
 			tp->t_bytes_acked -= rack->r_ctl.cwnd_to_use;
-			tp->ccv->flags |= CCF_ABC_SENTAWND;
+			tp->t_ccv.flags |= CCF_ABC_SENTAWND;
 		}
 	} else {
-		tp->ccv->flags &= ~CCF_ABC_SENTAWND;
+		tp->t_ccv.flags &= ~CCF_ABC_SENTAWND;
 		tp->t_bytes_acked = 0;
 	}
 	prior_cwnd = tp->snd_cwnd;
-	if ((recovery == 0) || (rack_max_abc_post_recovery == 0) || rack->r_use_labc_for_rec ||
-	    (rack_client_low_buf && (rack->client_bufferlvl < rack_client_low_buf)))
+	if ((post_recovery == 0) || (rack_max_abc_post_recovery == 0) || rack->r_use_labc_for_rec ||
+	    (rack_client_low_buf && rack->client_bufferlvl &&
+	    (rack->client_bufferlvl < rack_client_low_buf)))
 		labc_to_use = rack->rc_labc;
 	else
 		labc_to_use = rack_max_abc_post_recovery;
-	if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.flex1 = th_ack;
-		log.u_bbr.flex2 = tp->ccv->flags;
-		log.u_bbr.flex3 = tp->ccv->bytes_this_ack;
-		log.u_bbr.flex4 = tp->ccv->nsegs;
+		log.u_bbr.flex2 = tp->t_ccv.flags;
+		log.u_bbr.flex3 = tp->t_ccv.bytes_this_ack;
+		log.u_bbr.flex4 = tp->t_ccv.nsegs;
 		log.u_bbr.flex5 = labc_to_use;
 		log.u_bbr.flex6 = prior_cwnd;
 		log.u_bbr.flex7 = V_tcp_do_newsack;
 		log.u_bbr.flex8 = 1;
-		lgb = tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
-				     0, &log, false, NULL, NULL, 0, &tv);
+		lgb = tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+				     0, &log, false, NULL, __func__, __LINE__,&tv);
 	}
 	if (CC_ALGO(tp)->ack_received != NULL) {
 		/* XXXLAS: Find a way to live without this */
-		tp->ccv->curack = th_ack;
-		tp->ccv->labc = labc_to_use;
-		tp->ccv->flags |= CCF_USE_LOCAL_ABC;
-		CC_ALGO(tp)->ack_received(tp->ccv, type);
+		tp->t_ccv.curack = th_ack;
+		tp->t_ccv.labc = labc_to_use;
+		tp->t_ccv.flags |= CCF_USE_LOCAL_ABC;
+		CC_ALGO(tp)->ack_received(&tp->t_ccv, type);
 	}
 	if (lgb) {
 		lgb->tlb_stackinfo.u_bbr.flex6 = tp->snd_cwnd;
@@ -4689,14 +5673,14 @@ rack_ack_received(struct tcpcb *tp, struct tcp_rack *rack, uint32_t th_ack, uint
 	if (rack->r_ctl.rc_rack_largest_cwnd < rack->r_ctl.cwnd_to_use) {
 		rack->r_ctl.rc_rack_largest_cwnd = rack->r_ctl.cwnd_to_use;
 	}
-#ifdef NETFLIX_PEAKRATE
-	/* we enforce max peak rate if it is set and we are not pacing */
-	if ((rack->rc_always_pace == 0) &&
-	    tp->t_peakrate_thr &&
-	    (tp->snd_cwnd > tp->t_peakrate_thr)) {
-		tp->snd_cwnd = tp->t_peakrate_thr;
+	if ((rack->rc_initial_ss_comp == 0) &&
+	    (tp->snd_cwnd >= tp->snd_ssthresh)) {
+		/*
+		 * The cwnd has grown beyond ssthresh we have
+		 * entered ca and completed our first Slowstart.
+		 */
+		rack->rc_initial_ss_comp = 1;
 	}
-#endif
 }
 
 static void
@@ -4705,7 +5689,7 @@ tcp_rack_partialack(struct tcpcb *tp)
 	struct tcp_rack *rack;
 
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 	/*
 	 * If we are doing PRR and have enough
 	 * room to send <or> we are pacing and prr
@@ -4718,6 +5702,462 @@ tcp_rack_partialack(struct tcpcb *tp)
 		rack->r_wanted_output = 1;
 }
 
+static inline uint64_t
+rack_get_rxt_per(uint64_t snds,  uint64_t rxts)
+{
+	uint64_t rxt_per;
+
+	if (snds > 0) {
+		rxt_per = rxts * 1000;
+		rxt_per /= snds;
+	} else {
+		/* This is an unlikely path */
+		if (rxts) {
+			/* Its the max it was all re-transmits */
+			rxt_per = 0xffffffffffffffff;
+		} else {
+			rxt_per = 0;
+		}
+	}
+	return (rxt_per);
+}
+
+static void
+policer_detection_log(struct tcp_rack *rack, uint32_t flex1, uint32_t flex2, uint32_t flex3, uint32_t flex4, uint8_t flex8)
+{
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.flex1 = flex1;
+		log.u_bbr.flex2 = flex2;
+		log.u_bbr.flex3 = flex3;
+		log.u_bbr.flex4 = flex4;
+		log.u_bbr.flex5 = rack->r_ctl.current_policer_bucket;
+		log.u_bbr.flex6 = rack->r_ctl.policer_bucket_size;
+		log.u_bbr.flex7 = 0;
+		log.u_bbr.flex8 = flex8;
+		log.u_bbr.bw_inuse = rack->r_ctl.policer_bw;
+		log.u_bbr.applimited = rack->r_ctl.current_round;
+		log.u_bbr.epoch = rack->r_ctl.policer_max_seg;
+		log.u_bbr.delivered = (uint32_t)rack->r_ctl.bytes_acked_in_recovery;
+		log.u_bbr.cur_del_rate = rack->rc_tp->t_sndbytes;
+		log.u_bbr.delRate = rack->rc_tp->t_snd_rxt_bytes;
+		log.u_bbr.rttProp = rack->r_ctl.gp_bw;
+		log.u_bbr.bbr_state = rack->rc_policer_detected;
+		log.u_bbr.bbr_substate = 0;
+		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		log.u_bbr.use_lt_bw = rack->policer_detect_on;
+		log.u_bbr.lt_epoch = 0;
+		log.u_bbr.pkts_out = 0;
+		tcp_log_event(rack->rc_tp, NULL, NULL, NULL, TCP_POLICER_DET, 0,
+			      0, &log, false, NULL, NULL, 0, &tv);
+	}
+
+}
+
+static void
+policer_detection(struct tcpcb *tp, struct tcp_rack *rack, int post_recovery)
+{
+	/*
+	 * Rack excess rxt accounting is turned on. If we
+	 * are above a threshold of rxt's in at least N
+	 * rounds, then back off the cwnd and ssthresh
+	 * to fit into the long-term b/w.
+	 */
+
+	uint32_t pkts, mid, med, alt_med, avg, segsiz, tot_retran_pkt_count = 0;
+	uint32_t cnt_of_mape_rxt = 0;
+	uint64_t snds, rxts, rxt_per, tim, del, del_bw;
+	int i;
+	struct timeval tv;
+
+
+	/*
+	 * First is there enough packets delivered during recovery to make
+	 * a determiniation of b/w?
+	 */
+	segsiz = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
+	if ((rack->rc_policer_detected == 0) &&
+	    (rack->r_ctl.policer_del_mss > 0) &&
+	    ((uint32_t)rack->r_ctl.policer_del_mss > ((rack->r_ctl.bytes_acked_in_recovery + segsiz - 1)/segsiz))) {
+		/*
+		 * Not enough data sent in recovery for initial detection. Once
+		 * we have deteced a policer we allow less than the threshold (polcer_del_mss)
+		 * amount of data in a recovery to let us fall through and double check
+		 * our policer settings and possibly expand or collapse the bucket size and
+		 * the polcier b/w.
+		 *
+		 * Once you are declared to be policed. this block of code cannot be
+		 * reached, instead blocks further down will re-check the policer detection
+		 * triggers and possibly reset the measurements if somehow we have let the
+		 * policer bucket size grow too large.
+		 */
+		if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
+			policer_detection_log(rack, rack->r_ctl.policer_del_mss,
+					      ((rack->r_ctl.bytes_acked_in_recovery + segsiz - 1)/segsiz),
+					      rack->r_ctl.bytes_acked_in_recovery, segsiz, 18);
+		}
+		return;
+	}
+	tcp_get_usecs(&tv);
+	tim = tcp_tv_to_lusectick(&tv) - rack->r_ctl.time_entered_recovery;
+	del = rack->r_ctl.bytes_acked_in_recovery;
+	if (tim > 0)
+		del_bw = (del * (uint64_t)1000000) / tim;
+	else
+		del_bw = 0;
+	/* B/W compensation? */
+
+	if (rack->r_ctl.pol_bw_comp && ((rack->r_ctl.policer_bw > 0) ||
+					(del_bw > 0))) {
+		/*
+		 * Sanity check now that the data is in. How long does it
+		 * take for us to pace out two of our policer_max_seg's?
+		 *
+		 * If it is longer than the RTT then we are set
+		 * too slow, maybe because of not enough data
+		 * sent during recovery.
+		 */
+		uint64_t lentime, res, srtt, max_delbw, alt_bw;
+
+		srtt = (uint64_t)rack_grab_rtt(tp, rack);
+		if ((tp->t_srtt > 0) && (srtt > tp->t_srtt))
+			srtt = tp->t_srtt;
+		lentime = rack->r_ctl.policer_max_seg * (uint64_t)HPTS_USEC_IN_SEC * 2;
+		if (del_bw > rack->r_ctl.policer_bw) {
+			max_delbw = del_bw;
+		} else {
+			max_delbw = rack->r_ctl.policer_bw;
+		}
+		res = lentime / max_delbw;
+		if ((srtt > 0) && (res > srtt)) {
+			/*
+			 * At this rate we can not get two policer_maxsegs
+			 * out before the ack arrives back.
+			 *
+			 * Lets at least get it raised up so that
+			 * we can be a bit faster than that if possible.
+			 */
+			lentime = (rack->r_ctl.policer_max_seg * 2);
+			tim = srtt;
+			alt_bw = (lentime * (uint64_t)HPTS_USEC_IN_SEC) / tim;
+			if (alt_bw > max_delbw) {
+				uint64_t cap_alt_bw;
+
+				cap_alt_bw = (max_delbw + (max_delbw * rack->r_ctl.pol_bw_comp));
+				if ((rack_pol_min_bw > 0) && (cap_alt_bw < rack_pol_min_bw)) {
+					/* We place a min on the cap which defaults to 1Mbps */
+					cap_alt_bw = rack_pol_min_bw;
+				}
+				if (alt_bw <= cap_alt_bw) {
+					/* It should be */
+					del_bw = alt_bw;
+					policer_detection_log(rack,
+							      (uint32_t)tim,
+							      rack->r_ctl.policer_max_seg,
+							      0,
+							      0,
+							      16);
+				} else {
+					/*
+					 * This is an odd case where likely the RTT is very very
+					 * low. And yet it is still being policed. We don't want
+					 * to get more than (rack_policing_do_bw_comp+1) x del-rate
+					 * where del-rate is what we got in recovery for either the
+					 * first Policer Detection(PD) or this PD we are on now.
+					 */
+					del_bw = cap_alt_bw;
+					policer_detection_log(rack,
+							      (uint32_t)tim,
+							      rack->r_ctl.policer_max_seg,
+							      (uint32_t)max_delbw,
+							      (rack->r_ctl.pol_bw_comp + 1),
+							      16);
+				}
+			}
+		}
+	}
+	snds = tp->t_sndbytes - rack->r_ctl.last_policer_sndbytes;
+	rxts = tp->t_snd_rxt_bytes - rack->r_ctl.last_policer_snd_rxt_bytes;
+	rxt_per = rack_get_rxt_per(snds,  rxts);
+	/* Figure up the average  and median */
+	for(i = 0; i < RETRAN_CNT_SIZE; i++) {
+		if (rack->r_ctl.rc_cnt_of_retran[i] > 0) {
+			tot_retran_pkt_count += (i + 1) * rack->r_ctl.rc_cnt_of_retran[i];
+			cnt_of_mape_rxt  += rack->r_ctl.rc_cnt_of_retran[i];
+		}
+	}
+	if (cnt_of_mape_rxt)
+		avg = (tot_retran_pkt_count * 10)/cnt_of_mape_rxt;
+	else
+		avg = 0;
+	alt_med = med = 0;
+	mid = tot_retran_pkt_count/2;
+	for(i = 0; i < RETRAN_CNT_SIZE; i++) {
+		pkts = (i + 1) * rack->r_ctl.rc_cnt_of_retran[i];
+		if (mid > pkts) {
+			mid -= pkts;
+			continue;
+		}
+		med = (i + 1);
+		break;
+	}
+	mid = cnt_of_mape_rxt / 2;
+	for(i = 0; i < RETRAN_CNT_SIZE; i++) {
+		if (mid > rack->r_ctl.rc_cnt_of_retran[i]) {
+			mid -= rack->r_ctl.rc_cnt_of_retran[i];
+			continue;
+		}
+		alt_med = (i + 1);
+		break;
+	}
+	if (rack->r_ctl.policer_alt_median) {
+		/* Swap the medians */
+		uint32_t swap;
+
+		swap = med;
+		med = alt_med;
+		alt_med = swap;
+	}
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.flex1 = avg;
+		log.u_bbr.flex2 = med;
+		log.u_bbr.flex3 = (uint32_t)rxt_per;
+		log.u_bbr.flex4 = rack->r_ctl.policer_avg_threshold;
+		log.u_bbr.flex5 = rack->r_ctl.policer_med_threshold;
+		log.u_bbr.flex6 = rack->r_ctl.policer_rxt_threshold;
+		log.u_bbr.flex7 = rack->r_ctl.policer_alt_median;
+		log.u_bbr.flex8 = 1;
+		log.u_bbr.delivered = rack->r_ctl.policer_bucket_size;
+		log.u_bbr.applimited = rack->r_ctl.current_round;
+		log.u_bbr.epoch = rack->r_ctl.policer_max_seg;
+		log.u_bbr.bw_inuse = del_bw;
+		log.u_bbr.cur_del_rate = rxts;
+		log.u_bbr.delRate = snds;
+		log.u_bbr.rttProp = rack->r_ctl.gp_bw;
+		log.u_bbr.bbr_state = rack->rc_policer_detected;
+		log.u_bbr.bbr_substate = 0;
+		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		log.u_bbr.use_lt_bw = rack->policer_detect_on;
+		log.u_bbr.lt_epoch = (uint32_t)tim;
+		log.u_bbr.pkts_out = rack->r_ctl.bytes_acked_in_recovery;
+		tcp_log_event(tp, NULL, NULL, NULL, TCP_POLICER_DET, 0,
+			      0, &log, false, NULL, NULL, 0, &tv);
+	}
+	if (med == RETRAN_CNT_SIZE) {
+		/*
+		 * If the median is the maximum, then what we
+		 * likely have here is a network breakage. Either that
+		 * or we are so unlucky that all of our traffic is being
+		 * dropped and having to be retransmitted the maximum times
+		 * and this just is not how a policer works.
+		 *
+		 * If it is truely a policer eventually we will come
+		 * through and it won't be the maximum.
+		 */
+		return;
+	}
+	/* Has enough rounds progressed for us to re-measure? */
+	if ((rxt_per >= (uint64_t)rack->r_ctl.policer_rxt_threshold) &&
+	    (avg >= rack->r_ctl.policer_avg_threshold) &&
+	    (med >= rack->r_ctl.policer_med_threshold)) {
+		/*
+		 * We hit all thresholds that indicate we are
+		 * being policed. Now we may be doing this from a rack timeout
+		 * which then means the rest of recovery will hopefully go
+		 * smoother as we pace. At the end of recovery we will
+		 * fall back in here and reset the values using the
+		 * results of the entire recovery episode (we could also
+		 * hit this as we exit recovery as well which means only
+		 * one time in here).
+		 *
+		 * This is done explicitly that if we hit the thresholds
+		 * again in a second recovery we overwrite the values. We do
+		 * that because over time, as we pace the policer_bucket_size may
+		 * continue to grow. This then provides more and more times when
+		 * we are not pacing to the policer rate. This lets us compensate
+		 * for when we hit a false positive and those flows continue to
+		 * increase. However if its a real policer we will then get over its
+		 * limit, over time, again and thus end up back here hitting the
+		 * thresholds again.
+		 *
+		 * The alternative to this is to instead whenever we pace due to
+		 * policing in rack_policed_sending we could add the amount len paced to the
+		 * idle_snd_una value (which decreases the amount in last_amount_before_rec
+		 * since that is always [th_ack - idle_snd_una]). This would then prevent
+		 * the polcier_bucket_size from growing in additional recovery episodes
+		 * Which would then mean false  postives would be pretty much stuck
+		 * after things got back to normal (assuming that what caused the
+		 * false positive was a small network outage).
+		 *
+		 */
+		tcp_trace_point(rack->rc_tp, TCP_TP_POLICER_DET);
+		if (rack->rc_policer_detected == 0) {
+			/*
+			 * Increment the stat that tells us we identified
+			 * a policer only once. Note that if we ever allow
+			 * the flag to be cleared (reverted) then we need
+			 * to adjust this to not do multi-counting.
+			 */
+			counter_u64_add(tcp_policer_detected, 1);
+		}
+		rack->r_ctl.last_policer_sndbytes = tp->t_sndbytes;
+		rack->r_ctl.last_policer_snd_rxt_bytes = tp->t_snd_rxt_bytes;
+		rack->r_ctl.policer_bw = del_bw;
+		rack->r_ctl.policer_max_seg = tcp_get_pacing_burst_size_w_divisor(rack->rc_tp,
+										  rack->r_ctl.policer_bw,
+										  min(ctf_fixed_maxseg(rack->rc_tp),
+										      rack->r_ctl.rc_pace_min_segs),
+										  0, NULL,
+										  NULL, rack->r_ctl.pace_len_divisor);
+		/* Now what about the policer bucket size */
+		rack->r_ctl.policer_bucket_size = rack->r_ctl.last_amount_before_rec;
+		if (rack->r_ctl.policer_bucket_size < rack->r_ctl.policer_max_seg) {
+			/* We must be able to send our max-seg or else chaos ensues */
+			rack->r_ctl.policer_bucket_size = rack->r_ctl.policer_max_seg * 2;
+		}
+		if (rack->rc_policer_detected == 0)
+			rack->r_ctl.current_policer_bucket = 0;
+		if (tcp_bblogging_on(rack->rc_tp)) {
+			union tcp_log_stackspecific log;
+			struct timeval tv;
+
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+			log.u_bbr.flex1 = avg;
+			log.u_bbr.flex2 = med;
+			log.u_bbr.flex3 = rxt_per;
+			log.u_bbr.flex4 = rack->r_ctl.policer_avg_threshold;
+			log.u_bbr.flex5 = rack->r_ctl.policer_med_threshold;
+			log.u_bbr.flex6 = rack->r_ctl.policer_rxt_threshold;
+			log.u_bbr.flex7 = rack->r_ctl.policer_alt_median;
+			log.u_bbr.flex8 = 2;
+			log.u_bbr.applimited = rack->r_ctl.current_round;
+			log.u_bbr.bw_inuse = del_bw;
+			log.u_bbr.delivered = rack->r_ctl.policer_bucket_size;
+			log.u_bbr.cur_del_rate = rxts;
+			log.u_bbr.delRate = snds;
+			log.u_bbr.rttProp = rack->r_ctl.gp_bw;
+			log.u_bbr.bbr_state = rack->rc_policer_detected;
+			log.u_bbr.bbr_substate = 0;
+			log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+			log.u_bbr.use_lt_bw = rack->policer_detect_on;
+			log.u_bbr.epoch = rack->r_ctl.policer_max_seg;
+			log.u_bbr.lt_epoch = (uint32_t)tim;
+			log.u_bbr.pkts_out = rack->r_ctl.bytes_acked_in_recovery;
+			tcp_log_event(tp, NULL, NULL, NULL, TCP_POLICER_DET, 0,
+				      0, &log, false, NULL, NULL, 0, &tv);
+			/*
+			 * Put out an added log, 19, for the sole purpose
+			 * of getting the txt/rxt so that we can benchmark
+			 * in read-bbrlog the ongoing rxt rate after our
+			 * policer invocation in the HYSTART announcments.
+			 */
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.timeStamp = tcp_tv_to_usectick(&tv);
+			log.u_bbr.flex1 = alt_med;
+			log.u_bbr.flex8 = 19;
+			log.u_bbr.cur_del_rate = tp->t_sndbytes;
+			log.u_bbr.delRate = tp->t_snd_rxt_bytes;
+			tcp_log_event(tp, NULL, NULL, NULL, TCP_POLICER_DET, 0,
+				      0, &log, false, NULL, NULL, 0, &tv);
+		}
+		/* Turn off any fast output, thats ended */
+		rack->r_fast_output = 0;
+		/* Mark the time for credits */
+		rack->r_ctl.last_sendtime = tcp_get_u64_usecs(NULL);
+		if (rack->r_rr_config < 2) {
+			/*
+			 * We need to be stricter on the RR config so
+			 * the pacing has priority.
+			 */
+			rack->r_rr_config = 2;
+		}
+		policer_detection_log(rack,
+				      rack->r_ctl.idle_snd_una,
+				      rack->r_ctl.ack_for_idle,
+				      0,
+				      (uint32_t)tim,
+				      14);
+		rack->rc_policer_detected = 1;
+	} else if ((rack->rc_policer_detected == 1) &&
+		   (post_recovery == 1)) {
+		/*
+		 * If we are exiting recovery and have already detected
+		 * we need to possibly update the values.
+		 *
+		 * First: Update the idle -> recovery sent value.
+		 */
+		uint32_t srtt;
+
+		if (rack->r_ctl.last_amount_before_rec > rack->r_ctl.policer_bucket_size) {
+			rack->r_ctl.policer_bucket_size = rack->r_ctl.last_amount_before_rec;
+		}
+		srtt = (uint64_t)rack_grab_rtt(tp, rack);
+		if ((tp->t_srtt > 0) && (srtt > tp->t_srtt))
+			srtt = tp->t_srtt;
+		if ((srtt != 0) &&
+		    (tim < (uint64_t)srtt)) {
+			/*
+			 * Not long enough.
+			 */
+			if (rack_verbose_logging)
+				policer_detection_log(rack,
+						      (uint32_t)tim,
+						      0,
+						      0,
+						      0,
+						      15);
+			return;
+		}
+		/*
+		 * Finally update the b/w if its grown.
+		 */
+		if (del_bw > rack->r_ctl.policer_bw) {
+			rack->r_ctl.policer_bw = del_bw;
+			rack->r_ctl.policer_max_seg = tcp_get_pacing_burst_size_w_divisor(rack->rc_tp,
+											  rack->r_ctl.policer_bw,
+											  min(ctf_fixed_maxseg(rack->rc_tp),
+											      rack->r_ctl.rc_pace_min_segs),
+											  0, NULL,
+											  NULL, rack->r_ctl.pace_len_divisor);
+			if (rack->r_ctl.policer_bucket_size < rack->r_ctl.policer_max_seg) {
+				/* We must be able to send our max-seg or else chaos ensues */
+				rack->r_ctl.policer_bucket_size = rack->r_ctl.policer_max_seg * 2;
+			}
+		}
+		policer_detection_log(rack,
+				      rack->r_ctl.idle_snd_una,
+				      rack->r_ctl.ack_for_idle,
+				      0,
+				      (uint32_t)tim,
+				      3);
+	}
+}
+
+static void
+rack_exit_recovery(struct tcpcb *tp, struct tcp_rack *rack, int how)
+{
+	/* now check with the policer if on */
+	if (rack->policer_detect_on == 1) {
+		policer_detection(tp, rack, 1);
+	}
+	/*
+	 * Now exit recovery, note we must do the idle set after the policer_detection
+	 * to get the amount acked prior to recovery correct.
+	 */
+	rack->r_ctl.idle_snd_una = tp->snd_una;
+	EXIT_RECOVERY(tp->t_flags);
+}
+
 static void
 rack_post_recovery(struct tcpcb *tp, uint32_t th_ack)
 {
@@ -4725,12 +6165,12 @@ rack_post_recovery(struct tcpcb *tp, uint32_t th_ack)
 	uint32_t orig_cwnd;
 
 	orig_cwnd = tp->snd_cwnd;
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	/* only alert CC if we alerted when we entered */
 	if (CC_ALGO(tp)->post_recovery != NULL) {
-		tp->ccv->curack = th_ack;
-		CC_ALGO(tp)->post_recovery(tp->ccv);
+		tp->t_ccv.curack = th_ack;
+		CC_ALGO(tp)->post_recovery(&tp->t_ccv);
 		if (tp->snd_cwnd < tp->snd_ssthresh) {
 			/*
 			 * Rack has burst control and pacing
@@ -4740,23 +6180,23 @@ rack_post_recovery(struct tcpcb *tp, uint32_t th_ack)
 			tp->snd_cwnd = tp->snd_ssthresh;
 		}
 	}
-	if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.flex1 = th_ack;
-		log.u_bbr.flex2 = tp->ccv->flags;
-		log.u_bbr.flex3 = tp->ccv->bytes_this_ack;
-		log.u_bbr.flex4 = tp->ccv->nsegs;
+		log.u_bbr.flex2 = tp->t_ccv.flags;
+		log.u_bbr.flex3 = tp->t_ccv.bytes_this_ack;
+		log.u_bbr.flex4 = tp->t_ccv.nsegs;
 		log.u_bbr.flex5 = V_tcp_abc_l_var;
 		log.u_bbr.flex6 = orig_cwnd;
 		log.u_bbr.flex7 = V_tcp_do_newsack;
 		log.u_bbr.pkts_out = rack->r_ctl.rc_prr_sndcnt;
 		log.u_bbr.flex8 = 2;
-		tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
-			       0, &log, false, NULL, NULL, 0, &tv);
+		tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+			       0, &log, false, NULL, __func__, __LINE__, &tv);
 	}
 	if ((rack->rack_no_prr == 0) &&
 	    (rack->no_prr_addback == 0) &&
@@ -4765,7 +6205,7 @@ rack_post_recovery(struct tcpcb *tp, uint32_t th_ack)
 		 * Suck the next prr cnt back into cwnd, but
 		 * only do that if we are not application limited.
 		 */
-		if (ctf_outstanding(tp) <= sbavail(&(tp->t_inpcb->inp_socket->so_snd))) {
+		if (ctf_outstanding(tp) <= sbavail(&tptosocket(tp)->so_snd)) {
 			/*
 			 * We are allowed to add back to the cwnd the amount we did
 			 * not get out if:
@@ -4790,7 +6230,12 @@ rack_post_recovery(struct tcpcb *tp, uint32_t th_ack)
 		}
 		rack_log_dsack_event(rack, 1, __LINE__, 0, 0);
 	}
-	EXIT_RECOVERY(tp->t_flags);
+	if (rack->rto_from_rec == 1) {
+		rack->rto_from_rec = 0;
+		if (rack->r_ctl.rto_ssthresh > tp->snd_ssthresh)
+			tp->snd_ssthresh = rack->r_ctl.rto_ssthresh;
+	}
+	rack_exit_recovery(tp, rack, 1);
 }
 
 static void
@@ -4799,7 +6244,7 @@ rack_cong_signal(struct tcpcb *tp, uint32_t type, uint32_t ack, int line)
 	struct tcp_rack *rack;
 	uint32_t ssthresh_enter, cwnd_enter, in_rec_at_entry, orig_cwnd;
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 #ifdef STATS
 	stats_voi_update_abs_u32(tp->t_stats, VOI_TCP_CSIG, type);
 #endif
@@ -4815,8 +6260,72 @@ rack_cong_signal(struct tcpcb *tp, uint32_t type, uint32_t ack, int line)
 		tp->t_flags &= ~TF_WASFRECOVERY;
 		tp->t_flags &= ~TF_WASCRECOVERY;
 		if (!IN_FASTRECOVERY(tp->t_flags)) {
+			struct rack_sendmap *rsm;
+			struct timeval tv;
+			uint32_t segsiz;
+
+			/* Check if this is the end of the initial Start-up i.e. initial slow-start */
+			if (rack->rc_initial_ss_comp == 0) {
+				/* Yep it is the end of the initial slowstart */
+				rack->rc_initial_ss_comp = 1;
+			}
+			microuptime(&tv);
+			rack->r_ctl.time_entered_recovery = tcp_tv_to_lusectick(&tv);
+			if (SEQ_GEQ(ack, tp->snd_una)) {
+				/*
+				 * The ack is above snd_una. Lets see
+				 * if we can establish a postive distance from
+				 * our idle mark.
+				 */
+				rack->r_ctl.ack_for_idle = ack;
+				if (SEQ_GT(ack, rack->r_ctl.idle_snd_una)) {
+					rack->r_ctl.last_amount_before_rec = ack - rack->r_ctl.idle_snd_una;
+				} else {
+					/* No data thru yet */
+					rack->r_ctl.last_amount_before_rec = 0;
+				}
+			} else if (SEQ_GT(tp->snd_una, rack->r_ctl.idle_snd_una)) {
+				/*
+				 * The ack is out of order and behind the snd_una. It may
+				 * have contained SACK information which we processed else
+				 * we would have rejected it.
+				 */
+				rack->r_ctl.ack_for_idle = tp->snd_una;
+				rack->r_ctl.last_amount_before_rec = tp->snd_una - rack->r_ctl.idle_snd_una;
+			} else {
+				rack->r_ctl.ack_for_idle = ack;
+				rack->r_ctl.last_amount_before_rec = 0;
+			}
+			if (rack->rc_policer_detected) {
+				/*
+				 * If we are being policed and we have a loss, it
+				 * means our bucket is now empty. This can happen
+				 * where some other flow on the same host sends
+				 * that this connection is not aware of.
+				 */
+				rack->r_ctl.current_policer_bucket = 0;
+				if (rack_verbose_logging)
+					policer_detection_log(rack, rack->r_ctl.last_amount_before_rec, 0, 0, 0, 4);
+				if (rack->r_ctl.last_amount_before_rec > rack->r_ctl.policer_bucket_size) {
+					rack->r_ctl.policer_bucket_size = rack->r_ctl.last_amount_before_rec;
+				}
+			}
+			memset(rack->r_ctl.rc_cnt_of_retran, 0, sizeof(rack->r_ctl.rc_cnt_of_retran));
+			segsiz = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
+			TAILQ_FOREACH(rsm, &rack->r_ctl.rc_tmap, r_tnext) {
+				/*
+				 * Go through the outstanding and re-peg
+				 * any that should have been left in the
+				 * retransmit list (on a double recovery).
+				 */
+				if (rsm->r_act_rxt_cnt > 0) {
+					rack_peg_rxt(rack, rsm, segsiz);
+				}
+			}
+			rack->r_ctl.bytes_acked_in_recovery = 0;
 			rack->r_ctl.rc_prr_delivered = 0;
 			rack->r_ctl.rc_prr_out = 0;
+			rack->r_fast_output = 0;
 			if (rack->rack_no_prr == 0) {
 				rack->r_ctl.rc_prr_sndcnt = ctf_fixed_maxseg(tp);
 				rack_log_to_prr(rack, 2, in_rec_at_entry, line);
@@ -4836,6 +6345,7 @@ rack_cong_signal(struct tcpcb *tp, uint32_t type, uint32_t ack, int line)
 		    SEQ_GEQ(ack, tp->snd_recover)) {
 			EXIT_CONGRECOVERY(tp->t_flags);
 			KMOD_TCPSTAT_INC(tcps_ecn_rcwnd);
+			rack->r_fast_output = 0;
 			tp->snd_recover = tp->snd_max + 1;
 			if (tp->t_flags2 & TF2_ECN_PERMIT)
 				tp->t_flags2 |= TF2_ECN_SND_CWR;
@@ -4844,12 +6354,20 @@ rack_cong_signal(struct tcpcb *tp, uint32_t type, uint32_t ack, int line)
 	case CC_RTO:
 		tp->t_dupacks = 0;
 		tp->t_bytes_acked = 0;
-		EXIT_RECOVERY(tp->t_flags);
-		tp->snd_ssthresh = max(2, min(tp->snd_wnd, rack->r_ctl.cwnd_to_use) / 2 /
-		    ctf_fixed_maxseg(tp)) * ctf_fixed_maxseg(tp);
+		rack->r_fast_output = 0;
+		if (IN_RECOVERY(tp->t_flags))
+			rack_exit_recovery(tp, rack, 2);
+		rack->r_ctl.bytes_acked_in_recovery = 0;
+		rack->r_ctl.time_entered_recovery = 0;
 		orig_cwnd = tp->snd_cwnd;
-		tp->snd_cwnd = ctf_fixed_maxseg(tp);
 		rack_log_to_prr(rack, 16, orig_cwnd, line);
+		if (CC_ALGO(tp)->cong_signal == NULL) {
+			/* TSNH */
+			tp->snd_ssthresh = max(2,
+			    min(tp->snd_wnd, rack->r_ctl.cwnd_to_use) / 2 /
+			    ctf_fixed_maxseg(tp)) * ctf_fixed_maxseg(tp);
+			tp->snd_cwnd = ctf_fixed_maxseg(tp);
+		}
 		if (tp->t_flags2 & TF2_ECN_PERMIT)
 			tp->t_flags2 |= TF2_ECN_SND_CWR;
 		break;
@@ -4873,8 +6391,8 @@ rack_cong_signal(struct tcpcb *tp, uint32_t type, uint32_t ack, int line)
 	}
 	if ((CC_ALGO(tp)->cong_signal != NULL)  &&
 	    (type != CC_RTO)){
-		tp->ccv->curack = ack;
-		CC_ALGO(tp)->cong_signal(tp->ccv, type);
+		tp->t_ccv.curack = ack;
+		CC_ALGO(tp)->cong_signal(&tp->t_ccv, type);
 	}
 	if ((in_rec_at_entry == 0) && IN_RECOVERY(tp->t_flags)) {
 		rack_log_to_prr(rack, 15, cwnd_enter, line);
@@ -4891,15 +6409,10 @@ rack_cc_after_idle(struct tcp_rack *rack, struct tcpcb *tp)
 {
 	uint32_t i_cwnd;
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 
-#ifdef NETFLIX_STATS
-	KMOD_TCPSTAT_INC(tcps_idle_restarts);
-	if (tp->t_state == TCPS_ESTABLISHED)
-		KMOD_TCPSTAT_INC(tcps_idle_estrestarts);
-#endif
 	if (CC_ALGO(tp)->after_idle != NULL)
-		CC_ALGO(tp)->after_idle(tp->ccv);
+		CC_ALGO(tp)->after_idle(&tp->t_ccv);
 
 	if (tp->snd_cwnd == 1)
 		i_cwnd = tp->t_maxseg;		/* SYN(-ACK) lost */
@@ -4964,7 +6477,8 @@ rack_find_high_nonack(struct tcp_rack *rack, struct rack_sendmap *rsm)
 	 * should be the last segment (which it was not).
 	 */
 	prsm = rsm;
-	RB_FOREACH_REVERSE_FROM(prsm, rack_rb_tree_head, rsm) {
+
+	TQHASH_FOREACH_REVERSE_FROM(prsm, rack->r_ctl.tqh) {
 		if (prsm->r_flags & (RACK_ACKED | RACK_HAS_FIN)) {
 			continue;
 		}
@@ -4974,7 +6488,7 @@ rack_find_high_nonack(struct tcp_rack *rack, struct rack_sendmap *rsm)
 }
 
 static uint32_t
-rack_calc_thresh_rack(struct tcp_rack *rack, uint32_t srtt, uint32_t cts)
+rack_calc_thresh_rack(struct tcp_rack *rack, uint32_t srtt, uint32_t cts, int line, int log_allowed)
 {
 	int32_t lro;
 	uint32_t thresh;
@@ -5045,7 +6559,8 @@ rack_calc_thresh_rack(struct tcp_rack *rack, uint32_t srtt, uint32_t cts)
 		 * have seen reordering <and> we have a DSACK count.
 		 */
 		thresh += rack->r_ctl.num_dsack * (srtt >> 2);
-		rack_log_dsack_event(rack, 4, __LINE__, srtt, thresh);
+		if (log_allowed)
+			rack_log_dsack_event(rack, 4, line, srtt, thresh);
 	}
 	/* SRTT * 2 is the ceiling */
 	if (thresh > (srtt * 2)) {
@@ -5055,7 +6570,8 @@ rack_calc_thresh_rack(struct tcp_rack *rack, uint32_t srtt, uint32_t cts)
 	if (thresh > rack_rto_max) {
 		thresh = rack_rto_max;
 	}
-	rack_log_dsack_event(rack, 6, __LINE__, srtt, thresh);
+	if (log_allowed)
+		rack_log_dsack_event(rack, 6, line,  srtt, thresh);
 	return (thresh);
 }
 
@@ -5175,7 +6691,7 @@ rack_check_recovery_mode(struct tcpcb *tp, uint32_t tsused)
 	uint32_t srtt, thresh;
 
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	if (RB_EMPTY(&rack->r_ctl.rc_mtree)) {
+	if (tqhash_empty(rack->r_ctl.tqh)) {
 		return (NULL);
 	}
 	rsm = TAILQ_FIRST(&rack->r_ctl.rc_tmap);
@@ -5190,7 +6706,7 @@ rack_check_recovery_mode(struct tcpcb *tp, uint32_t tsused)
 	}
 	idx = rsm->r_rtr_cnt - 1;
 	srtt = rack_grab_rtt(tp, rack);
-	thresh = rack_calc_thresh_rack(rack, srtt, tsused);
+	thresh = rack_calc_thresh_rack(rack, srtt, tsused, __LINE__, 1);
 	if (TSTMP_LT(tsused, ((uint32_t)rsm->r_tim_lastsent[idx]))) {
 		return (NULL);
 	}
@@ -5270,7 +6786,8 @@ activate_rxt:
 			if (TSTMP_GT(cts, tstmp_touse))
 			    time_since_sent = cts - tstmp_touse;
 		}
-		if (SEQ_LT(tp->snd_una, tp->snd_max) || sbavail(&(tp->t_inpcb->inp_socket->so_snd))) {
+		if (SEQ_LT(tp->snd_una, tp->snd_max) ||
+		    sbavail(&tptosocket(tp)->so_snd)) {
 			rack->r_ctl.rc_hpts_flags |= PACE_TMR_RXT;
 			to = tp->t_rxtcur;
 			if (to > time_since_sent)
@@ -5312,16 +6829,6 @@ activate_rxt:
 			goto activate_rxt;
 		}
 	}
-	if (rack->sack_attack_disable) {
-		/*
-		 * We don't want to do
-		 * any TLP's if you are an attacker.
-		 * Though if you are doing what
-		 * is expected you may still have
-		 * SACK-PASSED marks.
-		 */
-		goto activate_rxt;
-	}
 	/* Convert from ms to usecs */
 	if ((rsm->r_flags & RACK_SACK_PASSED) ||
 	    (rsm->r_flags & RACK_RWND_COLLAPSED) ||
@@ -5350,7 +6857,7 @@ activate_rxt:
 			goto activate_tlp;
 		}
 		srtt = rack_grab_rtt(tp, rack);
-		thresh = rack_calc_thresh_rack(rack, srtt, cts);
+		thresh = rack_calc_thresh_rack(rack, srtt, cts, __LINE__, 1);
 		idx = rsm->r_rtr_cnt - 1;
 		exp = ((uint32_t)rsm->r_tim_lastsent[idx]) + thresh;
 		if (SEQ_GEQ(exp, cts)) {
@@ -5455,7 +6962,7 @@ activate_tlp:
 }
 
 static void
-rack_enter_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
+rack_enter_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, tcp_seq snd_una)
 {
 	if (rack->rc_in_persist == 0) {
 		if (tp->t_flags & TF_GPUTINPROG) {
@@ -5472,9 +6979,23 @@ rack_enter_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 			rack->rack_scwnd_is_idle = 1;
 		}
 #endif
-		rack->r_ctl.rc_went_idle_time = tcp_get_usecs(NULL);
+		rack->r_ctl.rc_went_idle_time = cts;
 		if (rack->r_ctl.rc_went_idle_time == 0)
 			rack->r_ctl.rc_went_idle_time = 1;
+		if (rack->lt_bw_up) {
+			/* Suspend our LT BW measurement */
+			uint64_t tmark;
+
+			rack->r_ctl.lt_bw_bytes += (snd_una - rack->r_ctl.lt_seq);
+			rack->r_ctl.lt_seq = snd_una;
+			tmark = tcp_tv_to_lusectick(&rack->r_ctl.act_rcv_time);
+			if (tmark >= rack->r_ctl.lt_timemark) {
+				rack->r_ctl.lt_bw_time += (tmark - rack->r_ctl.lt_timemark);
+			}
+			rack->r_ctl.lt_timemark = tmark;
+			rack->lt_bw_up = 0;
+			rack->r_persist_lt_bw_off = 1;
+		}
 		rack_timer_cancel(tp, rack, cts, __LINE__);
 		rack->r_ctl.persist_lost_ends = 0;
 		rack->probe_not_answered = 0;
@@ -5489,8 +7010,8 @@ rack_enter_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 static void
 rack_exit_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 {
-	if (tcp_in_hpts(rack->rc_inp)) {
-		tcp_hpts_remove(rack->rc_inp);
+	if (tcp_in_hpts(rack->rc_tp)) {
+		tcp_hpts_remove(rack->rc_tp);
 		rack->r_ctl.rc_hpts_flags = 0;
 	}
 #ifdef NETFLIX_SHARED_CWND
@@ -5508,7 +7029,7 @@ rack_exit_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 		 */
 		uint32_t time_idle, idle_min;
 
-		time_idle = tcp_get_usecs(NULL) - rack->r_ctl.rc_went_idle_time;
+		time_idle = cts - rack->r_ctl.rc_went_idle_time;
 		idle_min = rack_min_probertt_hold;
 		if (rack_probertt_gpsrtt_cnt_div) {
 			uint64_t extra;
@@ -5532,6 +7053,13 @@ rack_exit_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 			}
 		}
 	}
+	if (rack->r_persist_lt_bw_off) {
+		/* Continue where we left off */
+		rack->r_ctl.lt_timemark = tcp_get_u64_usecs(NULL);
+		rack->lt_bw_up = 1;
+		rack->r_persist_lt_bw_off = 0;
+	}
+	rack->r_ctl.idle_snd_una = tp->snd_una;
 	rack->rc_in_persist = 0;
 	rack->r_ctl.rc_went_idle_time = 0;
 	tp->t_rxtshift = 0;
@@ -5547,7 +7075,7 @@ static void
 rack_log_hpts_diag(struct tcp_rack *rack, uint32_t cts,
 		   struct hpts_diag *diag, struct timeval *tv)
 {
-	if (rack_verbose_logging && rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
@@ -5585,7 +7113,7 @@ rack_log_hpts_diag(struct tcp_rack *rack, uint32_t cts,
 static void
 rack_log_wakeup(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb, uint32_t len, int type)
 {
-	if (rack_verbose_logging && rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -5604,11 +7132,11 @@ rack_log_wakeup(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb, uin
 }
 
 static void
-rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
+rack_start_hpts_timer (struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
       int32_t slot, uint32_t tot_len_this_send, int sup_rack)
 {
 	struct hpts_diag diag;
-	struct inpcb *inp;
+	struct inpcb *inp = tptoinpcb(tp);
 	struct timeval tv;
 	uint32_t delayed_ack = 0;
 	uint32_t hpts_timeout;
@@ -5617,12 +7145,11 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 	uint32_t left = 0;
 	uint32_t us_cts;
 
-	inp = tp->t_inpcb;
 	if ((tp->t_state == TCPS_CLOSED) ||
 	    (tp->t_state == TCPS_LISTEN)) {
 		return;
 	}
-	if (tcp_in_hpts(inp)) {
+	if (tcp_in_hpts(tp)) {
 		/* Already on the pacer */
 		return;
 	}
@@ -5649,7 +7176,8 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 		rack->r_early = 0;
 		rack->r_ctl.rc_agg_early = 0;
 	}
-	if (rack->r_late) {
+	if ((rack->r_late) &&
+	    ((rack->r_use_hpts_min == 0) || (rack->dgp_on == 0))) {
 		/*
 		 * This is harder, we can
 		 * compensate some but it
@@ -5683,28 +7211,34 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 			if (rack->r_ctl.rc_agg_delayed == 0)
 				rack->r_late = 0;
 		}
+	} else if (rack->r_late) {
+		/* r_use_hpts_min is on and so is DGP */
+		uint32_t max_red;
+
+		max_red = (slot * rack->r_ctl.max_reduction) / 100;
+		if (max_red >= rack->r_ctl.rc_agg_delayed) {
+			slot -= rack->r_ctl.rc_agg_delayed;
+			rack->r_ctl.rc_agg_delayed = 0;
+		} else {
+			slot -= max_red;
+			rack->r_ctl.rc_agg_delayed -= max_red;
+		}
 	}
-	if (slot) {
-		/* We are pacing too */
-		rack->r_ctl.rc_hpts_flags |= PACE_PKT_OUTPUT;
+	if ((rack->r_use_hpts_min == 1) &&
+	    (slot > 0) &&
+	    (rack->dgp_on == 1)) {
+		/*
+		 * We are enforcing a min pacing timer
+		 * based on our hpts min timeout.
+		 */
+		uint32_t min;
+
+		min = get_hpts_min_sleep_time();
+		if (min > slot) {
+			slot = min;
+		}
 	}
 	hpts_timeout = rack_timer_start(tp, rack, cts, sup_rack);
-#ifdef NETFLIX_EXP_DETECTION
-	if (rack->sack_attack_disable &&
-	    (slot < tcp_sad_pacing_interval)) {
-		/*
-		 * We have a potential attacker on
-		 * the line. We have possibly some
-		 * (or now) pacing time set. We want to
-		 * slow down the processing of sacks by some
-		 * amount (if it is an attacker). Set the default
-		 * slot for attackers in place (unless the orginal
-		 * interval is longer). Its stored in
-		 * micro-seconds, so lets convert to msecs.
-		 */
-		slot = tcp_sad_pacing_interval;
-	}
-#endif
 	if (tp->t_flags & TF_DELACK) {
 		delayed_ack = TICKS_2_USEC(tcp_delacktime);
 		rack->r_ctl.rc_hpts_flags |= PACE_TMR_DELACK;
@@ -5800,12 +7334,12 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 	 * are not on then these flags won't have any effect since it
 	 * won't go through the queuing LRO path).
 	 *
-	 * INP_MBUF_QUEUE_READY - This flags says that I am busy
+	 * TF2_MBUF_QUEUE_READY - This flags says that I am busy
 	 *                        pacing output, so don't disturb. But
 	 *                        it also means LRO can wake me if there
 	 *                        is a SACK arrival.
 	 *
-	 * INP_DONT_SACK_QUEUE - This flag is used in conjunction
+	 * TF2_DONT_SACK_QUEUE - This flag is used in conjunction
 	 *                       with the above flag (QUEUE_READY) and
 	 *                       when present it says don't even wake me
 	 *                       if a SACK arrives.
@@ -5820,8 +7354,9 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 	 * Other cases should usually have none of the flags set
 	 * so LRO can call into us.
 	 */
-	inp->inp_flags2 &= ~(INP_DONT_SACK_QUEUE|INP_MBUF_QUEUE_READY);
+	tp->t_flags2 &= ~(TF2_DONT_SACK_QUEUE|TF2_MBUF_QUEUE_READY);
 	if (slot) {
+		rack->r_ctl.rc_hpts_flags |= PACE_PKT_OUTPUT;
 		rack->r_ctl.rc_last_output_to = us_cts + slot;
 		/*
 		 * A pacing timer (slot) is being set, in
@@ -5831,15 +7366,28 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 		 * will be effective if mbuf queueing is on or
 		 * compressed acks are being processed.
 		 */
-		inp->inp_flags2 |= INP_MBUF_QUEUE_READY;
+		tp->t_flags2 |= TF2_MBUF_QUEUE_READY;
 		/*
 		 * But wait if we have a Rack timer running
 		 * even a SACK should not disturb us (with
 		 * the exception of r_rr_config 3).
 		 */
-		if ((rack->r_ctl.rc_hpts_flags & PACE_TMR_RACK) &&
-		    (rack->r_rr_config != 3))
-			inp->inp_flags2 |= INP_DONT_SACK_QUEUE;
+		if ((rack->r_ctl.rc_hpts_flags & PACE_TMR_RACK) ||
+		    (IN_RECOVERY(tp->t_flags))) {
+			if (rack->r_rr_config != 3)
+				tp->t_flags2 |= TF2_DONT_SACK_QUEUE;
+			else if (rack->rc_pace_dnd) {
+				/*
+				 * When DND is on, we only let a sack
+				 * interrupt us if we are not in recovery.
+				 *
+				 * If DND is off, then we never hit here
+				 * and let all sacks wake us up.
+				 *
+				 */
+				tp->t_flags2 |= TF2_DONT_SACK_QUEUE;
+			}
+		}
 		if (rack->rc_ack_can_sendout_data) {
 			/*
 			 * Ahh but wait, this is that special case
@@ -5847,7 +7395,8 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 			 * backout the changes (used for non-paced
 			 * burst limiting).
 			 */
-			inp->inp_flags2 &= ~(INP_DONT_SACK_QUEUE|INP_MBUF_QUEUE_READY);
+			tp->t_flags2 &= ~(TF2_DONT_SACK_QUEUE |
+			    TF2_MBUF_QUEUE_READY);
 		}
 		if ((rack->use_rack_rr) &&
 		    (rack->r_rr_config < 2) &&
@@ -5856,26 +7405,27 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 			 * Arrange for the hpts to kick back in after the
 			 * t-o if the t-o does not cause a send.
 			 */
-			(void)tcp_hpts_insert_diag(tp->t_inpcb, HPTS_USEC_TO_SLOTS(hpts_timeout),
+			(void)tcp_hpts_insert_diag(tp, HPTS_USEC_TO_SLOTS(hpts_timeout),
 						   __LINE__, &diag);
 			rack_log_hpts_diag(rack, us_cts, &diag, &tv);
 			rack_log_to_start(rack, cts, hpts_timeout, slot, 0);
 		} else {
-			(void)tcp_hpts_insert_diag(tp->t_inpcb, HPTS_USEC_TO_SLOTS(slot),
+			(void)tcp_hpts_insert_diag(tp, HPTS_USEC_TO_SLOTS(slot),
 						   __LINE__, &diag);
 			rack_log_hpts_diag(rack, us_cts, &diag, &tv);
 			rack_log_to_start(rack, cts, hpts_timeout, slot, 1);
 		}
 	} else if (hpts_timeout) {
 		/*
-		 * With respect to inp_flags2 here, lets let any new acks wake
+		 * With respect to t_flags2(?) here, lets let any new acks wake
 		 * us up here. Since we are not pacing (no pacing timer), output
 		 * can happen so we should let it. If its a Rack timer, then any inbound
 		 * packet probably won't change the sending (we will be blocked)
 		 * but it may change the prr stats so letting it in (the set defaults
 		 * at the start of this block) are good enough.
 		 */
-		(void)tcp_hpts_insert_diag(tp->t_inpcb, HPTS_USEC_TO_SLOTS(hpts_timeout),
+		rack->r_ctl.rc_hpts_flags &= ~PACE_PKT_OUTPUT;
+		(void)tcp_hpts_insert_diag(tp, HPTS_USEC_TO_SLOTS(hpts_timeout),
 					   __LINE__, &diag);
 		rack_log_hpts_diag(rack, us_cts, &diag, &tv);
 		rack_log_to_start(rack, cts, hpts_timeout, slot, 0);
@@ -5890,7 +7440,35 @@ rack_start_hpts_timer(struct tcp_rack *rack, struct tcpcb *tp, uint32_t cts,
 	}
 	rack->rc_tmr_stopped = 0;
 	if (slot)
-		rack_log_type_bbrsnd(rack, tot_len_this_send, slot, us_cts, &tv);
+		rack_log_type_bbrsnd(rack, tot_len_this_send, slot, us_cts, &tv, __LINE__);
+}
+
+static void
+rack_mark_lost(struct tcpcb *tp,
+    struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t cts)
+{
+	struct rack_sendmap *nrsm;
+	uint32_t thresh,  exp;
+
+	thresh = rack_calc_thresh_rack(rack, rack_grab_rtt(tp, rack), cts, __LINE__, 0);
+	nrsm = rsm;
+	TAILQ_FOREACH_FROM(nrsm, &rack->r_ctl.rc_tmap, r_tnext) {
+		if ((nrsm->r_flags & RACK_SACK_PASSED) == 0) {
+			/* Got up to all that were marked sack-passed */
+			break;
+		}
+		if ((nrsm->r_flags & RACK_WAS_LOST) == 0) {
+			exp = ((uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)]) + thresh;
+			if (TSTMP_LT(exp, cts) || (exp == cts)) {
+				/* We now consider it lost */
+				nrsm->r_flags |= RACK_WAS_LOST;
+				rack->r_ctl.rc_considered_lost += nrsm->r_end - nrsm->r_start;
+			} else {
+				/* Past here it won't be lost so stop */
+				break;
+			}
+		}
+	}
 }
 
 /*
@@ -5912,9 +7490,6 @@ rack_timeout_rack(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	 */
 	struct rack_sendmap *rsm;
 
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
 	counter_u64_add(rack_to_tot, 1);
 	if (rack->r_state && (rack->r_state != tp->t_state))
 		rack_set_state(tp, rack);
@@ -5922,6 +7497,8 @@ rack_timeout_rack(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	rsm = rack_check_recovery_mode(tp, cts);
 	rack_log_to_event(rack, RACK_TO_FRM_RACK, rsm);
 	if (rsm) {
+		/* We need to stroke any lost that are now declared as lost */
+		rack_mark_lost(tp, rack, rsm, cts);
 		rack->r_ctl.rc_resend = rsm;
 		rack->r_timer_override = 1;
 		if (rack->use_rack_rr) {
@@ -5943,35 +7520,75 @@ rack_timeout_rack(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 				      0, 0, 0);
 		return (1);
 	}
+	if ((rack->policer_detect_on == 1) &&
+	    (rack->rc_policer_detected == 0)) {
+		/*
+		 * We do this early if we have not
+		 * deteceted to attempt to detect
+		 * quicker. Normally we want to do this
+		 * as recovery exits (and we will again).
+		 */
+		policer_detection(tp, rack, 0);
+	}
 	return (0);
 }
+
+
 
 static void
 rack_adjust_orig_mlen(struct rack_sendmap *rsm)
 {
-	if (rsm->m->m_len > rsm->orig_m_len) {
+
+	if ((M_TRAILINGROOM(rsm->m) != rsm->orig_t_space)) {
 		/*
-		 * Mbuf grew, caused by sbcompress, our offset does
-		 * not change.
+		 * The trailing space changed, mbufs can grow
+		 * at the tail but they can't shrink from
+		 * it, KASSERT that. Adjust the orig_m_len to
+		 * compensate for this change.
 		 */
-		rsm->orig_m_len = rsm->m->m_len;
-	} else if (rsm->m->m_len < rsm->orig_m_len) {
+		KASSERT((rsm->orig_t_space > M_TRAILINGROOM(rsm->m)),
+			("mbuf:%p rsm:%p trailing_space:%jd ots:%u oml:%u mlen:%u\n",
+			 rsm->m,
+			 rsm,
+			 (intmax_t)M_TRAILINGROOM(rsm->m),
+			 rsm->orig_t_space,
+			 rsm->orig_m_len,
+			 rsm->m->m_len));
+		rsm->orig_m_len += (rsm->orig_t_space - M_TRAILINGROOM(rsm->m));
+		rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+	}
+	if (rsm->m->m_len < rsm->orig_m_len) {
 		/*
 		 * Mbuf shrank, trimmed off the top by an ack, our
 		 * offset changes.
 		 */
-		rsm->soff -= (rsm->orig_m_len - rsm->m->m_len);
+		KASSERT((rsm->soff >= (rsm->orig_m_len - rsm->m->m_len)),
+			("mbuf:%p len:%u rsm:%p oml:%u soff:%u\n",
+			 rsm->m, rsm->m->m_len,
+			 rsm, rsm->orig_m_len,
+			 rsm->soff));
+		if (rsm->soff >= (rsm->orig_m_len - rsm->m->m_len))
+			rsm->soff -= (rsm->orig_m_len - rsm->m->m_len);
+		else
+			rsm->soff = 0;
 		rsm->orig_m_len = rsm->m->m_len;
+#ifdef INVARIANTS
+	} else if (rsm->m->m_len > rsm->orig_m_len) {
+		panic("rsm:%p m:%p m_len grew outside of t_space compensation",
+		      rsm, rsm->m);
+#endif
 	}
 }
 
 static void
-rack_setup_offset_for_rsm(struct rack_sendmap *src_rsm, struct rack_sendmap *rsm)
+rack_setup_offset_for_rsm(struct tcp_rack *rack, struct rack_sendmap *src_rsm, struct rack_sendmap *rsm)
 {
 	struct mbuf *m;
 	uint32_t soff;
 
-	if (src_rsm->m && (src_rsm->orig_m_len != src_rsm->m->m_len)) {
+	if (src_rsm->m &&
+	    ((src_rsm->orig_m_len != src_rsm->m->m_len) ||
+	     (M_TRAILINGROOM(src_rsm->m) != src_rsm->orig_t_space))) {
 		/* Fix up the orig_m_len and possibly the mbuf offset */
 		rack_adjust_orig_mlen(src_rsm);
 	}
@@ -5984,10 +7601,25 @@ rack_setup_offset_for_rsm(struct rack_sendmap *src_rsm, struct rack_sendmap *rsm
 		KASSERT((m != NULL),
 			("rsm:%p nrsm:%p hit at soff:%u null m",
 			 src_rsm, rsm, soff));
+		if (m == NULL) {
+			/* This should *not* happen which is why there is a kassert */
+			src_rsm->m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd,
+					       (src_rsm->r_start - rack->rc_tp->snd_una),
+					       &src_rsm->soff);
+			src_rsm->orig_m_len = src_rsm->m->m_len;
+			src_rsm->orig_t_space = M_TRAILINGROOM(src_rsm->m);
+			rsm->m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd,
+					   (rsm->r_start - rack->rc_tp->snd_una),
+					   &rsm->soff);
+			rsm->orig_m_len = rsm->m->m_len;
+			rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+			return;
+		}
 	}
 	rsm->m = m;
 	rsm->soff = soff;
 	rsm->orig_m_len = m->m_len;
+	rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
 }
 
 static __inline void
@@ -5999,12 +7631,14 @@ rack_clone_rsm(struct tcp_rack *rack, struct rack_sendmap *nrsm,
 	nrsm->r_start = start;
 	nrsm->r_end = rsm->r_end;
 	nrsm->r_rtr_cnt = rsm->r_rtr_cnt;
+	nrsm->r_act_rxt_cnt = rsm->r_act_rxt_cnt;
 	nrsm->r_flags = rsm->r_flags;
 	nrsm->r_dupack = rsm->r_dupack;
 	nrsm->r_no_rtt_allowed = rsm->r_no_rtt_allowed;
 	nrsm->r_rtr_bytes = 0;
 	nrsm->r_fas = rsm->r_fas;
-	rsm->r_end = nrsm->r_start;
+	nrsm->r_bas = rsm->r_bas;
+	tqhash_update_end(rack->r_ctl.tqh, rsm, nrsm->r_start);
 	nrsm->r_just_ret = rsm->r_just_ret;
 	for (idx = 0; idx < nrsm->r_rtr_cnt; idx++) {
 		nrsm->r_tim_lastsent[idx] = rsm->r_tim_lastsent[idx];
@@ -6031,7 +7665,7 @@ rack_clone_rsm(struct tcp_rack *rack, struct rack_sendmap *nrsm,
 		 (rsm->r_flags & (RACK_HAS_SYN|RACK_HAS_FIN))),
 		("rsm:%p nrsm:%p rack:%p -- rsm->m is NULL?", rsm, nrsm, rack));
 	if (rsm->m)
-		rack_setup_offset_for_rsm(rsm, nrsm);
+		rack_setup_offset_for_rsm(rack, rsm, nrsm);
 }
 
 static struct rack_sendmap *
@@ -6049,12 +7683,9 @@ rack_merge_rsm(struct tcp_rack *rack,
 	 * is any reason we need to try to find
 	 * the oldest (or last oldest retransmitted).
 	 */
-#ifdef INVARIANTS
-	struct rack_sendmap *rm;
-#endif
 	rack_log_map_chg(rack->rc_tp, rack, NULL,
 			 l_rsm, r_rsm, MAP_MERGE, r_rsm->r_end, __LINE__);
-	l_rsm->r_end = r_rsm->r_end;
+	tqhash_update_end(rack->r_ctl.tqh, l_rsm, r_rsm->r_end);
 	if (l_rsm->r_dupack < r_rsm->r_dupack)
 		l_rsm->r_dupack = r_rsm->r_dupack;
 	if (r_rsm->r_rtr_bytes)
@@ -6084,21 +7715,40 @@ rack_merge_rsm(struct tcp_rack *rack,
 		if (r_rsm == rack->r_ctl.rc_first_appl)
 			rack->r_ctl.rc_first_appl = l_rsm;
 	}
-#ifndef INVARIANTS
-	(void)RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, r_rsm);
-#else
-	rm = RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, r_rsm);
-	if (rm != r_rsm) {
-		panic("removing head in rack:%p rsm:%p rm:%p",
-		      rack, r_rsm, rm);
+	tqhash_remove(rack->r_ctl.tqh, r_rsm, REMOVE_TYPE_MERGE);
+	/*
+	 * We keep the largest value, which is the newest
+	 * send. We do this in case a segment that is
+	 * joined together and not part of a GP estimate
+	 * later gets expanded into the GP estimate.
+	 *
+	 * We prohibit the merging of unlike kinds i.e.
+	 * all pieces that are in the GP estimate can be
+	 * merged and all pieces that are not in a GP estimate
+	 * can be merged, but not disimilar pieces. Combine
+	 * this with taking the highest here and we should
+	 * be ok unless of course the client reneges. Then
+	 * all bets are off.
+	 */
+	if(l_rsm->r_tim_lastsent[(l_rsm->r_rtr_cnt-1)] <
+	   r_rsm->r_tim_lastsent[(r_rsm->r_rtr_cnt-1)]) {
+		l_rsm->r_tim_lastsent[(l_rsm->r_rtr_cnt-1)] = r_rsm->r_tim_lastsent[(r_rsm->r_rtr_cnt-1)];
 	}
-#endif
+	/*
+	 * When merging two RSM's we also need to consider the ack time and keep
+	 * newest. If the ack gets merged into a measurement then that is the
+	 * one we will want to be using.
+	 */
+	if(l_rsm->r_ack_arrival	 < r_rsm->r_ack_arrival)
+		l_rsm->r_ack_arrival = r_rsm->r_ack_arrival;
+
 	if ((r_rsm->r_limit_type == 0) && (l_rsm->r_limit_type != 0)) {
 		/* Transfer the split limit to the map we free */
 		r_rsm->r_limit_type = l_rsm->r_limit_type;
 		l_rsm->r_limit_type = 0;
 	}
 	rack_free(rack, r_rsm);
+	l_rsm->r_flags |= RACK_MERGED;
 	return (l_rsm);
 }
 
@@ -6117,17 +7767,12 @@ rack_timeout_tlp(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, uint8_t 
 	 * Tail Loss Probe.
 	 */
 	struct rack_sendmap *rsm = NULL;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
-	struct socket *so;
+	int insret __diagused;
+	struct socket *so = tptosocket(tp);
 	uint32_t amm;
 	uint32_t out, avail;
 	int collapsed_win = 0;
 
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
 	if (TSTMP_LT(cts, rack->r_ctl.rc_timer_exp)) {
 		/* Its not time yet */
 		return (0);
@@ -6142,11 +7787,11 @@ rack_timeout_tlp(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, uint8_t 
 	 */
 	rack_log_to_event(rack, RACK_TO_FRM_TLP, NULL);
 	rack->r_ctl.retran_during_recovery = 0;
+	rack->r_might_revert = 0;
 	rack->r_ctl.dsack_byte_cnt = 0;
 	counter_u64_add(rack_tlp_tot, 1);
 	if (rack->r_state && (rack->r_state != tp->t_state))
 		rack_set_state(tp, rack);
-	so = tp->t_inpcb->inp_socket;
 	avail = sbavail(&so->so_snd);
 	out = tp->snd_max - tp->snd_una;
 	if ((out > tp->snd_wnd) || rack->rc_has_collapsed) {
@@ -6227,7 +7872,7 @@ need_retran:
 		if (rack_always_send_oldest)
 			rsm = TAILQ_FIRST(&rack->r_ctl.rc_tmap);
 		else {
-			rsm = RB_MAX(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+			rsm = tqhash_max(rack->r_ctl.tqh);
 			if (rsm && (rsm->r_flags & (RACK_ACKED | RACK_HAS_FIN))) {
 				rsm = rack_find_high_nonack(rack, rsm);
 			}
@@ -6240,24 +7885,17 @@ need_retran:
 		}
 	} else {
 		/*
-		 * We must find the last segment
-		 * that was acceptable by the client.
+		 * We had a collapsed window, lets find
+		 * the point before the collapse.
 		 */
-		RB_FOREACH_REVERSE(rsm, rack_rb_tree_head, &rack->r_ctl.rc_mtree) {
-			if ((rsm->r_flags & RACK_RWND_COLLAPSED) == 0) {
-				/* Found one */
-				break;
-			}
+		if (SEQ_GT((rack->r_ctl.last_collapse_point - 1), rack->rc_tp->snd_una))
+			rsm = tqhash_find(rack->r_ctl.tqh, (rack->r_ctl.last_collapse_point - 1));
+		else {
+			rsm = tqhash_min(rack->r_ctl.tqh);
 		}
 		if (rsm == NULL) {
-			/* None? if so send the first */
-			rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
-			if (rsm == NULL) {
-#ifdef TCP_BLACKBOX
-				tcp_log_dump_tp_logbuf(tp, "nada counter trips", M_NOWAIT, true);
-#endif
-				goto out;
-			}
+			/* Huh */
+			goto out;
 		}
 	}
 	if ((rsm->r_end - rsm->r_start) > ctf_fixed_maxseg(tp)) {
@@ -6278,11 +7916,10 @@ need_retran:
 			       (rsm->r_end - ctf_fixed_maxseg(tp)));
 		rack_log_map_chg(tp, rack, NULL, rsm, nrsm, MAP_SPLIT, 0, __LINE__);
 #ifndef INVARIANTS
-		(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+		(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-		insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-		if (insret != NULL) {
-			panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+		if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+			panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 			      nrsm, insret, rack, rsm);
 		}
 #endif
@@ -6315,15 +7952,39 @@ out:
 static int
 rack_timeout_delack(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 {
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
+
 	rack_log_to_event(rack, RACK_TO_FRM_DELACK, NULL);
 	tp->t_flags &= ~TF_DELACK;
 	tp->t_flags |= TF_ACKNOW;
 	KMOD_TCPSTAT_INC(tcps_delack);
 	rack->r_ctl.rc_hpts_flags &= ~PACE_TMR_DELACK;
 	return (0);
+}
+
+static inline int
+rack_send_ack_challange(struct tcp_rack *rack)
+{
+	struct tcptemp *t_template;
+
+	t_template = tcpip_maketemplate(rack->rc_inp);
+	if (t_template) {
+		if (rack->forced_ack == 0) {
+			rack->forced_ack = 1;
+			rack->r_ctl.forced_ack_ts = tcp_get_usecs(NULL);
+		} else {
+			rack->probe_not_answered = 1;
+		}
+		tcp_respond(rack->rc_tp, t_template->tt_ipgen,
+			    &t_template->tt_t, (struct mbuf *)NULL,
+			    rack->rc_tp->rcv_nxt, rack->rc_tp->snd_una - 1, 0);
+		free(t_template, M_TEMP);
+		/* This does send an ack so kill any D-ack timer */
+		if (rack->rc_tp->t_flags & TF_DELACK)
+			rack->rc_tp->t_flags &= ~TF_DELACK;
+		return(1);
+	} else
+		return (0);
+
 }
 
 /*
@@ -6337,15 +7998,8 @@ rack_timeout_delack(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 static int
 rack_timeout_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 {
-	struct tcptemp *t_template;
-#ifdef INVARIANTS
-	struct inpcb *inp = tp->t_inpcb;
-#endif
 	int32_t retval = 1;
 
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
 	if (rack->rc_in_persist == 0)
 		return (0);
 	if (ctf_progress_timeout_check(tp, false)) {
@@ -6354,7 +8008,6 @@ rack_timeout_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 		counter_u64_add(rack_persists_lost_ends, rack->r_ctl.persist_lost_ends);
 		return (-ETIMEDOUT);	/* tcp_drop() */
 	}
-	KASSERT(inp != NULL, ("%s: tp %p tp->t_inpcb == NULL", __func__, tp));
 	/*
 	 * Persistence timer into zero window. Force a byte to be output, if
 	 * possible.
@@ -6366,7 +8019,7 @@ rack_timeout_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	 * the idle time (no responses to probes) reaches the maximum
 	 * backoff that we would use if retransmitting.
 	 */
-	if (tp->t_rxtshift == TCP_MAXRXTSHIFT &&
+	if (tp->t_rxtshift >= V_tcp_retries &&
 	    (ticks - tp->t_rcvtime >= tcp_maxpersistidle ||
 	     TICKS_2_USEC(ticks - tp->t_rcvtime) >= RACK_REXMTVAL(tp) * tcp_totbackoff)) {
 		KMOD_TCPSTAT_INC(tcps_persistdrop);
@@ -6391,27 +8044,16 @@ rack_timeout_persist(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 		retval = -ETIMEDOUT;	/* tcp_drop() */
 		goto out;
 	}
-	t_template = tcpip_maketemplate(rack->rc_inp);
-	if (t_template) {
+	if (rack_send_ack_challange(rack)) {
 		/* only set it if we were answered */
-		if (rack->forced_ack == 0) {
-			rack->forced_ack = 1;
-			rack->r_ctl.forced_ack_ts = tcp_get_usecs(NULL);
-		} else {
-			rack->probe_not_answered = 1;
+		if (rack->probe_not_answered) {
 			counter_u64_add(rack_persists_loss, 1);
 			rack->r_ctl.persist_lost_ends++;
 		}
 		counter_u64_add(rack_persists_sends, 1);
-		tcp_respond(tp, t_template->tt_ipgen,
-			    &t_template->tt_t, (struct mbuf *)NULL,
-			    tp->rcv_nxt, tp->snd_una - 1, 0);
-		/* This sends an ack */
-		if (tp->t_flags & TF_DELACK)
-			tp->t_flags &= ~TF_DELACK;
-		free(t_template, M_TEMP);
+		counter_u64_add(rack_out_size[TCP_MSS_ACCT_PERSIST], 1);
 	}
-	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
+	if (tp->t_rxtshift < V_tcp_retries)
 		tp->t_rxtshift++;
 out:
 	rack_log_to_event(rack, RACK_TO_FRM_PERSIST, NULL);
@@ -6429,14 +8071,9 @@ out:
 static int
 rack_timeout_keepalive(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 {
-	struct tcptemp *t_template;
-	struct inpcb *inp;
+	struct inpcb *inp = tptoinpcb(tp);
 
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
 	rack->r_ctl.rc_hpts_flags &= ~PACE_TMR_KEEP;
-	inp = tp->t_inpcb;
 	rack_log_to_event(rack, RACK_TO_FRM_KEEP, NULL);
 	/*
 	 * Keep-alive timer went off; send something or drop connection if
@@ -6460,19 +8097,7 @@ rack_timeout_keepalive(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 		 * respond.
 		 */
 		KMOD_TCPSTAT_INC(tcps_keepprobe);
-		t_template = tcpip_maketemplate(inp);
-		if (t_template) {
-			if (rack->forced_ack == 0) {
-				rack->forced_ack = 1;
-				rack->r_ctl.forced_ack_ts = tcp_get_usecs(NULL);
-			} else {
-				rack->probe_not_answered = 1;
-			}
-			tcp_respond(tp, t_template->tt_ipgen,
-			    &t_template->tt_t, (struct mbuf *)NULL,
-			    tp->rcv_nxt, tp->snd_una - 1, 0);
-			free(t_template, M_TEMP);
-		}
+		rack_send_ack_challange(rack);
 	}
 	rack_start_hpts_timer(rack, tp, cts, 0, 0, 0);
 	return (1);
@@ -6499,8 +8124,26 @@ rack_remxt_tmr(struct tcpcb *tp)
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	rack_timer_cancel(tp, rack, tcp_get_usecs(NULL), __LINE__);
 	rack_log_to_event(rack, RACK_TO_FRM_TMR, NULL);
+	rack->r_timer_override = 1;
+	rack->r_ctl.rc_snd_max_at_rto = tp->snd_max;
+	rack->r_ctl.rc_last_timeout_snduna = tp->snd_una;
+	rack->r_late = 0;
+	rack->r_early = 0;
+	rack->r_ctl.rc_agg_delayed = 0;
+	rack->r_ctl.rc_agg_early = 0;
 	if (rack->r_state && (rack->r_state != tp->t_state))
 		rack_set_state(tp, rack);
+	if (tp->t_rxtshift <= rack_rxt_scoreboard_clear_thresh) {
+		/*
+		 * We do not clear the scoreboard until we have had
+		 * more than rack_rxt_scoreboard_clear_thresh time-outs.
+		 */
+		rack->r_ctl.rc_resend = TAILQ_FIRST(&rack->r_ctl.rc_tmap);
+		if (rack->r_ctl.rc_resend != NULL)
+			rack->r_ctl.rc_resend->r_flags |= RACK_TO_REXT;
+
+		return;
+	}
 	/*
 	 * Ideally we would like to be able to
 	 * mark SACK-PASS on anything not acked here.
@@ -6514,13 +8157,15 @@ rack_remxt_tmr(struct tcpcb *tp)
 	 * order. This way we send in the proper order and any
 	 * sacks that come floating in will "re-ack" the data.
 	 * To do this we zap the tmap with an INIT and then
-	 * walk through and place every rsm in the RB tree
-	 * back in its seq ordered place.
+	 * walk through and place every rsm in the tail queue
+	 * hash table back in its seq ordered place.
 	 */
 	TAILQ_INIT(&rack->r_ctl.rc_tmap);
-	RB_FOREACH(rsm, rack_rb_tree_head, &rack->r_ctl.rc_mtree) {
+
+	TQHASH_FOREACH(rsm, rack->r_ctl.tqh)  {
 		rsm->r_dupack = 0;
-		rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
+		if (rack_verbose_logging)
+			rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
 		/* We must re-add it back to the tlist */
 		if (trsm == NULL) {
 			TAILQ_INSERT_HEAD(&rack->r_ctl.rc_tmap, rsm, r_tnext);
@@ -6531,29 +8176,25 @@ rack_remxt_tmr(struct tcpcb *tp)
 		trsm = rsm;
 		if (rsm->r_flags & RACK_ACKED)
 			rsm->r_flags |= RACK_WAS_ACKED;
-		rsm->r_flags &= ~(RACK_ACKED | RACK_SACK_PASSED | RACK_WAS_SACKPASS | RACK_RWND_COLLAPSED);
+		rsm->r_flags &= ~(RACK_ACKED | RACK_SACK_PASSED | RACK_WAS_SACKPASS | RACK_RWND_COLLAPSED | RACK_WAS_LOST);
 		rsm->r_flags |= RACK_MUST_RXT;
 	}
+	/* zero the lost since it's all gone */
+	rack->r_ctl.rc_considered_lost = 0;
 	/* Clear the count (we just un-acked them) */
-	rack->r_ctl.rc_last_timeout_snduna = tp->snd_una;
 	rack->r_ctl.rc_sacked = 0;
 	rack->r_ctl.rc_sacklast = NULL;
-	rack->r_ctl.rc_agg_delayed = 0;
-	rack->r_early = 0;
-	rack->r_ctl.rc_agg_early = 0;
-	rack->r_late = 0;
 	/* Clear the tlp rtx mark */
-	rack->r_ctl.rc_resend = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+	rack->r_ctl.rc_resend = tqhash_min(rack->r_ctl.tqh);
 	if (rack->r_ctl.rc_resend != NULL)
 		rack->r_ctl.rc_resend->r_flags |= RACK_TO_REXT;
 	rack->r_ctl.rc_prr_sndcnt = 0;
 	rack_log_to_prr(rack, 6, 0, __LINE__);
-	rack->r_timer_override = 1;
-	if ((((tp->t_flags & TF_SACK_PERMIT) == 0)
-#ifdef NETFLIX_EXP_DETECTION
-	    || (rack->sack_attack_disable != 0)
-#endif
-		    ) && ((tp->t_flags & TF_SENTFIN) == 0)) {
+	rack->r_ctl.rc_resend = tqhash_min(rack->r_ctl.tqh);
+	if (rack->r_ctl.rc_resend != NULL)
+		rack->r_ctl.rc_resend->r_flags |= RACK_TO_REXT;
+	if (((tp->t_flags & TF_SACK_PERMIT) == 0) &&
+	    ((tp->t_flags & TF_SENTFIN) == 0)) {
 		/*
 		 * For non-sack customers new data
 		 * needs to go out as retransmits until
@@ -6561,54 +8202,14 @@ rack_remxt_tmr(struct tcpcb *tp)
 		 */
 		rack->r_must_retran = 1;
 		rack->r_ctl.rc_out_at_rto = ctf_flight_size(rack->rc_tp,
-						rack->r_ctl.rc_sacked);
+							    rack->r_ctl.rc_sacked);
 	}
-	rack->r_ctl.rc_snd_max_at_rto = tp->snd_max;
 }
 
 static void
 rack_convert_rtts(struct tcpcb *tp)
 {
-	if (tp->t_srtt > 1) {
-		uint32_t val, frac;
-
-		val = tp->t_srtt >> TCP_RTT_SHIFT;
-		frac = tp->t_srtt & 0x1f;
-		tp->t_srtt = TICKS_2_USEC(val);
-		/*
-		 * frac is the fractional part of the srtt (if any)
-		 * but its in ticks and every bit represents
-		 * 1/32nd of a hz.
-		 */
-		if (frac) {
-			if (hz == 1000) {
-				frac = (((uint64_t)frac * (uint64_t)HPTS_USEC_IN_MSEC) / (uint64_t)TCP_RTT_SCALE);
-			} else {
-				frac = (((uint64_t)frac * (uint64_t)HPTS_USEC_IN_SEC) / ((uint64_t)(hz) * (uint64_t)TCP_RTT_SCALE));
-			}
-			tp->t_srtt += frac;
-		}
-	}
-	if (tp->t_rttvar) {
-		uint32_t val, frac;
-
-		val = tp->t_rttvar >> TCP_RTTVAR_SHIFT;
-		frac = tp->t_rttvar & 0x1f;
-		tp->t_rttvar = TICKS_2_USEC(val);
-		/*
-		 * frac is the fractional part of the srtt (if any)
-		 * but its in ticks and every bit represents
-		 * 1/32nd of a hz.
-		 */
-		if (frac) {
-			if (hz == 1000) {
-				frac = (((uint64_t)frac * (uint64_t)HPTS_USEC_IN_MSEC) / (uint64_t)TCP_RTT_SCALE);
-			} else {
-				frac = (((uint64_t)frac * (uint64_t)HPTS_USEC_IN_SEC) / ((uint64_t)(hz) * (uint64_t)TCP_RTT_SCALE));
-			}
-			tp->t_rttvar += frac;
-		}
-	}
+	tcp_change_time_units(tp, TCP_TMR_GRANULARITY_USEC);
 	tp->t_rxtcur = RACK_REXMTVAL(tp);
 	if (TCPS_HAVEESTABLISHED(tp->t_state)) {
 		tp->t_rxtcur += TICKS_2_USEC(tcp_rexmit_slop);
@@ -6657,13 +8258,11 @@ rack_cc_conn_init(struct tcpcb *tp)
 static int
 rack_timeout_rxt(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 {
+	struct inpcb *inp = tptoinpcb(tp);
 	int32_t rexmt;
 	int32_t retval = 0;
 	bool isipv6;
 
-	if (tp->t_timers->tt_flags & TT_STOPPED) {
-		return (1);
-	}
 	if ((tp->t_flags & TF_GPUTINPROG) &&
 	    (tp->t_rxtshift)) {
 		/*
@@ -6685,7 +8284,19 @@ rack_timeout_rxt(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	}
 	rack->r_ctl.rc_hpts_flags &= ~PACE_TMR_RXT;
 	rack->r_ctl.retran_during_recovery = 0;
+	rack->rc_ack_required = 1;
 	rack->r_ctl.dsack_byte_cnt = 0;
+	if (IN_RECOVERY(tp->t_flags) &&
+	    (rack->rto_from_rec == 0)) {
+		/*
+		 * Mark that we had a rto while in recovery
+		 * and save the ssthresh so if we go back
+		 * into recovery we will have a chance
+		 * to slowstart back to the level.
+		 */
+		rack->rto_from_rec = 1;
+		rack->r_ctl.rto_ssthresh = tp->snd_ssthresh;
+	}
 	if (IN_FASTRECOVERY(tp->t_flags))
 		tp->t_flags |= TF_WASFRECOVERY;
 	else
@@ -6718,7 +8329,7 @@ rack_timeout_rxt(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	    (TP_KEEPINIT(tp) != 0)) {
 		struct rack_sendmap *rsm;
 
-		rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+		rsm = tqhash_min(rack->r_ctl.tqh);
 		if (rsm) {
 			/* Ok we have something outstanding to test keepinit with */
 			if ((TSTMP_GT(cts, (uint32_t)rsm->r_tim_lastsent[0])) &&
@@ -6734,7 +8345,6 @@ rack_timeout_rxt(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 	 * retransmit interval.  Back off to a longer retransmit interval
 	 * and retransmit one segment.
 	 */
-	rack_remxt_tmr(tp);
 	if ((rack->r_ctl.rc_resend == NULL) ||
 	    ((rack->r_ctl.rc_resend->r_flags & RACK_RWND_COLLAPSED) == 0)) {
 		/*
@@ -6745,10 +8355,11 @@ rack_timeout_rxt(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts)
 		 */
 		tp->t_rxtshift++;
 	}
-	if (tp->t_rxtshift > TCP_MAXRXTSHIFT) {
+	rack_remxt_tmr(tp);
+	if (tp->t_rxtshift > V_tcp_retries) {
 		tcp_log_end_status(tp, TCP_EI_STATUS_RETRAN);
 drop_it:
-		tp->t_rxtshift = TCP_MAXRXTSHIFT;
+		tp->t_rxtshift = V_tcp_retries;
 		KMOD_TCPSTAT_INC(tcps_timeoutdrop);
 		/* XXXGL: previously t_softerror was casted to uint16_t */
 		MPASS(tp->t_softerror >= 0);
@@ -6795,7 +8406,7 @@ drop_it:
 	 * catch ESTABLISHED state.
 	 */
 #ifdef INET6
-	isipv6 = (tp->t_inpcb->inp_vflag & INP_IPV6) ? true : false;
+	isipv6 = (inp->inp_vflag & INP_IPV6) ? true : false;
 #else
 	isipv6 = false;
 #endif
@@ -6881,6 +8492,16 @@ drop_it:
 				tp->t_flags2 |= TF2_PLPMTU_PMTUD;
 				tp->t_flags2 &= ~TF2_PLPMTU_BLACKHOLE;
 				tp->t_maxseg = tp->t_pmtud_saved_maxseg;
+				if (tp->t_maxseg < V_tcp_mssdflt) {
+					/*
+					 * The MSS is so small we should not 
+					 * process incoming SACK's since we are 
+					 * subject to attack in such a case.
+					 */
+					tp->t_flags2 |= TF2_PROC_SACK_PROHIBIT;
+				} else {
+					tp->t_flags2 &= ~TF2_PROC_SACK_PROHIBIT;
+				}
 				KMOD_TCPSTAT_INC(tcps_pmtud_blackhole_failed);
 			}
 		}
@@ -6903,11 +8524,11 @@ drop_it:
 	 */
 	if (tp->t_rxtshift > TCP_MAXRXTSHIFT / 4) {
 #ifdef INET6
-		if ((tp->t_inpcb->inp_vflag & INP_IPV6) != 0)
-			in6_losing(tp->t_inpcb);
+		if ((inp->inp_vflag & INP_IPV6) != 0)
+			in6_losing(inp);
 		else
 #endif
-			in_losing(tp->t_inpcb);
+			in_losing(inp);
 		tp->t_rttvar += tp->t_srtt;
 		tp->t_srtt = 0;
 	}
@@ -6939,7 +8560,7 @@ rack_process_timers(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, uint8
 		bytes = tp->gput_ack - tp->gput_seq;
 		if (SEQ_GT(tp->gput_seq, tp->snd_una))
 			bytes += tp->gput_seq - tp->snd_una;
-		if (bytes > sbavail(&tp->t_inpcb->inp_socket->so_snd)) {
+		if (bytes > sbavail(&tptosocket(tp)->so_snd)) {
 			/*
 			 * There are not enough bytes in the socket
 			 * buffer that have been sent to cover this
@@ -6996,11 +8617,14 @@ rack_process_timers(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, uint8
 		}
 		/*
 		 * Ok our timer went off early and we are not paced false
-		 * alarm, go back to sleep.
+		 * alarm, go back to sleep. We make sure we don't have
+		 * no-sack wakeup on since we no longer have a PKT_OUTPUT
+		 * flag in place.
 		 */
+		rack->rc_tp->t_flags2 &= ~TF2_DONT_SACK_QUEUE;
 		ret = -3;
 		left = rack->r_ctl.rc_timer_exp - cts;
-		tcp_hpts_insert(tp->t_inpcb, HPTS_MS_TO_SLOTS(left));
+		tcp_hpts_insert(tp, HPTS_MS_TO_SLOTS(left));
 		rack_log_to_processing(rack, cts, ret, left);
 		return (1);
 	}
@@ -7041,7 +8665,7 @@ rack_timer_cancel(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, int lin
 	if ((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) &&
 	    ((TSTMP_GEQ(us_cts, rack->r_ctl.rc_last_output_to)) ||
 	     ((tp->snd_max - tp->snd_una) == 0))) {
-		tcp_hpts_remove(rack->rc_inp);
+		tcp_hpts_remove(rack->rc_tp);
 		hpts_removed = 1;
 		/* If we were not delayed cancel out the flag. */
 		if ((tp->snd_max - tp->snd_una) == 0)
@@ -7050,14 +8674,14 @@ rack_timer_cancel(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, int lin
 	}
 	if (rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK) {
 		rack->rc_tmr_stopped = rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK;
-		if (tcp_in_hpts(rack->rc_inp) &&
+		if (tcp_in_hpts(rack->rc_tp) &&
 		    ((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) == 0)) {
 			/*
 			 * Canceling timer's when we have no output being
 			 * paced. We also must remove ourselves from the
 			 * hpts.
 			 */
-			tcp_hpts_remove(rack->rc_inp);
+			tcp_hpts_remove(rack->rc_tp);
 			hpts_removed = 1;
 		}
 		rack->r_ctl.rc_hpts_flags &= ~(PACE_TMR_MASK);
@@ -7066,68 +8690,151 @@ rack_timer_cancel(struct tcpcb *tp, struct tcp_rack *rack, uint32_t cts, int lin
 		rack_log_to_cancel(rack, hpts_removed, line, us_cts, &tv, flags_on_entry);
 }
 
-static void
-rack_timer_stop(struct tcpcb *tp, uint32_t timer_type)
-{
-	return;
-}
-
 static int
 rack_stopall(struct tcpcb *tp)
 {
 	struct tcp_rack *rack;
+
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	rack->t_timers_stopped = 1;
+
+	tcp_hpts_remove(tp);
+
 	return (0);
 }
 
 static void
-rack_timer_activate(struct tcpcb *tp, uint32_t timer_type, uint32_t delta)
+rack_stop_all_timers(struct tcpcb *tp, struct tcp_rack *rack)
 {
-	return;
-}
-
-static int
-rack_timer_active(struct tcpcb *tp, uint32_t timer_type)
-{
-	return (0);
-}
-
-static void
-rack_stop_all_timers(struct tcpcb *tp)
-{
-	struct tcp_rack *rack;
-
 	/*
 	 * Assure no timers are running.
 	 */
 	if (tcp_timer_active(tp, TT_PERSIST)) {
 		/* We enter in persists, set the flag appropriately */
-		rack = (struct tcp_rack *)tp->t_fb_ptr;
 		rack->rc_in_persist = 1;
 	}
-	tcp_timer_suspend(tp, TT_PERSIST);
-	tcp_timer_suspend(tp, TT_REXMT);
-	tcp_timer_suspend(tp, TT_KEEP);
-	tcp_timer_suspend(tp, TT_DELACK);
+	if (tcp_in_hpts(rack->rc_tp)) {
+		tcp_hpts_remove(rack->rc_tp);
+	}
+}
+
+/*
+ * We maintain an array fo 16 (RETRAN_CNT_SIZE) entries. This
+ * array is zeroed at the start of recovery. Each time a segment
+ * is retransmitted, we translate that into a number of packets
+ * (based on segsiz) and based on how many times its been retransmitted
+ * increment by the number of packets the counter that represents
+ * retansmitted N times. Index 0 is retransmitted 1 time, index 1
+ * is retransmitted 2 times etc.
+ *
+ * So for example when we send a 4344 byte transmission with a 1448
+ * byte segsize, and its the third time we have retransmitted this
+ * segment, we would add to the rc_cnt_of_retran[2] the value of
+ * 3. That represents 3 MSS were retransmitted 3 times (index is
+ * the number of times retranmitted minus 1).
+ */
+static void
+rack_peg_rxt(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t segsiz)
+{
+	int idx;
+	uint32_t peg;
+
+	peg = ((rsm->r_end - rsm->r_start) + segsiz) - 1;
+	peg /= segsiz;
+	idx = rsm->r_act_rxt_cnt - 1;
+	if (idx >= RETRAN_CNT_SIZE)
+		idx = RETRAN_CNT_SIZE - 1;
+	/* Max of a uint16_t retransmits in a bucket */
+	if ((rack->r_ctl.rc_cnt_of_retran[idx] + peg) < 0xffff)
+		rack->r_ctl.rc_cnt_of_retran[idx] += peg;
+	else
+		rack->r_ctl.rc_cnt_of_retran[idx] = 0xffff;
+}
+
+/*
+ * We maintain an array fo 16 (RETRAN_CNT_SIZE) entries. This
+ * array is zeroed at the start of recovery. Each time a segment
+ * is retransmitted, we translate that into a number of packets
+ * (based on segsiz) and based on how many times its been retransmitted
+ * increment by the number of packets the counter that represents
+ * retansmitted N times. Index 0 is retransmitted 1 time, index 1
+ * is retransmitted 2 times etc.
+ *
+ * The rack_unpeg_rxt is used when we go to retransmit a segment
+ * again. Basically if the segment had previously been retransmitted
+ * say 3 times (as our previous example illustrated in the comment
+ * above rack_peg_rxt() prior to calling that and incrementing
+ * r_ack_rxt_cnt we would have called rack_unpeg_rxt() that would
+ * subtract back the previous add from its last rxt (in this
+ * example r_act_cnt would have been 2 for 2 retransmissions. So
+ * we would have subtracted 3 from rc_cnt_of_reetran[1] to remove
+ * those 3 segments. You will see this in the rack_update_rsm()
+ * below where we do:
+ *	if (rsm->r_act_rxt_cnt > 0) {
+ *		rack_unpeg_rxt(rack, rsm, segsiz);
+ *	}
+ *	rsm->r_act_rxt_cnt++;
+ *	rack_peg_rxt(rack, rsm, segsiz);
+ *
+ * This effectively moves the count from rc_cnt_of_retran[1] to
+ * rc_cnt_of_retran[2].
+ */
+static void
+rack_unpeg_rxt(struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t segsiz)
+{
+	int idx;
+	uint32_t peg;
+
+	idx = rsm->r_act_rxt_cnt - 1;
+	if (idx >= RETRAN_CNT_SIZE)
+		idx = RETRAN_CNT_SIZE - 1;
+	peg = ((rsm->r_end - rsm->r_start) + segsiz) - 1;
+	peg /= segsiz;
+	if (peg < rack->r_ctl.rc_cnt_of_retran[idx])
+		rack->r_ctl.rc_cnt_of_retran[idx] -= peg;
+	else {
+		/* TSNH */
+		rack->r_ctl.rc_cnt_of_retran[idx] = 0;
+	}
 }
 
 static void
 rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
-    struct rack_sendmap *rsm, uint64_t ts, uint16_t add_flag)
+    struct rack_sendmap *rsm, uint64_t ts, uint32_t add_flag, int segsiz)
 {
 	int32_t idx;
 
 	rsm->r_rtr_cnt++;
-	rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
-	rsm->r_dupack = 0;
 	if (rsm->r_rtr_cnt > RACK_NUM_OF_RETRANS) {
 		rsm->r_rtr_cnt = RACK_NUM_OF_RETRANS;
 		rsm->r_flags |= RACK_OVERMAX;
 	}
+	if (rsm->r_act_rxt_cnt > 0) {
+		/* Drop the count back for this, its retransmitting again */
+		rack_unpeg_rxt(rack, rsm, segsiz);
+	}
+	rsm->r_act_rxt_cnt++;
+	/* Peg the count/index */
+	rack_peg_rxt(rack, rsm, segsiz);
+	rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
+	rsm->r_dupack = 0;
 	if ((rsm->r_rtr_cnt > 1) && ((rsm->r_flags & RACK_TLP) == 0)) {
 		rack->r_ctl.rc_holes_rxt += (rsm->r_end - rsm->r_start);
 		rsm->r_rtr_bytes += (rsm->r_end - rsm->r_start);
+	}
+	if (rsm->r_flags & RACK_WAS_LOST) {
+		/*
+		 * We retransmitted it putting it back in flight
+		 * remove the lost desgination and reduce the
+		 * bytes considered lost.
+		 */
+		rsm->r_flags  &= ~RACK_WAS_LOST;
+		KASSERT((rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start)),
+			("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+		if (rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start))
+			rack->r_ctl.rc_considered_lost -= rsm->r_end - rsm->r_start;
+		else
+			rack->r_ctl.rc_considered_lost = 0;
 	}
 	idx = rsm->r_rtr_cnt - 1;
 	rsm->r_tim_lastsent[idx] = ts;
@@ -7146,8 +8853,11 @@ rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
 		TAILQ_REMOVE(&rack->r_ctl.rc_tmap, rsm, r_tnext);
 		rsm->r_in_tmap = 0;
 	}
+	/* Lets make sure it really is in or not the GP window */
+	rack_mark_in_gp_win(tp, rsm);
 	TAILQ_INSERT_TAIL(&rack->r_ctl.rc_tmap, rsm, r_tnext);
 	rsm->r_in_tmap = 1;
+	rsm->r_bas = (uint8_t)(((rsm->r_end - rsm->r_start) + segsiz - 1) / segsiz);
 	/* Take off the must retransmit flag, if its on */
 	if (rsm->r_flags & RACK_MUST_RXT) {
 		if (rack->r_must_retran)
@@ -7162,6 +8872,8 @@ rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
 		}
 		rsm->r_flags &= ~RACK_MUST_RXT;
 	}
+	/* Remove any collapsed flag */
+	rsm->r_flags &= ~RACK_RWND_COLLAPSED;
 	if (rsm->r_flags & RACK_SACK_PASSED) {
 		/* We have retransmitted due to the SACK pass */
 		rsm->r_flags &= ~RACK_SACK_PASSED;
@@ -7171,16 +8883,14 @@ rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
 
 static uint32_t
 rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
-    struct rack_sendmap *rsm, uint64_t ts, int32_t *lenp, uint16_t add_flag)
+    struct rack_sendmap *rsm, uint64_t ts, int32_t *lenp, uint32_t add_flag, int segsiz)
 {
 	/*
 	 * We (re-)transmitted starting at rsm->r_start for some length
 	 * (possibly less than r_end.
 	 */
 	struct rack_sendmap *nrsm;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
+	int insret __diagused;
 	uint32_t c_end;
 	int32_t len;
 
@@ -7191,7 +8901,7 @@ rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
 		 * We retransmitted the whole piece or more than the whole
 		 * slopping into the next rsm.
 		 */
-		rack_update_rsm(tp, rack, rsm, ts, add_flag);
+		rack_update_rsm(tp, rack, rsm, ts, add_flag, segsiz);
 		if (c_end == rsm->r_end) {
 			*lenp = 0;
 			return (0);
@@ -7228,11 +8938,10 @@ rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
 	nrsm->r_dupack = 0;
 	rack_log_retran_reason(rack, nrsm, __LINE__, 0, 2);
 #ifndef INVARIANTS
-	(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+	(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-	insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-	if (insret != NULL) {
-		panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+	if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+		panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 		      nrsm, insret, rack, rsm);
 	}
 #endif
@@ -7241,7 +8950,7 @@ rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
 		nrsm->r_in_tmap = 1;
 	}
 	rsm->r_flags &= (~RACK_HAS_FIN);
-	rack_update_rsm(tp, rack, rsm, ts, add_flag);
+	rack_update_rsm(tp, rack, rsm, ts, add_flag, segsiz);
 	/* Log a split of rsm into rsm and nrsm */
 	rack_log_map_chg(tp, rack, NULL, rsm, nrsm, MAP_SPLIT, 0, __LINE__);
 	*lenp = 0;
@@ -7251,13 +8960,13 @@ rack_update_entry(struct tcpcb *tp, struct tcp_rack *rack,
 static void
 rack_log_output(struct tcpcb *tp, struct tcpopt *to, int32_t len,
 		uint32_t seq_out, uint16_t th_flags, int32_t err, uint64_t cts,
-		struct rack_sendmap *hintrsm, uint16_t add_flag, struct mbuf *s_mb, uint32_t s_moff, int hw_tls)
+		struct rack_sendmap *hintrsm, uint32_t add_flag, struct mbuf *s_mb,
+		uint32_t s_moff, int hw_tls, int segsiz)
 {
 	struct tcp_rack *rack;
-	struct rack_sendmap *rsm, *nrsm, fe;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
+	struct rack_sendmap *rsm, *nrsm;
+	int insret __diagused;
+
 	register uint32_t snd_max, snd_una;
 
 	/*
@@ -7281,7 +8990,7 @@ rack_log_output(struct tcpcb *tp, struct tcpopt *to, int32_t len,
 	 * -- i.e. return if err != 0 or should we pretend we sent it? --
 	 * i.e. proceed with add ** do this for now.
 	 */
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 	if (err)
 		/*
 		 * We don't log errors -- we could but snd_max does not
@@ -7310,13 +9019,6 @@ rack_log_output(struct tcpcb *tp, struct tcpopt *to, int32_t len,
 			len++;
 		if (th_flags & TH_FIN)
 			len++;
-		if (SEQ_LT(snd_max, tp->snd_nxt)) {
-			/*
-			 * The add/update as not been done for the FIN/SYN
-			 * yet.
-			 */
-			snd_max = tp->snd_nxt;
-		}
 	}
 	if (SEQ_LEQ((seq_out + len), snd_una)) {
 		/* Are sending an old segment to induce an ack (keep-alive)? */
@@ -7343,6 +9045,7 @@ rack_log_output(struct tcpcb *tp, struct tcpopt *to, int32_t len,
 	/* First question is it a retransmission or new? */
 	if (seq_out == snd_max) {
 		/* Its new */
+		rack_chk_req_and_hybrid_on_out(rack, seq_out, len, cts);
 again:
 		rsm = rack_alloc(rack);
 		if (rsm == NULL) {
@@ -7361,6 +9064,7 @@ again:
 			rsm->r_hw_tls = 1;
 		rsm->r_tim_lastsent[0] = cts;
 		rsm->r_rtr_cnt = 1;
+ 		rsm->r_act_rxt_cnt = 0;
 		rsm->r_rtr_bytes = 0;
 		if (th_flags & TH_SYN) {
 			/* The data space is one beyond snd_una */
@@ -7368,6 +9072,7 @@ again:
 		}
 		rsm->r_start = seq_out;
 		rsm->r_end = rsm->r_start + len;
+		rack_mark_in_gp_win(tp, rsm);
 		rsm->r_dupack = 0;
 		/*
 		 * save off the mbuf location that
@@ -7383,6 +9088,10 @@ again:
 		rsm->r_fas = (ctf_flight_size(rack->rc_tp,
 					      rack->r_ctl.rc_sacked) +
 			      (rsm->r_end - rsm->r_start));
+		if ((rack->rc_initial_ss_comp == 0) &&
+		    (rack->r_ctl.ss_hi_fs < rsm->r_fas)) {
+			   rack->r_ctl.ss_hi_fs = rsm->r_fas;
+		}
 		/* rsm->m will be NULL if RACK_HAS_SYN or RACK_HAS_FIN is set */
 		if (rsm->m) {
 			if (rsm->m->m_len <= rsm->soff) {
@@ -7407,22 +9116,32 @@ again:
 				rsm->m = lm;
 			}
 			rsm->orig_m_len = rsm->m->m_len;
-		} else
+			rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+		} else {
 			rsm->orig_m_len = 0;
+			rsm->orig_t_space = 0;
+		}
+		rsm->r_bas = (uint8_t)((len + segsiz - 1) / segsiz);
 		rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
 		/* Log a new rsm */
 		rack_log_map_chg(tp, rack, NULL, rsm, NULL, MAP_NEW, 0, __LINE__);
 #ifndef INVARIANTS
-		(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		(void)tqhash_insert(rack->r_ctl.tqh, rsm);
 #else
-		insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-		if (insret != NULL) {
-			panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+		if ((insret = tqhash_insert(rack->r_ctl.tqh, rsm)) != 0) {
+			panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 			      nrsm, insret, rack, rsm);
 		}
 #endif
 		TAILQ_INSERT_TAIL(&rack->r_ctl.rc_tmap, rsm, r_tnext);
 		rsm->r_in_tmap = 1;
+		if (rsm->r_flags & RACK_IS_PCM) {
+			rack->r_ctl.pcm_i.send_time = cts;
+			rack->r_ctl.pcm_i.eseq = rsm->r_end;
+			/* First time through we set the start too */
+			if (rack->pcm_in_progress == 0)
+				rack->r_ctl.pcm_i.sseq = rsm->r_start;
+		}
 		/*
 		 * Special case detection, is there just a single
 		 * packet outstanding when we are not in recovery?
@@ -7433,7 +9152,7 @@ again:
 		    (ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked) == ctf_fixed_maxseg(tp))) {
 			struct rack_sendmap *prsm;
 
-			prsm = RB_PREV(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+			prsm = tqhash_prev(rack->r_ctl.tqh, rsm);
 			if (prsm)
 				prsm->r_one_out_nr = 1;
 		}
@@ -7442,7 +9161,6 @@ again:
 	/*
 	 * If we reach here its a retransmission and we need to find it.
 	 */
-	memset(&fe, 0, sizeof(fe));
 more:
 	if (hintrsm && (hintrsm->r_start == seq_out)) {
 		rsm = hintrsm;
@@ -7452,7 +9170,7 @@ more:
 		rsm = NULL;
 	}
 	if ((rsm) && (rsm->r_start == seq_out)) {
-		seq_out = rack_update_entry(tp, rack, rsm, cts, &len, add_flag);
+		seq_out = rack_update_entry(tp, rack, rsm, cts, &len, add_flag, segsiz);
 		if (len == 0) {
 			return;
 		} else {
@@ -7461,11 +9179,10 @@ more:
 	}
 	/* Ok it was not the last pointer go through it the hard way. */
 refind:
-	fe.r_start = seq_out;
-	rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
+	rsm = tqhash_find(rack->r_ctl.tqh, seq_out);
 	if (rsm) {
 		if (rsm->r_start == seq_out) {
-			seq_out = rack_update_entry(tp, rack, rsm, cts, &len, add_flag);
+			seq_out = rack_update_entry(tp, rack, rsm, cts, &len, add_flag, segsiz);
 			if (len == 0) {
 				return;
 			} else {
@@ -7480,7 +9197,7 @@ refind:
 			 */
 			nrsm = rack_alloc_full_limit(rack);
 			if (nrsm == NULL) {
-				rack_update_rsm(tp, rack, rsm, cts, add_flag);
+				rack_update_rsm(tp, rack, rsm, cts, add_flag, segsiz);
 				return;
 			}
 			/*
@@ -7490,11 +9207,10 @@ refind:
 			rack_clone_rsm(rack, nrsm, rsm, seq_out);
 			rack_log_map_chg(tp, rack, NULL, rsm, nrsm, MAP_SPLIT, 0, __LINE__);
 #ifndef INVARIANTS
-			(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+			(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-			insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-			if (insret != NULL) {
-				panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+			if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+				panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 				      nrsm, insret, rack, rsm);
 			}
 #endif
@@ -7503,7 +9219,7 @@ refind:
 				nrsm->r_in_tmap = 1;
 			}
 			rsm->r_flags &= (~RACK_HAS_FIN);
-			seq_out = rack_update_entry(tp, rack, nrsm, cts, &len, add_flag);
+			seq_out = rack_update_entry(tp, rack, nrsm, cts, &len, add_flag, segsiz);
 			if (len == 0) {
 				return;
 			} else if (len > 0)
@@ -7521,7 +9237,7 @@ refind:
 		printf("seq_out:%u len:%d snd_una:%u snd_max:%u -- but rsm not found?\n",
 		       seq_out, len, tp->snd_una, tp->snd_max);
 		printf("Starting Dump of all rack entries\n");
-		RB_FOREACH(rsm, rack_rb_tree_head, &rack->r_ctl.rc_mtree) {
+		TQHASH_FOREACH(rsm, rack->r_ctl.tqh)  {
 			printf("rsm:%p start:%u end:%u\n",
 			       rsm, rsm->r_start, rsm->r_end);
 		}
@@ -7592,7 +9308,7 @@ tcp_rack_xmit_timer(struct tcp_rack *rack, int32_t rtt, uint32_t len, uint32_t u
 			rack->r_ctl.rack_rs.rs_us_rtt = us_rtt;
 			rack->r_ctl.rack_rs.confidence = confidence;
 			rack->r_ctl.rack_rs.rs_us_rtrcnt = rtrcnt;
-		} else if (confidence || rack->r_ctl.rack_rs.confidence) {
+		} else if (confidence != 0) {
 			/*
 			 * Once we have a confident number,
 			 * we can update it with a smaller
@@ -7717,8 +9433,6 @@ tcp_rack_xmit_timer_commit(struct tcp_rack *rack, struct tcpcb *tp)
 		tp->t_rttvar += (delta >> 3);
 		if (tp->t_rttvar <= 0)
 			tp->t_rttvar = 1;
-		if (tp->t_rttbest > tp->t_srtt + tp->t_rttvar)
-			tp->t_rttbest = tp->t_srtt + tp->t_rttvar;
 	} else {
 		/*
 		 * No rtt measurement yet - use the unsmoothed rtt. Set the
@@ -7727,11 +9441,11 @@ tcp_rack_xmit_timer_commit(struct tcp_rack *rack, struct tcpcb *tp)
 		 */
 		tp->t_srtt = rtt;
 		tp->t_rttvar = rtt >> 1;
-		tp->t_rttbest = tp->t_srtt + tp->t_rttvar;
 	}
 	rack->rc_srtt_measure_made = 1;
 	KMOD_TCPSTAT_INC(tcps_rttupdated);
-	tp->t_rttupdated++;
+	if (tp->t_rttupdated < UCHAR_MAX)
+		tp->t_rttupdated++;
 #ifdef STATS
 	if (rack_stats_gets_ms_rtt == 0) {
 		/* Send in the microsecond rtt used for rxt timeout purposes */
@@ -7754,8 +9468,9 @@ tcp_rack_xmit_timer_commit(struct tcp_rack *rack, struct tcpcb *tp)
 		/* Send in the microsecond rtt has close to the path RTT as we can get  */
 		stats_voi_update_abs_u32(tp->t_stats, VOI_TCP_RTT, imax(0, rack->r_ctl.rack_rs.rs_us_rtt));
 	}
-
+	stats_voi_update_abs_u32(tp->t_stats, VOI_TCP_PATHRTT, imax(0, rack->r_ctl.rack_rs.rs_us_rtt));
 #endif
+	rack->r_ctl.last_rcv_tstmp_for_rtt = tcp_tv_to_mssectick(&rack->r_ctl.act_rcv_time);
 	/*
 	 * the retransmit should happen at rtt + 4 * rttvar. Because of the
 	 * way we do the smoothing, srtt and rttvar will each average +1/2
@@ -7809,6 +9524,7 @@ rack_apply_updated_usrtt(struct tcp_rack *rack, uint32_t us_rtt, uint32_t us_cts
 				val = rack_probertt_lower_within * rack_time_between_probertt;
 				val /= 100;
 				if ((rack->in_probe_rtt == 0)  &&
+				    (rack->rc_skip_timely == 0) &&
 				    ((us_cts - rack->r_ctl.rc_lower_rtt_us_cts) >= (rack_time_between_probertt - val)))	{
 					rack_enter_probertt(rack, us_cts);
 				}
@@ -7868,7 +9584,7 @@ rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
 			us_rtt = 1;
 		if (CC_ALGO(tp)->rttsample != NULL) {
 			/* Kick the RTT to the CC */
-			CC_ALGO(tp)->rttsample(tp->ccv, us_rtt, 1, rsm->r_fas);
+			CC_ALGO(tp)->rttsample(&tp->t_ccv, us_rtt, 1, rsm->r_fas);
 		}
 		rack_apply_updated_usrtt(rack, us_rtt, tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time));
 		if (ack_type == SACKED) {
@@ -7921,12 +9637,16 @@ rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
 		    (!IN_FASTRECOVERY(tp->t_flags))) {
 			/* Segment was a TLP and our retrans matched */
 			if (rack->r_ctl.rc_tlp_cwnd_reduce) {
-				rack_cong_signal(tp, CC_NDUPACK, tp->snd_una, __LINE__);
+				rack_cong_signal(tp, CC_NDUPACK, th_ack, __LINE__);
 			}
 		}
-		if (SEQ_LT(rack->r_ctl.rc_rack_tmit_time, (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)])) {
+		if ((rack->r_ctl.rc_rack_tmit_time == 0) ||
+		    (SEQ_LT(rack->r_ctl.rc_rack_tmit_time,
+			    (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)]))) {
 			/* New more recent rack_tmit_time */
 			rack->r_ctl.rc_rack_tmit_time = (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)];
+			if (rack->r_ctl.rc_rack_tmit_time == 0)
+				rack->r_ctl.rc_rack_tmit_time = 1;
 			rack->rc_rack_rtt = t;
 		}
 		return (1);
@@ -7965,7 +9685,7 @@ rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
 						us_rtt = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time) - (uint32_t)rsm->r_tim_lastsent[i];
 					else
 						us_rtt = tcp_get_usecs(NULL) - (uint32_t)rsm->r_tim_lastsent[i];
-					CC_ALGO(tp)->rttsample(tp->ccv, us_rtt, 1, rsm->r_fas);
+					CC_ALGO(tp)->rttsample(&tp->t_ccv, us_rtt, 1, rsm->r_fas);
 				}
 				if ((i + 1) < rsm->r_rtr_cnt) {
 					/*
@@ -7987,10 +9707,13 @@ rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
 						rack->r_ctl.rc_rack_min_rtt = 1;
 					}
 				}
-				if (SEQ_LT(rack->r_ctl.rc_rack_tmit_time,
-					   (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)])) {
+				if ((rack->r_ctl.rc_rack_tmit_time == 0) ||
+				    (SEQ_LT(rack->r_ctl.rc_rack_tmit_time,
+					    (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)]))) {
 					/* New more recent rack_tmit_time */
 					rack->r_ctl.rc_rack_tmit_time = (uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)];
+					if (rack->r_ctl.rc_rack_tmit_time == 0)
+						rack->r_ctl.rc_rack_tmit_time = 1;
 					rack->rc_rack_rtt = t;
 				}
 				rack_log_rtt_sample_calc(rack, t, (uint32_t)rsm->r_tim_lastsent[i], cts, 3);
@@ -7999,13 +9722,19 @@ rack_update_rtt(struct tcpcb *tp, struct tcp_rack *rack,
 				return (1);
 			}
 		}
+		/* If we are logging log out the sendmap */
+		if (tcp_bblogging_on(rack->rc_tp)) {
+			for (i = 0; i < rsm->r_rtr_cnt; i++) {
+				rack_log_rtt_sendmap(rack, i, rsm->r_tim_lastsent[i], to->to_tsecr);
+			}
+		}
 		goto ts_not_found;
 	} else {
 		/*
 		 * Ok its a SACK block that we retransmitted. or a windows
 		 * machine without timestamps. We can tell nothing from the
 		 * time-stamp since its not there or the time the peer last
-		 * recieved a segment that moved forward its cum-ack point.
+		 * received a segment that moved forward its cum-ack point.
 		 */
 ts_not_found:
 		i = rsm->r_rtr_cnt - 1;
@@ -8035,9 +9764,13 @@ ts_not_found:
 					rack->r_ctl.rc_rack_min_rtt = 1;
 				}
 			}
-			if (SEQ_LT(rack->r_ctl.rc_rack_tmit_time, (uint32_t)rsm->r_tim_lastsent[i])) {
+			if ((rack->r_ctl.rc_rack_tmit_time == 0) ||
+			    (SEQ_LT(rack->r_ctl.rc_rack_tmit_time,
+				    (uint32_t)rsm->r_tim_lastsent[i]))) {
 				/* New more recent rack_tmit_time */
 				rack->r_ctl.rc_rack_tmit_time = (uint32_t)rsm->r_tim_lastsent[i];
+				if (rack->r_ctl.rc_rack_tmit_time == 0)
+					rack->r_ctl.rc_rack_tmit_time = 1;
 				rack->rc_rack_rtt = t;
 			}
 			return (1);
@@ -8051,15 +9784,19 @@ ts_not_found:
  */
 static void
 rack_log_sack_passed(struct tcpcb *tp,
-    struct tcp_rack *rack, struct rack_sendmap *rsm)
+    struct tcp_rack *rack, struct rack_sendmap *rsm, uint32_t cts)
 {
 	struct rack_sendmap *nrsm;
+	uint32_t thresh;
 
+	/* Get our rxt threshold for lost consideration */
+	thresh = rack_calc_thresh_rack(rack, rack_grab_rtt(tp, rack), cts, __LINE__, 0);
+	/* Now start looking at rsm's */
 	nrsm = rsm;
 	TAILQ_FOREACH_REVERSE_FROM(nrsm, &rack->r_ctl.rc_tmap,
 	    rack_head, r_tnext) {
 		if (nrsm == rsm) {
-			/* Skip orginal segment he is acked */
+			/* Skip original segment he is acked */
 			continue;
 		}
 		if (nrsm->r_flags & RACK_ACKED) {
@@ -8076,6 +9813,17 @@ rack_log_sack_passed(struct tcpcb *tp,
 			 * these then we don't worry about them.
 			 */
 			continue;
+		}
+		/* Check lost state */
+		if ((nrsm->r_flags & RACK_WAS_LOST) == 0) {
+			uint32_t exp;
+
+			exp = ((uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)]) + thresh;
+			if (TSTMP_LT(exp, cts) || (exp == cts)) {
+				/* We consider it lost */
+				nrsm->r_flags |= RACK_WAS_LOST;
+				rack->r_ctl.rc_considered_lost += nrsm->r_end - nrsm->r_start;
+			}
 		}
 		if (nrsm->r_flags & RACK_SACK_PASSED) {
 			/*
@@ -8098,6 +9846,7 @@ rack_need_set_test(struct tcpcb *tp,
 		   int line,
 		   int use_which)
 {
+	struct rack_sendmap *s_rsm;
 
 	if ((tp->t_flags & TF_GPUTINPROG) &&
 	    SEQ_GEQ(rsm->r_end, tp->gput_seq)) {
@@ -8135,26 +9884,24 @@ rack_need_set_test(struct tcpcb *tp,
 			 * up some of the rsm, we set RACK_USE_BEG
 			 * since whats at r_start (i.e. th_ack)
 			 * is left unacked and thats where the
-			 * measurement not starts.
+			 * measurement now starts.
 			 */
 			tp->gput_seq = rsm->r_start;
-			rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
 		}
 		if ((use_which == RACK_USE_END) &&
 		    SEQ_GEQ(rsm->r_end, tp->gput_seq)) {
-			    /*
-			     * We use the end when the cumack
-			     * is moving forward and completely
-			     * deleting the rsm passed so basically
-			     * r_end holds th_ack.
-			     *
-			     * For SACK's we also want to use the end
-			     * since this piece just got sacked and
-			     * we want to target anything after that
-			     * in our measurement.
-			     */
-			    tp->gput_seq = rsm->r_end;
-			    rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
+			/*
+			 * We use the end when the cumack
+			 * is moving forward and completely
+			 * deleting the rsm passed so basically
+			 * r_end holds th_ack.
+			 *
+			 * For SACK's we also want to use the end
+			 * since this piece just got sacked and
+			 * we want to target anything after that
+			 * in our measurement.
+			 */
+			tp->gput_seq = rsm->r_end;
 		}
 		if (use_which == RACK_USE_END_OR_THACK) {
 			/*
@@ -8167,7 +9914,28 @@ rack_need_set_test(struct tcpcb *tp,
 				tp->gput_seq = th_ack;
 			else
 				tp->gput_seq = rsm->r_end;
-			rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
+		}
+		if (SEQ_LT(tp->gput_seq, tp->snd_max))
+			s_rsm = tqhash_find(rack->r_ctl.tqh, tp->gput_seq);
+		else
+			s_rsm = NULL;
+		/*
+		 * Pick up the correct send time if we can the rsm passed in
+		 * may be equal to s_rsm if the RACK_USE_BEG was set. For the other
+		 * two cases (RACK_USE_THACK or RACK_USE_END) most likely we will
+		 * find a different seq i.e. the next send up.
+		 *
+		 * If that has not been sent, s_rsm will be NULL and we must
+		 * arrange it so this function will get called again by setting
+		 * app_limited_needs_set.
+		 */
+		if (s_rsm)
+			rack->r_ctl.rc_gp_output_ts = s_rsm->r_tim_lastsent[0];
+		else {
+			/* If we hit here we have to have *not* sent tp->gput_seq */
+			rack->r_ctl.rc_gp_output_ts = rsm->r_tim_lastsent[0];
+			/* Set it up so we will go through here again */
+			rack->app_limited_needs_set = 1;
 		}
 		if (SEQ_GT(tp->gput_seq, tp->gput_ack)) {
 			/*
@@ -8189,7 +9957,10 @@ rack_need_set_test(struct tcpcb *tp,
 		    (SEQ_GEQ(tp->gput_seq, rack->r_ctl.rc_probertt_sndmax_atexit)))
 			rack->measure_saw_probe_rtt = 0;
 		rack_log_pacing_delay_calc(rack, ts, tp->gput_ts,
-					   seq, tp->gput_seq, 0, 5, line, NULL, 0);
+					   seq, tp->gput_seq,
+					   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) |
+					    (uint64_t)rack->r_ctl.rc_gp_output_ts),
+					   5, line, NULL, 0);
 		if (rack->rc_gp_filled &&
 		    ((tp->gput_ack - tp->gput_seq) <
 		     max(rc_init_window(rack), (MIN_GP_WIN *
@@ -8197,7 +9968,7 @@ rack_need_set_test(struct tcpcb *tp,
 			uint32_t ideal_amount;
 
 			ideal_amount = rack_get_measure_window(tp, rack);
-			if (ideal_amount > sbavail(&tp->t_inpcb->inp_socket->so_snd)) {
+			if (ideal_amount > sbavail(&tptosocket(tp)->so_snd)) {
 				/*
 				 * There is no sense of continuing this measurement
 				 * because its too small to gain us anything we
@@ -8206,7 +9977,10 @@ rack_need_set_test(struct tcpcb *tp,
 				 */
 				tp->t_flags &= ~TF_GPUTINPROG;
 				rack_log_pacing_delay_calc(rack, tp->gput_ack, tp->gput_seq,
-							   0, 0, 0, 6, __LINE__, NULL, 0);
+							   0, 0,
+							   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) |
+							    (uint64_t)rack->r_ctl.rc_gp_output_ts),
+							   6, __LINE__, NULL, 0);
 			} else {
 				/*
 				 * Reset the window further out.
@@ -8214,6 +9988,8 @@ rack_need_set_test(struct tcpcb *tp,
 				tp->gput_ack = tp->gput_seq + ideal_amount;
 			}
 		}
+		rack_tend_gp_marks(tp, rack);
+		rack_log_gpset(rack, tp->gput_ack, 0, 0, line, 2, rsm);
 	}
 }
 
@@ -8232,24 +10008,22 @@ is_rsm_inside_declared_tlp_block(struct tcp_rack *rack, struct rack_sendmap *rsm
 	return (1);
 }
 
-
 static uint32_t
 rack_proc_sack_blk(struct tcpcb *tp, struct tcp_rack *rack, struct sackblk *sack,
-		   struct tcpopt *to, struct rack_sendmap **prsm, uint32_t cts, int *moved_two)
+		   struct tcpopt *to, struct rack_sendmap **prsm, uint32_t cts,
+		   uint32_t segsiz)
 {
 	uint32_t start, end, changed = 0;
 	struct rack_sendmap stack_map;
-	struct rack_sendmap *rsm, *nrsm, fe, *prev, *next;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
+	struct rack_sendmap *rsm, *nrsm, *prev, *next;
+	int insret __diagused;
 	int32_t used_ref = 1;
-	int moved = 0;
+	int can_use_hookery = 0;
 
 	start = sack->start;
 	end = sack->end;
 	rsm = *prsm;
-	memset(&fe, 0, sizeof(fe));
+
 do_rest_ofb:
 	if ((rsm == NULL) ||
 	    (SEQ_LT(end, rsm->r_start)) ||
@@ -8260,9 +10034,7 @@ do_rest_ofb:
 		 * find the correct spot in the tree.
 		 */
 		used_ref = 0;
-		fe.r_start = start;
-		rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
-		moved++;
+		rsm = tqhash_find(rack->r_ctl.tqh, start);
 	}
 	if (rsm == NULL) {
 		/* TSNH */
@@ -8327,8 +10099,25 @@ do_rest_ofb:
 			 * the next guy and it is already sacked.
 			 *
 			 */
-			next = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-			if (next && (next->r_flags & RACK_ACKED) &&
+			/*
+			 * Hookery can only be used if the two entries
+			 * are in the same bucket and neither one of
+			 * them staddle the bucket line.
+			 */
+			next = tqhash_next(rack->r_ctl.tqh, rsm);
+			if (next &&
+			    (rsm->bindex == next->bindex) &&
+			    ((rsm->r_flags & RACK_STRADDLE) == 0) &&
+			    ((next->r_flags & RACK_STRADDLE) == 0) &&
+			    ((rsm->r_flags & RACK_IS_PCM) == 0) &&
+			    ((next->r_flags & RACK_IS_PCM) == 0) &&
+			    (rsm->r_flags & RACK_IN_GP_WIN) &&
+			    (next->r_flags & RACK_IN_GP_WIN))
+				can_use_hookery = 1;
+			else
+				can_use_hookery = 0;
+			if (next && can_use_hookery &&
+			    (next->r_flags & RACK_ACKED) &&
 			    SEQ_GEQ(end, next->r_start)) {
 				/**
 				 * So the next one is already acked, and
@@ -8350,10 +10139,40 @@ do_rest_ofb:
 				nrsm = &stack_map;
 				memcpy(nrsm, rsm, sizeof(struct rack_sendmap));
 				/* Now adjust our tree blocks */
-				rsm->r_end = start;
+				tqhash_update_end(rack->r_ctl.tqh, rsm, start);
 				next->r_start = start;
+ 				rsm->r_flags |= RACK_SHUFFLED;
+				next->r_flags |= RACK_SHUFFLED;
 				/* Now we must adjust back where next->m is */
-				rack_setup_offset_for_rsm(rsm, next);
+				rack_setup_offset_for_rsm(rack, rsm, next);
+				/*
+				 * Which timestamp do we keep? It is rather
+				 * important in GP measurements to have the
+				 * accurate end of the send window.
+				 *
+				 * We keep the largest value, which is the newest
+				 * send. We do this in case a segment that is
+				 * joined together and not part of a GP estimate
+				 * later gets expanded into the GP estimate.
+				 *
+				 * We prohibit the merging of unlike kinds i.e.
+				 * all pieces that are in the GP estimate can be
+				 * merged and all pieces that are not in a GP estimate
+				 * can be merged, but not disimilar pieces. Combine
+				 * this with taking the highest here and we should
+				 * be ok unless of course the client reneges. Then
+				 * all bets are off.
+				 */
+				if (next->r_tim_lastsent[(next->r_rtr_cnt-1)] <
+				    nrsm->r_tim_lastsent[(nrsm->r_rtr_cnt-1)])
+					next->r_tim_lastsent[(next->r_rtr_cnt-1)] = nrsm->r_tim_lastsent[(nrsm->r_rtr_cnt-1)];
+				/*
+				 * And we must keep the newest ack arrival time.
+				 */
+				if (next->r_ack_arrival <
+				    rack_to_usec_ts(&rack->r_ctl.act_rcv_time))
+					next->r_ack_arrival = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
+
 
 				/* We don't need to adjust rsm, it did not change */
 				/* Clear out the dup ack count of the remainder */
@@ -8368,8 +10187,21 @@ do_rest_ofb:
 					rack_need_set_test(tp, rack, nrsm, tp->snd_una, __LINE__, RACK_USE_END);
 				changed += (nrsm->r_end - nrsm->r_start);
 				rack->r_ctl.rc_sacked += (nrsm->r_end - nrsm->r_start);
+				if (rsm->r_flags & RACK_WAS_LOST) {
+					int my_chg;
+
+					my_chg = (nrsm->r_end - nrsm->r_start);
+					KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
+						("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+					if (my_chg <= rack->r_ctl.rc_considered_lost)
+						rack->r_ctl.rc_considered_lost -= my_chg;
+					else
+						rack->r_ctl.rc_considered_lost = 0;
+				}
 				if (nrsm->r_flags & RACK_SACK_PASSED) {
 					rack->r_ctl.rc_reorder_ts = cts;
+					if (rack->r_ctl.rc_reorder_ts == 0)
+						rack->r_ctl.rc_reorder_ts = 1;
 				}
 				/*
 				 * Now we want to go up from rsm (the
@@ -8388,7 +10220,7 @@ do_rest_ofb:
 					 * one walk backwards from there.
 					 */
 					if (nrsm && nrsm->r_in_tmap)
-						rack_log_sack_passed(tp, rack, nrsm);
+						rack_log_sack_passed(tp, rack, nrsm, cts);
 				}
 				/* Now are we done? */
 				if (SEQ_LT(end, next->r_end) ||
@@ -8400,7 +10232,7 @@ do_rest_ofb:
 				counter_u64_add(rack_sack_used_next_merge, 1);
 				/* Postion for the next block */
 				start = next->r_end;
-				rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, next);
+				rsm = tqhash_next(rack->r_ctl.tqh, next);
 				if (rsm == NULL)
 					goto out;
 			} else {
@@ -8433,11 +10265,10 @@ do_rest_ofb:
 				rack_clone_rsm(rack, nrsm, rsm, start);
 				rsm->r_just_ret = 0;
 #ifndef INVARIANTS
-				(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+				(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-				insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-				if (insret != NULL) {
-					panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+				if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+					panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 					      nrsm, insret, rack, rsm);
 				}
 #endif
@@ -8453,15 +10284,13 @@ do_rest_ofb:
 		} else {
 			/* Already sacked this piece */
 			counter_u64_add(rack_sack_skipped_acked, 1);
-			moved++;
 			if (end == rsm->r_end) {
 				/* Done with block */
-				rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+				rsm = tqhash_next(rack->r_ctl.tqh, rsm);
 				goto out;
 			} else if (SEQ_LT(end, rsm->r_end)) {
 				/* A partial sack to a already sacked block */
-				moved++;
-				rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+				rsm = tqhash_next(rack->r_ctl.tqh, rsm);
 				goto out;
 			} else {
 				/*
@@ -8470,7 +10299,7 @@ do_rest_ofb:
 				 * next block.
 				 */
 				start = rsm->r_end;
-				rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+				rsm = tqhash_next(rack->r_ctl.tqh, rsm);
 				if (rsm == NULL)
 					goto out;
 			}
@@ -8526,18 +10355,34 @@ do_rest_ofb:
 			}
 			rack_update_rtt(tp, rack, rsm, to, cts, SACKED, 0);
 			changed += (rsm->r_end - rsm->r_start);
+			/* You get a count for acking a whole segment or more */
+			if (rsm->r_flags & RACK_WAS_LOST) {
+				int my_chg;
+
+				my_chg = (rsm->r_end - rsm->r_start);
+				rsm->r_flags &= ~RACK_WAS_LOST;
+				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
+					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+				if (my_chg <= rack->r_ctl.rc_considered_lost)
+					rack->r_ctl.rc_considered_lost -= my_chg;
+				else
+					rack->r_ctl.rc_considered_lost = 0;
+			}
 			rack->r_ctl.rc_sacked += (rsm->r_end - rsm->r_start);
 			if (rsm->r_in_tmap) /* should be true */
-				rack_log_sack_passed(tp, rack, rsm);
+				rack_log_sack_passed(tp, rack, rsm, cts);
 			/* Is Reordering occuring? */
 			if (rsm->r_flags & RACK_SACK_PASSED) {
 				rsm->r_flags &= ~RACK_SACK_PASSED;
 				rack->r_ctl.rc_reorder_ts = cts;
+				if (rack->r_ctl.rc_reorder_ts == 0)
+					rack->r_ctl.rc_reorder_ts = 1;
 			}
 			if (rack->app_limited_needs_set)
 				rack_need_set_test(tp, rack, rsm, tp->snd_una, __LINE__, RACK_USE_END);
 			rsm->r_ack_arrival = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
 			rsm->r_flags |= RACK_ACKED;
+			rack_update_pcm_ack(rack, 0, rsm->r_start, rsm->r_end);
 			if (rsm->r_in_tmap) {
 				TAILQ_REMOVE(&rack->r_ctl.rc_tmap, rsm, r_tnext);
 				rsm->r_in_tmap = 0;
@@ -8545,7 +10390,6 @@ do_rest_ofb:
 			rack_log_map_chg(tp, rack, NULL, rsm, NULL, MAP_SACK_M3, end, __LINE__);
 		} else {
 			counter_u64_add(rack_sack_skipped_acked, 1);
-			moved++;
 		}
 		if (end == rsm->r_end) {
 			/* This block only - done, setup for next */
@@ -8553,9 +10397,9 @@ do_rest_ofb:
 		}
 		/*
 		 * There is more not coverend by this rsm move on
-		 * to the next block in the RB tree.
+		 * to the next block in the tail queue hash table.
 		 */
-		nrsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		nrsm = tqhash_next(rack->r_ctl.tqh, rsm);
 		start = rsm->r_end;
 		rsm = nrsm;
 		if (rsm == NULL)
@@ -8607,8 +10451,24 @@ do_rest_ofb:
 				rack_log_dsack_event(rack, 8, __LINE__, rsm->r_start, rsm->r_end);
 			}
 		}
-		prev = RB_PREV(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		/*
+		 * Hookery can only be used if the two entries
+		 * are in the same bucket and neither one of
+		 * them staddle the bucket line.
+		 */
+		prev = tqhash_prev(rack->r_ctl.tqh, rsm);
 		if (prev &&
+		    (rsm->bindex == prev->bindex) &&
+		    ((rsm->r_flags & RACK_STRADDLE) == 0) &&
+		    ((prev->r_flags & RACK_STRADDLE) == 0) &&
+		    ((rsm->r_flags & RACK_IS_PCM) == 0) &&
+		    ((prev->r_flags & RACK_IS_PCM) == 0) &&
+		    (rsm->r_flags & RACK_IN_GP_WIN) &&
+		    (prev->r_flags & RACK_IN_GP_WIN))
+			can_use_hookery = 1;
+		else
+			can_use_hookery = 0;
+		if (prev && can_use_hookery &&
 		    (prev->r_flags & RACK_ACKED)) {
 			/**
 			 * Goal, we want the right remainder of rsm to shrink
@@ -8629,20 +10489,52 @@ do_rest_ofb:
 			 */
 			nrsm = &stack_map;
 			memcpy(nrsm, rsm, sizeof(struct rack_sendmap));
-			prev->r_end = end;
+			tqhash_update_end(rack->r_ctl.tqh, prev, end);
 			rsm->r_start = end;
+			rsm->r_flags |= RACK_SHUFFLED;
+			prev->r_flags |= RACK_SHUFFLED;
 			/* Now adjust nrsm (stack copy) to be
 			 * the one that is the small
 			 * piece that was "sacked".
 			 */
 			nrsm->r_end = end;
 			rsm->r_dupack = 0;
+			/*
+			 * Which timestamp do we keep? It is rather
+			 * important in GP measurements to have the
+			 * accurate end of the send window.
+			 *
+			 * We keep the largest value, which is the newest
+			 * send. We do this in case a segment that is
+			 * joined together and not part of a GP estimate
+			 * later gets expanded into the GP estimate.
+			 *
+			 * We prohibit the merging of unlike kinds i.e.
+			 * all pieces that are in the GP estimate can be
+			 * merged and all pieces that are not in a GP estimate
+			 * can be merged, but not disimilar pieces. Combine
+			 * this with taking the highest here and we should
+			 * be ok unless of course the client reneges. Then
+			 * all bets are off.
+			 */
+			if(prev->r_tim_lastsent[(prev->r_rtr_cnt-1)] <
+			   nrsm->r_tim_lastsent[(nrsm->r_rtr_cnt-1)]) {
+				prev->r_tim_lastsent[(prev->r_rtr_cnt-1)] = nrsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
+			}
+			/*
+			 * And we must keep the newest ack arrival time.
+			 */
+
+			if(prev->r_ack_arrival <
+			   rack_to_usec_ts(&rack->r_ctl.act_rcv_time))
+				prev->r_ack_arrival = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
+
 			rack_log_retran_reason(rack, rsm, __LINE__, 0, 2);
 			/*
 			 * Now that the rsm has had its start moved forward
 			 * lets go ahead and get its new place in the world.
 			 */
-			rack_setup_offset_for_rsm(prev, rsm);
+			rack_setup_offset_for_rsm(rack, prev, rsm);
 			/*
 			 * Now nrsm is our new little piece
 			 * that is acked (which was merged
@@ -8654,8 +10546,21 @@ do_rest_ofb:
 				rack_need_set_test(tp, rack, nrsm, tp->snd_una, __LINE__, RACK_USE_END);
 			changed += (nrsm->r_end - nrsm->r_start);
 			rack->r_ctl.rc_sacked += (nrsm->r_end - nrsm->r_start);
+			if (rsm->r_flags & RACK_WAS_LOST) {
+				int my_chg;
+
+				my_chg = (nrsm->r_end - nrsm->r_start);
+				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
+					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+				if (my_chg <= rack->r_ctl.rc_considered_lost)
+					rack->r_ctl.rc_considered_lost -= my_chg;
+				else
+					rack->r_ctl.rc_considered_lost = 0;
+			}
 			if (nrsm->r_flags & RACK_SACK_PASSED) {
 				rack->r_ctl.rc_reorder_ts = cts;
+				if (rack->r_ctl.rc_reorder_ts == 0)
+					rack->r_ctl.rc_reorder_ts = 1;
 			}
 			rack_log_map_chg(tp, rack, prev, &stack_map, rsm, MAP_SACK_M4, end, __LINE__);
 			rsm = prev;
@@ -8679,32 +10584,32 @@ do_rest_ofb:
 				 */
 				if (rack->rc_last_tlp_acked_set &&
 				    (is_rsm_inside_declared_tlp_block(rack, rsm))) {
-					    /*
-					     * We already turned this on since this block is inside
-					     * the previous one was a partially sack now we
-					     * are getting another one (maybe all of it).
-					     */
-					    rack_log_dsack_event(rack, 10, __LINE__, rsm->r_start, rsm->r_end);
-					    /*
-					     * Lets make sure we have all of it though.
-					     */
-					    if (SEQ_LT(rsm->r_start, rack->r_ctl.last_tlp_acked_start)) {
-						    rack->r_ctl.last_tlp_acked_start = rsm->r_start;
-						    rack_log_dsack_event(rack, 11, __LINE__, rack->r_ctl.last_tlp_acked_start,
-									 rack->r_ctl.last_tlp_acked_end);
-					    }
-					    if (SEQ_GT(rsm->r_end, rack->r_ctl.last_tlp_acked_end)) {
-						    rack->r_ctl.last_tlp_acked_end = rsm->r_end;
-						    rack_log_dsack_event(rack, 11, __LINE__, rack->r_ctl.last_tlp_acked_start,
-									 rack->r_ctl.last_tlp_acked_end);
-					    }
-				    } else {
-					    rack->r_ctl.last_tlp_acked_start = rsm->r_start;
-					    rack->r_ctl.last_tlp_acked_end = rsm->r_end;
-					    rack->rc_last_tlp_acked_set = 1;
-					    rack->rc_last_tlp_past_cumack = 0;
-					    rack_log_dsack_event(rack, 8, __LINE__, rsm->r_start, rsm->r_end);
-				    }
+					/*
+					 * We already turned this on since this block is inside
+					 * the previous one was a partially sack now we
+					 * are getting another one (maybe all of it).
+					 */
+					rack_log_dsack_event(rack, 10, __LINE__, rsm->r_start, rsm->r_end);
+					/*
+					 * Lets make sure we have all of it though.
+					 */
+					if (SEQ_LT(rsm->r_start, rack->r_ctl.last_tlp_acked_start)) {
+						rack->r_ctl.last_tlp_acked_start = rsm->r_start;
+						rack_log_dsack_event(rack, 11, __LINE__, rack->r_ctl.last_tlp_acked_start,
+								     rack->r_ctl.last_tlp_acked_end);
+					}
+					if (SEQ_GT(rsm->r_end, rack->r_ctl.last_tlp_acked_end)) {
+						rack->r_ctl.last_tlp_acked_end = rsm->r_end;
+						rack_log_dsack_event(rack, 11, __LINE__, rack->r_ctl.last_tlp_acked_start,
+								     rack->r_ctl.last_tlp_acked_end);
+					}
+				} else {
+					rack->r_ctl.last_tlp_acked_start = rsm->r_start;
+					rack->r_ctl.last_tlp_acked_end = rsm->r_end;
+					rack->rc_last_tlp_acked_set = 1;
+					rack->rc_last_tlp_past_cumack = 0;
+					rack_log_dsack_event(rack, 8, __LINE__, rsm->r_start, rsm->r_end);
+				}
 			}
 			/**
 			 * In this case nrsm becomes
@@ -8729,11 +10634,10 @@ do_rest_ofb:
 			rsm->r_flags &= (~RACK_HAS_FIN);
 			rsm->r_just_ret = 0;
 #ifndef INVARIANTS
-			(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+			(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-			insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-			if (insret != NULL) {
-				panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+			if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+				panic("Insert in tailq_hash of %p fails ret:% rack:%p rsm:%p",
 				      nrsm, insret, rack, rsm);
 			}
 #endif
@@ -8745,18 +10649,34 @@ do_rest_ofb:
 			rack_log_retran_reason(rack, nrsm, __LINE__, 0, 2);
 			rack_update_rtt(tp, rack, rsm, to, cts, SACKED, 0);
 			changed += (rsm->r_end - rsm->r_start);
+			if (rsm->r_flags & RACK_WAS_LOST) {
+				int my_chg;
+
+				my_chg = (rsm->r_end - rsm->r_start);
+				rsm->r_flags &= ~RACK_WAS_LOST;
+				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
+					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+				if (my_chg <= rack->r_ctl.rc_considered_lost)
+					rack->r_ctl.rc_considered_lost -= my_chg;
+				else
+					rack->r_ctl.rc_considered_lost = 0;
+			}
 			rack->r_ctl.rc_sacked += (rsm->r_end - rsm->r_start);
+
 			if (rsm->r_in_tmap) /* should be true */
-				rack_log_sack_passed(tp, rack, rsm);
+				rack_log_sack_passed(tp, rack, rsm, cts);
 			/* Is Reordering occuring? */
 			if (rsm->r_flags & RACK_SACK_PASSED) {
 				rsm->r_flags &= ~RACK_SACK_PASSED;
 				rack->r_ctl.rc_reorder_ts = cts;
+				if (rack->r_ctl.rc_reorder_ts == 0)
+					rack->r_ctl.rc_reorder_ts = 1;
 			}
 			if (rack->app_limited_needs_set)
 				rack_need_set_test(tp, rack, rsm, tp->snd_una, __LINE__, RACK_USE_END);
 			rsm->r_ack_arrival = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
 			rsm->r_flags |= RACK_ACKED;
+			rack_update_pcm_ack(rack, 0, rsm->r_start, rsm->r_end);
 			rack_log_map_chg(tp, rack, NULL, rsm, nrsm, MAP_SACK_M5, end, __LINE__);
 			if (rsm->r_in_tmap) {
 				TAILQ_REMOVE(&rack->r_ctl.rc_tmap, rsm, r_tnext);
@@ -8768,7 +10688,6 @@ do_rest_ofb:
 		 * The block was already acked.
 		 */
 		counter_u64_add(rack_sack_skipped_acked, 1);
-		moved++;
 	}
 out:
 	if (rsm &&
@@ -8779,26 +10698,64 @@ out:
 		 * with either the previous or
 		 * next block?
 		 */
-		next = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		next = tqhash_next(rack->r_ctl.tqh, rsm);
 		while (next) {
 			if (next->r_flags & RACK_TLP)
 				break;
+			/* Only allow merges between ones in or out of GP window */
+			if ((next->r_flags & RACK_IN_GP_WIN) &&
+			    ((rsm->r_flags & RACK_IN_GP_WIN) == 0)) {
+				break;
+			}
+			if ((rsm->r_flags & RACK_IN_GP_WIN) &&
+			    ((next->r_flags & RACK_IN_GP_WIN) == 0)) {
+				break;
+			}
+			if (rsm->bindex != next->bindex)
+				break;
+			if (rsm->r_flags & RACK_STRADDLE)
+				break;
+			if (rsm->r_flags & RACK_IS_PCM)
+				break;
+			if (next->r_flags & RACK_STRADDLE)
+				break;
+			if (next->r_flags & RACK_IS_PCM)
+				break;
 			if (next->r_flags & RACK_ACKED) {
-			/* yep this and next can be merged */
+				/* yep this and next can be merged */
 				rsm = rack_merge_rsm(rack, rsm, next);
-				next = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+				next = tqhash_next(rack->r_ctl.tqh, rsm);
 			} else
 				break;
 		}
 		/* Now what about the previous? */
-		prev = RB_PREV(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		prev = tqhash_prev(rack->r_ctl.tqh, rsm);
 		while (prev) {
 			if (prev->r_flags & RACK_TLP)
+				break;
+			/* Only allow merges between ones in or out of GP window */
+			if ((prev->r_flags & RACK_IN_GP_WIN) &&
+			    ((rsm->r_flags & RACK_IN_GP_WIN) == 0)) {
+				break;
+			}
+			if ((rsm->r_flags & RACK_IN_GP_WIN) &&
+			    ((prev->r_flags & RACK_IN_GP_WIN) == 0)) {
+				break;
+			}
+			if (rsm->bindex != prev->bindex)
+				break;
+			if (rsm->r_flags & RACK_STRADDLE)
+				break;
+			if (rsm->r_flags & RACK_IS_PCM)
+				break;
+			if (prev->r_flags & RACK_STRADDLE)
+				break;
+			if (prev->r_flags & RACK_IS_PCM)
 				break;
 			if (prev->r_flags & RACK_ACKED) {
 				/* yep the previous and this can be merged */
 				rsm = rack_merge_rsm(rack, prev, rsm);
-				prev = RB_PREV(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+				prev = tqhash_prev(rack->r_ctl.tqh, rsm);
 			} else
 				break;
 		}
@@ -8809,13 +10766,11 @@ out:
 		counter_u64_add(rack_sack_proc_short, 1);
 	}
 	/* Save off the next one for quick reference. */
-	if (rsm)
-		nrsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-	else
-		nrsm = NULL;
+	nrsm = tqhash_find(rack->r_ctl.tqh, end);
 	*prsm = rack->r_ctl.rc_sacklast = nrsm;
-	/* Pass back the moved. */
-	*moved_two = moved;
+	if (IN_RECOVERY(tp->t_flags)) {
+		rack->r_ctl.bytes_acked_in_recovery += changed;
+	}
 	return (changed);
 }
 
@@ -8844,7 +10799,7 @@ rack_peer_reneges(struct tcp_rack *rack, struct rack_sendmap *rsm, tcp_seq th_ac
 			tmap = rsm;
 		}
 		tmap->r_in_tmap = 1;
-		rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
+		rsm = tqhash_next(rack->r_ctl.tqh, rsm);
 	}
 	/*
 	 * Now lets possibly clear the sack filter so we start
@@ -8854,79 +10809,122 @@ rack_peer_reneges(struct tcp_rack *rack, struct rack_sendmap *rsm, tcp_seq th_ac
 
 }
 
-static void
-rack_do_decay(struct tcp_rack *rack)
+
+static void inline
+rack_rsm_sender_update(struct tcp_rack *rack, struct tcpcb *tp, struct rack_sendmap *rsm, uint8_t from)
 {
-	struct timeval res;
+	/*
+	 * We look at advancing the end send time for our GP
+	 * measurement tracking only as the cumulative acknowledgment
+	 * moves forward. You might wonder about this, why not
+	 * at every transmission or retransmission within the
+	 * GP window update the rc_gp_cumack_ts? Well its rather
+	 * nuanced but basically the GP window *may* expand (as
+	 * it does below) or worse and harder to track it may shrink.
+	 *
+	 * This last makes it impossible to track at the time of
+	 * the send, since you may set forward your rc_gp_cumack_ts
+	 * when you send, because that send *is* in your currently
+	 * "guessed" window, but then it shrinks. Now which was
+	 * the send time of the last bytes in the window, by the
+	 * time you ask that question that part of the sendmap
+	 * is freed. So you don't know and you will have too
+	 * long of send window. Instead by updating the time
+	 * marker only when the cumack advances this assures us
+	 * that we will have only the sends in the window of our
+	 * GP measurement.
+	 *
+	 * Another complication from this is the
+	 * merging of sendmap entries. During SACK processing this
+	 * can happen to conserve the sendmap size. That breaks
+	 * everything down in tracking the send window of the GP
+	 * estimate. So to prevent that and keep it working with
+	 * a tiny bit more limited merging, we only allow like
+	 * types to be merged. I.e. if two sends are in the GP window
+	 * then its ok to merge them together. If two sends are not
+	 * in the GP window its ok to merge them together too. Though
+	 * one send in and one send out cannot be merged. We combine
+	 * this with never allowing the shrinking of the GP window when
+	 * we are in recovery so that we can properly calculate the
+	 * sending times.
+	 *
+	 * This all of course seems complicated, because it is.. :)
+	 *
+	 * The cum-ack is being advanced upon the sendmap.
+	 * If we are not doing a GP estimate don't
+	 * proceed.
+	 */
+	uint64_t ts;
 
-#define	timersub(tvp, uvp, vvp)						\
-	do {								\
-		(vvp)->tv_sec = (tvp)->tv_sec - (uvp)->tv_sec;		\
-		(vvp)->tv_usec = (tvp)->tv_usec - (uvp)->tv_usec;	\
-		if ((vvp)->tv_usec < 0) {				\
-			(vvp)->tv_sec--;				\
-			(vvp)->tv_usec += 1000000;			\
-		}							\
-	} while (0)
-
-	timersub(&rack->r_ctl.act_rcv_time, &rack->r_ctl.rc_last_time_decay, &res);
-#undef timersub
-
-	rack->r_ctl.input_pkt++;
-	if ((rack->rc_in_persist) ||
-	    (res.tv_sec >= 1) ||
-	    (rack->rc_tp->snd_max == rack->rc_tp->snd_una)) {
-		/*
-		 * Check for decay of non-SAD,
-		 * we want all SAD detection metrics to
-		 * decay 1/4 per second (or more) passed.
-		 */
-#ifdef NETFLIX_EXP_DETECTION
-		uint32_t pkt_delta;
-
-		pkt_delta = rack->r_ctl.input_pkt - rack->r_ctl.saved_input_pkt;
-#endif
-		/* Update our saved tracking values */
-		rack->r_ctl.saved_input_pkt = rack->r_ctl.input_pkt;
-		rack->r_ctl.rc_last_time_decay = rack->r_ctl.act_rcv_time;
-		/* Now do we escape without decay? */
-#ifdef NETFLIX_EXP_DETECTION
-		if (rack->rc_in_persist ||
-		    (rack->rc_tp->snd_max == rack->rc_tp->snd_una) ||
-		    (pkt_delta < tcp_sad_low_pps)){
-			/*
-			 * We don't decay idle connections
-			 * or ones that have a low input pps.
-			 */
-			return;
-		}
-		/* Decay the counters */
-		rack->r_ctl.ack_count = ctf_decay_count(rack->r_ctl.ack_count,
-							tcp_sad_decay_val);
-		rack->r_ctl.sack_count = ctf_decay_count(rack->r_ctl.sack_count,
-							 tcp_sad_decay_val);
-		rack->r_ctl.sack_moved_extra = ctf_decay_count(rack->r_ctl.sack_moved_extra,
-							       tcp_sad_decay_val);
-		rack->r_ctl.sack_noextra_move = ctf_decay_count(rack->r_ctl.sack_noextra_move,
-								tcp_sad_decay_val);
-#endif
+	if ((tp->t_flags & TF_GPUTINPROG) == 0)
+		return;
+	/*
+	 * If this sendmap entry is going
+	 * beyond the measurement window we had picked,
+	 * expand the measurement window by that much.
+	 */
+	if (SEQ_GT(rsm->r_end, tp->gput_ack)) {
+		tp->gput_ack = rsm->r_end;
+	}
+	/*
+	 * If we have not setup a ack, then we
+	 * have no idea if the newly acked pieces
+	 * will be "in our seq measurement range". If
+	 * it is when we clear the app_limited_needs_set
+	 * flag the timestamp will be updated.
+	 */
+	if (rack->app_limited_needs_set)
+		return;
+	/*
+	 * Finally, we grab out the latest timestamp
+	 * that this packet was sent and then see
+	 * if:
+	 *  a) The packet touches are newly defined GP range.
+	 *  b) The time is greater than (newer) than the
+	 *     one we currently have. If so we update
+	 *     our sending end time window.
+	 *
+	 * Note we *do not* do this at send time. The reason
+	 * is that if you do you *may* pick up a newer timestamp
+	 * for a range you are not going to measure. We project
+	 * out how far and then sometimes modify that to be
+	 * smaller. If that occurs then you will have a send
+	 * that does not belong to the range included.
+	 */
+	if ((ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)]) <=
+	    rack->r_ctl.rc_gp_cumack_ts)
+		return;
+	if (rack_in_gp_window(tp, rsm)) {
+		rack->r_ctl.rc_gp_cumack_ts = ts;
+		rack_log_gpset(rack, tp->gput_ack, (uint32_t)ts, rsm->r_end,
+			       __LINE__, from, rsm);
 	}
 }
 
 static void
-rack_process_to_cumack(struct tcpcb *tp, struct tcp_rack *rack, register uint32_t th_ack, uint32_t cts, struct tcpopt *to)
+rack_process_to_cumack(struct tcpcb *tp, struct tcp_rack *rack, register uint32_t th_ack, uint32_t cts, struct tcpopt *to, uint64_t acktime)
 {
 	struct rack_sendmap *rsm;
-#ifdef INVARIANTS
-	struct rack_sendmap *rm;
-#endif
-
 	/*
 	 * The ACK point is advancing to th_ack, we must drop off
 	 * the packets in the rack log and calculate any eligble
 	 * RTT's.
 	 */
+
+	if (sack_filter_blks_used(&rack->r_ctl.rack_sf)) {
+		/*
+		 * If we have some sack blocks in the filter
+		 * lets prune them out by calling sfb with no blocks.
+		 */
+		sack_filter_blks(tp, &rack->r_ctl.rack_sf, NULL, 0, th_ack);
+	}
+	if (SEQ_GT(th_ack, tp->snd_una)) {
+		/* Clear any app ack remembered settings */
+		rack->r_ctl.cleared_app_ack = 0;
+	}
 	rack->r_wanted_output = 1;
+	if (SEQ_GT(th_ack, tp->snd_una))
+		rack->r_ctl.last_cumack_advance = acktime;
 
 	/* Tend any TLP that has been marked for 1/2 the seq space (its old)  */
 	if ((rack->rc_last_tlp_acked_set == 1)&&
@@ -8977,7 +10975,7 @@ rack_process_to_cumack(struct tcpcb *tp, struct tcp_rack *rack, register uint32_
 		rack->rc_last_sent_tlp_past_cumack = 1;
 	}
 more:
-	rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+	rsm = tqhash_min(rack->r_ctl.tqh);
 	if (rsm == NULL) {
 		if ((th_ack - 1) == tp->iss) {
 			/*
@@ -8993,10 +10991,10 @@ more:
 			return;
 		}
 #ifdef INVARIANTS
-		panic("No rack map tp:%p for state:%d ack:%u rack:%p snd_una:%u snd_max:%u snd_nxt:%u\n",
+		panic("No rack map tp:%p for state:%d ack:%u rack:%p snd_una:%u snd_max:%u\n",
 		      tp,
 		      tp->t_state, th_ack, rack,
-		      tp->snd_una, tp->snd_max, tp->snd_nxt);
+		      tp->snd_una, tp->snd_max);
 #endif
 		return;
 	}
@@ -9053,30 +11051,44 @@ more:
 		}
 	}
 	/* Now do we consume the whole thing? */
+	rack->r_ctl.last_tmit_time_acked = rsm->r_tim_lastsent[(rsm->r_rtr_cnt - 1)];
 	if (SEQ_GEQ(th_ack, rsm->r_end)) {
 		/* Its all consumed. */
 		uint32_t left;
 		uint8_t newly_acked;
 
+		if (rsm->r_flags & RACK_WAS_LOST) {
+			/*
+			 * This can happen when we marked it as lost
+			 * and yet before retransmitting we get an ack
+			 * which can happen due to reordering.
+			 */
+			rsm->r_flags  &= ~RACK_WAS_LOST;
+			KASSERT((rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start)),
+				("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+			if (rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start))
+				rack->r_ctl.rc_considered_lost -= rsm->r_end - rsm->r_start;
+			else
+				rack->r_ctl.rc_considered_lost = 0;
+		}
 		rack_log_map_chg(tp, rack, NULL, rsm, NULL, MAP_FREE, rsm->r_end, __LINE__);
 		rack->r_ctl.rc_holes_rxt -= rsm->r_rtr_bytes;
 		rsm->r_rtr_bytes = 0;
-		/* Record the time of highest cumack sent */
-		rack->r_ctl.rc_gp_cumack_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
-#ifndef INVARIANTS
-		(void)RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-#else
-		rm = RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-		if (rm != rsm) {
-			panic("removing head in rack:%p rsm:%p rm:%p",
-			      rack, rsm, rm);
-		}
-#endif
+		/*
+		 * Record the time of highest cumack sent if its in our measurement
+		 * window and possibly bump out the end.
+		 */
+		rack_rsm_sender_update(rack, tp, rsm, 4);
+		tqhash_remove(rack->r_ctl.tqh, rsm, REMOVE_TYPE_CUMACK);
 		if (rsm->r_in_tmap) {
 			TAILQ_REMOVE(&rack->r_ctl.rc_tmap, rsm, r_tnext);
 			rsm->r_in_tmap = 0;
 		}
 		newly_acked = 1;
+		if (((rsm->r_flags & RACK_ACKED) == 0) &&
+		    (IN_RECOVERY(tp->t_flags))) {
+			rack->r_ctl.bytes_acked_in_recovery += (rsm->r_end - rsm->r_start);
+		}
 		if (rsm->r_flags & RACK_ACKED) {
 			/*
 			 * It was acked on the scoreboard -- remove
@@ -9094,6 +11106,8 @@ more:
 			rsm->r_ack_arrival = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
 			rsm->r_flags |= RACK_ACKED;
 			rack->r_ctl.rc_reorder_ts = cts;
+			if (rack->r_ctl.rc_reorder_ts == 0)
+				rack->r_ctl.rc_reorder_ts = 1;
 			if (rack->r_ent_rec_ns) {
 				/*
 				 * We have sent no more, and we saw an sack
@@ -9101,6 +11115,9 @@ more:
 				 */
 				rack->r_might_revert = 1;
 			}
+			rack_update_pcm_ack(rack, 1, rsm->r_start, rsm->r_end);
+		} else {
+			rack_update_pcm_ack(rack, 1, rsm->r_start, rsm->r_end);
 		}
 		if ((rsm->r_flags & RACK_TO_REXT) &&
 		    (tp->t_flags & TF_RCVD_TSTMP) &&
@@ -9127,7 +11144,7 @@ more:
 			goto more;
 		}
 		/* Check for reneging */
-		rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+		rsm = tqhash_min(rack->r_ctl.tqh);
 		if (rsm && (rsm->r_flags & RACK_ACKED) && (th_ack == rsm->r_start)) {
 			/*
 			 * The peer has moved snd_una up to
@@ -9153,6 +11170,27 @@ more:
 		 * total for the part being cum-acked.
 		 */
 		rack->r_ctl.rc_sacked -= (th_ack - rsm->r_start);
+	} else {
+		if (((rsm->r_flags & RACK_ACKED) == 0) &&
+		    (IN_RECOVERY(tp->t_flags))) {
+			rack->r_ctl.bytes_acked_in_recovery += (th_ack - rsm->r_start);
+		}
+		rack_update_pcm_ack(rack, 1, rsm->r_start, th_ack);
+	}
+	/* And what about the lost flag? */
+	if (rsm->r_flags & RACK_WAS_LOST) {
+		/*
+		 * This can happen when we marked it as lost
+		 * and yet before retransmitting we get an ack
+		 * which can happen due to reordering. In this
+		 * case its only a partial ack of the send.
+		 */
+		KASSERT((rack->r_ctl.rc_considered_lost >= (th_ack - rsm->r_start)),
+			("rsm:%p rack:%p rc_considered_lost goes negative th_ack:%u", rsm,  rack, th_ack));
+		if (rack->r_ctl.rc_considered_lost >= (th_ack - rsm->r_start))
+			rack->r_ctl.rc_considered_lost -= th_ack - rsm->r_start;
+		else
+			rack->r_ctl.rc_considered_lost = 0;
 	}
 	/*
 	 * Clear the dup ack count for
@@ -9175,29 +11213,62 @@ more:
 	}
 	/*
 	 * Update where the piece starts and record
-	 * the time of send of highest cumack sent.
+	 * the time of send of highest cumack sent if
+	 * its in our GP range.
 	 */
-	rack->r_ctl.rc_gp_cumack_ts = rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)];
 	rack_log_map_chg(tp, rack, NULL, rsm, NULL, MAP_TRIM_HEAD, th_ack, __LINE__);
 	/* Now we need to move our offset forward too */
-	if (rsm->m && (rsm->orig_m_len != rsm->m->m_len)) {
+	if (rsm->m &&
+	    ((rsm->orig_m_len != rsm->m->m_len) ||
+	     (M_TRAILINGROOM(rsm->m) != rsm->orig_t_space))) {
 		/* Fix up the orig_m_len and possibly the mbuf offset */
 		rack_adjust_orig_mlen(rsm);
 	}
 	rsm->soff += (th_ack - rsm->r_start);
-	rsm->r_start = th_ack;
+	rack_rsm_sender_update(rack, tp, rsm, 5);
+	/* The trim will move th_ack into r_start for us */
+	tqhash_trim(rack->r_ctl.tqh, th_ack);
 	/* Now do we need to move the mbuf fwd too? */
-	if (rsm->m) {
-		while (rsm->soff >= rsm->m->m_len) {
-			rsm->soff -= rsm->m->m_len;
-			rsm->m = rsm->m->m_next;
-			KASSERT((rsm->m != NULL),
-				(" nrsm:%p hit at soff:%u null m",
-				 rsm, rsm->soff));
+	{
+		struct mbuf *m;
+		uint32_t soff;
+
+		m = rsm->m;
+		soff = rsm->soff;
+		if (m) {
+			while (soff >= m->m_len) {
+				soff -= m->m_len;
+				KASSERT((m->m_next != NULL),
+					(" rsm:%p  off:%u soff:%u m:%p",
+					 rsm, rsm->soff, soff, m));
+				m = m->m_next;
+				if (m == NULL) {
+					/*
+					 * This is a fall-back that prevents a panic. In reality
+					 * we should be able to walk the mbuf's and find our place.
+					 * At this point snd_una has not been updated with the sbcut() yet
+					 * but tqhash_trim did update rsm->r_start so the offset calcuation
+					 * should work fine. This is undesirable since we will take cache
+					 * hits to access the socket buffer. And even more puzzling is that
+					 * it happens occasionally. It should not :(
+					 */
+					m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd,
+						      (rsm->r_start - tp->snd_una),
+						      &soff);
+					break;
+				}
+			}
+			/*
+			 * Now save in our updated values.
+			 */
+			rsm->m = m;
+			rsm->soff = soff;
+			rsm->orig_m_len = rsm->m->m_len;
+			rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
 		}
-		rsm->orig_m_len = rsm->m->m_len;
 	}
-	if (rack->app_limited_needs_set)
+	if (rack->app_limited_needs_set &&
+	    SEQ_GEQ(th_ack, tp->gput_seq))
 		rack_need_set_test(tp, rack, rsm, tp->snd_una, __LINE__, RACK_USE_BEG);
 }
 
@@ -9236,99 +11307,31 @@ rack_handle_might_revert(struct tcpcb *tp, struct tcp_rack *rack)
 			tp->snd_ssthresh = rack->r_ctl.rc_ssthresh_at_erec;
 			tp->snd_recover = tp->snd_una;
 			rack_log_to_prr(rack, 14, orig_cwnd, __LINE__);
-			EXIT_RECOVERY(tp->t_flags);
+			if (IN_RECOVERY(tp->t_flags)) {
+				rack_exit_recovery(tp, rack, 3);
+				if ((rack->rto_from_rec == 1) && (rack_ssthresh_rest_rto_rec != 0) ){
+					/*
+					 * We were in recovery, had an RTO
+					 * and then re-entered recovery (more sack's arrived)
+					 * and we have properly recorded the old ssthresh from
+					 * the first recovery. We want to be able to slow-start
+					 * back to this level. The ssthresh from the timeout
+					 * and then back into recovery will end up most likely
+					 * to be min(cwnd=1mss, 2mss). Which makes it basically
+					 * so we get no slow-start after our RTO.
+					 */
+					rack->rto_from_rec = 0;
+					if (rack->r_ctl.rto_ssthresh > tp->snd_ssthresh)
+						tp->snd_ssthresh = rack->r_ctl.rto_ssthresh;
+				}
+			}
+			rack->r_ctl.bytes_acked_in_recovery = 0;
+			rack->r_ctl.time_entered_recovery = 0;
 		}
 		rack->r_might_revert = 0;
 	}
 }
 
-#ifdef NETFLIX_EXP_DETECTION
-static void
-rack_do_detection(struct tcpcb *tp, struct tcp_rack *rack,  uint32_t bytes_this_ack, uint32_t segsiz)
-{
-	if ((rack->do_detection || tcp_force_detection) &&
-	    tcp_sack_to_ack_thresh &&
-	    tcp_sack_to_move_thresh &&
-	    ((rack->r_ctl.rc_num_maps_alloced > tcp_map_minimum) || rack->sack_attack_disable)) {
-		/*
-		 * We have thresholds set to find
-		 * possible attackers and disable sack.
-		 * Check them.
-		 */
-		uint64_t ackratio, moveratio, movetotal;
-
-		/* Log detecting */
-		rack_log_sad(rack, 1);
-		ackratio = (uint64_t)(rack->r_ctl.sack_count);
-		ackratio *= (uint64_t)(1000);
-		if (rack->r_ctl.ack_count)
-			ackratio /= (uint64_t)(rack->r_ctl.ack_count);
-		else {
-			/* We really should not hit here */
-			ackratio = 1000;
-		}
-		if ((rack->sack_attack_disable == 0) &&
-		    (ackratio > rack_highest_sack_thresh_seen))
-			rack_highest_sack_thresh_seen = (uint32_t)ackratio;
-		movetotal = rack->r_ctl.sack_moved_extra;
-		movetotal += rack->r_ctl.sack_noextra_move;
-		moveratio = rack->r_ctl.sack_moved_extra;
-		moveratio *= (uint64_t)1000;
-		if (movetotal)
-			moveratio /= movetotal;
-		else {
-			/* No moves, thats pretty good */
-			moveratio = 0;
-		}
-		if ((rack->sack_attack_disable == 0) &&
-		    (moveratio > rack_highest_move_thresh_seen))
-			rack_highest_move_thresh_seen = (uint32_t)moveratio;
-		if (rack->sack_attack_disable == 0) {
-			if ((ackratio > tcp_sack_to_ack_thresh) &&
-			    (moveratio > tcp_sack_to_move_thresh)) {
-				/* Disable sack processing */
-				rack->sack_attack_disable = 1;
-				if (rack->r_rep_attack == 0) {
-					rack->r_rep_attack = 1;
-					counter_u64_add(rack_sack_attacks_detected, 1);
-				}
-				if (tcp_attack_on_turns_on_logging) {
-					/*
-					 * Turn on logging, used for debugging
-					 * false positives.
-					 */
-					rack->rc_tp->t_logstate = tcp_attack_on_turns_on_logging;
-				}
-				/* Clamp the cwnd at flight size */
-				rack->r_ctl.rc_saved_cwnd = rack->rc_tp->snd_cwnd;
-				rack->rc_tp->snd_cwnd = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
-				rack_log_sad(rack, 2);
-			}
-		} else {
-			/* We are sack-disabled check for false positives */
-			if ((ackratio <= tcp_restoral_thresh) ||
-			    (rack->r_ctl.rc_num_maps_alloced  < tcp_map_minimum)) {
-				rack->sack_attack_disable = 0;
-				rack_log_sad(rack, 3);
-				/* Restart counting */
-				rack->r_ctl.sack_count = 0;
-				rack->r_ctl.sack_moved_extra = 0;
-				rack->r_ctl.sack_noextra_move = 1;
-				rack->r_ctl.ack_count = max(1,
-				      (bytes_this_ack / segsiz));
-
-				if (rack->r_rep_reverse == 0) {
-					rack->r_rep_reverse = 1;
-					counter_u64_add(rack_sack_attacks_reversed, 1);
-				}
-				/* Restore the cwnd */
-				if (rack->r_ctl.rc_saved_cwnd > rack->rc_tp->snd_cwnd)
-					rack->rc_tp->snd_cwnd = rack->r_ctl.rc_saved_cwnd;
-			}
-		}
-	}
-}
-#endif
 
 static int
 rack_note_dsack(struct tcp_rack *rack, tcp_seq start, tcp_seq end)
@@ -9396,6 +11399,21 @@ skip_dsack_round:
 	return (was_tlp);
 }
 
+static uint32_t
+do_rack_compute_pipe(struct tcpcb *tp, struct tcp_rack *rack, uint32_t snd_una)
+{
+	return (((tp->snd_max - snd_una) -
+		 (rack->r_ctl.rc_sacked + rack->r_ctl.rc_considered_lost)) + rack->r_ctl.rc_holes_rxt);
+}
+
+static int32_t
+rack_compute_pipe(struct tcpcb *tp)
+{
+	return ((int32_t)do_rack_compute_pipe(tp,
+					      (struct tcp_rack *)tp->t_fb_ptr,
+					      tp->snd_una));
+}
+
 static void
 rack_update_prr(struct tcpcb *tp, struct tcp_rack *rack, uint32_t changed, tcp_seq th_ack)
 {
@@ -9420,7 +11438,7 @@ rack_update_prr(struct tcpcb *tp, struct tcp_rack *rack, uint32_t changed, tcp_s
 	} else {
 		snd_una = th_ack;
 	}
-	pipe = ((tp->snd_max - snd_una) - rack->r_ctl.rc_sacked) + rack->r_ctl.rc_holes_rxt;
+	pipe = do_rack_compute_pipe(tp, rack, snd_una);
 	if (pipe > tp->snd_ssthresh) {
 		long sndcnt;
 
@@ -9460,7 +11478,8 @@ rack_update_prr(struct tcpcb *tp, struct tcp_rack *rack, uint32_t changed, tcp_s
 }
 
 static void
-rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered_recovery, int dup_ack_struck)
+rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered_recovery, int dup_ack_struck,
+	     int *dsack_seen, int *sacks_seen)
 {
 	uint32_t changed;
 	struct tcp_rack *rack;
@@ -9469,23 +11488,23 @@ rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered
 	register uint32_t th_ack;
 	int32_t i, j, k, num_sack_blks = 0;
 	uint32_t cts, acked, ack_point;
-	int loop_start = 0, moved_two = 0;
+	int loop_start = 0;
 	uint32_t tsused;
+	uint32_t segsiz;
 
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 	if (tcp_get_flags(th) & TH_RST) {
 		/* We don't log resets */
 		return;
 	}
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	cts = tcp_get_usecs(NULL);
-	rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+	rsm = tqhash_min(rack->r_ctl.tqh);
 	changed = 0;
 	th_ack = th->th_ack;
-	if (rack->sack_attack_disable == 0)
-		rack_do_decay(rack);
-	if (BYTES_THIS_ACK(tp, th) >= ctf_fixed_maxseg(rack->rc_tp)) {
+	segsiz = ctf_fixed_maxseg(rack->rc_tp);
+	if (BYTES_THIS_ACK(tp, th) >=  segsiz) {
 		/*
 		 * You only get credit for
 		 * MSS and greater (and you get extra
@@ -9494,16 +11513,7 @@ rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered
 		int ac;
 
 		ac = BYTES_THIS_ACK(tp, th) / ctf_fixed_maxseg(rack->rc_tp);
-		rack->r_ctl.ack_count += ac;
 		counter_u64_add(rack_ack_total, ac);
-	}
-	if (rack->r_ctl.ack_count > 0xfff00000) {
-		/*
-		 * reduce the number to keep us under
-		 * a uint32_t.
-		 */
-		rack->r_ctl.ack_count /= 2;
-		rack->r_ctl.sack_count /= 2;
 	}
 	if (SEQ_GT(th_ack, tp->snd_una)) {
 		rack_log_progress_event(rack, tp, ticks, PROGRESS_UPDATE, __LINE__);
@@ -9512,7 +11522,8 @@ rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered
 	if (rsm && SEQ_GT(th_ack, rsm->r_start))
 		changed = th_ack - rsm->r_start;
 	if (changed) {
-		rack_process_to_cumack(tp, rack, th_ack, cts, to);
+		rack_process_to_cumack(tp, rack, th_ack, cts, to,
+				       tcp_tv_to_lusectick(&rack->r_ctl.act_rcv_time));
 	}
 	if ((to->to_flags & TOF_SACK) == 0) {
 		/* We are done nothing left and no sack. */
@@ -9548,6 +11559,8 @@ rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered
 			   SEQ_LEQ(sack.end, th_ack)) {
 			int was_tlp;
 
+			if (dsack_seen != NULL)
+				*dsack_seen = 1;
 			was_tlp = rack_note_dsack(rack, sack.start, sack.end);
 			/*
 			 * Its a D-SACK block.
@@ -9567,13 +11580,16 @@ rack_log_ack(struct tcpcb *tp, struct tcpopt *to, struct tcphdr *th, int entered
 	 * Sort the SACK blocks so we can update the rack scoreboard with
 	 * just one pass.
 	 */
-	num_sack_blks = sack_filter_blks(&rack->r_ctl.rack_sf, sack_blocks,
+	num_sack_blks = sack_filter_blks(tp, &rack->r_ctl.rack_sf, sack_blocks,
 					 num_sack_blks, th->th_ack);
 	ctf_log_sack_filter(rack->rc_tp, num_sack_blks, sack_blocks);
+	if (sacks_seen != NULL)
+		*sacks_seen = num_sack_blks;
 	if (num_sack_blks == 0) {
-		/* Nothing to sack (DSACKs?) */
+		/* Nothing to sack, but we need to update counts */
 		goto out_with_totals;
 	}
+	/* Its a sack of some sort */
 	if (num_sack_blks < 2) {
 		/* Only one, we don't need to sort */
 		goto do_sack_work;
@@ -9641,7 +11657,7 @@ do_sack_work:
 		 * We probably did the FR and the next
 		 * SACK in continues as we would expect.
 		 */
-		acked = rack_proc_sack_blk(tp, rack, &sack_blocks[0], to, &rsm, cts, &moved_two);
+		acked = rack_proc_sack_blk(tp, rack, &sack_blocks[0], to, &rsm, cts, segsiz);
 		if (acked) {
 			rack->r_wanted_output = 1;
 			changed += acked;
@@ -9657,101 +11673,25 @@ do_sack_work:
 			 * are acked). Count this as ACK'd data to boost
 			 * up the chances of recovering any false positives.
 			 */
-			rack->r_ctl.ack_count += (acked / ctf_fixed_maxseg(rack->rc_tp));
 			counter_u64_add(rack_ack_total, (acked / ctf_fixed_maxseg(rack->rc_tp)));
 			counter_u64_add(rack_express_sack, 1);
-			if (rack->r_ctl.ack_count > 0xfff00000) {
-				/*
-				 * reduce the number to keep us under
-				 * a uint32_t.
-				 */
-				rack->r_ctl.ack_count /= 2;
-				rack->r_ctl.sack_count /= 2;
-			}
 			goto out_with_totals;
 		} else {
 			/*
 			 * Start the loop through the
 			 * rest of blocks, past the first block.
 			 */
-			moved_two = 0;
 			loop_start = 1;
 		}
 	}
-	/* Its a sack of some sort */
-	rack->r_ctl.sack_count++;
-	if (rack->r_ctl.sack_count > 0xfff00000) {
-		/*
-		 * reduce the number to keep us under
-		 * a uint32_t.
-		 */
-		rack->r_ctl.ack_count /= 2;
-		rack->r_ctl.sack_count /= 2;
-	}
 	counter_u64_add(rack_sack_total, 1);
-	if (rack->sack_attack_disable) {
-		/* An attacker disablement is in place */
-		if (num_sack_blks > 1) {
-			rack->r_ctl.sack_count += (num_sack_blks - 1);
-			rack->r_ctl.sack_moved_extra++;
-			counter_u64_add(rack_move_some, 1);
-			if (rack->r_ctl.sack_moved_extra > 0xfff00000) {
-				rack->r_ctl.sack_moved_extra /= 2;
-				rack->r_ctl.sack_noextra_move /= 2;
-			}
-		}
-		goto out;
-	}
 	rsm = rack->r_ctl.rc_sacklast;
 	for (i = loop_start; i < num_sack_blks; i++) {
-		acked = rack_proc_sack_blk(tp, rack, &sack_blocks[i], to, &rsm, cts, &moved_two);
+		acked = rack_proc_sack_blk(tp, rack, &sack_blocks[i], to, &rsm, cts,  segsiz);
 		if (acked) {
 			rack->r_wanted_output = 1;
 			changed += acked;
 		}
-		if (moved_two) {
-			/*
-			 * If we did not get a SACK for at least a MSS and
-			 * had to move at all, or if we moved more than our
-			 * threshold, it counts against the "extra" move.
-			 */
-			rack->r_ctl.sack_moved_extra += moved_two;
-			counter_u64_add(rack_move_some, 1);
-		} else {
-			/*
-			 * else we did not have to move
-			 * any more than we would expect.
-			 */
-			rack->r_ctl.sack_noextra_move++;
-			counter_u64_add(rack_move_none, 1);
-		}
-		if (moved_two && (acked < ctf_fixed_maxseg(rack->rc_tp))) {
-			/*
-			 * If the SACK was not a full MSS then
-			 * we add to sack_count the number of
-			 * MSS's (or possibly more than
-			 * a MSS if its a TSO send) we had to skip by.
-			 */
-			rack->r_ctl.sack_count += moved_two;
-			counter_u64_add(rack_sack_total, moved_two);
-		}
-		/*
-		 * Now we need to setup for the next
-		 * round. First we make sure we won't
-		 * exceed the size of our uint32_t on
-		 * the various counts, and then clear out
-		 * moved_two.
-		 */
-		if ((rack->r_ctl.sack_moved_extra > 0xfff00000) ||
-		    (rack->r_ctl.sack_noextra_move > 0xfff00000)) {
-			rack->r_ctl.sack_moved_extra /= 2;
-			rack->r_ctl.sack_noextra_move /= 2;
-		}
-		if (rack->r_ctl.sack_count > 0xfff00000) {
-			rack->r_ctl.ack_count /= 2;
-			rack->r_ctl.sack_count /= 2;
-		}
-		moved_two = 0;
 	}
 out_with_totals:
 	if (num_sack_blks > 1) {
@@ -9763,13 +11703,9 @@ out_with_totals:
 		 * it could be an attacker constantly
 		 * moving us.
 		 */
-		rack->r_ctl.sack_moved_extra++;
 		counter_u64_add(rack_move_some, 1);
 	}
 out:
-#ifdef NETFLIX_EXP_DETECTION
-	rack_do_detection(tp, rack, BYTES_THIS_ACK(tp, th), ctf_fixed_maxseg(rack->rc_tp));
-#endif
 	if (changed) {
 		/* Something changed cancel the rack timer */
 		rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
@@ -9781,7 +11717,7 @@ out:
 	    ((rsm->r_flags & RACK_MUST_RXT) == 0)) {
 		/* Enter recovery */
 		entered_recovery = 1;
-		rack_cong_signal(tp, CC_NDUPACK, tp->snd_una, __LINE__);
+		rack_cong_signal(tp, CC_NDUPACK, th_ack, __LINE__);
 		/*
 		 * When we enter recovery we need to assure we send
 		 * one packet.
@@ -9809,7 +11745,7 @@ out:
 	    (entered_recovery == 0)) {
 		rack_update_prr(tp, rack, changed, th_ack);
 		if ((rsm && (rack->r_ctl.rc_prr_sndcnt >= ctf_fixed_maxseg(tp)) &&
-		     ((tcp_in_hpts(rack->rc_inp) == 0) &&
+		     ((tcp_in_hpts(rack->rc_tp) == 0) &&
 		      ((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) == 0)))) {
 			/*
 			 * If you are pacing output you don't want
@@ -9823,26 +11759,22 @@ out:
 }
 
 static void
-rack_strike_dupack(struct tcp_rack *rack)
+rack_strike_dupack(struct tcp_rack *rack, tcp_seq th_ack)
 {
 	struct rack_sendmap *rsm;
 
 	rsm = TAILQ_FIRST(&rack->r_ctl.rc_tmap);
-	while (rsm && (rsm->r_dupack >= DUP_ACK_THRESHOLD)) {
-		rsm = TAILQ_NEXT(rsm, r_tnext);
-		if (rsm->r_flags & RACK_MUST_RXT) {
-			/* Sendmap entries that are marked to
-			 * be retransmitted do not need dupack's
-			 * struck. We get these marks for a number
-			 * of reasons (rxt timeout with no sack,
-			 * mtu change, or rwnd collapses). When
-			 * these events occur, we know we must retransmit
-			 * them and mark the sendmap entries. Dupack counting
-			 * is not needed since we are already set to retransmit
-			 * it as soon as we can.
-			 */
+	while (rsm) {
+		/*
+		 * We need to skip anything already set
+		 * to be retransmitted.
+		 */
+		if ((rsm->r_dupack >= DUP_ACK_THRESHOLD)  ||
+		    (rsm->r_flags & RACK_MUST_RXT)) {
+			rsm = TAILQ_NEXT(rsm, r_tnext);
 			continue;
 		}
+		break;
 	}
 	if (rsm && (rsm->r_dupack < 0xff)) {
 		rsm->r_dupack++;
@@ -9861,7 +11793,7 @@ rack_strike_dupack(struct tcp_rack *rack)
 			if (rack->r_ctl.rc_resend != NULL) {
 				if (!IN_FASTRECOVERY(rack->rc_tp->t_flags)) {
 					rack_cong_signal(rack->rc_tp, CC_NDUPACK,
-							 rack->rc_tp->snd_una, __LINE__);
+							 th_ack,  __LINE__);
 				}
 				rack->r_wanted_output = 1;
 				rack->r_timer_override = 1;
@@ -9876,13 +11808,31 @@ rack_strike_dupack(struct tcp_rack *rack)
 static void
 rack_check_bottom_drag(struct tcpcb *tp,
 		       struct tcp_rack *rack,
-		       struct socket *so, int32_t acked)
+		       struct socket *so)
 {
+	/*
+	 * So what is dragging bottom?
+	 *
+	 * Dragging bottom means you were under pacing and had a
+	 * delay in processing inbound acks waiting on our pacing
+	 * timer to expire. While you were waiting all of the acknowledgments
+	 * for the packets you sent have arrived. This means we are pacing
+	 * way underneath the bottleneck to the point where our Goodput
+	 * measurements stop working, since they require more than one
+	 * ack (usually at least 8 packets worth with multiple acks so we can
+	 * gauge the inter-ack times). If that occurs we have a real problem
+	 * since we are stuck in a hole that we can't get out of without
+	 * something speeding us up.
+	 *
+	 * We also check to see if we are widdling down to just one segment
+	 * outstanding. If this occurs and we have room to send in our cwnd/rwnd
+	 * then we are adding the delayed ack interval into our measurments and
+	 * we need to speed up slightly.
+	 */
 	uint32_t segsiz, minseg;
 
 	segsiz = ctf_fixed_maxseg(tp);
 	minseg = segsiz;
-
 	if (tp->snd_max == tp->snd_una) {
 		/*
 		 * We are doing dynamic pacing and we are way
@@ -9893,43 +11843,22 @@ rack_check_bottom_drag(struct tcpcb *tp,
 		 * addition to any earlier boosting of
 		 * the multiplier.
 		 */
+		uint64_t lt_bw;
+
+		tcp_trace_point(rack->rc_tp, TCP_TP_PACED_BOTTOM);
+		lt_bw = rack_get_lt_bw(rack);
 		rack->rc_dragged_bottom = 1;
 		rack_validate_multipliers_at_or_above100(rack);
-		/*
-		 * Lets use the segment bytes acked plus
-		 * the lowest RTT seen as the basis to
-		 * form a b/w estimate. This will be off
-		 * due to the fact that the true estimate
-		 * should be around 1/2 the time of the RTT
-		 * but we can settle for that.
-		 */
 		if ((rack->r_ctl.rack_rs.rs_flags & RACK_RTT_VALID) &&
-		    acked) {
-			uint64_t bw, calc_bw, rtt;
-
-			rtt = rack->r_ctl.rack_rs.rs_us_rtt;
-			if (rtt == 0) {
-				/* no us sample is there a ms one? */
-				if (rack->r_ctl.rack_rs.rs_rtt_lowest) {
-					rtt = rack->r_ctl.rack_rs.rs_rtt_lowest;
-				} else {
-					goto no_measurement;
-				}
-			}
-			bw = acked;
-			calc_bw = bw * 1000000;
-			calc_bw /= rtt;
-			if (rack->r_ctl.last_max_bw &&
-			    (rack->r_ctl.last_max_bw < calc_bw)) {
-				/*
-				 * If we have a last calculated max bw
-				 * enforce it.
-				 */
-				calc_bw = rack->r_ctl.last_max_bw;
-			}
-			/* now plop it in */
+		    (rack->dis_lt_bw == 0) &&
+		    (rack->use_lesser_lt_bw == 0) &&
+		    (lt_bw > 0)) {
+			/*
+			 * Lets use the long-term b/w we have
+			 * been getting as a base.
+			 */
 			if (rack->rc_gp_filled == 0) {
-				if (calc_bw > ONE_POINT_TWO_MEG) {
+				if (lt_bw > ONE_POINT_TWO_MEG) {
 					/*
 					 * If we have no measurement
 					 * don't let us set in more than
@@ -9938,19 +11867,19 @@ rack_check_bottom_drag(struct tcpcb *tp,
 					 * will hopefully have a max b/w
 					 * available to sanity check things.
 					 */
-					calc_bw = ONE_POINT_TWO_MEG;
+					lt_bw = ONE_POINT_TWO_MEG;
 				}
 				rack->r_ctl.rc_rtt_diff = 0;
-				rack->r_ctl.gp_bw = calc_bw;
+				rack->r_ctl.gp_bw = lt_bw;
 				rack->rc_gp_filled = 1;
 				if (rack->r_ctl.num_measurements < RACK_REQ_AVG)
 					rack->r_ctl.num_measurements = RACK_REQ_AVG;
 				rack_set_pace_segments(rack->rc_tp, rack, __LINE__, NULL);
-			} else if (calc_bw > rack->r_ctl.gp_bw) {
+			} else if (lt_bw > rack->r_ctl.gp_bw) {
 				rack->r_ctl.rc_rtt_diff = 0;
 				if (rack->r_ctl.num_measurements < RACK_REQ_AVG)
 					rack->r_ctl.num_measurements = RACK_REQ_AVG;
-				rack->r_ctl.gp_bw = calc_bw;
+				rack->r_ctl.gp_bw = lt_bw;
 				rack_set_pace_segments(rack->rc_tp, rack, __LINE__, NULL);
 			} else
 				rack_increase_bw_mul(rack, -1, 0, 0, 1);
@@ -9958,21 +11887,16 @@ rack_check_bottom_drag(struct tcpcb *tp,
 			    (rack->r_ctl.num_measurements >= rack->r_ctl.req_measurements)) {
 				/* We have enough measurements now */
 				rack->gp_ready = 1;
-				rack_set_cc_pacing(rack);
+				if (rack->dgp_on ||
+				    rack->rack_hibeta)
+					rack_set_cc_pacing(rack);
 				if (rack->defer_options)
 					rack_apply_deferred_options(rack);
 			}
-			/*
-			 * For acks over 1mss we do a extra boost to simulate
-			 * where we would get 2 acks (we want 110 for the mul).
-			 */
-			if (acked > segsiz)
-				rack_increase_bw_mul(rack, -1, 0, 0, 1);
 		} else {
 			/*
 			 * zero rtt possibly?, settle for just an old increase.
 			 */
-no_measurement:
 			rack_increase_bw_mul(rack, -1, 0, 0, 1);
 		}
 	} else if ((IN_FASTRECOVERY(tp->t_flags) == 0) &&
@@ -9996,7 +11920,311 @@ no_measurement:
 	}
 }
 
+#ifdef TCP_REQUEST_TRK
+static void
+rack_log_hybrid(struct tcp_rack *rack, uint32_t seq,
+		struct tcp_sendfile_track *cur, uint8_t mod, int line, int err)
+{
+	int do_log;
 
+	do_log = tcp_bblogging_on(rack->rc_tp);
+	if (do_log == 0) {
+		if ((do_log = tcp_bblogging_point_on(rack->rc_tp, TCP_BBPOINT_REQ_LEVEL_LOGGING) )== 0)
+			return;
+		/* We only allow the three below with point logging on */
+		if ((mod != HYBRID_LOG_RULES_APP) &&
+		    (mod != HYBRID_LOG_RULES_SET) &&
+		    (mod != HYBRID_LOG_REQ_COMP))
+			return;
+
+	}
+	if (do_log) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		/* Convert our ms to a microsecond */
+		memset(&log, 0, sizeof(log));
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.flex1 = seq;
+		log.u_bbr.cwnd_gain = line;
+		if (cur != NULL) {
+			uint64_t off;
+
+			log.u_bbr.flex2 = cur->start_seq;
+			log.u_bbr.flex3 = cur->end_seq;
+			log.u_bbr.flex4 = (uint32_t)((cur->localtime >> 32) & 0x00000000ffffffff);
+			log.u_bbr.flex5 = (uint32_t)(cur->localtime & 0x00000000ffffffff);
+			log.u_bbr.flex6 = cur->flags;
+			log.u_bbr.pkts_out = cur->hybrid_flags;
+			log.u_bbr.rttProp = cur->timestamp;
+			log.u_bbr.cur_del_rate = cur->cspr;
+			log.u_bbr.bw_inuse = cur->start;
+			log.u_bbr.applimited = (uint32_t)(cur->end & 0x00000000ffffffff);
+			log.u_bbr.delivered = (uint32_t)((cur->end >> 32) & 0x00000000ffffffff) ;
+			log.u_bbr.epoch = (uint32_t)(cur->deadline & 0x00000000ffffffff);
+			log.u_bbr.lt_epoch = (uint32_t)((cur->deadline >> 32) & 0x00000000ffffffff) ;
+			log.u_bbr.inhpts = 1;
+#ifdef TCP_REQUEST_TRK
+			off = (uint64_t)(cur) - (uint64_t)(&rack->rc_tp->t_tcpreq_info[0]);
+			log.u_bbr.use_lt_bw = (uint8_t)(off / sizeof(struct tcp_sendfile_track));
+#endif
+		} else {
+			log.u_bbr.flex2 = err;
+		}
+		/*
+		 * Fill in flex7 to be CHD (catchup|hybrid|DGP)
+		 */
+		log.u_bbr.flex7 = rack->rc_catch_up;
+		log.u_bbr.flex7 <<= 1;
+		log.u_bbr.flex7 |= rack->rc_hybrid_mode;
+		log.u_bbr.flex7 <<= 1;
+		log.u_bbr.flex7 |= rack->dgp_on;
+		/*
+		 * Compose bbr_state to be a bit wise 0000ADHF
+		 * where A is the always_pace flag
+		 * where D is the dgp_on flag
+		 * where H is the hybrid_mode on flag
+		 * where F is the use_fixed_rate flag.
+		 */
+		log.u_bbr.bbr_state = rack->rc_always_pace;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->dgp_on;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->rc_hybrid_mode;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->use_fixed_rate;
+		log.u_bbr.flex8 = mod;
+		log.u_bbr.delRate = rack->r_ctl.bw_rate_cap;
+		log.u_bbr.bbr_substate = rack->r_ctl.client_suggested_maxseg;
+		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		log.u_bbr.pkt_epoch = rack->rc_tp->tcp_hybrid_start;
+		log.u_bbr.lost = rack->rc_tp->tcp_hybrid_error;
+		log.u_bbr.pacing_gain = (uint16_t)rack->rc_tp->tcp_hybrid_stop;
+		tcp_log_event(rack->rc_tp, NULL,
+		    &rack->rc_inp->inp_socket->so_rcv,
+		    &rack->rc_inp->inp_socket->so_snd,
+		    TCP_HYBRID_PACING_LOG, 0,
+	            0, &log, false, NULL, __func__, __LINE__, &tv);
+	}
+}
+#endif
+
+#ifdef TCP_REQUEST_TRK
+static void
+rack_set_dgp_hybrid_mode(struct tcp_rack *rack, tcp_seq seq, uint32_t len, uint64_t cts)
+{
+	struct tcp_sendfile_track *rc_cur, *orig_ent;
+	struct tcpcb *tp;
+	int err = 0;
+
+	orig_ent = rack->r_ctl.rc_last_sft;
+	rc_cur = tcp_req_find_req_for_seq(rack->rc_tp, seq);
+	if (rc_cur == NULL) {
+		/* If not in the beginning what about the end piece */
+		if (rack->rc_hybrid_mode)
+			rack_log_hybrid(rack, seq, NULL, HYBRID_LOG_NO_RANGE, __LINE__, err);
+		rc_cur = tcp_req_find_req_for_seq(rack->rc_tp, (seq + len - 1));
+	} else {
+		err = 12345;
+	}
+	/* If we find no parameters we are in straight DGP mode */
+	if(rc_cur == NULL) {
+		/* None found for this seq, just DGP for now */
+		if (rack->rc_hybrid_mode) {
+			rack->r_ctl.client_suggested_maxseg = 0;
+			rack->rc_catch_up = 0;
+			if (rack->cspr_is_fcc == 0)
+				rack->r_ctl.bw_rate_cap = 0;
+			else
+				rack->r_ctl.fillcw_cap = rack_fillcw_bw_cap;
+		}
+		if (rack->rc_hybrid_mode) {
+			rack_log_hybrid(rack, (seq + len - 1), NULL, HYBRID_LOG_NO_RANGE, __LINE__, err);
+		}
+		if (rack->r_ctl.rc_last_sft) {
+			rack->r_ctl.rc_last_sft = NULL;
+		}
+		return;
+	}
+	if ((rc_cur->hybrid_flags & TCP_HYBRID_PACING_WASSET) == 0) {
+		/* This entry was never setup for hybrid pacing on/off etc */
+		if (rack->rc_hybrid_mode) {
+			rack->r_ctl.client_suggested_maxseg = 0;
+			rack->rc_catch_up = 0;
+			rack->r_ctl.bw_rate_cap = 0;
+		}
+		if (rack->r_ctl.rc_last_sft) {
+			rack->r_ctl.rc_last_sft = NULL;
+		}
+		if ((rc_cur->flags & TCP_TRK_TRACK_FLG_FSND) == 0) {
+			rc_cur->flags |= TCP_TRK_TRACK_FLG_FSND;
+			rc_cur->first_send = cts;
+			rc_cur->sent_at_fs = rack->rc_tp->t_sndbytes;
+			rc_cur->rxt_at_fs = rack->rc_tp->t_snd_rxt_bytes;
+		}
+		return;
+	}
+	/*
+	 * Ok if we have a new entry *or* have never
+	 * set up an entry we need to proceed. If
+	 * we have already set it up this entry we
+	 * just continue along with what we already
+	 * setup.
+	 */
+	tp = rack->rc_tp;
+	if ((rack->r_ctl.rc_last_sft != NULL) &&
+	    (rack->r_ctl.rc_last_sft == rc_cur)) {
+		/* Its already in place */
+		if (rack->rc_hybrid_mode)
+			rack_log_hybrid(rack, seq, rc_cur, HYBRID_LOG_ISSAME, __LINE__, 0);
+		return;
+	}
+	if (rack->rc_hybrid_mode == 0) {
+		rack->r_ctl.rc_last_sft = rc_cur;
+		if (orig_ent) {
+			orig_ent->sent_at_ls = rack->rc_tp->t_sndbytes;
+			orig_ent->rxt_at_ls = rack->rc_tp->t_snd_rxt_bytes;
+			orig_ent->flags |= TCP_TRK_TRACK_FLG_LSND;
+		}
+		rack_log_hybrid(rack, seq, rc_cur, HYBRID_LOG_RULES_APP, __LINE__, 0);
+		return;
+	}
+	if ((rc_cur->hybrid_flags & TCP_HYBRID_PACING_CSPR) && rc_cur->cspr){
+		/* Compensate for all the header overhead's */
+		if (rack->cspr_is_fcc == 0)
+			rack->r_ctl.bw_rate_cap	= rack_compensate_for_linerate(rack, rc_cur->cspr);
+		else
+			rack->r_ctl.fillcw_cap =  rack_compensate_for_linerate(rack, rc_cur->cspr);
+	} else {
+		if (rack->rc_hybrid_mode) {
+			if (rack->cspr_is_fcc == 0)
+				rack->r_ctl.bw_rate_cap = 0;
+			else
+				rack->r_ctl.fillcw_cap = rack_fillcw_bw_cap;
+		}
+	}
+	if (rc_cur->hybrid_flags & TCP_HYBRID_PACING_H_MS)
+		rack->r_ctl.client_suggested_maxseg = rc_cur->hint_maxseg;
+	else
+		rack->r_ctl.client_suggested_maxseg = 0;
+	if (rc_cur->timestamp == rack->r_ctl.last_tm_mark) {
+		/*
+		 * It is the same timestamp as the previous one
+		 * add the hybrid flag that will indicate we use
+		 * sendtime not arrival time for catch-up mode.
+		 */
+		rc_cur->hybrid_flags |= TCP_HYBRID_PACING_SENDTIME;
+	}
+	if ((rc_cur->hybrid_flags & TCP_HYBRID_PACING_CU) &&
+	    (rc_cur->cspr > 0)) {
+		uint64_t len;
+
+		rack->rc_catch_up = 1;
+		/*
+		 * Calculate the deadline time, first set the
+		 * time to when the request arrived.
+		 */
+		if (rc_cur->hybrid_flags & TCP_HYBRID_PACING_SENDTIME) {
+			/*
+			 * For cases where its a duplicate tm (we received more
+			 * than one request for a tm) we want to use now, the point
+			 * where we are just sending the first bit of the request.
+			 */
+			rc_cur->deadline = cts;
+		} else {
+			/*
+			 * Here we have a different tm from the last request
+			 * so we want to use arrival time as our base.
+			 */
+			rc_cur->deadline = rc_cur->localtime;
+		}
+		/*
+		 * Next calculate the length and compensate for
+		 * TLS if need be.
+		 */
+		len = rc_cur->end - rc_cur->start;
+		if (tp->t_inpcb.inp_socket->so_snd.sb_tls_info) {
+			/*
+			 * This session is doing TLS. Take a swag guess
+			 * at the overhead.
+			 */
+			len += tcp_estimate_tls_overhead(tp->t_inpcb.inp_socket, len);
+		}
+		/*
+		 * Now considering the size, and the cspr, what is the time that
+		 * would be required at the cspr rate. Here we use the raw
+		 * cspr value since the client only looks at the raw data. We
+		 * do use len which includes TLS overhead, but not the TCP/IP etc.
+		 * That will get made up for in the CU pacing rate set.
+		 */
+		len *= HPTS_USEC_IN_SEC;
+		len /= rc_cur->cspr;
+		rc_cur->deadline += len;
+	} else {
+		rack->rc_catch_up = 0;
+		rc_cur->deadline = 0;
+	}
+	if (rack->r_ctl.client_suggested_maxseg != 0) {
+		/*
+		 * We need to reset the max pace segs if we have a
+		 * client_suggested_maxseg.
+		 */
+		rack_set_pace_segments(tp, rack, __LINE__, NULL);
+	}
+	if (orig_ent) {
+		orig_ent->sent_at_ls = rack->rc_tp->t_sndbytes;
+		orig_ent->rxt_at_ls = rack->rc_tp->t_snd_rxt_bytes;
+		orig_ent->flags |= TCP_TRK_TRACK_FLG_LSND;
+	}
+	rack_log_hybrid(rack, seq, rc_cur, HYBRID_LOG_RULES_APP, __LINE__, 0);
+	/* Remember it for next time and for CU mode */
+	rack->r_ctl.rc_last_sft = rc_cur;
+	rack->r_ctl.last_tm_mark = rc_cur->timestamp;
+}
+#endif
+
+static void
+rack_chk_req_and_hybrid_on_out(struct tcp_rack *rack, tcp_seq seq, uint32_t len, uint64_t cts)
+{
+#ifdef TCP_REQUEST_TRK
+	struct tcp_sendfile_track *ent;
+
+	ent = rack->r_ctl.rc_last_sft;
+	if ((ent == NULL) ||
+	    (ent->flags == TCP_TRK_TRACK_FLG_EMPTY) ||
+	    (SEQ_GEQ(seq, ent->end_seq))) {
+		/* Time to update the track. */
+		rack_set_dgp_hybrid_mode(rack, seq, len, cts);
+		ent = rack->r_ctl.rc_last_sft;
+	}
+	/* Out of all */
+	if (ent == NULL) {
+		return;
+	}
+	if (SEQ_LT(ent->end_seq, (seq + len))) {
+		/*
+		 * This is the case where our end_seq guess
+		 * was wrong. This is usually due to TLS having
+		 * more bytes then our guess. It could also be the
+		 * case that the client sent in two requests closely
+		 * and the SB is full of both so we are sending part
+		 * of each (end|beg). In such a case lets move this
+		 * guys end to match the end of this send. That
+		 * way it will complete when all of it is acked.
+		 */
+		ent->end_seq = (seq + len);
+		if (rack->rc_hybrid_mode)
+			rack_log_hybrid_bw(rack, seq, len, 0, 0, HYBRID_LOG_EXTEND, 0, ent, __LINE__);
+	}
+	/* Now validate we have set the send time of this one */
+	if ((ent->flags & TCP_TRK_TRACK_FLG_FSND) == 0) {
+		ent->flags |= TCP_TRK_TRACK_FLG_FSND;
+		ent->first_send = cts;
+		ent->sent_at_fs = rack->rc_tp->t_sndbytes;
+		ent->rxt_at_fs = rack->rc_tp->t_snd_rxt_bytes;
+	}
+#endif
+}
 
 static void
 rack_gain_for_fastoutput(struct tcp_rack *rack, struct tcpcb *tp, struct socket *so, uint32_t acked_amount)
@@ -10039,17 +12267,17 @@ rack_gain_for_fastoutput(struct tcp_rack *rack, struct tcpcb *tp, struct socket 
 }
 
 static void
-rack_adjust_sendmap(struct tcp_rack *rack, struct sockbuf *sb, tcp_seq snd_una)
+rack_adjust_sendmap_head(struct tcp_rack *rack, struct sockbuf *sb)
 {
 	/*
 	 * Here any sendmap entry that points to the
 	 * beginning mbuf must be adjusted to the correct
 	 * offset. This must be called with:
 	 * 1) The socket buffer locked
-	 * 2) snd_una adjusted to its new postion.
+	 * 2) snd_una adjusted to its new position.
 	 *
 	 * Note that (2) implies rack_ack_received has also
-	 * been called.
+	 * been called and all the sbcut's have been done.
 	 *
 	 * We grab the first mbuf in the socket buffer and
 	 * then go through the front of the sendmap, recalculating
@@ -10060,17 +12288,30 @@ rack_adjust_sendmap(struct tcp_rack *rack, struct sockbuf *sb, tcp_seq snd_una)
 	 * not be a penalty though, since we just referenced the sb
 	 * to go in and trim off the mbufs that we freed (of course
 	 * there will be a penalty for the sendmap references though).
+	 *
+	 * Note also with INVARIANT on, we validate with a KASSERT
+	 * that the first sendmap entry has a soff of 0.
+	 *
 	 */
 	struct mbuf *m;
 	struct rack_sendmap *rsm;
+	tcp_seq snd_una;
+#ifdef INVARIANTS
+	int first_processed = 0;
+#endif
 
+	snd_una = rack->rc_tp->snd_una;
 	SOCKBUF_LOCK_ASSERT(sb);
 	m = sb->sb_mb;
-	rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+	rsm = tqhash_min(rack->r_ctl.tqh);
 	if ((rsm == NULL) || (m == NULL)) {
 		/* Nothing outstanding */
 		return;
 	}
+	/* The very first RSM's mbuf must point to the head mbuf in the sb */
+	KASSERT((rsm->m == m),
+		("Rack:%p sb:%p rsm:%p -- first rsm mbuf not aligned to sb",
+		 rack, sb, rsm));
 	while (rsm->m && (rsm->m == m)) {
 		/* one to adjust */
 #ifdef INVARIANTS
@@ -10078,10 +12319,17 @@ rack_adjust_sendmap(struct tcp_rack *rack, struct sockbuf *sb, tcp_seq snd_una)
 		uint32_t soff;
 
 		tm = sbsndmbuf(sb, (rsm->r_start - snd_una), &soff);
-		if (rsm->orig_m_len != m->m_len) {
+		if ((rsm->orig_m_len != m->m_len) ||
+		    (rsm->orig_t_space != M_TRAILINGROOM(m))){
 			rack_adjust_orig_mlen(rsm);
 		}
-		if (rsm->soff != soff) {
+		if (first_processed == 0) {
+			KASSERT((rsm->soff == 0),
+				("Rack:%p rsm:%p -- rsm at head but soff not zero",
+				 rack, rsm));
+			first_processed = 1;
+		}
+		if ((rsm->soff != soff) || (rsm->m != tm)) {
 			/*
 			 * This is not a fatal error, we anticipate it
 			 * might happen (the else code), so we count it here
@@ -10092,23 +12340,113 @@ rack_adjust_sendmap(struct tcp_rack *rack, struct sockbuf *sb, tcp_seq snd_una)
 		}
 		rsm->m = tm;
 		rsm->soff = soff;
-		if (tm)
+		if (tm) {
 			rsm->orig_m_len = rsm->m->m_len;
-		else
+			rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+		} else {
 			rsm->orig_m_len = 0;
+			rsm->orig_t_space = 0;
+		}
 #else
 		rsm->m = sbsndmbuf(sb, (rsm->r_start - snd_una), &rsm->soff);
-		if (rsm->m)
+		if (rsm->m) {
 			rsm->orig_m_len = rsm->m->m_len;
-		else
+			rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+		} else {
 			rsm->orig_m_len = 0;
+			rsm->orig_t_space = 0;
+		}
 #endif
-		rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree,
-			      rsm);
+		rsm = tqhash_next(rack->r_ctl.tqh, rsm);
 		if (rsm == NULL)
 			break;
 	}
 }
+
+#ifdef TCP_REQUEST_TRK
+static inline void
+rack_req_check_for_comp(struct tcp_rack *rack, tcp_seq th_ack)
+{
+	struct tcp_sendfile_track *ent;
+	int i;
+
+	if ((rack->rc_hybrid_mode == 0) &&
+	    (tcp_bblogging_point_on(rack->rc_tp, TCP_BBPOINT_REQ_LEVEL_LOGGING) == 0)) {
+		/*
+		 * Just do normal completions hybrid pacing is not on
+		 * and CLDL is off as well.
+		 */
+		tcp_req_check_for_comp(rack->rc_tp, th_ack);
+		return;
+	}
+	/*
+	 * Originally I was just going to find the th_ack associated
+	 * with an entry. But then I realized a large strech ack could
+	 * in theory ack two or more requests at once. So instead we
+	 * need to find all entries that are completed by th_ack not
+	 * just a single entry and do our logging.
+	 */
+	ent = tcp_req_find_a_req_that_is_completed_by(rack->rc_tp, th_ack, &i);
+	while (ent != NULL) {
+		/*
+		 * We may be doing hybrid pacing or CLDL and need more details possibly
+		 * so we do it manually instead of calling
+		 * tcp_req_check_for_comp()
+		 */
+		uint64_t laa, tim, data, cbw, ftim;
+
+		/* Ok this ack frees it */
+		rack_log_hybrid(rack, th_ack,
+				ent, HYBRID_LOG_REQ_COMP, __LINE__, 0);
+		rack_log_hybrid_sends(rack, ent, __LINE__);
+		/* calculate the time based on the ack arrival */
+		data = ent->end - ent->start;
+		laa = tcp_tv_to_lusectick(&rack->r_ctl.act_rcv_time);
+		if (ent->flags & TCP_TRK_TRACK_FLG_FSND) {
+			if (ent->first_send > ent->localtime)
+				ftim = ent->first_send;
+			else
+				ftim = ent->localtime;
+		} else {
+			/* TSNH */
+			ftim = ent->localtime;
+		}
+		if (laa > ent->localtime)
+			tim = laa - ftim;
+		else
+			tim = 0;
+		cbw = data * HPTS_USEC_IN_SEC;
+		if (tim > 0)
+			cbw /= tim;
+		else
+			cbw = 0;
+		rack_log_hybrid_bw(rack, th_ack, cbw, tim, data, HYBRID_LOG_BW_MEASURE, 0, ent, __LINE__);
+		/*
+		 * Check to see if we are freeing what we are pointing to send wise
+		 * if so be sure to NULL the pointer so we know we are no longer
+		 * set to anything.
+		 */
+		if (ent == rack->r_ctl.rc_last_sft) {
+			rack->r_ctl.rc_last_sft = NULL;
+			if (rack->rc_hybrid_mode) {
+				rack->rc_catch_up = 0;
+				if (rack->cspr_is_fcc == 0)
+					rack->r_ctl.bw_rate_cap = 0;
+				else
+					rack->r_ctl.fillcw_cap = rack_fillcw_bw_cap;
+				rack->r_ctl.client_suggested_maxseg = 0;
+			}
+		}
+		/* Generate the log that the tcp_netflix call would have */
+		tcp_req_log_req_info(rack->rc_tp, ent,
+				      i, TCP_TRK_REQ_LOG_FREED, 0, 0);
+		/* Free it and see if there is another one */
+		tcp_req_free_a_slot(rack->rc_tp, ent);
+		ent = tcp_req_find_a_req_that_is_completed_by(rack->rc_tp, th_ack, &i);
+	}
+}
+#endif
+
 
 /*
  * Return value of 1, we do not need to call rack_process_data().
@@ -10120,7 +12458,7 @@ static int
 rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
     struct tcpcb *tp, struct tcpopt *to,
     uint32_t tiwin, int32_t tlen,
-    int32_t * ofia, int32_t thflags, int32_t *ret_val)
+    int32_t * ofia, int32_t thflags, int32_t *ret_val, int32_t orig_tlen)
 {
 	int32_t ourfinisacked = 0;
 	int32_t nsegs, acked_amount;
@@ -10128,7 +12466,10 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	struct mbuf *mfree;
 	struct tcp_rack *rack;
 	int32_t under_pacing = 0;
-	int32_t recovery = 0;
+	int32_t post_recovery = 0;
+	uint32_t p_cwnd;
+
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	if (SEQ_GT(th->th_ack, tp->snd_max)) {
@@ -10144,6 +12485,7 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	}
 	if (SEQ_GEQ(th->th_ack, tp->snd_una) || to->to_nsacks) {
 		int in_rec, dup_ack_struck = 0;
+		int dsack_seen = 0, sacks_seen = 0;
 
 		in_rec = IN_FASTRECOVERY(tp->t_flags);
 		if (rack->rc_in_persist) {
@@ -10151,13 +12493,17 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			RACK_TCPT_RANGESET(tp->t_rxtcur, RACK_REXMTVAL(tp),
 				      rack_rto_min, rack_rto_max, rack->r_ctl.timer_slop);
 		}
+
 		if ((th->th_ack == tp->snd_una) &&
 		    (tiwin == tp->snd_wnd) &&
+		    (orig_tlen == 0) &&
 		    ((to->to_flags & TOF_SACK) == 0)) {
-			rack_strike_dupack(rack);
+			rack_strike_dupack(rack, th->th_ack);
 			dup_ack_struck = 1;
 		}
-		rack_log_ack(tp, to, th, ((in_rec == 0) && IN_FASTRECOVERY(tp->t_flags)), dup_ack_struck);
+		rack_log_ack(tp, to, th, ((in_rec == 0) && IN_FASTRECOVERY(tp->t_flags)),
+			     dup_ack_struck, &dsack_seen, &sacks_seen);
+
 	}
 	if (__predict_false(SEQ_LEQ(th->th_ack, tp->snd_una))) {
 		/*
@@ -10167,6 +12513,8 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 */
 		if (SEQ_LT(th->th_ack, tp->snd_una) && (sbspace(&so->so_rcv) > ctf_fixed_maxseg(tp))) {
 			rack->r_ctl.rc_reorder_ts = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time);
+			if (rack->r_ctl.rc_reorder_ts == 0)
+				rack->r_ctl.rc_reorder_ts = 1;
 		}
 		return (0);
 	}
@@ -10191,7 +12539,6 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		}
 	}
 	nsegs = max(1, m->m_pkthdr.lro_nsegs);
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 
 	acked = BYTES_THIS_ACK(tp, th);
 	if (acked) {
@@ -10230,8 +12577,8 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 */
 		if (rack->r_ctl.rc_hpts_flags & PACE_TMR_RXT)
 			rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
-#ifdef NETFLIX_HTTP_LOGGING
-		tcp_http_check_for_comp(rack->rc_tp, th->th_ack);
+#ifdef TCP_REQUEST_TRK
+		rack_req_check_for_comp(rack, th->th_ack);
 #endif
 	}
 	/*
@@ -10263,15 +12610,37 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			tcp_rack_partialack(tp);
 		} else {
 			rack_post_recovery(tp, th->th_ack);
-			recovery = 1;
+			post_recovery = 1;
+			/*
+			 * Grab the segsiz, multiply by 2 and add the snd_cwnd
+			 * that is the max the CC should add if we are exiting
+			 * recovery and doing a late add.
+			 */
+			p_cwnd = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
+			p_cwnd <<= 1;
+			p_cwnd += tp->snd_cwnd;
 		}
+	} else if ((rack->rto_from_rec == 1) &&
+		   SEQ_GEQ(th->th_ack, tp->snd_recover)) {
+		/*
+		 * We were in recovery, hit a rxt timeout
+		 * and never re-entered recovery. The timeout(s)
+		 * made up all the lost data. In such a case
+		 * we need to clear the rto_from_rec flag.
+		 */
+		rack->rto_from_rec = 0;
 	}
 	/*
 	 * Let the congestion control algorithm update congestion control
 	 * related information. This typically means increasing the
 	 * congestion window.
 	 */
-	rack_ack_received(tp, rack, th->th_ack, nsegs, CC_ACK, recovery);
+	rack_ack_received(tp, rack, th->th_ack, nsegs, CC_ACK, post_recovery);
+	if (post_recovery &&
+	    (tp->snd_cwnd > p_cwnd)) {
+		/* Must be non-newreno (cubic) getting too ahead of itself */
+		tp->snd_cwnd = p_cwnd;
+	}
 	SOCKBUF_LOCK(&so->so_snd);
 	acked_amount = min(acked, (int)sbavail(&so->so_snd));
 	tp->snd_wnd -= acked_amount;
@@ -10289,8 +12658,9 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		ourfinisacked = 1;
 	}
 	tp->snd_una = th->th_ack;
+	/* wakeups? */
 	if (acked_amount && sbavail(&so->so_snd))
-		rack_adjust_sendmap(rack, &so->so_snd, tp->snd_una);
+		rack_adjust_sendmap_head(rack, &so->so_snd);
 	rack_log_wakeup(tp,rack, &so->so_snd, acked, 2);
 	/* NB: sowwakeup_locked() does an implicit unlock. */
 	sowwakeup_locked(so);
@@ -10298,8 +12668,8 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if (SEQ_GT(tp->snd_una, tp->snd_recover))
 		tp->snd_recover = tp->snd_una;
 
-	if (SEQ_LT(tp->snd_nxt, tp->snd_una)) {
-		tp->snd_nxt = tp->snd_una;
+	if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {
+		tp->snd_nxt = tp->snd_max;
 	}
 	if (under_pacing &&
 	    (rack->use_fixed_rate == 0) &&
@@ -10307,20 +12677,22 @@ rack_process_ack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    rack->rc_gp_dyn_mul &&
 	    rack->rc_always_pace) {
 		/* Check if we are dragging bottom */
-		rack_check_bottom_drag(tp, rack, so, acked);
+		rack_check_bottom_drag(tp, rack, so);
 	}
 	if (tp->snd_una == tp->snd_max) {
 		/* Nothing left outstanding */
 		tp->t_flags &= ~TF_PREVVALID;
+		rack->r_ctl.idle_snd_una = tp->snd_una;
 		rack->r_ctl.rc_went_idle_time = tcp_get_usecs(NULL);
-		rack->r_ctl.retran_during_recovery = 0;
-		rack->r_ctl.dsack_byte_cnt = 0;
 		if (rack->r_ctl.rc_went_idle_time == 0)
 			rack->r_ctl.rc_went_idle_time = 1;
+		rack->r_ctl.retran_during_recovery = 0;
+		rack->r_ctl.dsack_byte_cnt = 0;
 		rack_log_progress_event(rack, tp, 0, PROGRESS_CLEAR, __LINE__);
-		if (sbavail(&tp->t_inpcb->inp_socket->so_snd) == 0)
+		if (sbavail(&tptosocket(tp)->so_snd) == 0)
 			tp->t_acktime = 0;
 		rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
+		rack->rc_suspicious = 0;
 		/* Set need output so persist might get set */
 		rack->r_wanted_output = 1;
 		sack_filter_clear(&rack->r_ctl.rack_sf, tp->snd_una);
@@ -10350,7 +12722,7 @@ static void
 rack_log_collapse(struct tcp_rack *rack, uint32_t cnt, uint32_t split, uint32_t out, int line,
 		  int dir, uint32_t flags, struct rack_sendmap *rsm)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
@@ -10369,7 +12741,7 @@ rack_log_collapse(struct tcp_rack *rack, uint32_t cnt, uint32_t split, uint32_t 
 		if (rsm == NULL)
 			log.u_bbr.rttProp = 0;
 		else
-			log.u_bbr.rttProp = (uint64_t)rsm;
+			log.u_bbr.rttProp = (uintptr_t)rsm;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
@@ -10381,7 +12753,7 @@ rack_log_collapse(struct tcp_rack *rack, uint32_t cnt, uint32_t split, uint32_t 
 }
 
 static void
-rack_collapsed_window(struct tcp_rack *rack, uint32_t out, int line)
+rack_collapsed_window(struct tcp_rack *rack, uint32_t out, tcp_seq th_ack, int line)
 {
 	/*
 	 * Here all we do is mark the collapsed point and set the flag.
@@ -10389,30 +12761,28 @@ rack_collapsed_window(struct tcp_rack *rack, uint32_t out, int line)
 	 * sense splitting our map until we know where the
 	 * peer finally lands in the collapse.
 	 */
-	rack_trace_point(rack, RACK_TP_COLLAPSED_WND);
+	tcp_trace_point(rack->rc_tp, TCP_TP_COLLAPSED_WND);
 	if ((rack->rc_has_collapsed == 0) ||
-	    (rack->r_ctl.last_collapse_point != (rack->rc_tp->snd_una + rack->rc_tp->snd_wnd)))
+	    (rack->r_ctl.last_collapse_point != (th_ack + rack->rc_tp->snd_wnd)))
 		counter_u64_add(rack_collapsed_win_seen, 1);
-	rack->r_ctl.last_collapse_point = rack->rc_tp->snd_una + rack->rc_tp->snd_wnd;
+	rack->r_ctl.last_collapse_point = th_ack + rack->rc_tp->snd_wnd;
 	rack->r_ctl.high_collapse_point = rack->rc_tp->snd_max;
 	rack->rc_has_collapsed = 1;
 	rack->r_collapse_point_valid = 1;
-	rack_log_collapse(rack, 0, 0, rack->r_ctl.last_collapse_point, line, 1, 0, NULL);
+	rack_log_collapse(rack, 0, th_ack, rack->r_ctl.last_collapse_point, line, 1, 0, NULL);
 }
 
 static void
 rack_un_collapse_window(struct tcp_rack *rack, int line)
 {
-	struct rack_sendmap *nrsm, *rsm, fe;
+	struct rack_sendmap *nrsm, *rsm;
 	int cnt = 0, split = 0;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
+	int insret __diagused;
 
-	memset(&fe, 0, sizeof(fe));
+
+	tcp_trace_point(rack->rc_tp, TCP_TP_COLLAPSED_WND);
 	rack->rc_has_collapsed = 0;
-	fe.r_start = rack->r_ctl.last_collapse_point;
-	rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
+	rsm = tqhash_find(rack->r_ctl.tqh, rack->r_ctl.last_collapse_point);
 	if (rsm == NULL) {
 		/* Nothing to do maybe the peer ack'ed it all */
 		rack_log_collapse(rack, 0, 0, ctf_outstanding(rack->rc_tp), line, 0, 0, NULL);
@@ -10432,11 +12802,10 @@ rack_un_collapse_window(struct tcp_rack *rack, int line)
 		split = 1;
 		rack_clone_rsm(rack, nrsm, rsm, rack->r_ctl.last_collapse_point);
 #ifndef INVARIANTS
-		(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
+		(void)tqhash_insert(rack->r_ctl.tqh, nrsm);
 #else
-		insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm);
-		if (insret != NULL) {
-			panic("Insert in rb tree of %p fails ret:%p rack:%p rsm:%p",
+		if ((insret = tqhash_insert(rack->r_ctl.tqh, nrsm)) != 0) {
+			panic("Insert in tailq_hash of %p fails ret:%d rack:%p rsm:%p",
 			      nrsm, insret, rack, rsm);
 		}
 #endif
@@ -10452,8 +12821,10 @@ rack_un_collapse_window(struct tcp_rack *rack, int line)
 		 */
 		rsm = nrsm;
 	}
+
 no_split:
-	RB_FOREACH_FROM(nrsm, rack_rb_tree_head, rsm) {
+	TQHASH_FOREACH_FROM(nrsm, rack->r_ctl.tqh, rsm)  {
+		cnt++;
 		nrsm->r_flags |= RACK_RWND_COLLAPSED;
 		rack_log_collapse(rack, nrsm->r_start, nrsm->r_end, 0, line, 4, nrsm->r_flags, nrsm);
 		cnt++;
@@ -10469,24 +12840,12 @@ rack_handle_delayed_ack(struct tcpcb *tp, struct tcp_rack *rack,
 			int32_t tlen, int32_t tfo_syn)
 {
 	if (DELAY_ACK(tp, tlen) || tfo_syn) {
-		if (rack->rc_dack_mode &&
-		    (tlen > 500) &&
-		    (rack->rc_dack_toggle == 1)) {
-			goto no_delayed_ack;
-		}
 		rack_timer_cancel(tp, rack,
 				  rack->r_ctl.rc_rcvtime, __LINE__);
 		tp->t_flags |= TF_DELACK;
 	} else {
-no_delayed_ack:
 		rack->r_wanted_output = 1;
 		tp->t_flags |= TF_ACKNOW;
-		if (rack->rc_dack_mode) {
-			if (tp->t_flags & TF_DELACK)
-				rack->rc_dack_toggle = 1;
-			else
-				rack->rc_dack_toggle = 0;
-		}
 	}
 }
 
@@ -10523,7 +12882,6 @@ rack_validate_fo_sendwin_up(struct tcpcb *tp, struct tcp_rack *rack)
 	}
 }
 
-
 /*
  * Return value of 1, the TCB is unlocked and most
  * likely gone, return value of 0, the TCP is still
@@ -10542,8 +12900,9 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	int32_t tfo_syn;
 	struct tcp_rack *rack;
 
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
+
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 	nsegs = max(1, m->m_pkthdr.lro_nsegs);
 	if ((thflags & TH_ACK) &&
 	    (SEQ_LT(tp->snd_wl1, th->th_seq) ||
@@ -10570,7 +12929,7 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	}
 	if (tp->snd_wnd < ctf_outstanding(tp))
 		/* The peer collapsed the window */
-		rack_collapsed_window(rack, ctf_outstanding(tp), __LINE__);
+		rack_collapsed_window(rack, ctf_outstanding(tp), th->th_ack, __LINE__);
 	else if (rack->rc_has_collapsed)
 		rack_un_collapse_window(rack, __LINE__);
 	if ((rack->r_collapse_point_valid) &&
@@ -10590,15 +12949,15 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    (tp->snd_wnd < min((rack->r_ctl.rc_high_rwnd/2), rack->r_ctl.rc_pace_min_segs)) &&
 	    TCPS_HAVEESTABLISHED(tp->t_state) &&
 	    ((tp->snd_max == tp->snd_una) || rack->rc_has_collapsed) &&
-	    sbavail(&tp->t_inpcb->inp_socket->so_snd) &&
-	    (sbavail(&tp->t_inpcb->inp_socket->so_snd) > tp->snd_wnd)) {
+	    sbavail(&tptosocket(tp)->so_snd) &&
+	    (sbavail(&tptosocket(tp)->so_snd) > tp->snd_wnd)) {
 		/*
 		 * Here the rwnd is less than
 		 * the pacing size, we are established,
 		 * nothing is outstanding, and there is
 		 * data to send. Enter persists.
 		 */
-		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime);
+		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime, tp->snd_una);
 	}
 	if (tp->t_flags2 & TF2_DROP_AF_DATA) {
 		m_freem(m);
@@ -10609,7 +12968,6 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * along the up.
 	 */
 	tp->rcv_up = tp->rcv_nxt;
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 
 	/*
 	 * Process the segment text, merging it into the TCP sequencing
@@ -10620,7 +12978,7 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * then we just ignore the text.
 	 */
 	tfo_syn = ((tp->t_state == TCPS_SYN_RECEIVED) &&
-		   IS_FASTOPEN(tp->t_flags));
+	    (tp->t_flags & TF_FASTOPEN));
 	if ((tlen || (thflags & TH_FIN) || (tfo_syn && tlen > 0)) &&
 	    TCPS_HAVERCVDFIN(tp->t_state) == 0) {
 		tcp_seq save_start = th->th_seq;
@@ -10674,12 +13032,20 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			SOCKBUF_LOCK(&so->so_rcv);
 			if (so->so_rcv.sb_state & SBS_CANTRCVMORE) {
 				m_freem(m);
-			} else
+			} else {
+				int32_t newsize;
+
+				if (tlen > 0) {
+					newsize = tcp_autorcvbuf(m, th, so, tp, tlen);
+					if (newsize)
+						if (!sbreserve_locked(so, SO_RCV, newsize, NULL))
+							so->so_rcv.sb_flags &= ~SB_AUTOSIZE;
+				}
 #ifdef NETFLIX_SB_LIMITS
 				appended =
 #endif
 					sbappendstream_locked(&so->so_rcv, m, 0);
-
+			}
 			rack_log_wakeup(tp,rack, &so->so_rcv, tlen, 1);
 			/* NB: sorwakeup_locked() does an implicit unlock. */
 			sorwakeup_locked(so);
@@ -10713,7 +13079,6 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				 * DSACK actually handled in the fastpath
 				 * above.
 				 */
-				RACK_OPTS_INC(tcp_sack_path_1);
 				tcp_update_sack_list(tp, save_start,
 				    save_start + save_tlen);
 			} else if ((tlen > 0) && SEQ_GT(tp->rcv_nxt, save_rnxt)) {
@@ -10723,22 +13088,18 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 					 * Partial overlap, recorded at todrop
 					 * above.
 					 */
-					RACK_OPTS_INC(tcp_sack_path_2a);
 					tcp_update_sack_list(tp,
 					    tp->sackblks[0].start,
 					    tp->sackblks[0].end);
 				} else {
-					RACK_OPTS_INC(tcp_sack_path_2b);
 					tcp_update_dsack_list(tp, save_start,
 					    save_start + save_tlen);
 				}
 			} else if (tlen >= save_tlen) {
 				/* Update of sackblks. */
-				RACK_OPTS_INC(tcp_sack_path_3);
 				tcp_update_dsack_list(tp, save_start,
 				    save_start + save_tlen);
 			} else if (tlen > 0) {
-				RACK_OPTS_INC(tcp_sack_path_4);
 				tcp_update_dsack_list(tp, save_start,
 				    save_start + tlen);
 			}
@@ -10815,7 +13176,6 @@ rack_process_data(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    (sbavail(&so->so_snd) > (tp->snd_max - tp->snd_una))) {
 		rack->r_wanted_output = 1;
 	}
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 	return (0);
 }
 
@@ -10835,25 +13195,13 @@ rack_do_fastnewdata(struct mbuf *m, struct tcphdr *th, struct socket *so,
 #ifdef NETFLIX_SB_LIMITS
 	u_int mcnt, appended;
 #endif
-#ifdef TCPDEBUG
-	/*
-	 * The size of tcp_saveipgen must be the size of the max ip header,
-	 * now IPv6.
-	 */
-	u_char tcp_saveipgen[IP6_HDR_LEN];
-	struct tcphdr tcp_savetcp;
-	short ostate = 0;
 
-#endif
 	/*
 	 * If last ACK falls within this segment's sequence numbers, record
 	 * the timestamp. NOTE that the test is modified according to the
 	 * latest proposal of the tcplw@cray.com list (Braden 1993/04/26).
 	 */
 	if (__predict_false(th->th_seq != tp->rcv_nxt)) {
-		return (0);
-	}
-	if (__predict_false(tp->snd_nxt != tp->snd_max)) {
 		return (0);
 	}
 	if (tiwin && tiwin != tp->snd_wnd) {
@@ -10920,11 +13268,6 @@ rack_do_fastnewdata(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	tp->rcv_up = tp->rcv_nxt;
 	KMOD_TCPSTAT_ADD(tcps_rcvpack, nsegs);
 	KMOD_TCPSTAT_ADD(tcps_rcvbyte, tlen);
-#ifdef TCPDEBUG
-	if (so->so_options & SO_DEBUG)
-		tcp_trace(TA_INPUT, ostate, tp,
-		    (void *)tcp_saveipgen, &tcp_savetcp, 0);
-#endif
 	newsize = tcp_autorcvbuf(m, th, so, tp, tlen);
 
 	/* Add data to socket buffer. */
@@ -10975,15 +13318,6 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 {
 	int32_t acked;
 	int32_t nsegs;
-#ifdef TCPDEBUG
-	/*
-	 * The size of tcp_saveipgen must be the size of the max ip header,
-	 * now IPv6.
-	 */
-	u_char tcp_saveipgen[IP6_HDR_LEN];
-	struct tcphdr tcp_savetcp;
-	short ostate = 0;
-#endif
 	int32_t under_pacing = 0;
 	struct tcp_rack *rack;
 
@@ -10993,10 +13327,6 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	}
 	if (__predict_false(SEQ_GT(th->th_ack, tp->snd_max))) {
 		/* Above what we have sent? */
-		return (0);
-	}
-	if (__predict_false(tp->snd_nxt != tp->snd_max)) {
-		/* We are retransmitting */
 		return (0);
 	}
 	if (__predict_false(tiwin == 0)) {
@@ -11026,7 +13356,7 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		under_pacing = 1;
 	}
 	nsegs = max(1, m->m_pkthdr.lro_nsegs);
-	rack_log_ack(tp, to, th, 0, 0);
+	rack_log_ack(tp, to, th, 0, 0, NULL, NULL);
 	/* Did the window get updated? */
 	if (tiwin != tp->snd_wnd) {
 		tp->snd_wnd = tiwin;
@@ -11046,15 +13376,15 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    (tp->snd_wnd < min((rack->r_ctl.rc_high_rwnd/2), rack->r_ctl.rc_pace_min_segs)) &&
 	    TCPS_HAVEESTABLISHED(tp->t_state) &&
 	    ((tp->snd_max == tp->snd_una) || rack->rc_has_collapsed) &&
-	    sbavail(&tp->t_inpcb->inp_socket->so_snd) &&
-	    (sbavail(&tp->t_inpcb->inp_socket->so_snd) > tp->snd_wnd)) {
+	    sbavail(&tptosocket(tp)->so_snd) &&
+	    (sbavail(&tptosocket(tp)->so_snd) > tp->snd_wnd)) {
 		/*
 		 * Here the rwnd is less than
 		 * the pacing size, we are established,
 		 * nothing is outstanding, and there is
 		 * data to send. Enter persists.
 		 */
-		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime);
+		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime, th->th_ack);
 	}
 	/*
 	 * If last ACK falls within this segment's sequence numbers, record
@@ -11104,7 +13434,7 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		mfree = sbcut_locked(&so->so_snd, acked);
 		tp->snd_una = th->th_ack;
 		/* Note we want to hold the sb lock through the sendmap adjust */
-		rack_adjust_sendmap(rack, &so->so_snd, tp->snd_una);
+		rack_adjust_sendmap_head(rack, &so->so_snd);
 		/* Wake up the socket if we have room to write more */
 		rack_log_wakeup(tp,rack, &so->so_snd, acked, 2);
 		sowwakeup_locked(so);
@@ -11120,8 +13450,9 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 */
 		if (rack->r_ctl.rc_hpts_flags & PACE_TMR_RXT)
 			rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
-#ifdef NETFLIX_HTTP_LOGGING
-		tcp_http_check_for_comp(rack->rc_tp, th->th_ack);
+
+#ifdef TCP_REQUEST_TRK
+		rack_req_check_for_comp(rack, th->th_ack);
 #endif
 	}
 	/*
@@ -11131,7 +13462,7 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 */
 	if (tp->snd_wnd < ctf_outstanding(tp)) {
 		/* The peer collapsed the window */
-		rack_collapsed_window(rack, ctf_outstanding(tp), __LINE__);
+		rack_collapsed_window(rack, ctf_outstanding(tp), th->th_ack, __LINE__);
 	} else if (rack->rc_has_collapsed)
 		rack_un_collapse_window(rack, __LINE__);
 	if ((rack->r_collapse_point_valid) &&
@@ -11152,29 +13483,25 @@ rack_fastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * If data are ready to send, let tcp_output decide between more
 	 * output or persist.
 	 */
-#ifdef TCPDEBUG
-	if (so->so_options & SO_DEBUG)
-		tcp_trace(TA_INPUT, ostate, tp,
-		    (void *)tcp_saveipgen,
-		    &tcp_savetcp, 0);
-#endif
 	if (under_pacing &&
 	    (rack->use_fixed_rate == 0) &&
 	    (rack->in_probe_rtt == 0) &&
 	    rack->rc_gp_dyn_mul &&
 	    rack->rc_always_pace) {
 		/* Check if we are dragging bottom */
-		rack_check_bottom_drag(tp, rack, so, acked);
+		rack_check_bottom_drag(tp, rack, so);
 	}
 	if (tp->snd_una == tp->snd_max) {
 		tp->t_flags &= ~TF_PREVVALID;
 		rack->r_ctl.retran_during_recovery = 0;
+		rack->rc_suspicious = 0;
 		rack->r_ctl.dsack_byte_cnt = 0;
+		rack->r_ctl.idle_snd_una = tp->snd_una;
 		rack->r_ctl.rc_went_idle_time = tcp_get_usecs(NULL);
 		if (rack->r_ctl.rc_went_idle_time == 0)
 			rack->r_ctl.rc_went_idle_time = 1;
 		rack_log_progress_event(rack, tp, 0, PROGRESS_CLEAR, __LINE__);
-		if (sbavail(&tp->t_inpcb->inp_socket->so_snd) == 0)
+		if (sbavail(&tptosocket(tp)->so_snd) == 0)
 			tp->t_acktime = 0;
 		rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
 	}
@@ -11197,9 +13524,12 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	int32_t todrop;
 	int32_t ourfinisacked = 0;
 	struct tcp_rack *rack;
+
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 
 	ctf_calc_rwin(so, tp);
 	/*
@@ -11257,10 +13587,11 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 * If not all the data that was sent in the TFO SYN
 		 * has been acked, resend the remainder right away.
 		 */
-		if (IS_FASTOPEN(tp->t_flags) &&
+		if ((tp->t_flags & TF_FASTOPEN) &&
 		    (tp->snd_una != tp->snd_max)) {
-			tp->snd_nxt = th->th_ack;
-			tfo_partial = 1;
+			/* Was it a partial ack? */
+			if (SEQ_LT(th->th_ack, tp->snd_max))
+				tfo_partial = 1;
 		}
 		/*
 		 * If there's data, delay ACK; if there's also a FIN ACKNOW
@@ -11273,7 +13604,6 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		} else {
 			rack->r_wanted_output = 1;
 			tp->t_flags |= TF_ACKNOW;
-			rack->rc_dack_toggle = 0;
 		}
 
 		tcp_ecn_input_syn_sent(tp, thflags, iptos);
@@ -11292,6 +13622,24 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 * and there is no send_map.
 			 */
 			tp->snd_una++;
+			if (tfo_partial && (SEQ_GT(tp->snd_max, tp->snd_una))) {
+				/*
+				 * We sent a SYN with data, and thus have a
+				 * sendmap entry with a SYN set. Lets find it
+				 * and take off the send bit and the byte and
+				 * set it up to be what we send (send it next).
+				 */
+				struct rack_sendmap *rsm;
+
+				rsm = tqhash_min(rack->r_ctl.tqh);
+				if (rsm) {
+					if (rsm->r_flags & RACK_HAS_SYN) {
+						rsm->r_flags &= ~RACK_HAS_SYN;
+						rsm->r_start++;
+					}
+					rack->r_ctl.rc_resend = rsm;
+				}
+			}
 		}
 		/*
 		 * Received <SYN,ACK> in SYN_SENT[*] state. Transitions:
@@ -11317,10 +13665,9 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 * SYN-SENT -> SYN-RECEIVED SYN-SENT* -> SYN-RECEIVED* If
 		 * there was no CC option, clear cached CC value.
 		 */
-		tp->t_flags |= (TF_ACKNOW | TF_NEEDSYN);
+		tp->t_flags |= (TF_ACKNOW | TF_NEEDSYN | TF_SONOTCONN);
 		tcp_state_change(tp, TCPS_SYN_RECEIVED);
 	}
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 	/*
 	 * Advance th->th_seq to correspond to first data byte. If data,
 	 * trim to stay within window, dropping FIN if necessary.
@@ -11355,7 +13702,7 @@ rack_do_syn_sent(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			tcp_rack_xmit_timer(rack, t + 1, 1, t, 0, NULL, 2);
 			tcp_rack_xmit_timer_commit(rack, tp);
 		}
-		if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val))
+		if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen))
 			return (ret_val);
 		/* We may have changed to FIN_WAIT_1 above */
 		if (tp->t_state == TCPS_FIN_WAIT_1) {
@@ -11401,10 +13748,17 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	struct tcp_rack *rack;
+	int32_t orig_tlen = tlen;
 	int32_t ret_val = 0;
 	int32_t ourfinisacked = 0;
 
+	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	ctf_calc_rwin(so, tp);
+	if ((thflags & TH_RST) ||
+	    (tp->t_fin_is_rst && (thflags & TH_FIN)))
+		return (__ctf_process_rst(m, th, so, tp,
+					  &rack->r_ctl.challenge_ack_ts,
+					  &rack->r_ctl.challenge_ack_cnt));
 	if ((thflags & TH_ACK) &&
 	    (SEQ_LEQ(th->th_ack, tp->snd_una) ||
 	    SEQ_GT(th->th_ack, tp->snd_max))) {
@@ -11412,8 +13766,7 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		ctf_do_dropwithreset(m, tp, th, BANDLIM_RST_OPENPORT, tlen);
 		return (1);
 	}
-	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	if (IS_FASTOPEN(tp->t_flags)) {
+	if (tp->t_flags & TF_FASTOPEN) {
 		/*
 		 * When a TFO connection is in SYN_RECEIVED, the
 		 * only valid packets are the initial SYN, a
@@ -11439,11 +13792,6 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		}
 	}
 
-	if ((thflags & TH_RST) ||
-	    (tp->t_fin_is_rst && (thflags & TH_FIN)))
-		return (__ctf_process_rst(m, th, so, tp,
-					  &rack->r_ctl.challenge_ack_ts,
-					  &rack->r_ctl.challenge_ack_cnt));
 	/*
 	 * RFC 1323 PAWS: If we have a timestamp reply on this segment and
 	 * it's less than ts_recent, drop it.
@@ -11499,14 +13847,17 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * processing; else drop segment and return.
 	 */
 	if ((thflags & TH_ACK) == 0) {
-		if (IS_FASTOPEN(tp->t_flags)) {
+		if (tp->t_flags & TF_FASTOPEN) {
 			rack_cc_conn_init(tp);
 		}
 		return (rack_process_data(m, th, so, tp, drop_hdrlen, tlen,
 		    tiwin, thflags, nxt_pkt));
 	}
 	KMOD_TCPSTAT_INC(tcps_connects);
-	soisconnected(so);
+	if (tp->t_flags & TF_SONOTCONN) {
+		tp->t_flags &= ~TF_SONOTCONN;
+		soisconnected(so);
+	}
 	/* Do window scaling? */
 	if ((tp->t_flags & (TF_RCVD_SCALE | TF_REQ_SCALE)) ==
 	    (TF_RCVD_SCALE | TF_REQ_SCALE)) {
@@ -11517,7 +13868,7 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * FIN-WAIT-1
 	 */
 	tp->t_starttime = ticks;
-	if (IS_FASTOPEN(tp->t_flags) && tp->t_tfo_pending) {
+	if ((tp->t_flags & TF_FASTOPEN) && tp->t_tfo_pending) {
 		tcp_fastopen_decrement_counter(tp->t_tfo_pending);
 		tp->t_tfo_pending = NULL;
 	}
@@ -11534,7 +13885,7 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		 * is not harmless as it would undo the snd_cwnd reduction
 		 * that occurs when a TFO SYN|ACK is retransmitted.
 		 */
-		if (!IS_FASTOPEN(tp->t_flags))
+		if (!(tp->t_flags & TF_FASTOPEN))
 			rack_cc_conn_init(tp);
 	}
 	/*
@@ -11570,7 +13921,7 @@ rack_do_syn_recv(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		tcp_rack_xmit_timer(rack, t + 1, 1, t, 0, NULL, 2);
 		tcp_rack_xmit_timer_commit(rack, tp);
 	}
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (tp->t_state == TCPS_FIN_WAIT_1) {
@@ -11615,6 +13966,7 @@ rack_do_established(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	struct tcp_rack *rack;
 
 	/*
@@ -11661,7 +14013,7 @@ rack_do_established(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -11721,7 +14073,7 @@ rack_do_established(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, NULL, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, NULL, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (sbavail(&so->so_snd)) {
@@ -11747,6 +14099,7 @@ rack_do_close_wait(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	struct tcp_rack *rack;
 
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
@@ -11761,7 +14114,7 @@ rack_do_close_wait(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -11821,7 +14174,7 @@ rack_do_close_wait(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, NULL, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, NULL, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (sbavail(&so->so_snd)) {
@@ -11875,6 +14228,7 @@ rack_do_fin_wait_1(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	int32_t ourfinisacked = 0;
 	struct tcp_rack *rack;
 
@@ -11891,7 +14245,7 @@ rack_do_fin_wait_1(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -11957,7 +14311,7 @@ rack_do_fin_wait_1(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (ourfinisacked) {
@@ -12002,6 +14356,7 @@ rack_do_closing(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	int32_t ourfinisacked = 0;
 	struct tcp_rack *rack;
 
@@ -12018,7 +14373,7 @@ rack_do_closing(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -12035,13 +14390,6 @@ rack_do_closing(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			      &rack->r_ctl.challenge_ack_cnt)) {
 		return (ret_val);
 	}
-	/*
-	 * If new data are received on a connection after the user processes
-	 * are gone, then RST the other end.
-	 */
-	if ((tp->t_flags & TF_CLOSED) && tlen &&
-	    rack_check_data_after_close(m, tp, &tlen, th, so))
-		return (1);
 	/*
 	 * If last ACK falls within this segment's sequence numbers, record
 	 * its timestamp. NOTE: 1) That the test incorporates suggestions
@@ -12084,7 +14432,7 @@ rack_do_closing(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (ourfinisacked) {
@@ -12115,6 +14463,7 @@ rack_do_lastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen;
 	int32_t ourfinisacked = 0;
 	struct tcp_rack *rack;
 
@@ -12131,7 +14480,7 @@ rack_do_lastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -12143,18 +14492,12 @@ rack_do_lastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (ctf_ts_check(m, th, tp, tlen, thflags, &ret_val))
 			return (ret_val);
 	}
+	orig_tlen = tlen;
 	if (_ctf_drop_checks(to, m, th, tp, &tlen, &thflags, &drop_hdrlen, &ret_val,
 			      &rack->r_ctl.challenge_ack_ts,
 			      &rack->r_ctl.challenge_ack_cnt)) {
 		return (ret_val);
 	}
-	/*
-	 * If new data are received on a connection after the user processes
-	 * are gone, then RST the other end.
-	 */
-	if ((tp->t_flags & TF_CLOSED) && tlen &&
-	    rack_check_data_after_close(m, tp, &tlen, th, so))
-		return (1);
 	/*
 	 * If last ACK falls within this segment's sequence numbers, record
 	 * its timestamp. NOTE: 1) That the test incorporates suggestions
@@ -12197,7 +14540,7 @@ rack_do_lastack(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * case TCPS_LAST_ACK: Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (ourfinisacked) {
@@ -12228,6 +14571,7 @@ rack_do_fin_wait_2(struct mbuf *m, struct tcphdr *th, struct socket *so,
     uint32_t tiwin, int32_t thflags, int32_t nxt_pkt, uint8_t iptos)
 {
 	int32_t ret_val = 0;
+	int32_t orig_tlen = tlen;
 	int32_t ourfinisacked = 0;
 	struct tcp_rack *rack;
 
@@ -12245,7 +14589,7 @@ rack_do_fin_wait_2(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * synchronized state.
 	 */
 	if (thflags & TH_SYN) {
-		ctf_challenge_ack(m, th, tp, &ret_val);
+		ctf_challenge_ack(m, th, tp, iptos, &ret_val);
 		return (ret_val);
 	}
 	/*
@@ -12311,7 +14655,7 @@ rack_do_fin_wait_2(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * Ack processing.
 	 */
-	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val)) {
+	if (rack_process_ack(m, th, so, tp, to, tiwin, tlen, &ourfinisacked, thflags, &ret_val, orig_tlen)) {
 		return (ret_val);
 	}
 	if (sbavail(&so->so_snd)) {
@@ -12341,6 +14685,15 @@ rack_set_pace_segments(struct tcpcb *tp, struct tcp_rack *rack, uint32_t line, u
 	int chged = 0;
 	uint32_t user_max, orig_min, orig_max;
 
+#ifdef TCP_REQUEST_TRK
+	if (rack->rc_hybrid_mode &&
+	    (rack->r_ctl.rc_pace_max_segs != 0) &&
+	    (rack_hybrid_allow_set_maxseg == 1) &&
+	    (rack->r_ctl.rc_last_sft != NULL)) {
+		rack->r_ctl.rc_last_sft->hybrid_flags &= ~TCP_HYBRID_PACING_SETMSS;
+		return;
+	}
+#endif
 	orig_min = rack->r_ctl.rc_pace_min_segs;
 	orig_max = rack->r_ctl.rc_pace_max_segs;
 	user_max = ctf_fixed_maxseg(tp) * rack->rc_user_set_max_segs;
@@ -12360,19 +14713,21 @@ rack_set_pace_segments(struct tcpcb *tp, struct tcp_rack *rack, uint32_t line, u
 			rack->r_ctl.rc_pace_max_segs = user_max;
 		} else {
 			/* We are pacing right at the hardware rate */
-			uint32_t segsiz;
+			uint32_t segsiz, pace_one;
 
+			if (rack_pace_one_seg ||
+			    (rack->r_ctl.rc_user_set_min_segs == 1))
+				pace_one = 1;
+			else
+				pace_one = 0;
 			segsiz = min(ctf_fixed_maxseg(tp),
 				     rack->r_ctl.rc_pace_min_segs);
-			rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size(
-				                           tp, bw_est, segsiz, 0,
-							   rack->r_ctl.crte, NULL);
+			rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size_w_divisor(
+				tp, bw_est, segsiz, pace_one,
+				rack->r_ctl.crte, NULL, rack->r_ctl.pace_len_divisor);
 		}
 	} else if (rack->rc_always_pace) {
 		if (rack->r_ctl.gp_bw ||
-#ifdef NETFLIX_PEAKRATE
-		    rack->rc_tp->t_maxpeakrate ||
-#endif
 		    rack->r_ctl.init_rate) {
 			/* We have a rate of some sort set */
 			uint32_t  orig;
@@ -12382,7 +14737,7 @@ rack_set_pace_segments(struct tcpcb *tp, struct tcp_rack *rack, uint32_t line, u
 			if (fill_override)
 				rate_wanted = *fill_override;
 			else
-				rate_wanted = rack_get_output_bw(rack, bw_est, NULL, NULL);
+				rate_wanted = rack_get_gp_est(rack);
 			if (rate_wanted) {
 				/* We have something */
 				rack->r_ctl.rc_pace_max_segs = rack_get_pacing_len(rack,
@@ -12412,7 +14767,7 @@ rack_set_pace_segments(struct tcpcb *tp, struct tcp_rack *rack, uint32_t line, u
 
 
 static void
-rack_init_fsb_block(struct tcpcb *tp, struct tcp_rack *rack)
+rack_init_fsb_block(struct tcpcb *tp, struct tcp_rack *rack, int32_t flags)
 {
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
@@ -12442,8 +14797,10 @@ rack_init_fsb_block(struct tcpcb *tp, struct tcp_rack *rack)
 		tcpip_fillheaders(rack->rc_inp,
 				  tp->t_port,
 				  ip6, rack->r_ctl.fsb.th);
+		rack->r_ctl.fsb.hoplimit = in6_selecthlim(rack->rc_inp, NULL);
 	} else
 #endif				/* INET6 */
+#ifdef INET
 	{
 		rack->r_ctl.fsb.tcp_ip_hdr_len = sizeof(struct tcpiphdr);
 		ip = (struct ip *)rack->r_ctl.fsb.tcp_ip_hdr;
@@ -12462,7 +14819,11 @@ rack_init_fsb_block(struct tcpcb *tp, struct tcp_rack *rack)
 		tcpip_fillheaders(rack->rc_inp,
 				  tp->t_port,
 				  ip, rack->r_ctl.fsb.th);
+		rack->r_ctl.fsb.hoplimit = tptoinpcb(tp)->inp_ip_ttl;
 	}
+#endif
+	rack->r_ctl.fsb.recwin = lmin(lmax(sbspace(&tptosocket(tp)->so_rcv), 0),
+	    (long)TCP_MAXWIN << tp->rcv_scale);
 	rack->r_fsb_inited = 1;
 }
 
@@ -12487,36 +14848,488 @@ rack_init_fsb(struct tcpcb *tp, struct tcp_rack *rack)
 	return (0);
 }
 
-static int
-rack_init(struct tcpcb *tp)
+static void
+rack_log_hystart_event(struct tcp_rack *rack, uint32_t high_seq, uint8_t mod)
 {
-	struct tcp_rack *rack = NULL;
-#ifdef INVARIANTS
-	struct rack_sendmap *insret;
-#endif
-	uint32_t iwin, snt, us_cts;
-	int err;
+	/*
+	 * Types of logs (mod value)
+	 * 20 - Initial round setup
+	 * 21 - Rack declares a new round.
+	 */
+	struct tcpcb *tp;
 
-	tp->t_fb_ptr = uma_zalloc(rack_pcb_zone, M_NOWAIT);
-	if (tp->t_fb_ptr == NULL) {
+	tp = rack->rc_tp;
+	if (tcp_bblogging_on(tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log, 0, sizeof(log));
+		log.u_bbr.flex1 = rack->r_ctl.current_round;
+		log.u_bbr.flex2 = rack->r_ctl.roundends;
+		log.u_bbr.flex3 = high_seq;
+		log.u_bbr.flex4 = tp->snd_max;
+		log.u_bbr.flex8 = mod;
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.cur_del_rate = rack->rc_tp->t_sndbytes;
+		log.u_bbr.delRate = rack->rc_tp->t_snd_rxt_bytes;
+		TCP_LOG_EVENTP(tp, NULL,
+		    &tptosocket(tp)->so_rcv,
+		    &tptosocket(tp)->so_snd,
+		    TCP_HYSTART, 0,
+		    0, &log, false, &tv);
+	}
+}
+
+static void
+rack_deferred_init(struct tcpcb *tp, struct tcp_rack *rack)
+{
+	rack->rack_deferred_inited = 1;
+	rack->r_ctl.roundends = tp->snd_max;
+	rack->r_ctl.rc_high_rwnd = tp->snd_wnd;
+	rack->r_ctl.cwnd_to_use = tp->snd_cwnd;
+}
+
+static void
+rack_init_retransmit_value(struct tcp_rack *rack, int ctl)
+{
+	/* Retransmit bit controls.
+	 *
+	 * The setting of these values control one of
+	 * three settings you can have and dictate
+	 * how rack does retransmissions. Note this
+	 * is in *any* mode i.e. pacing on or off DGP
+	 * fixed rate pacing, or just bursting rack.
+	 *
+	 * 1 - Use full sized retransmits i.e. limit
+	 *     the size to whatever the pace_max_segments
+	 *     size is.
+	 *
+	 * 2 - Use pacer min granularity as a guide to
+	 *     the size combined with the current calculated
+	 *     goodput b/w measurement. So for example if
+	 *     the goodput is measured at 20Mbps we would
+	 *     calculate 8125 (pacer minimum 250usec in
+	 *     that b/w) and then round it up to the next
+	 *     MSS i.e. for 1448 mss 6 MSS or 8688 bytes.
+	 *
+	 * 0 - The rack default 1 MSS (anything not 0/1/2
+	 *     fall here too if we are setting via rack_init()).
+	 *
+	 */
+	if (ctl == 1) {
+		rack->full_size_rxt = 1;
+		rack->shape_rxt_to_pacing_min  = 0;
+	} else if (ctl == 2) {
+		rack->full_size_rxt = 0;
+		rack->shape_rxt_to_pacing_min  = 1;
+	} else {
+		rack->full_size_rxt = 0;
+		rack->shape_rxt_to_pacing_min  = 0;
+	}
+}
+
+static void
+rack_log_chg_info(struct tcpcb *tp, struct tcp_rack *rack, uint8_t mod,
+		  uint32_t flex1,
+		  uint32_t flex2,
+		  uint32_t flex3)
+{
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.flex8 = mod;
+		log.u_bbr.flex1 = flex1;
+		log.u_bbr.flex2 = flex2;
+		log.u_bbr.flex3 = flex3;
+		tcp_log_event(tp, NULL, NULL, NULL, TCP_CHG_QUERY, 0,
+			       0, &log, false, NULL, __func__, __LINE__, &tv);
+	}
+}
+
+static int
+rack_chg_query(struct tcpcb *tp, struct tcp_query_resp *reqr)
+{
+	struct tcp_rack *rack;
+	struct rack_sendmap *rsm;
+	int i;
+
+
+	rack = (struct tcp_rack *)tp->t_fb_ptr;
+	switch (reqr->req) {
+	case TCP_QUERY_SENDMAP:
+		if ((reqr->req_param == tp->snd_max) ||
+		    (tp->snd_max == tp->snd_una)){
+			/* Unlikely */
+			return (0);
+		}
+		rsm = tqhash_find(rack->r_ctl.tqh, reqr->req_param);
+		if (rsm == NULL) {
+			/* Can't find that seq -- unlikely */
+			return (0);
+		}
+		reqr->sendmap_start = rsm->r_start;
+		reqr->sendmap_end = rsm->r_end;
+		reqr->sendmap_send_cnt = rsm->r_rtr_cnt;
+		reqr->sendmap_fas = rsm->r_fas;
+		if (reqr->sendmap_send_cnt > SNDMAP_NRTX)
+			reqr->sendmap_send_cnt = SNDMAP_NRTX;
+		for(i=0; i<reqr->sendmap_send_cnt; i++)
+			reqr->sendmap_time[i] = rsm->r_tim_lastsent[i];
+		reqr->sendmap_ack_arrival = rsm->r_ack_arrival;
+		reqr->sendmap_flags = rsm->r_flags & SNDMAP_MASK;
+		reqr->sendmap_r_rtr_bytes = rsm->r_rtr_bytes;
+		reqr->sendmap_dupacks = rsm->r_dupack;
+		rack_log_chg_info(tp, rack, 1,
+				  rsm->r_start,
+				  rsm->r_end,
+				  rsm->r_flags);
+		return(1);
+		break;
+	case TCP_QUERY_TIMERS_UP:
+		if (rack->r_ctl.rc_hpts_flags == 0) {
+			/* no timers up */
+			return (0);
+		}
+		reqr->timer_hpts_flags = rack->r_ctl.rc_hpts_flags;
+		if (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) {
+			reqr->timer_pacing_to = rack->r_ctl.rc_last_output_to;
+		}
+		if (rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK) {
+			reqr->timer_timer_exp = rack->r_ctl.rc_timer_exp;
+		}
+		rack_log_chg_info(tp, rack, 2,
+				  rack->r_ctl.rc_hpts_flags,
+				  rack->r_ctl.rc_last_output_to,
+				  rack->r_ctl.rc_timer_exp);
+		return (1);
+		break;
+	case TCP_QUERY_RACK_TIMES:
+		/* Reordering items */
+		reqr->rack_num_dsacks = rack->r_ctl.num_dsack;
+		reqr->rack_reorder_ts = rack->r_ctl.rc_reorder_ts;
+		/* Timerstamps and timers */
+		reqr->rack_rxt_last_time = rack->r_ctl.rc_tlp_rxt_last_time;
+		reqr->rack_min_rtt = rack->r_ctl.rc_rack_min_rtt;
+		reqr->rack_rtt = rack->rc_rack_rtt;
+		reqr->rack_tmit_time = rack->r_ctl.rc_rack_tmit_time;
+		reqr->rack_srtt_measured = rack->rc_srtt_measure_made;
+		/* PRR data */
+		reqr->rack_sacked = rack->r_ctl.rc_sacked;
+		reqr->rack_holes_rxt = rack->r_ctl.rc_holes_rxt;
+		reqr->rack_prr_delivered = rack->r_ctl.rc_prr_delivered;
+		reqr->rack_prr_recovery_fs = rack->r_ctl.rc_prr_recovery_fs;
+		reqr->rack_prr_sndcnt = rack->r_ctl.rc_prr_sndcnt;
+		reqr->rack_prr_out = rack->r_ctl.rc_prr_out;
+		/* TLP and persists info */
+		reqr->rack_tlp_out = rack->rc_tlp_in_progress;
+		reqr->rack_tlp_cnt_out = rack->r_ctl.rc_tlp_cnt_out;
+		if (rack->rc_in_persist) {
+			reqr->rack_time_went_idle = rack->r_ctl.rc_went_idle_time;
+			reqr->rack_in_persist = 1;
+		} else {
+			reqr->rack_time_went_idle = 0;
+			reqr->rack_in_persist = 0;
+		}
+		if (rack->r_wanted_output)
+			reqr->rack_wanted_output = 1;
+		else
+			reqr->rack_wanted_output = 0;
+		return (1);
+		break;
+	default:
+		return (-EINVAL);
+	}
+}
+
+static void
+rack_switch_failed(struct tcpcb *tp)
+{
+	/*
+	 * This method gets called if a stack switch was
+	 * attempted and it failed. We are left
+	 * but our hpts timers were stopped and we
+	 * need to validate time units and t_flags2.
+	 */
+	struct tcp_rack *rack;
+	struct timeval tv;
+	uint32_t cts;
+	uint32_t toval;
+	struct hpts_diag diag;
+
+	rack = (struct tcp_rack *)tp->t_fb_ptr;
+	tcp_change_time_units(tp, TCP_TMR_GRANULARITY_USEC);
+	if  (rack->r_mbuf_queue || rack->rc_always_pace || rack->r_use_cmp_ack)
+		tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
+	else
+		tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
+	if (rack->r_use_cmp_ack && TCPS_HAVEESTABLISHED(tp->t_state))
+		tp->t_flags2 |= TF2_MBUF_ACKCMP;
+	if (tp->t_in_hpts > IHPTS_NONE) {
+		/* Strange */
+		return;
+	}
+	cts = tcp_get_usecs(&tv);
+	if (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) {
+		if (TSTMP_GT(rack->r_ctl.rc_last_output_to, cts)) {
+			toval = rack->r_ctl.rc_last_output_to - cts;
+		} else {
+			/* one slot please */
+			toval = HPTS_TICKS_PER_SLOT;
+		}
+	} else if (rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK) {
+		if (TSTMP_GT(rack->r_ctl.rc_timer_exp, cts)) {
+			toval = rack->r_ctl.rc_timer_exp - cts;
+		} else {
+			/* one slot please */
+			toval = HPTS_TICKS_PER_SLOT;
+		}
+	} else
+		toval = HPTS_TICKS_PER_SLOT;
+	(void)tcp_hpts_insert_diag(tp, HPTS_USEC_TO_SLOTS(toval),
+				   __LINE__, &diag);
+	rack_log_hpts_diag(rack, cts, &diag, &tv);
+}
+
+static int
+rack_init_outstanding(struct tcpcb *tp, struct tcp_rack *rack, uint32_t us_cts, void *ptr)
+{
+	struct rack_sendmap *rsm, *ersm;
+	int insret __diagused;
+	/*
+	 * When initing outstanding, we must be quite careful
+	 * to not refer to tp->t_fb_ptr. This has the old rack
+	 * pointer in it, not the "new" one (when we are doing
+	 * a stack switch).
+	 */
+
+
+	if (tp->t_fb->tfb_chg_query == NULL) {
+		/* Create a send map for the current outstanding data */
+
+		rsm = rack_alloc(rack);
+		if (rsm == NULL) {
+			uma_zfree(rack_pcb_zone, ptr);
+			return (ENOMEM);
+		}
+		rsm->r_no_rtt_allowed = 1;
+		rsm->r_tim_lastsent[0] = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
+		rsm->r_rtr_cnt = 1;
+		rsm->r_rtr_bytes = 0;
+		if (tp->t_flags & TF_SENTFIN)
+			rsm->r_flags |= RACK_HAS_FIN;
+		rsm->r_end = tp->snd_max;
+		if (tp->snd_una == tp->iss) {
+			/* The data space is one beyond snd_una */
+			rsm->r_flags |= RACK_HAS_SYN;
+			rsm->r_start = tp->iss;
+			rsm->r_end = rsm->r_start + (tp->snd_max - tp->snd_una);
+		} else
+			rsm->r_start = tp->snd_una;
+		rsm->r_dupack = 0;
+		if (rack->rc_inp->inp_socket->so_snd.sb_mb != NULL) {
+			rsm->m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd, 0, &rsm->soff);
+			if (rsm->m) {
+				rsm->orig_m_len = rsm->m->m_len;
+				rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+			} else {
+				rsm->orig_m_len = 0;
+				rsm->orig_t_space = 0;
+			}
+		} else {
+			/*
+			 * This can happen if we have a stand-alone FIN or
+			 *  SYN.
+			 */
+			rsm->m = NULL;
+			rsm->orig_m_len = 0;
+			rsm->orig_t_space = 0;
+			rsm->soff = 0;
+		}
+#ifdef INVARIANTS
+		if ((insret = tqhash_insert(rack->r_ctl.tqh, rsm)) != 0) {
+			panic("Insert in tailq_hash fails ret:%d rack:%p rsm:%p",
+			      insret, rack, rsm);
+		}
+#else
+		(void)tqhash_insert(rack->r_ctl.tqh, rsm);
+#endif
+		TAILQ_INSERT_TAIL(&rack->r_ctl.rc_tmap, rsm, r_tnext);
+		rsm->r_in_tmap = 1;
+	} else {
+		/* We have a query mechanism, lets use it */
+		struct tcp_query_resp qr;
+		int i;
+		tcp_seq at;
+
+		at = tp->snd_una;
+		while (at != tp->snd_max) {
+			memset(&qr, 0, sizeof(qr));
+			qr.req = TCP_QUERY_SENDMAP;
+			qr.req_param = at;
+			if ((*tp->t_fb->tfb_chg_query)(tp, &qr) == 0)
+				break;
+			/* Move forward */
+			at = qr.sendmap_end;
+			/* Now lets build the entry for this one */
+			rsm = rack_alloc(rack);
+			if (rsm == NULL) {
+				uma_zfree(rack_pcb_zone, ptr);
+				return (ENOMEM);
+			}
+			memset(rsm, 0, sizeof(struct rack_sendmap));
+			/* Now configure the rsm and insert it */
+			rsm->r_dupack = qr.sendmap_dupacks;
+			rsm->r_start = qr.sendmap_start;
+			rsm->r_end = qr.sendmap_end;
+			if (qr.sendmap_fas)
+				rsm->r_fas = qr.sendmap_end;
+			else
+				rsm->r_fas = rsm->r_start - tp->snd_una;
+			/*
+			 * We have carefully aligned the bits
+			 * so that all we have to do is copy over
+			 * the bits with the mask.
+			 */
+			rsm->r_flags = qr.sendmap_flags & SNDMAP_MASK;
+			rsm->r_rtr_bytes = qr.sendmap_r_rtr_bytes;
+			rsm->r_rtr_cnt = qr.sendmap_send_cnt;
+			rsm->r_ack_arrival = qr.sendmap_ack_arrival;
+			for (i=0 ; i<rsm->r_rtr_cnt; i++)
+				rsm->r_tim_lastsent[i]	= qr.sendmap_time[i];
+			rsm->m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd,
+					   (rsm->r_start - tp->snd_una), &rsm->soff);
+			if (rsm->m) {
+				rsm->orig_m_len = rsm->m->m_len;
+				rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
+			} else {
+				rsm->orig_m_len = 0;
+				rsm->orig_t_space = 0;
+			}
+#ifdef INVARIANTS
+			if ((insret = tqhash_insert(rack->r_ctl.tqh, rsm)) != 0) {
+				panic("Insert in tailq_hash fails ret:%d rack:%p rsm:%p",
+				      insret, rack, rsm);
+			}
+#else
+			(void)tqhash_insert(rack->r_ctl.tqh, rsm);
+#endif
+			if ((rsm->r_flags & RACK_ACKED) == 0)  {
+				TAILQ_FOREACH(ersm, &rack->r_ctl.rc_tmap, r_tnext) {
+					if (ersm->r_tim_lastsent[(ersm->r_rtr_cnt-1)] >
+					    rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)]) {
+						/*
+						 * If the existing ersm was sent at
+						 * a later time than the new one, then
+						 * the new one should appear ahead of this
+						 * ersm.
+						 */
+						rsm->r_in_tmap = 1;
+						TAILQ_INSERT_BEFORE(ersm, rsm, r_tnext);
+						break;
+					}
+				}
+				if (rsm->r_in_tmap == 0) {
+					/*
+					 * Not found so shove it on the tail.
+					 */
+					TAILQ_INSERT_TAIL(&rack->r_ctl.rc_tmap, rsm, r_tnext);
+					rsm->r_in_tmap = 1;
+				}
+ 			} else {
+				if ((rack->r_ctl.rc_sacklast == NULL) ||
+				    (SEQ_GT(rsm->r_end, rack->r_ctl.rc_sacklast->r_end))) {
+					rack->r_ctl.rc_sacklast = rsm;
+				}
+			}
+			rack_log_chg_info(tp, rack, 3,
+					  rsm->r_start,
+					  rsm->r_end,
+					  rsm->r_flags);
+		}
+	}
+	return (0);
+}
+
+static void
+rack_translate_policer_detect(struct tcp_rack *rack, uint32_t optval)
+{
+	/*
+	 * P = Percent of retransmits 499 = 49.9%
+	 * A = Average number 1 (.1%) -> 169 (16.9%)
+	 * M = Median number of retrans 1 - 16
+	 * MMMM MMMM AAAA AAAA PPPP PPPP PPPP PPPP
+	 *
+	 */
+	uint16_t per, upp;
+
+	per = optval & 0x0000ffff;
+	rack->r_ctl.policer_rxt_threshold = (uint32_t)(per & 0xffff);
+	upp = ((optval & 0xffff0000) >> 16);
+	rack->r_ctl.policer_avg_threshold = (0x00ff & upp);
+	rack->r_ctl.policer_med_threshold = ((upp >> 8) & 0x00ff);
+	if ((rack->r_ctl.policer_rxt_threshold > 0) &&
+	    (rack->r_ctl.policer_avg_threshold > 0) &&
+	    (rack->r_ctl.policer_med_threshold > 0)) {
+		rack->policer_detect_on = 1;
+	} else {
+		rack->policer_detect_on = 0;
+	}
+	rack->r_ctl.saved_policer_val = optval;
+	policer_detection_log(rack, optval,
+			      rack->r_ctl.policer_avg_threshold,
+			      rack->r_ctl.policer_med_threshold,
+			      rack->r_ctl.policer_rxt_threshold, 11);
+}
+
+static int32_t
+rack_init(struct tcpcb *tp, void **ptr)
+{
+	struct inpcb *inp = tptoinpcb(tp);
+	struct tcp_rack *rack = NULL;
+	uint32_t iwin, snt, us_cts;
+	size_t sz;
+	int err, no_query;
+
+	tcp_hpts_init(tp);
+
+	/*
+	 * First are we the initial or are we a switched stack?
+	 * If we are initing via tcp_newtcppcb the ptr passed
+	 * will be tp->t_fb_ptr. If its a stack switch that
+	 * has a previous stack we can query it will be a local
+	 * var that will in the end be set into t_fb_ptr.
+	 */
+	if (ptr == &tp->t_fb_ptr)
+		no_query = 1;
+	else
+		no_query = 0;
+	*ptr = uma_zalloc(rack_pcb_zone, M_NOWAIT);
+	if (*ptr == NULL) {
 		/*
 		 * We need to allocate memory but cant. The INP and INP_INFO
 		 * locks and they are recursive (happens during setup. So a
 		 * scheme to drop the locks fails :(
 		 *
 		 */
-		return (ENOMEM);
+		return(ENOMEM);
 	}
-	memset(tp->t_fb_ptr, 0, sizeof(struct tcp_rack));
-
-	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	RB_INIT(&rack->r_ctl.rc_mtree);
+	memset(*ptr, 0, sizeof(struct tcp_rack));
+	rack = (struct tcp_rack *)*ptr;
+	rack->r_ctl.tqh = malloc(sizeof(struct tailq_hash), M_TCPFSB, M_NOWAIT);
+	if (rack->r_ctl.tqh == NULL) {
+		uma_zfree(rack_pcb_zone, rack);
+		return(ENOMEM);
+	}
+	tqhash_init(rack->r_ctl.tqh);
 	TAILQ_INIT(&rack->r_ctl.rc_free);
 	TAILQ_INIT(&rack->r_ctl.rc_tmap);
 	rack->rc_tp = tp;
-	rack->rc_inp = tp->t_inpcb;
+	rack->rc_inp = inp;
 	/* Set the flag */
-	rack->r_is_v6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
+	rack->r_is_v6 = (inp->inp_vflag & INP_IPV6) != 0;
 	/* Probably not needed but lets be sure */
 	rack_clear_rate_sample(rack);
 	/*
@@ -12530,17 +15343,37 @@ rack_init(struct tcpcb *tp)
 	 * rc_pacing_cc_set. That way whenever we turn off pacing
 	 * or switch off this stack, we will know to go restore
 	 * the saved values.
+	 *
+	 * We specifically put into the beta the ecn value for pacing.
 	 */
-	rack->r_ctl.rc_saved_beta.beta = V_newreno_beta_ecn;
-	rack->r_ctl.rc_saved_beta.beta_ecn = V_newreno_beta_ecn;
+	rack->rc_new_rnd_needed = 1;
+	rack->r_ctl.rc_split_limit = V_tcp_map_split_limit;
 	/* We want abe like behavior as well */
+
 	rack->r_ctl.rc_saved_beta.newreno_flags |= CC_NEWRENO_BETA_ECN_ENABLED;
 	rack->r_ctl.rc_reorder_fade = rack_reorder_fade;
 	rack->rc_allow_data_af_clo = rack_ignore_data_after_close;
 	rack->r_ctl.rc_tlp_threshold = rack_tlp_thresh;
-	rack->r_ctl.roundends = tp->snd_max;
+	rack->r_ctl.policer_del_mss = rack_req_del_mss;
+	if ((rack_policer_rxt_thresh > 0) &&
+	    (rack_policer_avg_thresh > 0) &&
+	    (rack_policer_med_thresh > 0)) {
+		rack->r_ctl.policer_rxt_threshold = rack_policer_rxt_thresh;
+		rack->r_ctl.policer_avg_threshold = rack_policer_avg_thresh;
+		rack->r_ctl.policer_med_threshold = rack_policer_med_thresh;
+		rack->policer_detect_on = 1;
+	} else {
+		rack->policer_detect_on = 0;
+	}
+	if (rack_fill_cw_state)
+		rack->rc_pace_to_cwnd = 1;
+	if (rack_pacing_min_seg)
+		rack->r_ctl.rc_user_set_min_segs = rack_pacing_min_seg;
 	if (use_rack_rr)
 		rack->use_rack_rr = 1;
+	if (rack_dnd_default) {
+		rack->rc_pace_dnd = 1;
+	}
 	if (V_tcp_delack_enabled)
 		tp->t_delayed_ack = 1;
 	else
@@ -12550,19 +15383,52 @@ rack_init(struct tcpcb *tp)
 		tp->t_flags2 |= TF2_TCP_ACCOUNTING;
 	}
 #endif
+	rack->r_ctl.pcm_i.cnt_alloc = RACK_DEFAULT_PCM_ARRAY;
+	sz = (sizeof(struct rack_pcm_stats) * rack->r_ctl.pcm_i.cnt_alloc);
+	rack->r_ctl.pcm_s = malloc(sz,M_TCPPCM, M_NOWAIT);
+	if (rack->r_ctl.pcm_s == NULL) {
+		rack->r_ctl.pcm_i.cnt_alloc = 0;
+	}
+#ifdef NETFLIX_STATS
+	rack->r_ctl.side_chan_dis_mask = tcp_sidechannel_disable_mask;
+#endif
+	rack->r_ctl.rack_per_upper_bound_ss = (uint8_t)rack_per_upper_bound_ss;
+	rack->r_ctl.rack_per_upper_bound_ca = (uint8_t)rack_per_upper_bound_ca;
 	if (rack_enable_shared_cwnd)
 		rack->rack_enable_scwnd = 1;
+	rack->r_ctl.pace_len_divisor = rack_default_pacing_divisor;
 	rack->rc_user_set_max_segs = rack_hptsi_segments;
+	rack->r_ctl.max_reduction = rack_max_reduce;
 	rack->rc_force_max_seg = 0;
-	if (rack_use_imac_dack)
-		rack->rc_dack_mode = 1;
 	TAILQ_INIT(&rack->r_ctl.opt_list);
+	rack->r_ctl.rc_saved_beta.beta = V_newreno_beta_ecn;
+	rack->r_ctl.rc_saved_beta.beta_ecn = V_newreno_beta_ecn;
+	if (rack_hibeta_setting) {
+		rack->rack_hibeta = 1;
+		if ((rack_hibeta_setting >= 50) &&
+		    (rack_hibeta_setting <= 100)) {
+			rack->r_ctl.rc_saved_beta.beta = rack_hibeta_setting;
+			rack->r_ctl.saved_hibeta = rack_hibeta_setting;
+		}
+	} else {
+		rack->r_ctl.saved_hibeta = 50;
+	}
+	/*
+	 * We initialize to all ones so we never match 0
+	 * just in case the client sends in 0, it hopefully
+	 * will never have all 1's in ms :-)
+	 */
+	rack->r_ctl.last_tm_mark = 0xffffffffffffffff;
 	rack->r_ctl.rc_reorder_shift = rack_reorder_thresh;
 	rack->r_ctl.rc_pkt_delay = rack_pkt_delay;
+	rack->r_ctl.pol_bw_comp = rack_policing_do_bw_comp;
 	rack->r_ctl.rc_tlp_cwnd_reduce = rack_lower_cwnd_at_tlp;
 	rack->r_ctl.rc_lowest_us_rtt = 0xffffffff;
 	rack->r_ctl.rc_highest_us_rtt = 0;
 	rack->r_ctl.bw_rate_cap = rack_bw_rate_cap;
+	rack->pcm_enabled = rack_pcm_is_enabled;
+	if (rack_fillcw_bw_cap)
+		rack->r_ctl.fillcw_cap = rack_fillcw_bw_cap;
 	rack->r_ctl.timer_slop = TICKS_2_USEC(tcp_rexmit_slop);
 	if (rack_use_cmp_acks)
 		rack->r_use_cmp_ack = 1;
@@ -12571,8 +15437,9 @@ rack_init(struct tcpcb *tp)
 	if (rack_gp_no_rec_chg)
 		rack->rc_gp_no_rec_chg = 1;
 	if (rack_pace_every_seg && tcp_can_enable_pacing()) {
+		rack->r_ctl.pacing_method |= RACK_REG_PACING;
 		rack->rc_always_pace = 1;
-		if (rack->use_fixed_rate || rack->gp_ready)
+		if (rack->rack_hibeta)
 			rack_set_cc_pacing(rack);
 	} else
 		rack->rc_always_pace = 0;
@@ -12580,25 +15447,38 @@ rack_init(struct tcpcb *tp)
 		rack->r_mbuf_queue = 1;
 	else
 		rack->r_mbuf_queue = 0;
-	if  (rack->r_mbuf_queue || rack->rc_always_pace || rack->r_use_cmp_ack)
-		tp->t_inpcb->inp_flags2 |= INP_SUPPORTS_MBUFQ;
-	else
-		tp->t_inpcb->inp_flags2 &= ~INP_SUPPORTS_MBUFQ;
 	rack_set_pace_segments(tp, rack, __LINE__, NULL);
 	if (rack_limits_scwnd)
 		rack->r_limit_scw = 1;
 	else
 		rack->r_limit_scw = 0;
+	rack_init_retransmit_value(rack, rack_rxt_controls);
 	rack->rc_labc = V_tcp_abc_l_var;
-	rack->r_ctl.rc_high_rwnd = tp->snd_wnd;
-	rack->r_ctl.cwnd_to_use = tp->snd_cwnd;
+	if (rack_honors_hpts_min_to)
+		rack->r_use_hpts_min = 1;
+	if (tp->snd_una != 0) {
+		rack->r_ctl.idle_snd_una = tp->snd_una;
+		rack->rc_sendvars_notset = 0;
+		/*
+		 * Make sure any TCP timers are not running.
+		 */
+		tcp_timer_stop(tp);
+	} else {
+		/*
+		 * Server side, we are called from the
+		 * syn-cache. This means none of the
+		 * snd_una/max are set yet so we have
+		 * to defer this until the first send.
+		 */
+		rack->rc_sendvars_notset = 1;
+	}
+
 	rack->r_ctl.rc_rate_sample_method = rack_rate_sample_method;
 	rack->rack_tlp_threshold_use = rack_tlp_threshold_use;
 	rack->r_ctl.rc_prr_sendalot = rack_send_a_lot_in_prr;
 	rack->r_ctl.rc_min_to = rack_min_to;
 	microuptime(&rack->r_ctl.act_rcv_time);
 	rack->r_ctl.rc_last_time_decay = rack->r_ctl.act_rcv_time;
-	rack->rc_init_win = rack_default_init_window;
 	rack->r_ctl.rack_per_of_gp_ss = rack_per_of_gp_ss;
 	if (rack_hw_up_only)
 		rack->r_up_only = 1;
@@ -12610,15 +15490,34 @@ rack_init(struct tcpcb *tp)
 	} else
 		rack->r_ctl.rack_per_of_gp_ca = rack_per_of_gp_ca;
 	rack->r_ctl.rack_per_of_gp_rec = rack_per_of_gp_rec;
+	if (rack_timely_off) {
+		rack->rc_skip_timely = 1;
+	}
+	if (rack->rc_skip_timely) {
+		rack->r_ctl.rack_per_of_gp_rec = 90;
+		rack->r_ctl.rack_per_of_gp_ca = 100;
+		rack->r_ctl.rack_per_of_gp_ss = 250;
+	}
 	rack->r_ctl.rack_per_of_gp_probertt = rack_per_of_gp_probertt;
 	rack->r_ctl.rc_tlp_rxt_last_time = tcp_tv_to_mssectick(&rack->r_ctl.act_rcv_time);
+	rack->r_ctl.last_rcv_tstmp_for_rtt = tcp_tv_to_mssectick(&rack->r_ctl.act_rcv_time);
+
 	setup_time_filter_small(&rack->r_ctl.rc_gp_min_rtt, FILTER_TYPE_MIN,
 				rack_probertt_filter_life);
 	us_cts = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time);
 	rack->r_ctl.rc_lower_rtt_us_cts = us_cts;
 	rack->r_ctl.rc_time_of_last_probertt = us_cts;
-	rack->r_ctl.challenge_ack_ts = tcp_ts_getticks();
+	rack->r_ctl.rc_went_idle_time = us_cts;
+	rack->r_ctl.challenge_ack_ts = tcp_ts_getticks() - (tcp_ack_war_time_window + 1);
 	rack->r_ctl.rc_time_probertt_starts = 0;
+
+	rack->r_ctl.gp_rnd_thresh = rack_rnd_cnt_req & 0xff;
+	if (rack_rnd_cnt_req  & 0x10000)
+		rack->r_ctl.gate_to_fs = 1;
+	rack->r_ctl.gp_gain_req = rack_gp_gain_req;
+	if ((rack_rnd_cnt_req & 0x100) > 0) {
+
+	}
 	if (rack_dsack_std_based & 0x1) {
 		/* Basically this means all rack timers are at least (srtt + 1/4 srtt) */
 		rack->rc_rack_tmr_std_based = 1;
@@ -12636,70 +15535,98 @@ rack_init(struct tcpcb *tp)
 		rack->rack_hdw_pace_ena = 1;
 	if (rack_hw_rate_caps)
 		rack->r_rack_hw_rate_caps = 1;
-	/* Do we force on detection? */
-#ifdef NETFLIX_EXP_DETECTION
-	if (tcp_force_detection)
-		rack->do_detection = 1;
-	else
-#endif
-		rack->do_detection = 0;
 	if (rack_non_rxt_use_cr)
 		rack->rack_rec_nonrxt_use_cr = 1;
+	/* Lets setup the fsb block */
 	err = rack_init_fsb(tp, rack);
 	if (err) {
-		uma_zfree(rack_pcb_zone, tp->t_fb_ptr);
-		tp->t_fb_ptr = NULL;
+		uma_zfree(rack_pcb_zone, *ptr);
+		*ptr = NULL;
 		return (err);
 	}
-	if (tp->snd_una != tp->snd_max) {
-		/* Create a send map for the current outstanding data */
-		struct rack_sendmap *rsm;
-
-		rsm = rack_alloc(rack);
-		if (rsm == NULL) {
-			uma_zfree(rack_pcb_zone, tp->t_fb_ptr);
-			tp->t_fb_ptr = NULL;
-			return (ENOMEM);
-		}
-		rsm->r_no_rtt_allowed = 1;
-		rsm->r_tim_lastsent[0] = rack_to_usec_ts(&rack->r_ctl.act_rcv_time);
-		rsm->r_rtr_cnt = 1;
-		rsm->r_rtr_bytes = 0;
-		if (tp->t_flags & TF_SENTFIN)
-			rsm->r_flags |= RACK_HAS_FIN;
-		if ((tp->snd_una == tp->iss) &&
-		    !TCPS_HAVEESTABLISHED(tp->t_state))
-			rsm->r_flags |= RACK_HAS_SYN;
-		rsm->r_start = tp->snd_una;
-		rsm->r_end = tp->snd_max;
-		rsm->r_dupack = 0;
-		if (rack->rc_inp->inp_socket->so_snd.sb_mb != NULL) {
-			rsm->m = sbsndmbuf(&rack->rc_inp->inp_socket->so_snd, 0, &rsm->soff);
-			if (rsm->m)
-				rsm->orig_m_len = rsm->m->m_len;
-			else
-				rsm->orig_m_len = 0;
-		} else {
-			/*
-			 * This can happen if we have a stand-alone FIN or
-			 *  SYN.
-			 */
-			rsm->m = NULL;
-			rsm->orig_m_len = 0;
-			rsm->soff = 0;
-		}
-#ifndef INVARIANTS
-		(void)RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-#else
-		insret = RB_INSERT(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-		if (insret != NULL) {
-			panic("Insert in rb tree fails ret:%p rack:%p rsm:%p",
-			      insret, rack, rsm);
-		}
-#endif
-		TAILQ_INSERT_TAIL(&rack->r_ctl.rc_tmap, rsm, r_tnext);
-		rsm->r_in_tmap = 1;
+	if (rack_do_hystart) {
+		tp->t_ccv.flags |= CCF_HYSTART_ALLOWED;
+		if (rack_do_hystart > 1)
+			tp->t_ccv.flags |= CCF_HYSTART_CAN_SH_CWND;
+		if (rack_do_hystart > 2)
+			tp->t_ccv.flags |= CCF_HYSTART_CONS_SSTH;
 	}
+	/* Log what we will do with queries */
+	rack_log_chg_info(tp, rack, 7,
+			  no_query, 0, 0);
+	if (rack_def_profile)
+		rack_set_profile(rack, rack_def_profile);
+	/* Cancel the GP measurement in progress */
+	tp->t_flags &= ~TF_GPUTINPROG;
+	if ((tp->t_state != TCPS_CLOSED) &&
+	    (tp->t_state != TCPS_TIME_WAIT)) {
+		/*
+		 * We are already open, we may
+		 * need to adjust a few things.
+		 */
+		if (SEQ_GT(tp->snd_max, tp->iss))
+			snt = tp->snd_max - tp->iss;
+		else
+			snt = 0;
+		iwin = rc_init_window(rack);
+		if ((snt < iwin) &&
+		    (no_query == 1)) {
+			/* We are not past the initial window
+			 * on the first init (i.e. a stack switch
+			 * has not yet occured) so we need to make
+			 * sure cwnd and ssthresh is correct.
+			 */
+			if (tp->snd_cwnd < iwin)
+				tp->snd_cwnd = iwin;
+			/*
+			 * If we are within the initial window
+			 * we want ssthresh to be unlimited. Setting
+			 * it to the rwnd (which the default stack does
+			 * and older racks) is not really a good idea
+			 * since we want to be in SS and grow both the
+			 * cwnd and the rwnd (via dynamic rwnd growth). If
+			 * we set it to the rwnd then as the peer grows its
+			 * rwnd we will be stuck in CA and never hit SS.
+			 *
+			 * Its far better to raise it up high (this takes the
+			 * risk that there as been a loss already, probably
+			 * we should have an indicator in all stacks of loss
+			 * but we don't), but considering the normal use this
+			 * is a risk worth taking. The consequences of not
+			 * hitting SS are far worse than going one more time
+			 * into it early on (before we have sent even a IW).
+			 * It is highly unlikely that we will have had a loss
+			 * before getting the IW out.
+			 */
+			tp->snd_ssthresh = 0xffffffff;
+		}
+		/*
+		 * Any init based on sequence numbers
+		 * should be done in the deferred init path
+		 * since we can be CLOSED and not have them
+		 * inited when rack_init() is called. We
+		 * are not closed so lets call it.
+		 */
+		rack_deferred_init(tp, rack);
+	}
+	if ((tp->t_state != TCPS_CLOSED) &&
+	    (tp->t_state != TCPS_TIME_WAIT) &&
+	    (no_query == 0) &&
+	    (tp->snd_una != tp->snd_max))  {
+		err = rack_init_outstanding(tp, rack, us_cts, *ptr);
+		if (err) {
+			*ptr = NULL;
+			return(err);
+		}
+	}
+	rack_stop_all_timers(tp, rack);
+	/* Setup all the t_flags2 */
+	if  (rack->r_mbuf_queue || rack->rc_always_pace || rack->r_use_cmp_ack)
+		tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
+	else
+		tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
+	if (rack->r_use_cmp_ack && TCPS_HAVEESTABLISHED(tp->t_state))
+		tp->t_flags2 |= TF2_MBUF_ACKCMP;
 	/*
 	 * Timers in Rack are kept in microseconds so lets
 	 * convert any initial incoming variables
@@ -12710,57 +15637,110 @@ rack_init(struct tcpcb *tp)
 	 * these to get the full precision.
 	 */
 	rack_convert_rtts(tp);
-	tp->t_rttlow = TICKS_2_USEC(tp->t_rttlow);
-	if (rack_do_hystart) {
-		tp->ccv->flags |= CCF_HYSTART_ALLOWED;
-		if (rack_do_hystart > 1)
-			tp->ccv->flags |= CCF_HYSTART_CAN_SH_CWND;
-		if (rack_do_hystart > 2)
-			tp->ccv->flags |= CCF_HYSTART_CONS_SSTH;
+	rack_log_hystart_event(rack, rack->r_ctl.roundends, 20);
+	if ((tptoinpcb(tp)->inp_flags & INP_DROPPED) == 0) {
+		/* We do not start any timers on DROPPED connections */
+		if (tp->t_fb->tfb_chg_query == NULL) {
+			rack_start_hpts_timer(rack, tp, tcp_get_usecs(NULL), 0, 0, 0);
+		} else {
+			struct tcp_query_resp qr;
+			int ret;
+
+			memset(&qr, 0, sizeof(qr));
+
+			/* Get the misc time stamps and such for rack */
+			qr.req = TCP_QUERY_RACK_TIMES;
+			ret = (*tp->t_fb->tfb_chg_query)(tp, &qr);
+			if (ret == 1) {
+				rack->r_ctl.rc_reorder_ts = qr.rack_reorder_ts;
+				rack->r_ctl.num_dsack  = qr.rack_num_dsacks;
+				rack->r_ctl.rc_tlp_rxt_last_time = qr.rack_rxt_last_time;
+				rack->r_ctl.rc_rack_min_rtt = qr.rack_min_rtt;
+				rack->rc_rack_rtt = qr.rack_rtt;
+				rack->r_ctl.rc_rack_tmit_time = qr.rack_tmit_time;
+				rack->r_ctl.rc_sacked = qr.rack_sacked;
+				rack->r_ctl.rc_holes_rxt = qr.rack_holes_rxt;
+				rack->r_ctl.rc_prr_delivered = qr.rack_prr_delivered;
+				rack->r_ctl.rc_prr_recovery_fs = qr.rack_prr_recovery_fs;
+				rack->r_ctl.rc_prr_sndcnt = qr.rack_prr_sndcnt;
+				rack->r_ctl.rc_prr_out = qr.rack_prr_out;
+				if (qr.rack_tlp_out) {
+					rack->rc_tlp_in_progress = 1;
+					rack->r_ctl.rc_tlp_cnt_out = qr.rack_tlp_cnt_out;
+				} else {
+					rack->rc_tlp_in_progress = 0;
+					rack->r_ctl.rc_tlp_cnt_out = 0;
+				}
+				if (qr.rack_srtt_measured)
+					rack->rc_srtt_measure_made = 1;
+				if (qr.rack_in_persist == 1) {
+					rack->r_ctl.rc_went_idle_time = qr.rack_time_went_idle;
+#ifdef NETFLIX_SHARED_CWND
+					if (rack->r_ctl.rc_scw) {
+						tcp_shared_cwnd_idle(rack->r_ctl.rc_scw, rack->r_ctl.rc_scw_index);
+						rack->rack_scwnd_is_idle = 1;
+					}
+#endif
+					rack->r_ctl.persist_lost_ends = 0;
+					rack->probe_not_answered = 0;
+					rack->forced_ack = 0;
+					tp->t_rxtshift = 0;
+					rack->rc_in_persist = 1;
+					RACK_TCPT_RANGESET(tp->t_rxtcur, RACK_REXMTVAL(tp),
+							   rack_rto_min, rack_rto_max, rack->r_ctl.timer_slop);
+				}
+				if (qr.rack_wanted_output)
+					rack->r_wanted_output = 1;
+				rack_log_chg_info(tp, rack, 6,
+						  qr.rack_min_rtt,
+						  qr.rack_rtt,
+						  qr.rack_reorder_ts);
+			}
+			/* Get the old stack timers */
+			qr.req_param = 0;
+			qr.req = TCP_QUERY_TIMERS_UP;
+			ret = (*tp->t_fb->tfb_chg_query)(tp, &qr);
+			if (ret) {
+				/*
+				 * non-zero return means we have a timer('s)
+				 * to start. Zero means no timer (no keepalive
+				 * I suppose).
+				 */
+				uint32_t tov = 0;
+
+				rack->r_ctl.rc_hpts_flags = qr.timer_hpts_flags;
+				if (qr.timer_hpts_flags & PACE_PKT_OUTPUT) {
+					rack->r_ctl.rc_last_output_to = qr.timer_pacing_to;
+					if (TSTMP_GT(qr.timer_pacing_to, us_cts))
+						tov = qr.timer_pacing_to - us_cts;
+					else
+						tov = HPTS_TICKS_PER_SLOT;
+				}
+				if (qr.timer_hpts_flags & PACE_TMR_MASK) {
+					rack->r_ctl.rc_timer_exp = qr.timer_timer_exp;
+					if (tov == 0) {
+						if (TSTMP_GT(qr.timer_timer_exp, us_cts))
+							tov = qr.timer_timer_exp - us_cts;
+						else
+							tov = HPTS_TICKS_PER_SLOT;
+					}
+				}
+				rack_log_chg_info(tp, rack, 4,
+						  rack->r_ctl.rc_hpts_flags,
+						  rack->r_ctl.rc_last_output_to,
+						  rack->r_ctl.rc_timer_exp);
+				if (tov) {
+					struct hpts_diag diag;
+
+					(void)tcp_hpts_insert_diag(tp, HPTS_USEC_TO_SLOTS(tov),
+								   __LINE__, &diag);
+					rack_log_hpts_diag(rack, us_cts, &diag, &rack->r_ctl.act_rcv_time);
+				}
+			}
+		}
+		rack_log_rtt_shrinks(rack,  us_cts,  tp->t_rxtcur,
+				     __LINE__, RACK_RTTS_INIT);
 	}
-	if (rack_def_profile)
-		rack_set_profile(rack, rack_def_profile);
-	/* Cancel the GP measurement in progress */
-	tp->t_flags &= ~TF_GPUTINPROG;
-	if (SEQ_GT(tp->snd_max, tp->iss))
-		snt = tp->snd_max - tp->iss;
-	else
-		snt = 0;
-	iwin = rc_init_window(rack);
-	if (snt < iwin) {
-		/* We are not past the initial window
-		 * so we need to make sure cwnd is
-		 * correct.
-		 */
-		if (tp->snd_cwnd < iwin)
-			tp->snd_cwnd = iwin;
-		/*
-		 * If we are within the initial window
-		 * we want ssthresh to be unlimited. Setting
-		 * it to the rwnd (which the default stack does
-		 * and older racks) is not really a good idea
-		 * since we want to be in SS and grow both the
-		 * cwnd and the rwnd (via dynamic rwnd growth). If
-		 * we set it to the rwnd then as the peer grows its
-		 * rwnd we will be stuck in CA and never hit SS.
-		 *
-		 * Its far better to raise it up high (this takes the
-		 * risk that there as been a loss already, probably
-		 * we should have an indicator in all stacks of loss
-		 * but we don't), but considering the normal use this
-		 * is a risk worth taking. The consequences of not
-		 * hitting SS are far worse than going one more time
-		 * into it early on (before we have sent even a IW).
-		 * It is highly unlikely that we will have had a loss
-		 * before getting the IW out.
-		 */
-		tp->snd_ssthresh = 0xffffffff;
-	}
-	rack_stop_all_timers(tp);
-	/* Lets setup the fsb block */
-	rack_start_hpts_timer(rack, tp, tcp_get_usecs(NULL), 0, 0, 0);
-	rack_log_rtt_shrinks(rack,  us_cts,  tp->t_rxtcur,
-			     __LINE__, RACK_RTTS_INIT);
 	return (0);
 }
 
@@ -12803,40 +15783,25 @@ rack_handoff_ok(struct tcpcb *tp)
 	return (EINVAL);
 }
 
-
 static void
 rack_fini(struct tcpcb *tp, int32_t tcb_is_purged)
 {
+
 	if (tp->t_fb_ptr) {
+		uint32_t cnt_free = 0;
 		struct tcp_rack *rack;
-		struct rack_sendmap *rsm, *nrsm;
-#ifdef INVARIANTS
-		struct rack_sendmap *rm;
-#endif
+		struct rack_sendmap *rsm;
 
-		rack = (struct tcp_rack *)tp->t_fb_ptr;
-		if (tp->t_in_pkt) {
-			/*
-			 * It is unsafe to process the packets since a
-			 * reset may be lurking in them (its rare but it
-			 * can occur). If we were to find a RST, then we
-			 * would end up dropping the connection and the
-			 * INP lock, so when we return the caller (tcp_usrreq)
-			 * will blow up when it trys to unlock the inp.
-			 */
-			struct mbuf *save, *m;
-
-			m = tp->t_in_pkt;
-			tp->t_in_pkt = NULL;
-			tp->t_tail_pkt = NULL;
-			while (m) {
-				save = m->m_nextpkt;
-				m->m_nextpkt = NULL;
-				m_freem(m);
-				m = save;
-			}
-		}
+		tcp_handle_orphaned_packets(tp);
 		tp->t_flags &= ~TF_FORCEDATA;
+		rack = (struct tcp_rack *)tp->t_fb_ptr;
+		rack_log_pacing_delay_calc(rack,
+					   0,
+					   0,
+					   0,
+					   rack_get_gp_est(rack), /* delRate */
+					   rack_get_lt_bw(rack), /* rttProp */
+					   20, __LINE__, NULL, 0);
 #ifdef NETFLIX_SHARED_CWND
 		if (rack->r_ctl.rc_scw) {
 			uint32_t limit;
@@ -12856,55 +15821,8 @@ rack_fini(struct tcpcb *tp, int32_t tcb_is_purged)
 			rack->r_ctl.fsb.tcp_ip_hdr = NULL;
 			rack->r_ctl.fsb.th = NULL;
 		}
-		/* Convert back to ticks, with  */
-		if (tp->t_srtt > 1) {
-			uint32_t val, frac;
-
-			val = USEC_2_TICKS(tp->t_srtt);
-			frac = tp->t_srtt % (HPTS_USEC_IN_SEC / hz);
-			tp->t_srtt = val << TCP_RTT_SHIFT;
-			/*
-			 * frac is the fractional part here is left
-			 * over from converting to hz and shifting.
-			 * We need to convert this to the 5 bit
-			 * remainder.
-			 */
-			if (frac) {
-				if (hz == 1000) {
-					frac = (((uint64_t)frac *  (uint64_t)TCP_RTT_SCALE) / (uint64_t)HPTS_USEC_IN_MSEC);
-				} else {
-					frac = (((uint64_t)frac * (uint64_t)(hz) * (uint64_t)TCP_RTT_SCALE) /(uint64_t)HPTS_USEC_IN_SEC);
-				}
-				tp->t_srtt += frac;
-			}
-		}
-		if (tp->t_rttvar) {
-			uint32_t val, frac;
-
-			val = USEC_2_TICKS(tp->t_rttvar);
-			frac = tp->t_srtt % (HPTS_USEC_IN_SEC / hz);
-			tp->t_rttvar = val <<  TCP_RTTVAR_SHIFT;
-			/*
-			 * frac is the fractional part here is left
-			 * over from converting to hz and shifting.
-			 * We need to convert this to the 5 bit
-			 * remainder.
-			 */
-			if (frac) {
-				if (hz == 1000) {
-					frac = (((uint64_t)frac *  (uint64_t)TCP_RTT_SCALE) / (uint64_t)HPTS_USEC_IN_MSEC);
-				} else {
-					frac = (((uint64_t)frac * (uint64_t)(hz) * (uint64_t)TCP_RTT_SCALE) /(uint64_t)HPTS_USEC_IN_SEC);
-				}
-				tp->t_rttvar += frac;
-			}
-		}
-		tp->t_rxtcur = USEC_2_TICKS(tp->t_rxtcur);
-		tp->t_rttlow = USEC_2_TICKS(tp->t_rttlow);
-		if (rack->rc_always_pace) {
-			tcp_decrement_paced_conn();
-			rack_undo_cc_pacing(rack);
-			rack->rc_always_pace = 0;
+		if (rack->rc_always_pace == 1) {
+			rack_remove_pacing(rack);
 		}
 		/* Clean up any options if they were not applied */
 		while (!TAILQ_EMPTY(&rack->r_ctl.opt_list)) {
@@ -12923,36 +15841,62 @@ rack_fini(struct tcpcb *tp, int32_t tcb_is_purged)
 #ifdef TCP_BLACKBOX
 		tcp_log_flowend(tp);
 #endif
-		RB_FOREACH_SAFE(rsm, rack_rb_tree_head, &rack->r_ctl.rc_mtree, nrsm) {
-#ifndef INVARIANTS
-			(void)RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-#else
-			rm = RB_REMOVE(rack_rb_tree_head, &rack->r_ctl.rc_mtree, rsm);
-			if (rm != rsm) {
-				panic("At fini, rack:%p rsm:%p rm:%p",
-				      rack, rsm, rm);
-			}
-#endif
+		/*
+		 * Lets take a different approach to purging just
+		 * get each one and free it like a cum-ack would and
+		 * not use a foreach loop.
+		 */
+		rsm = tqhash_min(rack->r_ctl.tqh);
+		while (rsm) {
+			tqhash_remove(rack->r_ctl.tqh, rsm, REMOVE_TYPE_CUMACK);
+			rack->r_ctl.rc_num_maps_alloced--;
 			uma_zfree(rack_zone, rsm);
+			rsm = tqhash_min(rack->r_ctl.tqh);
 		}
 		rsm = TAILQ_FIRST(&rack->r_ctl.rc_free);
 		while (rsm) {
 			TAILQ_REMOVE(&rack->r_ctl.rc_free, rsm, r_tnext);
+			rack->r_ctl.rc_num_maps_alloced--;
+			rack->rc_free_cnt--;
+			cnt_free++;
 			uma_zfree(rack_zone, rsm);
 			rsm = TAILQ_FIRST(&rack->r_ctl.rc_free);
 		}
+		if (rack->r_ctl.pcm_s != NULL) {
+			free(rack->r_ctl.pcm_s, M_TCPPCM);
+			rack->r_ctl.pcm_s = NULL;
+			rack->r_ctl.pcm_i.cnt_alloc = 0;
+			rack->r_ctl.pcm_i.cnt = 0;
+		}
+		if ((rack->r_ctl.rc_num_maps_alloced > 0) &&
+		    (tcp_bblogging_on(tp))) {
+			union tcp_log_stackspecific log;
+			struct timeval tv;
+
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.flex8 = 10;
+			log.u_bbr.flex1 = rack->r_ctl.rc_num_maps_alloced;
+			log.u_bbr.flex2 = rack->rc_free_cnt;
+			log.u_bbr.flex3 = cnt_free;
+			log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+			rsm = tqhash_min(rack->r_ctl.tqh);
+			log.u_bbr.delRate = (uintptr_t)rsm;
+			rsm = TAILQ_FIRST(&rack->r_ctl.rc_free);
+			log.u_bbr.cur_del_rate = (uintptr_t)rsm;
+			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+			log.u_bbr.pkt_epoch = __LINE__;
+			(void)tcp_log_event(tp, NULL, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
+					     0, &log, false, NULL, NULL, 0, &tv);
+		}
+		KASSERT((rack->r_ctl.rc_num_maps_alloced == 0),
+			("rack:%p num_aloc:%u after freeing all?",
+			 rack,
+			 rack->r_ctl.rc_num_maps_alloced));
 		rack->rc_free_cnt = 0;
+		free(rack->r_ctl.tqh, M_TCPFSB);
+		rack->r_ctl.tqh = NULL;
 		uma_zfree(rack_pcb_zone, tp->t_fb_ptr);
 		tp->t_fb_ptr = NULL;
-	}
-	if (tp->t_inpcb) {
-		tp->t_inpcb->inp_flags2 &= ~INP_SUPPORTS_MBUFQ;
-		tp->t_inpcb->inp_flags2 &= ~INP_MBUF_QUEUE_READY;
-		tp->t_inpcb->inp_flags2 &= ~INP_DONT_SACK_QUEUE;
-		tp->t_inpcb->inp_flags2 &= ~INP_MBUF_ACKCMP;
-		/* Cancel the GP measurement in progress */
-		tp->t_flags &= ~TF_GPUTINPROG;
-		tp->t_inpcb->inp_flags2 &= ~INP_MBUF_L_ACKS;
 	}
 	/* Make sure snd_nxt is correctly set */
 	tp->snd_nxt = tp->snd_max;
@@ -12962,7 +15906,7 @@ static void
 rack_set_state(struct tcpcb *tp, struct tcp_rack *rack)
 {
 	if ((rack->r_state == TCPS_CLOSED) && (tp->t_state != TCPS_CLOSED)) {
-		rack->r_is_v6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
+		rack->r_is_v6 = (tptoinpcb(tp)->inp_vflag & INP_IPV6) != 0;
 	}
 	switch (tp->t_state) {
 	case TCPS_SYN_SENT:
@@ -12979,7 +15923,6 @@ rack_set_state(struct tcpcb *tp, struct tcp_rack *rack)
 		rack->r_substate = rack_do_established;
 		break;
 	case TCPS_CLOSE_WAIT:
-		rack_set_pace_segments(tp, rack, __LINE__, NULL);
 		rack->r_state = TCPS_CLOSE_WAIT;
 		rack->r_substate = rack_do_close_wait;
 		break;
@@ -12999,7 +15942,6 @@ rack_set_state(struct tcpcb *tp, struct tcp_rack *rack)
 		rack->r_substate = rack_do_lastack;
 		break;
 	case TCPS_FIN_WAIT_2:
-		rack_set_pace_segments(tp, rack, __LINE__, NULL);
 		rack->r_state = TCPS_FIN_WAIT_2;
 		rack->r_substate = rack_do_fin_wait_2;
 		break;
@@ -13010,7 +15952,7 @@ rack_set_state(struct tcpcb *tp, struct tcp_rack *rack)
 		break;
 	};
 	if (rack->r_use_cmp_ack && TCPS_HAVEESTABLISHED(tp->t_state))
-		rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
+		rack->rc_tp->t_flags2 |= TF2_MBUF_ACKCMP;
 
 }
 
@@ -13027,6 +15969,16 @@ rack_timer_audit(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb)
 	int tmr_up;
 
 	tmr_up = rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK;
+	if (tcp_in_hpts(rack->rc_tp) == 0) {
+		/*
+		 * Ok we probably need some timer up, but no
+		 * matter what the mask we are not in hpts. We
+		 * may have received an old ack and thus did nothing.
+		 */
+		rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
+		rack_start_hpts_timer(rack, tp, tcp_get_usecs(NULL), 0, 0, 0);
+		return;
+	}
 	if (rack->rc_in_persist && (tmr_up == PACE_TMR_PERSIT))
 		return;
 	rsm = TAILQ_FIRST(&rack->r_ctl.rc_tmap);
@@ -13041,7 +15993,7 @@ rack_timer_audit(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb)
 			if (tmr_up == PACE_TMR_DELACK)
 				/* We are supposed to have delayed ack up and we do */
 				return;
-		} else if (sbavail(&tp->t_inpcb->inp_socket->so_snd) && (tmr_up == PACE_TMR_RXT)) {
+		} else if (sbavail(&tptosocket(tp)->so_snd) && (tmr_up == PACE_TMR_RXT)) {
 			/*
 			 * if we hit enobufs then we would expect the possibility
 			 * of nothing outstanding and the RXT up (and the hptsi timer).
@@ -13080,7 +16032,7 @@ rack_timer_audit(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb)
 	 * We will force the hpts to be stopped if any, and restart
 	 * with the slot set to what was in the saved slot.
 	 */
-	if (tcp_in_hpts(rack->rc_inp)) {
+	if (tcp_in_hpts(rack->rc_tp)) {
 		if (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) {
 			uint32_t us_cts;
 
@@ -13091,7 +16043,7 @@ rack_timer_audit(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb)
 			}
 			rack->r_ctl.rc_hpts_flags &= ~PACE_PKT_OUTPUT;
 		}
-		tcp_hpts_remove(tp->t_inpcb);
+		tcp_hpts_remove(rack->rc_tp);
 	}
 	rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
 	rack_start_hpts_timer(rack, tp, tcp_get_usecs(NULL), 0, 0, 0);
@@ -13099,7 +16051,7 @@ rack_timer_audit(struct tcpcb *tp, struct tcp_rack *rack, struct sockbuf *sb)
 
 
 static void
-rack_do_win_updates(struct tcpcb *tp, struct tcp_rack *rack, uint32_t tiwin, uint32_t seq, uint32_t ack, uint32_t cts, uint32_t high_seq)
+rack_do_win_updates(struct tcpcb *tp, struct tcp_rack *rack, uint32_t tiwin, uint32_t seq, uint32_t ack, uint32_t cts)
 {
 	if ((SEQ_LT(tp->snd_wl1, seq) ||
 	    (tp->snd_wl1 == seq && (SEQ_LT(tp->snd_wl2, ack) ||
@@ -13123,6 +16075,8 @@ rack_do_win_updates(struct tcpcb *tp, struct tcp_rack *rack, uint32_t tiwin, uin
 		/* Not a valid win update */
 		return;
 	}
+	if (tp->snd_wnd > tp->max_sndwnd)
+		tp->max_sndwnd = tp->snd_wnd;
 	/* Do we exit persists? */
 	if ((rack->rc_in_persist != 0) &&
 	    (tp->snd_wnd >= min((rack->r_ctl.rc_high_rwnd/2),
@@ -13134,15 +16088,15 @@ rack_do_win_updates(struct tcpcb *tp, struct tcp_rack *rack, uint32_t tiwin, uin
 	    (tp->snd_wnd < min((rack->r_ctl.rc_high_rwnd/2), rack->r_ctl.rc_pace_min_segs)) &&
 	    TCPS_HAVEESTABLISHED(tp->t_state) &&
 	    ((tp->snd_max == tp->snd_una) || rack->rc_has_collapsed) &&
-	    sbavail(&tp->t_inpcb->inp_socket->so_snd) &&
-	    (sbavail(&tp->t_inpcb->inp_socket->so_snd) > tp->snd_wnd)) {
+	    sbavail(&tptosocket(tp)->so_snd) &&
+	    (sbavail(&tptosocket(tp)->so_snd) > tp->snd_wnd)) {
 		/*
 		 * Here the rwnd is less than
 		 * the pacing size, we are established,
 		 * nothing is outstanding, and there is
 		 * data to send. Enter persists.
 		 */
-		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime);
+		rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime, ack);
 	}
 }
 
@@ -13150,7 +16104,8 @@ static void
 rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent *ae, int ackval, uint32_t high_seq)
 {
 
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		struct inpcb *inp = tptoinpcb(tp);
 		union tcp_log_stackspecific log;
 		struct timeval ltv;
 		char tcp_hdr_buf[60];
@@ -13159,17 +16114,17 @@ rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent
 		uint32_t orig_snd_una;
 		uint8_t xx = 0;
 
-#ifdef NETFLIX_HTTP_LOGGING
-		struct http_sendfile_track *http_req;
+#ifdef TCP_REQUEST_TRK
+		struct tcp_sendfile_track *tcp_req;
 
 		if (SEQ_GT(ae->ack, tp->snd_una)) {
-			http_req = tcp_http_find_req_for_seq(tp, (ae->ack-1));
+			tcp_req = tcp_req_find_req_for_seq(tp, (ae->ack-1));
 		} else {
-			http_req = tcp_http_find_req_for_seq(tp, ae->ack);
+			tcp_req = tcp_req_find_req_for_seq(tp, ae->ack);
 		}
 #endif
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		if (rack->rack_no_prr == 0)
 			log.u_bbr.flex1 = rack->r_ctl.rc_prr_sndcnt;
 		else
@@ -13178,6 +16133,7 @@ rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent
 		log.u_bbr.use_lt_bw <<= 1;
 		log.u_bbr.use_lt_bw |= rack->r_might_revert;
 		log.u_bbr.flex2 = rack->r_ctl.rc_num_maps_alloced;
+		log.u_bbr.bbr_state = rack->rc_free_cnt;
 		log.u_bbr.inflight = ctf_flight_size(tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.pkts_out = tp->t_maxseg;
 		log.u_bbr.flex4 = rack->r_ctl.rc_hpts_flags;
@@ -13205,30 +16161,30 @@ rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent
 		log.u_bbr.timeStamp = tcp_get_usecs(&ltv);
 		/* Log the rcv time */
 		log.u_bbr.delRate = ae->timestamp;
-#ifdef NETFLIX_HTTP_LOGGING
-		log.u_bbr.applimited = tp->t_http_closed;
+#ifdef TCP_REQUEST_TRK
+		log.u_bbr.applimited = tp->t_tcpreq_closed;
 		log.u_bbr.applimited <<= 8;
-		log.u_bbr.applimited |= tp->t_http_open;
+		log.u_bbr.applimited |= tp->t_tcpreq_open;
 		log.u_bbr.applimited <<= 8;
-		log.u_bbr.applimited |= tp->t_http_req;
-		if (http_req) {
+		log.u_bbr.applimited |= tp->t_tcpreq_req;
+		if (tcp_req) {
 			/* Copy out any client req info */
 			/* seconds */
-			log.u_bbr.pkt_epoch = (http_req->localtime / HPTS_USEC_IN_SEC);
+			log.u_bbr.pkt_epoch = (tcp_req->localtime / HPTS_USEC_IN_SEC);
 			/* useconds */
-			log.u_bbr.delivered = (http_req->localtime % HPTS_USEC_IN_SEC);
-			log.u_bbr.rttProp = http_req->timestamp;
-			log.u_bbr.cur_del_rate = http_req->start;
-			if (http_req->flags & TCP_HTTP_TRACK_FLG_OPEN) {
+			log.u_bbr.delivered = (tcp_req->localtime % HPTS_USEC_IN_SEC);
+			log.u_bbr.rttProp = tcp_req->timestamp;
+			log.u_bbr.cur_del_rate = tcp_req->start;
+			if (tcp_req->flags & TCP_TRK_TRACK_FLG_OPEN) {
 				log.u_bbr.flex8 |= 1;
 			} else {
 				log.u_bbr.flex8 |= 2;
-				log.u_bbr.bw_inuse = http_req->end;
+				log.u_bbr.bw_inuse = tcp_req->end;
 			}
-			log.u_bbr.flex6 = http_req->start_seq;
-			if (http_req->flags & TCP_HTTP_TRACK_FLG_COMP) {
+			log.u_bbr.flex6 = tcp_req->start_seq;
+			if (tcp_req->flags & TCP_TRK_TRACK_FLG_COMP) {
 				log.u_bbr.flex8 |= 4;
-				log.u_bbr.epoch = http_req->end_seq;
+				log.u_bbr.epoch = tcp_req->end_seq;
 			}
 		}
 #endif
@@ -13238,8 +16194,8 @@ rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent
 		th->th_ack = ae->ack;
 		th->th_win = ae->win;
 		/* Now fill in the ports */
-		th->th_sport = tp->t_inpcb->inp_fport;
-		th->th_dport = tp->t_inpcb->inp_lport;
+		th->th_sport = inp->inp_fport;
+		th->th_dport = inp->inp_lport;
 		tcp_set_flags(th, ae->flags);
 		/* Now do we have a timestamp option? */
 		if (ae->flags & HAS_TSTMP) {
@@ -13282,8 +16238,8 @@ rack_log_input_packet(struct tcpcb *tp, struct tcp_rack *rack, struct tcp_ackent
 		} else
 			xx = 0;
 		TCP_LOG_EVENTP(tp, th,
-			       &tp->t_inpcb->inp_socket->so_rcv,
-			       &tp->t_inpcb->inp_socket->so_snd, TCP_LOG_IN, 0,
+			       &tptosocket(tp)->so_rcv,
+			       &tptosocket(tp)->so_snd, TCP_LOG_IN, 0,
 			       0, &log, true, &ltv);
 		if (xx) {
 			tp->snd_una = orig_snd_una;
@@ -13346,6 +16302,134 @@ rack_handle_probe_response(struct tcp_rack *rack, uint32_t tiwin, uint32_t us_ct
 	}
 }
 
+static void
+rack_new_round_starts(struct tcpcb *tp, struct tcp_rack *rack, uint32_t high_seq)
+{
+	/*
+	 * The next send has occurred mark the end of the round
+	 * as when that data gets acknowledged. We can
+	 * also do common things we might need to do when
+	 * a round begins.
+	 */
+	rack->r_ctl.roundends = tp->snd_max;
+	rack->rc_new_rnd_needed = 0;
+	rack_log_hystart_event(rack, tp->snd_max, 4);
+}
+
+
+static void
+rack_log_pcm(struct tcp_rack *rack, uint8_t mod, uint32_t flex1, uint32_t flex2,
+	     uint32_t flex3)
+{
+	if (tcp_bblogging_on(rack->rc_tp)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+		
+		(void)tcp_get_usecs(&tv);
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.timeStamp = tcp_tv_to_usectick(&tv);
+		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		log.u_bbr.flex8 = mod;
+		log.u_bbr.flex1 = flex1;
+		log.u_bbr.flex2 = flex2;
+		log.u_bbr.flex3 = flex3;
+		log.u_bbr.flex4 = rack_pcm_every_n_rounds;
+		log.u_bbr.flex5 = rack->r_ctl.pcm_idle_rounds;
+		log.u_bbr.bbr_substate = rack->pcm_needed;
+		log.u_bbr.bbr_substate <<= 1;
+		log.u_bbr.bbr_substate |= rack->pcm_in_progress;
+		log.u_bbr.bbr_substate <<= 1;
+		log.u_bbr.bbr_substate |= rack->pcm_enabled; /* bits are NIE for Needed, Inprogress, Enabled */
+		(void)tcp_log_event(rack->rc_tp, NULL, NULL, NULL, TCP_PCM_MEASURE, ERRNO_UNK,
+				    0, &log, false, NULL, NULL, 0, &tv);
+	}
+}
+
+static void
+rack_new_round_setup(struct tcpcb *tp, struct tcp_rack *rack, uint32_t high_seq)
+{
+	/*
+	 * The round (current_round) has ended. We now
+	 * setup for the next round by incrementing the
+	 * round numnber and doing any round specific
+	 * things.
+	 */
+	rack_log_hystart_event(rack, high_seq, 21);
+	rack->r_ctl.current_round++;
+	/* New round (current_round) begins at next send */
+	rack->rc_new_rnd_needed = 1;
+	if ((rack->pcm_enabled == 1) &&
+	    (rack->pcm_needed == 0) &&
+	    (rack->pcm_in_progress == 0)) {
+		/*
+		 * If we have enabled PCM, then we need to
+		 * check if the round has adanced to the state
+		 * where one is required.
+		 */
+		int rnds;
+
+		rnds = rack->r_ctl.current_round - rack->r_ctl.last_pcm_round;
+		if ((rnds + rack->r_ctl.pcm_idle_rounds) >= rack_pcm_every_n_rounds) {
+			rack->pcm_needed = 1;
+			rack_log_pcm(rack, 3, rack->r_ctl.last_pcm_round, rack_pcm_every_n_rounds, rack->r_ctl.current_round );
+		} else if (rack_verbose_logging) {
+			rack_log_pcm(rack, 3, rack->r_ctl.last_pcm_round, rack_pcm_every_n_rounds, rack->r_ctl.current_round );
+		}
+	}
+	if (tp->t_ccv.flags & CCF_HYSTART_ALLOWED) {
+		/* We have hystart enabled send the round info in */
+		if (CC_ALGO(tp)->newround != NULL) {
+			CC_ALGO(tp)->newround(&tp->t_ccv, rack->r_ctl.current_round);
+		}
+	}
+	/*
+	 * For DGP an initial startup check. We want to validate
+	 * that we are not just pushing on slow-start and just
+	 * not gaining.. i.e. filling buffers without getting any
+	 * boost in b/w during the inital slow-start.
+	 */
+	if (rack->dgp_on &&
+	    (rack->rc_initial_ss_comp == 0) &&
+	    (tp->snd_cwnd < tp->snd_ssthresh) &&
+	    (rack->r_ctl.num_measurements >= RACK_REQ_AVG) &&
+	    (rack->r_ctl.gp_rnd_thresh > 0) &&
+	    ((rack->r_ctl.current_round - rack->r_ctl.last_rnd_of_gp_rise) >= rack->r_ctl.gp_rnd_thresh)) {
+
+		/*
+		 * We are in the initial SS and we have hd rack_rnd_cnt_req rounds(def:5) where
+		 * we have not gained the required amount in the gp_est (120.0% aka 1200). Lets
+		 * exit SS.
+		 *
+		 * Pick up the flight size now as we enter slowstart (not the
+		 * cwnd which may be inflated).
+		 */
+		rack->rc_initial_ss_comp = 1;
+
+		if (tcp_bblogging_on(rack->rc_tp)) {
+			union tcp_log_stackspecific log;
+			struct timeval tv;
+
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+			log.u_bbr.flex1 = rack->r_ctl.current_round;
+			log.u_bbr.flex2 = rack->r_ctl.last_rnd_of_gp_rise;
+			log.u_bbr.flex3 = rack->r_ctl.gp_rnd_thresh;
+			log.u_bbr.flex4 = rack->r_ctl.gate_to_fs;
+			log.u_bbr.flex5 = rack->r_ctl.ss_hi_fs;
+			log.u_bbr.flex8 = 40;
+			(void)tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
+					    0, &log, false, NULL, __func__, __LINE__,&tv);
+		}
+		if ((rack->r_ctl.gate_to_fs == 1) &&
+		     (tp->snd_cwnd > rack->r_ctl.ss_hi_fs)) {
+			tp->snd_cwnd = rack->r_ctl.ss_hi_fs;
+		}
+		tp->snd_ssthresh = tp->snd_cwnd - 1;
+		/* Turn off any fast output running */
+		rack->r_fast_output = 0;
+	}
+}
+
 static int
 rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mbuf *m, int nxt_pkt, struct timeval *tv)
 {
@@ -13378,16 +16462,14 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	int win_up_req = 0;
 #endif
 	int nsegs = 0;
-	int under_pacing = 1;
-	int recovery = 0;
+	int under_pacing = 0;
+	int post_recovery = 0;
 #ifdef TCP_ACCOUNTING
 	sched_pin();
 #endif
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	if (rack->gp_ready &&
 	    (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT))
-		under_pacing = 0;
-	else
 		under_pacing = 1;
 
 	if (rack->r_state != tp->t_state)
@@ -13405,7 +16487,7 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		bytes = tp->gput_ack - tp->gput_seq;
 		if (SEQ_GT(tp->gput_seq, tp->snd_una))
 			bytes += tp->gput_seq - tp->snd_una;
-		if (bytes > sbavail(&tp->t_inpcb->inp_socket->so_snd)) {
+		if (bytes > sbavail(&tptosocket(tp)->so_snd)) {
 			/*
 			 * There are not enough bytes in the socket
 			 * buffer that have been sent to cover this
@@ -13444,6 +16526,14 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #endif
 		rack_clear_rate_sample(rack);
 		ae = ((mtod(m, struct tcp_ackent *)) + i);
+		if (ae->flags & TH_FIN)
+			rack_log_pacing_delay_calc(rack,
+						   0,
+						   0,
+						   0,
+						   rack_get_gp_est(rack), /* delRate */
+						   rack_get_lt_bw(rack), /* rttProp */
+						   20, __LINE__, NULL, 0);
 		/* Setup the window */
 		tiwin = ae->win << tp->snd_scale;
 		if (tiwin > rack->r_ctl.rc_high_rwnd)
@@ -13462,6 +16552,7 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 			/* Case C */
 			ae->ack_val_set = ACK_RWND;
 		}
+		rack_log_type_bbrsnd(rack, 0, 0, cts, tv, __LINE__);
 		rack_log_input_packet(tp, rack, ae, ae->ack_val_set, high_seq);
 		/* Validate timestamp */
 		if (ae->flags & HAS_TSTMP) {
@@ -13483,8 +16574,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 					rdstc = get_cyclecount();
 					if (rdstc > ts_val) {
-						counter_u64_add(tcp_proc_time[ae->ack_val_set] ,
-								(rdstc - ts_val));
 						if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 							tp->tcp_proc_time[ae->ack_val_set] += (rdstc - ts_val);
 						}
@@ -13510,12 +16599,13 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 			rack_cc_after_idle(rack, tp);
 		}
 		tp->t_rcvtime = ticks;
-		/* Now what about ECN? */
-		if (tcp_ecn_input_segment(tp, ae->flags, ae->codepoint))
+		/* Now what about ECN of a chain of pure ACKs? */
+		if (tcp_ecn_input_segment(tp, ae->flags, 0,
+			tcp_packets_this_ack(tp, ae->ack),
+			ae->codepoint))
 			rack_cong_signal(tp, CC_ECN, ae->ack, __LINE__);
 #ifdef TCP_ACCOUNTING
 		/* Count for the specific type of ack in */
-		counter_u64_add(tcp_cnt_counters[ae->ack_val_set], 1);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[ae->ack_val_set]++;
 		}
@@ -13538,10 +16628,12 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 			 */
 			if (SEQ_LT(ae->ack, tp->snd_una) && (sbspace(&so->so_rcv) > segsiz)) {
 				rack->r_ctl.rc_reorder_ts = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time);
+				if (rack->r_ctl.rc_reorder_ts == 0)
+					rack->r_ctl.rc_reorder_ts = 1;
 			}
 		} else if (ae->ack_val_set == ACK_DUPACK) {
 			/* Case D */
-			rack_strike_dupack(rack);
+			rack_strike_dupack(rack, ae->ack);
 		} else if (ae->ack_val_set == ACK_RWND) {
 			/* Case C */
 			if ((ae->flags & TSTMP_LRO) || (ae->flags & TSTMP_HDWR)) {
@@ -13562,7 +16654,7 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 			win_upd_ack = ae->ack;
 			win_seq = ae->seq;
 			the_win = tiwin;
-			rack_do_win_updates(tp, rack, the_win, win_seq, win_upd_ack, cts, high_seq);
+			rack_do_win_updates(tp, rack, the_win, win_seq, win_upd_ack, cts);
 		} else {
 			/* Case A */
 			if (SEQ_GT(ae->ack, tp->snd_max)) {
@@ -13582,46 +16674,15 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 					win_upd_ack = ae->ack;
 					win_seq = ae->seq;
 					the_win = tiwin;
-					rack_do_win_updates(tp, rack, the_win, win_seq, win_upd_ack, cts, high_seq);
+					rack_do_win_updates(tp, rack, the_win, win_seq, win_upd_ack, cts);
 				}
 #ifdef TCP_ACCOUNTING
 				/* Account for the acks */
 				if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 					tp->tcp_cnt_counters[CNT_OF_ACKS_IN] += (((ae->ack - high_seq) + segsiz - 1) / segsiz);
 				}
-				counter_u64_add(tcp_cnt_counters[CNT_OF_ACKS_IN],
-						(((ae->ack - high_seq) + segsiz - 1) / segsiz));
 #endif
 				high_seq = ae->ack;
-				if (rack_verbose_logging && (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
-					union tcp_log_stackspecific log;
-					struct timeval tv;
-
-					memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-					log.u_bbr.timeStamp = tcp_get_usecs(&tv);
-					log.u_bbr.flex1 = high_seq;
-					log.u_bbr.flex2 = rack->r_ctl.roundends;
-					log.u_bbr.flex3 = rack->r_ctl.current_round;
-					log.u_bbr.rttProp = (uint64_t)CC_ALGO(tp)->newround;
-					log.u_bbr.flex8 = 8;
-					tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
-						       0, &log, false, NULL, NULL, 0, &tv);
-				}
-				/*
-				 * The draft (v3) calls for us to use SEQ_GEQ, but that
-				 * causes issues when we are just going app limited. Lets
-				 * instead use SEQ_GT <or> where its equal but more data
-				 * is outstanding.
-				 */
-				if ((SEQ_GT(high_seq, rack->r_ctl.roundends)) ||
-				    ((high_seq == rack->r_ctl.roundends) &&
-				     SEQ_GT(tp->snd_max, tp->snd_una))) {
-					rack->r_ctl.current_round++;
-					rack->r_ctl.roundends = tp->snd_max;
-					if (CC_ALGO(tp)->newround != NULL) {
-						CC_ALGO(tp)->newround(tp->ccv, rack->r_ctl.current_round);
-					}
-				}
 				/* Setup our act_rcv_time */
 				if ((ae->flags & TSTMP_LRO) || (ae->flags & TSTMP_HDWR)) {
 					ts.tv_sec = ae->timestamp / 1000000000;
@@ -13631,7 +16692,11 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 				} else {
 					rack->r_ctl.act_rcv_time = *tv;
 				}
-				rack_process_to_cumack(tp, rack, ae->ack, cts, to);
+				rack_process_to_cumack(tp, rack, ae->ack, cts, to,
+						       tcp_tv_to_lusectick(&rack->r_ctl.act_rcv_time));
+#ifdef TCP_REQUEST_TRK
+				rack_req_check_for_comp(rack, high_seq);
+#endif
 				if (rack->rc_dsack_round_seen) {
 					/* Is the dsack round over? */
 					if (SEQ_GEQ(ae->ack, rack->r_ctl.dsack_round_end)) {
@@ -13647,7 +16712,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 		rdstc = get_cyclecount();
 		if (rdstc > ts_val) {
-			counter_u64_add(tcp_proc_time[ae->ack_val_set] , (rdstc - ts_val));
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[ae->ack_val_set] += (rdstc - ts_val);
 				if (ae->ack_val_set == ACK_CUMACK)
@@ -13662,7 +16726,7 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	/* Tend to any collapsed window */
 	if (SEQ_GT(tp->snd_max, high_seq) && (tp->snd_wnd < (tp->snd_max - high_seq))) {
 		/* The peer collapsed the window */
-		rack_collapsed_window(rack, (tp->snd_max - high_seq), __LINE__);
+		rack_collapsed_window(rack, (tp->snd_max - high_seq), high_seq, __LINE__);
 	} else if (rack->rc_has_collapsed)
 		rack_un_collapse_window(rack, __LINE__);
 	if ((rack->r_collapse_point_valid) &&
@@ -13671,32 +16735,30 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	acked_amount = acked = (high_seq - tp->snd_una);
 	if (acked) {
 		/*
+		 * The draft (v3) calls for us to use SEQ_GEQ, but that
+		 * causes issues when we are just going app limited. Lets
+		 * instead use SEQ_GT <or> where its equal but more data
+		 * is outstanding.
+		 *
+		 * Also make sure we are on the last ack of a series. We
+		 * have to have all the ack's processed in queue to know
+		 * if there is something left outstanding.
+		 *
+		 */
+		if (SEQ_GEQ(high_seq, rack->r_ctl.roundends) &&
+		    (rack->rc_new_rnd_needed == 0) &&
+		    (nxt_pkt == 0)) {
+			/*
+			 * We have crossed into a new round with
+			 * this th_ack value.
+			 */
+			rack_new_round_setup(tp, rack, high_seq);
+		}
+		/*
 		 * Clear the probe not answered flag
 		 * since cum-ack moved forward.
 		 */
 		rack->probe_not_answered = 0;
-		if (rack->sack_attack_disable == 0)
-			rack_do_decay(rack);
-		if (acked >= segsiz) {
-			/*
-			 * You only get credit for
-			 * MSS and greater (and you get extra
-			 * credit for larger cum-ack moves).
-			 */
-			int ac;
-
-			ac = acked / segsiz;
-			rack->r_ctl.ack_count += ac;
-			counter_u64_add(rack_ack_total, ac);
-		}
-		if (rack->r_ctl.ack_count > 0xfff00000) {
-			/*
-			 * reduce the number to keep us under
-			 * a uint32_t.
-			 */
-			rack->r_ctl.ack_count /= 2;
-			rack->r_ctl.sack_count /= 2;
-		}
 		if (tp->t_flags & TF_NEEDSYN) {
 			/*
 			 * T/TCP: Connection was half-synchronized, and our SYN has
@@ -13710,16 +16772,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		}
 		if (acked > sbavail(&so->so_snd))
 			acked_amount = sbavail(&so->so_snd);
-#ifdef NETFLIX_EXP_DETECTION
-		/*
-		 * We only care on a cum-ack move if we are in a sack-disabled
-		 * state. We have already added in to the ack_count, and we never
-		 * would disable on a cum-ack move, so we only care to do the
-		 * detection if it may "undo" it, i.e. we were in disabled already.
-		 */
-		if (rack->sack_attack_disable)
-			rack_do_detection(tp, rack, acked_amount, segsiz);
-#endif
 		if (IN_FASTRECOVERY(tp->t_flags) &&
 		    (rack->rack_no_prr == 0))
 			rack_update_prr(tp, rack, acked_amount, high_seq);
@@ -13729,8 +16781,17 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 				tcp_rack_partialack(tp);
 			} else {
 				rack_post_recovery(tp, high_seq);
-				recovery = 1;
+				post_recovery = 1;
 			}
+		}  else if ((rack->rto_from_rec == 1) &&
+			    SEQ_GEQ(high_seq, tp->snd_recover)) {
+			/*
+			 * We were in recovery, hit a rxt timeout
+			 * and never re-entered recovery. The timeout(s)
+			 * made up all the lost data. In such a case
+			 * we need to clear the rto_from_rec flag.
+			 */
+			rack->rto_from_rec = 0;
 		}
 		/* Handle the rack-log-ack part (sendmap) */
 		if ((sbused(&so->so_snd) == 0) &&
@@ -13763,14 +16824,29 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		KMOD_TCPSTAT_ADD(tcps_rcvackpack, 1);
 		KMOD_TCPSTAT_ADD(tcps_rcvackbyte, acked);
 		if (acked_amount > 0) {
+			uint32_t p_cwnd;
 			struct mbuf *mfree;
 
-			rack_ack_received(tp, rack, high_seq, nsegs, CC_ACK, recovery);
+			if (post_recovery) {
+				/*
+				 * Grab the segsiz, multiply by 2 and add the snd_cwnd
+				 * that is the max the CC should add if we are exiting
+				 * recovery and doing a late add.
+				 */
+				p_cwnd = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
+				p_cwnd <<= 1;
+				p_cwnd += tp->snd_cwnd;
+			}
+			rack_ack_received(tp, rack, high_seq, nsegs, CC_ACK, post_recovery);
+			if (post_recovery && (tp->snd_cwnd > p_cwnd)) {
+				/* Must be non-newreno (cubic) getting too ahead of itself */
+				tp->snd_cwnd = p_cwnd;
+			}
 			SOCKBUF_LOCK(&so->so_snd);
 			mfree = sbcut_locked(&so->so_snd, acked_amount);
 			tp->snd_una = high_seq;
 			/* Note we want to hold the sb lock through the sendmap adjust */
-			rack_adjust_sendmap(rack, &so->so_snd, tp->snd_una);
+			rack_adjust_sendmap_head(rack, &so->so_snd);
 			/* Wake up the socket if we have room to write more */
 			rack_log_wakeup(tp,rack, &so->so_snd, acked, 2);
 			sowwakeup_locked(so);
@@ -13789,17 +16865,14 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		/* Send recover and snd_nxt must be dragged along */
 		if (SEQ_GT(tp->snd_una, tp->snd_recover))
 			tp->snd_recover = tp->snd_una;
-		if (SEQ_LT(tp->snd_nxt, tp->snd_una))
-			tp->snd_nxt = tp->snd_una;
+		if (SEQ_LT(tp->snd_nxt, tp->snd_max))
+			tp->snd_nxt = tp->snd_max;
 		/*
 		 * If the RXT timer is running we want to
 		 * stop it, so we can restart a TLP (or new RXT).
 		 */
 		if (rack->r_ctl.rc_hpts_flags & PACE_TMR_RXT)
 			rack_timer_cancel(tp, rack, rack->r_ctl.rc_rcvtime, __LINE__);
-#ifdef NETFLIX_HTTP_LOGGING
-		tcp_http_check_for_comp(rack->rc_tp, high_seq);
-#endif
 		tp->snd_wl2 = high_seq;
 		tp->t_dupacks = 0;
 		if (under_pacing &&
@@ -13808,17 +16881,18 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		    rack->rc_gp_dyn_mul &&
 		    rack->rc_always_pace) {
 			/* Check if we are dragging bottom */
-			rack_check_bottom_drag(tp, rack, so, acked);
+			rack_check_bottom_drag(tp, rack, so);
 		}
 		if (tp->snd_una == tp->snd_max) {
 			tp->t_flags &= ~TF_PREVVALID;
 			rack->r_ctl.retran_during_recovery = 0;
+			rack->rc_suspicious = 0;
 			rack->r_ctl.dsack_byte_cnt = 0;
 			rack->r_ctl.rc_went_idle_time = tcp_get_usecs(NULL);
 			if (rack->r_ctl.rc_went_idle_time == 0)
 				rack->r_ctl.rc_went_idle_time = 1;
 			rack_log_progress_event(rack, tp, 0, PROGRESS_CLEAR, __LINE__);
-			if (sbavail(&tp->t_inpcb->inp_socket->so_snd) == 0)
+			if (sbavail(&tptosocket(tp)->so_snd) == 0)
 				tp->t_acktime = 0;
 			/* Set so we might enter persists... */
 			rack->r_wanted_output = 1;
@@ -13838,7 +16912,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 				rdstc = get_cyclecount();
 				if (rdstc > ts_val) {
-					counter_u64_add(tcp_proc_time[ACK_CUMACK] , (rdstc - ts_val));
 					if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 						tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 						tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13904,7 +16977,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 				rdstc = get_cyclecount();
 				if (rdstc > ts_val) {
-					counter_u64_add(tcp_proc_time[ACK_CUMACK] , (rdstc - ts_val));
 					if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 						tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 						tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13923,8 +16995,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 				rdstc = get_cyclecount();
 				if (rdstc > ts_val) {
-					counter_u64_add(tcp_proc_time[ACK_CUMACK] ,
-							(rdstc - ts_val));
 					if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 						tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 						tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13940,8 +17010,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 				rdstc = get_cyclecount();
 				if (rdstc > ts_val) {
-					counter_u64_add(tcp_proc_time[ACK_CUMACK] ,
-							(rdstc - ts_val));
 					if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 						tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 						tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13957,8 +17025,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 				rdstc = get_cyclecount();
 				if (rdstc > ts_val) {
-					counter_u64_add(tcp_proc_time[ACK_CUMACK] ,
-							(rdstc - ts_val));
 					if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 						tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 						tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13987,7 +17053,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 #ifdef TCP_ACCOUNTING
 		rdstc = get_cyclecount();
 		if (rdstc > ts_val) {
-			counter_u64_add(tcp_proc_time[ACK_CUMACK] , (rdstc - ts_val));
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[ACK_CUMACK] += (rdstc - ts_val);
 				tp->tcp_proc_time[CYC_HANDLE_ACK] += (rdstc - ts_val);
@@ -13997,7 +17062,6 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	} else if (win_up_req) {
 		rdstc = get_cyclecount();
 		if (rdstc > ts_val) {
-			counter_u64_add(tcp_proc_time[ACK_RWND] , (rdstc - ts_val));
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[ACK_RWND] += (rdstc - ts_val);
 			}
@@ -14016,7 +17080,9 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	}
 	rack_handle_might_revert(tp, rack);
 	ctf_calc_rwin(so, tp);
-	if ((rack->r_wanted_output != 0) || (rack->r_fast_output != 0)) {
+	if ((rack->r_wanted_output != 0) ||
+	    (rack->r_fast_output != 0) ||
+	    (tp->t_flags & TF_ACKNOW )) {
 	send_out_a_rst:
 		if (tcp_output(tp) < 0) {
 #ifdef TCP_ACCOUNTING
@@ -14026,6 +17092,8 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 		}
 		did_out = 1;
 	}
+	if (tp->t_flags2 & TF2_HPTS_CALLS)
+		tp->t_flags2 &= ~TF2_HPTS_CALLS;
 	rack_free_trim(rack);
 #ifdef TCP_ACCOUNTING
 	sched_unpin();
@@ -14035,12 +17103,17 @@ rack_do_compressed_ack_processing(struct tcpcb *tp, struct socket *so, struct mb
 	return (0);
 }
 
+#define	TCP_LRO_TS_OPTION \
+    ntohl((TCPOPT_NOP << 24) | (TCPOPT_NOP << 16) | \
+	  (TCPOPT_TIMESTAMP << 8) | TCPOLEN_TIMESTAMP)
 
 static int
-rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
-    struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen, uint8_t iptos,
-    int32_t nxt_pkt, struct timeval *tv)
+rack_do_segment_nounlock(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+    int32_t drop_hdrlen, int32_t tlen, uint8_t iptos, int32_t nxt_pkt,
+    struct timeval *tv)
 {
+	struct inpcb *inp = tptoinpcb(tp);
+	struct socket *so = tptosocket(tp);
 #ifdef TCP_ACCOUNTING
 	uint64_t ts_val;
 #endif
@@ -14052,24 +17125,107 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * us_cts - is the time that LRO or hardware actually got the packet in microseconds.
 	 */
 	uint32_t cts, us_cts, ms_cts;
-	uint32_t tiwin, high_seq;
+	uint32_t tiwin;
 	struct timespec ts;
 	struct tcpopt to;
 	struct tcp_rack *rack;
 	struct rack_sendmap *rsm;
 	int32_t prev_state = 0;
+	int no_output = 0;
+	int slot_remaining = 0;
 #ifdef TCP_ACCOUNTING
 	int ack_val_set = 0xf;
 #endif
 	int nsegs;
+
+	NET_EPOCH_ASSERT();
+	INP_WLOCK_ASSERT(inp);
+
 	/*
 	 * tv passed from common code is from either M_TSTMP_LRO or
 	 * tcp_get_usecs() if no LRO m_pkthdr timestamp is present.
 	 */
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
+	if (rack->rack_deferred_inited == 0) {
+		/*
+		 * If we are the connecting socket we will
+		 * hit rack_init() when no sequence numbers
+		 * are setup. This makes it so we must defer
+		 * some initialization. Call that now.
+		 */
+		rack_deferred_init(tp, rack);
+	}
+	/*
+	 * Check to see if we need to skip any output plans. This
+	 * can happen in the non-LRO path where we are pacing and
+	 * must process the ack coming in but need to defer sending
+	 * anything becase a pacing timer is running.
+	 */
+	us_cts = tcp_tv_to_usectick(tv);
 	if (m->m_flags & M_ACKCMP) {
+		/*
+		 * All compressed ack's are ack's by definition so
+		 * remove any ack required flag and then do the processing.
+		 */
+		rack->rc_ack_required = 0;
 		return (rack_do_compressed_ack_processing(tp, so, m, nxt_pkt, tv));
 	}
+	thflags = tcp_get_flags(th);
+	if ((rack->rc_always_pace == 1) &&
+	    (rack->rc_ack_can_sendout_data == 0) &&
+	    (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) &&
+	    (TSTMP_LT(us_cts, rack->r_ctl.rc_last_output_to))) {
+		/*
+		 * Ok conditions are right for queuing the packets
+		 * but we do have to check the flags in the inp, it
+		 * could be, if a sack is present, we want to be awoken and
+		 * so should process the packets.
+		 */
+		slot_remaining = rack->r_ctl.rc_last_output_to - us_cts;
+		if (rack->rc_tp->t_flags2 & TF2_DONT_SACK_QUEUE) {
+			no_output = 1;
+		} else {
+			/*
+			 * If there is no options, or just a
+			 * timestamp option, we will want to queue
+			 * the packets. This is the same that LRO does
+			 * and will need to change with accurate ECN.
+			 */
+			uint32_t *ts_ptr;
+			int optlen;
+
+			optlen = (th->th_off << 2) - sizeof(struct tcphdr);
+			ts_ptr = (uint32_t *)(th + 1);
+			if ((optlen == 0) ||
+			    ((optlen == TCPOLEN_TSTAMP_APPA) &&
+			     (*ts_ptr == TCP_LRO_TS_OPTION)))
+				no_output = 1;
+		}
+		if ((no_output == 1) && (slot_remaining < tcp_min_hptsi_time)) {
+			/*
+			 * It is unrealistic to think we can pace in less than
+			 * the minimum granularity of the pacer (def:250usec). So
+			 * if we have less than that time remaining we should go
+			 * ahead and allow output to be "early". We will attempt to
+			 * make up for it in any pacing time we try to apply on
+			 * the outbound packet.
+			 */
+			no_output = 0;
+		}
+	}
+	/*
+	 * If there is a RST or FIN lets dump out the bw
+	 * with a FIN the connection may go on but we
+	 * may not.
+	 */
+	if ((thflags & TH_FIN) || (thflags & TH_RST))
+		rack_log_pacing_delay_calc(rack,
+					   rack->r_ctl.gp_bw,
+					   0,
+					   0,
+					   rack_get_gp_est(rack), /* delRate */
+					   rack_get_lt_bw(rack), /* rttProp */
+					   20, __LINE__, NULL, 0);
 	if (m->m_flags & M_ACKCMP) {
 		panic("Impossible reach m has ackcmp? m:%p tp:%p", m, tp);
 	}
@@ -14077,7 +17233,6 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	ms_cts =  tcp_tv_to_mssectick(tv);
 	nsegs = m->m_pkthdr.lro_nsegs;
 	counter_u64_add(rack_proc_non_comp_ack, 1);
-	thflags = tcp_get_flags(th);
 #ifdef TCP_ACCOUNTING
 	sched_pin();
 	if (thflags & TH_ACK)
@@ -14127,12 +17282,18 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	tcp_dooptions(&to, (u_char *)(th + 1),
 	    (th->th_off << 2) - sizeof(struct tcphdr),
 	    (thflags & TH_SYN) ? TO_SYN : 0);
-	NET_EPOCH_ASSERT();
-	INP_WLOCK_ASSERT(tp->t_inpcb);
 	KASSERT(tp->t_state > TCPS_LISTEN, ("%s: TCPS_LISTEN",
 	    __func__));
 	KASSERT(tp->t_state != TCPS_TIME_WAIT, ("%s: TCPS_TIME_WAIT",
 	    __func__));
+	if (tp->t_flags2 & TF2_PROC_SACK_PROHIBIT) {
+		/*
+		 * We don't look at sack's from the
+		 * peer because the MSS is too small which
+		 * can subject us to an attack.
+		 */
+		to.to_flags &= ~TOF_SACK;
+	}
 	if ((tp->t_state >= TCPS_FIN_WAIT_1) &&
 	    (tp->t_flags & TF_GPUTINPROG)) {
 		/*
@@ -14146,7 +17307,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		bytes = tp->gput_ack - tp->gput_seq;
 		if (SEQ_GT(tp->gput_seq, tp->snd_una))
 			bytes += tp->gput_seq - tp->snd_una;
-		if (bytes > sbavail(&tp->t_inpcb->inp_socket->so_snd)) {
+		if (bytes > sbavail(&tptosocket(tp)->so_snd)) {
 			/*
 			 * There are not enough bytes in the socket
 			 * buffer that have been sent to cover this
@@ -14159,21 +17320,20 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			tp->t_flags &= ~TF_GPUTINPROG;
 		}
 	}
-	high_seq = th->th_ack;
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval ltv;
-#ifdef NETFLIX_HTTP_LOGGING
-		struct http_sendfile_track *http_req;
+#ifdef TCP_REQUEST_TRK
+		struct tcp_sendfile_track *tcp_req;
 
 		if (SEQ_GT(th->th_ack, tp->snd_una)) {
-			http_req = tcp_http_find_req_for_seq(tp, (th->th_ack-1));
+			tcp_req = tcp_req_find_req_for_seq(tp, (th->th_ack-1));
 		} else {
-			http_req = tcp_http_find_req_for_seq(tp, th->th_ack);
+			tcp_req = tcp_req_find_req_for_seq(tp, th->th_ack);
 		}
 #endif
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		if (rack->rack_no_prr == 0)
 			log.u_bbr.flex1 = rack->r_ctl.rc_prr_sndcnt;
 		else
@@ -14182,6 +17342,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		log.u_bbr.use_lt_bw <<= 1;
 		log.u_bbr.use_lt_bw |= rack->r_might_revert;
 		log.u_bbr.flex2 = rack->r_ctl.rc_num_maps_alloced;
+		log.u_bbr.bbr_state = rack->rc_free_cnt;
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
 		log.u_bbr.pkts_out = rack->rc_tp->t_maxseg;
 		log.u_bbr.flex3 = m->m_flags;
@@ -14208,36 +17369,40 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		log.u_bbr.timeStamp = tcp_get_usecs(&ltv);
 		/* Log the rcv time */
 		log.u_bbr.delRate = m->m_pkthdr.rcv_tstmp;
-#ifdef NETFLIX_HTTP_LOGGING
-		log.u_bbr.applimited = tp->t_http_closed;
+#ifdef TCP_REQUEST_TRK
+		log.u_bbr.applimited = tp->t_tcpreq_closed;
 		log.u_bbr.applimited <<= 8;
-		log.u_bbr.applimited |= tp->t_http_open;
+		log.u_bbr.applimited |= tp->t_tcpreq_open;
 		log.u_bbr.applimited <<= 8;
-		log.u_bbr.applimited |= tp->t_http_req;
-		if (http_req) {
+		log.u_bbr.applimited |= tp->t_tcpreq_req;
+		if (tcp_req) {
 			/* Copy out any client req info */
 			/* seconds */
-			log.u_bbr.pkt_epoch = (http_req->localtime / HPTS_USEC_IN_SEC);
+			log.u_bbr.pkt_epoch = (tcp_req->localtime / HPTS_USEC_IN_SEC);
 			/* useconds */
-			log.u_bbr.delivered = (http_req->localtime % HPTS_USEC_IN_SEC);
-			log.u_bbr.rttProp = http_req->timestamp;
-			log.u_bbr.cur_del_rate = http_req->start;
-			if (http_req->flags & TCP_HTTP_TRACK_FLG_OPEN) {
+			log.u_bbr.delivered = (tcp_req->localtime % HPTS_USEC_IN_SEC);
+			log.u_bbr.rttProp = tcp_req->timestamp;
+			log.u_bbr.cur_del_rate = tcp_req->start;
+			if (tcp_req->flags & TCP_TRK_TRACK_FLG_OPEN) {
 				log.u_bbr.flex8 |= 1;
 			} else {
 				log.u_bbr.flex8 |= 2;
-				log.u_bbr.bw_inuse = http_req->end;
+				log.u_bbr.bw_inuse = tcp_req->end;
 			}
-			log.u_bbr.flex6 = http_req->start_seq;
-			if (http_req->flags & TCP_HTTP_TRACK_FLG_COMP) {
+			log.u_bbr.flex6 = tcp_req->start_seq;
+			if (tcp_req->flags & TCP_TRK_TRACK_FLG_COMP) {
 				log.u_bbr.flex8 |= 4;
-				log.u_bbr.epoch = http_req->end_seq;
+				log.u_bbr.epoch = tcp_req->end_seq;
 			}
 		}
 #endif
 		TCP_LOG_EVENTP(tp, th, &so->so_rcv, &so->so_snd, TCP_LOG_IN, 0,
 		    tlen, &log, true, &ltv);
 	}
+	/* Remove ack required flag if set, we have one  */
+	if (thflags & TH_ACK)
+		rack->rc_ack_required = 0;
+	rack_log_type_bbrsnd(rack, 0, 0, cts, tv, __LINE__);
 	if ((thflags & TH_SYN) && (thflags & TH_FIN) && V_drop_synfin) {
 		way_out = 4;
 		retval = 0;
@@ -14271,7 +17436,6 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		m_freem(m);
 		goto done_with_input;
 	}
-
 	/*
 	 * Segment received on connection. Reset idle time and keep-alive
 	 * timer. XXX: This should be done after segment validation to
@@ -14293,7 +17457,9 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * TCP ECN processing. XXXJTL: If we ever use ECN, we need to move
 	 * this to occur after we've validated the segment.
 	 */
-	if (tcp_ecn_input_segment(tp, thflags, iptos))
+	if (tcp_ecn_input_segment(tp, thflags, tlen,
+	    tcp_packets_this_ack(tp, th->th_ack),
+	    iptos))
 		rack_cong_signal(tp, CC_ECN, th->th_ack, __LINE__);
 
 	/*
@@ -14306,7 +17472,28 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (TSTMP_GT(to.to_tsecr, ms_cts))
 			to.to_tsecr = 0;
 	}
+	if ((rack->r_rcvpath_rtt_up == 1) &&
+	    (to.to_flags & TOF_TS) &&
+	    (TSTMP_GEQ(to.to_tsecr, rack->r_ctl.last_rcv_tstmp_for_rtt))) {
+		uint32_t rtt = 0;
 
+		/*
+		 * We are receiving only and thus not sending
+		 * data to do an RTT. We set a flag when we first
+		 * sent this TS to the peer. We now have it back
+		 * and have an RTT to share. We log it as a conf
+		 * 4, we are not so sure about it.. since we
+		 * may have lost an ack.
+		 */
+		if (TSTMP_GT(cts, rack->r_ctl.last_time_of_arm_rcv))
+		    rtt = (cts - rack->r_ctl.last_time_of_arm_rcv);
+		rack->r_rcvpath_rtt_up = 0;
+		/* Submit and commit the timer */
+		if (rtt > 0) {
+			tcp_rack_xmit_timer(rack, rtt, 0, rtt, 4, NULL, 1);
+			tcp_rack_xmit_timer_commit(rack, tp);
+		}
+	}
 	/*
 	 * If its the first time in we need to take care of options and
 	 * verify we can do SACK for rack!
@@ -14316,7 +17503,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		KASSERT(rack->rc_inp != NULL,
 		    ("%s: rack->rc_inp unexpectedly NULL", __func__));
 		if (rack->rc_inp == NULL) {
-			rack->rc_inp = tp->t_inpcb;
+			rack->rc_inp = inp;
 		}
 
 		/*
@@ -14354,14 +17541,14 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			if ((tp->t_flags & TF_SACK_PERMIT) &&
 			    (to.to_flags & TOF_SACKPERM) == 0)
 				tp->t_flags &= ~TF_SACK_PERMIT;
-			if (IS_FASTOPEN(tp->t_flags)) {
+			if (tp->t_flags & TF_FASTOPEN) {
 				if (to.to_flags & TOF_FASTOPEN) {
 					uint16_t mss;
 
 					if (to.to_flags & TOF_MSS)
 						mss = to.to_mss;
 					else
-						if ((tp->t_inpcb->inp_vflag & INP_IPV6) != 0)
+						if ((inp->inp_vflag & INP_IPV6) != 0)
 							mss = TCP6_MSS;
 						else
 							mss = TCP_MSS;
@@ -14383,14 +17570,14 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if ((rack_sack_not_required == 0) &&
 		    ((tp->t_flags & TF_SACK_PERMIT) == 0)) {
 			tcp_switch_back_to_default(tp);
-			(*tp->t_fb->tfb_tcp_do_segment) (m, th, so, tp, drop_hdrlen,
+			(*tp->t_fb->tfb_tcp_do_segment)(tp, m, th, drop_hdrlen,
 			    tlen, iptos);
 #ifdef TCP_ACCOUNTING
 			sched_unpin();
 #endif
 			return (1);
 		}
-		tcp_set_hpts(tp->t_inpcb);
+		tcp_set_hpts(tp);
 		sack_filter_clear(&rack->r_ctl.rack_sf, th->th_ack);
 	}
 	if (thflags & TH_FIN)
@@ -14400,7 +17587,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    (rack->use_fixed_rate == 0) &&
 	    (rack->rc_always_pace)) {
 		/* Check in on probertt */
-		rack_check_probe_rtt(rack, us_cts);
+		rack_check_probe_rtt(rack, cts);
 	}
 	rack_clear_rate_sample(rack);
 	if ((rack->forced_ack) &&
@@ -14416,25 +17603,25 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if (rack->r_state != tp->t_state)
 		rack_set_state(tp, rack);
 	if (SEQ_GT(th->th_ack, tp->snd_una) &&
-	    (rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree)) != NULL)
+	    (rsm = tqhash_min(rack->r_ctl.tqh)) != NULL)
 		kern_prefetch(rsm, &prev_state);
 	prev_state = rack->r_state;
+	if ((thflags & TH_RST) &&
+	    ((SEQ_GEQ(th->th_seq, tp->last_ack_sent) &&
+	      SEQ_LT(th->th_seq, tp->last_ack_sent + tp->rcv_wnd)) ||
+	     (tp->rcv_wnd == 0 && tp->last_ack_sent == th->th_seq))) {
+		/* The connection will be killed by a reset check the tracepoint */
+		tcp_trace_point(rack->rc_tp, TCP_TP_RESET_RCV);
+	}
 	retval = (*rack->r_substate) (m, th, so,
 	    tp, &to, drop_hdrlen,
 	    tlen, tiwin, thflags, nxt_pkt, iptos);
-#ifdef INVARIANTS
-	if ((retval == 0) &&
-	    (tp->t_inpcb == NULL)) {
-		panic("retval:%d tp:%p t_inpcb:NULL state:%d",
-		    retval, tp, prev_state);
-	}
-#endif
 	if (retval == 0) {
 		/*
 		 * If retval is 1 the tcb is unlocked and most likely the tp
 		 * is gone.
 		 */
-		INP_WLOCK_ASSERT(tp->t_inpcb);
+		INP_WLOCK_ASSERT(inp);
 		if ((rack->rc_gp_dyn_mul) &&
 		    (rack->rc_always_pace) &&
 		    (rack->use_fixed_rate == 0) &&
@@ -14444,7 +17631,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 * If we are going for target, lets recheck before
 			 * we output.
 			 */
-			rack_check_probe_rtt(rack, us_cts);
+			rack_check_probe_rtt(rack, cts);
 		}
 		if (rack->set_pacing_done_a_iw == 0) {
 			/* How much has been acked? */
@@ -14469,50 +17656,61 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			uint64_t crtsc;
 
 			crtsc = get_cyclecount();
-			counter_u64_add(tcp_proc_time[ack_val_set] , (crtsc - ts_val));
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[ack_val_set] += (crtsc - ts_val);
 			}
 		}
 #endif
-		if (nxt_pkt == 0) {
-			if ((rack->r_wanted_output != 0) || (rack->r_fast_output != 0)) {
+		if ((nxt_pkt == 0) && (no_output == 0)) {
+			if ((rack->r_wanted_output != 0) ||
+			    (tp->t_flags & TF_ACKNOW) ||
+			    (rack->r_fast_output != 0)) {
+
 do_output_now:
-				if (tcp_output(tp) < 0)
+				if (tcp_output(tp) < 0) {
+#ifdef TCP_ACCOUNTING
+					sched_unpin();
+#endif
 					return (1);
+				}
 				did_out = 1;
 			}
 			rack_start_hpts_timer(rack, tp, cts, 0, 0, 0);
 			rack_free_trim(rack);
+		} else if ((nxt_pkt == 0) && (tp->t_flags & TF_ACKNOW)) {
+			goto do_output_now;
+		} else if ((no_output == 1) &&
+			   (nxt_pkt == 0)  &&
+			   (tcp_in_hpts(rack->rc_tp) == 0)) {
+			/*
+			 * We are not in hpts and we had a pacing timer up. Use
+			 * the remaining time (slot_remaining) to restart the timer.
+			 */
+			KASSERT ((slot_remaining != 0), ("slot remaining is zero for rack:%p tp:%p", rack, tp));
+			rack_start_hpts_timer(rack, tp, cts, slot_remaining, 0, 0);
+			rack_free_trim(rack);
 		}
-		/* Update any rounds needed */
-		if (rack_verbose_logging &&  (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF)) {
-			union tcp_log_stackspecific log;
-			struct timeval tv;
-
-			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
-			log.u_bbr.flex1 = high_seq;
-			log.u_bbr.flex2 = rack->r_ctl.roundends;
-			log.u_bbr.flex3 = rack->r_ctl.current_round;
-			log.u_bbr.rttProp = (uint64_t)CC_ALGO(tp)->newround;
-			log.u_bbr.flex8 = 9;
-			tcp_log_event_(tp, NULL, NULL, NULL, BBR_LOG_CWND, 0,
-				       0, &log, false, NULL, NULL, 0, &tv);
-		}
+		/* Clear the flag, it may have been cleared by output but we may not have  */
+		if ((nxt_pkt == 0) && (tp->t_flags2 & TF2_HPTS_CALLS))
+			tp->t_flags2 &= ~TF2_HPTS_CALLS;
 		/*
 		 * The draft (v3) calls for us to use SEQ_GEQ, but that
 		 * causes issues when we are just going app limited. Lets
 		 * instead use SEQ_GT <or> where its equal but more data
 		 * is outstanding.
+		 *
+		 * Also make sure we are on the last ack of a series. We
+		 * have to have all the ack's processed in queue to know
+		 * if there is something left outstanding.
 		 */
-		if ((SEQ_GT(tp->snd_una, rack->r_ctl.roundends)) ||
-		    ((tp->snd_una == rack->r_ctl.roundends) && SEQ_GT(tp->snd_max, tp->snd_una))) {
-			rack->r_ctl.current_round++;
-			rack->r_ctl.roundends = tp->snd_max;
-			if (CC_ALGO(tp)->newround != NULL) {
-				CC_ALGO(tp)->newround(tp->ccv, rack->r_ctl.current_round);
-			}
+		if (SEQ_GEQ(tp->snd_una, rack->r_ctl.roundends) &&
+		    (rack->rc_new_rnd_needed == 0) &&
+		    (nxt_pkt == 0)) {
+			/*
+			 * We have crossed into a new round with
+			 * the new snd_unae.
+			 */
+			rack_new_round_setup(tp, rack, tp->snd_una);
 		}
 		if ((nxt_pkt == 0) &&
 		    ((rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK) == 0) &&
@@ -14523,13 +17721,13 @@ do_output_now:
 			/* We could not send (probably in the hpts but stopped the timer earlier)? */
 			if ((tp->snd_max == tp->snd_una) &&
 			    ((tp->t_flags & TF_DELACK) == 0) &&
-			    (tcp_in_hpts(rack->rc_inp)) &&
+			    (tcp_in_hpts(rack->rc_tp)) &&
 			    (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT)) {
 				/* keep alive not needed if we are hptsi output yet */
 				;
 			} else {
 				int late = 0;
-				if (tcp_in_hpts(rack->rc_inp)) {
+				if (tcp_in_hpts(tp)) {
 					if (rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) {
 						us_cts = tcp_get_usecs(NULL);
 						if (TSTMP_GT(rack->r_ctl.rc_last_output_to, us_cts)) {
@@ -14539,7 +17737,7 @@ do_output_now:
 							late = 1;
 						rack->r_ctl.rc_hpts_flags &= ~PACE_PKT_OUTPUT;
 					}
-					tcp_hpts_remove(tp->t_inpcb);
+					tcp_hpts_remove(tp);
 				}
 				if (late && (did_out == 0)) {
 					/*
@@ -14561,59 +17759,36 @@ do_output_now:
 		rack_log_doseg_done(rack, cts, nxt_pkt, did_out, way_out, max(1, nsegs));
 		if (did_out)
 			rack->r_wanted_output = 0;
-#ifdef INVARIANTS
-		if (tp->t_inpcb == NULL) {
-			panic("OP:%d retval:%d tp:%p t_inpcb:NULL state:%d",
-			      did_out,
-			      retval, tp, prev_state);
-		}
-#endif
-#ifdef TCP_ACCOUNTING
-	} else {
-		/*
-		 * Track the time (see above).
-		 */
-		if (ack_val_set != 0xf) {
-			uint64_t crtsc;
-
-			crtsc = get_cyclecount();
-			counter_u64_add(tcp_proc_time[ack_val_set] , (crtsc - ts_val));
-			/*
-			 * Note we *DO NOT* increment the per-tcb counters since
-			 * in the else the TP may be gone!!
-			 */
-		}
-#endif
 	}
+
 #ifdef TCP_ACCOUNTING
 	sched_unpin();
 #endif
 	return (retval);
 }
 
-void
-rack_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
-    struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen, uint8_t iptos)
+static void
+rack_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+    int32_t drop_hdrlen, int32_t tlen, uint8_t iptos)
 {
 	struct timeval tv;
 
 	/* First lets see if we have old packets */
-	if (tp->t_in_pkt) {
-		if (ctf_do_queued_segments(so, tp, 1)) {
+	if (!STAILQ_EMPTY(&tp->t_inqueue)) {
+		if (ctf_do_queued_segments(tp, 1)) {
 			m_freem(m);
 			return;
 		}
 	}
 	if (m->m_flags & M_TSTMP_LRO) {
-		tv.tv_sec = m->m_pkthdr.rcv_tstmp /1000000000;
-		tv.tv_usec = (m->m_pkthdr.rcv_tstmp % 1000000000)/1000;
+		mbuf_tstmp2timeval(m, &tv);
 	} else {
 		/* Should not be should we kassert instead? */
 		tcp_get_usecs(&tv);
 	}
-	if (rack_do_segment_nounlock(m, th, so, tp,
-				     drop_hdrlen, tlen, iptos, 0, &tv) == 0) {
-		INP_WUNLOCK(tp->t_inpcb);
+	if (rack_do_segment_nounlock(tp, m, th, drop_hdrlen, tlen, iptos, 0,
+	    &tv) == 0) {
+		INP_WUNLOCK(tptoinpcb(tp));
 	}
 }
 
@@ -14625,7 +17800,7 @@ tcp_rack_output(struct tcpcb *tp, struct tcp_rack *rack, uint32_t tsused)
 	uint32_t srtt = 0, thresh = 0, ts_low = 0;
 
 	/* Return the next guy to be re-transmitted */
-	if (RB_EMPTY(&rack->r_ctl.rc_mtree)) {
+	if (tqhash_empty(rack->r_ctl.tqh)) {
 		return (NULL);
 	}
 	if (tp->t_flags & TF_SENTFIN) {
@@ -14651,7 +17826,6 @@ check_it:
 		 * No sack so we automatically do the 3 strikes and
 		 * retransmit (no rack timer would be started).
 		 */
-
 		return (rsm);
 	}
 	if (rsm->r_flags & RACK_ACKED) {
@@ -14665,7 +17839,7 @@ check_it:
 	srtt = rack_grab_rtt(tp, rack);
 	idx = rsm->r_rtr_cnt - 1;
 	ts_low = (uint32_t)rsm->r_tim_lastsent[idx];
-	thresh = rack_calc_thresh_rack(rack, srtt, tsused);
+	thresh = rack_calc_thresh_rack(rack, srtt, tsused, __LINE__, 1);
 	if ((tsused == ts_low) ||
 	    (TSTMP_LT(tsused, ts_low))) {
 		/* No time since sending */
@@ -14676,8 +17850,7 @@ check_it:
 		return (NULL);
 	}
 	if ((rsm->r_dupack >= DUP_ACK_THRESHOLD) ||
-	    ((rsm->r_flags & RACK_SACK_PASSED) &&
-	     (rack->sack_attack_disable == 0))) {
+	    ((rsm->r_flags & RACK_SACK_PASSED))) {
 		/*
 		 * We have passed the dup-ack threshold <or>
 		 * a SACK has indicated this is missing.
@@ -14694,14 +17867,28 @@ check_it:
 }
 
 static void
-rack_log_pacing_delay_calc(struct tcp_rack *rack, uint32_t len, uint32_t slot,
+rack_log_pacing_delay_calc (struct tcp_rack *rack, uint32_t len, uint32_t slot,
 			   uint64_t bw_est, uint64_t bw, uint64_t len_time, int method,
 			   int line, struct rack_sendmap *rsm, uint8_t quality)
 {
-	if (rack->rc_tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
+		if (rack_verbose_logging == 0) {
+			/*
+			 * We are not verbose screen out all but
+			 * ones we always want.
+			 */
+			if ((method != 2) &&
+			    (method != 3) &&
+			    (method != 7) &&
+			    (method != 89) &&
+			    (method != 14) &&
+			    (method != 20)) {
+				return;
+			}
+		}
 		memset(&log, 0, sizeof(log));
 		log.u_bbr.flex1 = slot;
 		log.u_bbr.flex2 = len;
@@ -14754,6 +17941,10 @@ rack_log_pacing_delay_calc(struct tcp_rack *rack, uint32_t len, uint32_t slot,
 		log.u_bbr.cwnd_gain <<= 1;
 		log.u_bbr.cwnd_gain |= rack->rc_gp_saw_ca;
 		log.u_bbr.bbr_substate = quality;
+		log.u_bbr.bbr_state = rack->dgp_on;
+		log.u_bbr.bbr_state <<= 1;
+		log.u_bbr.bbr_state |= rack->rc_pace_to_cwnd;
+		log.u_bbr.bbr_state <<= 2;
 		TCP_LOG_EVENTP(rack->rc_tp, NULL,
 		    &rack->rc_inp->inp_socket->so_rcv,
 		    &rack->rc_inp->inp_socket->so_snd,
@@ -14765,7 +17956,7 @@ rack_log_pacing_delay_calc(struct tcp_rack *rack, uint32_t len, uint32_t slot,
 static uint32_t
 rack_get_pacing_len(struct tcp_rack *rack, uint64_t bw, uint32_t mss)
 {
-	uint32_t new_tso, user_max;
+	uint32_t new_tso, user_max, pace_one;
 
 	user_max = rack->rc_user_set_max_segs * mss;
 	if (rack->rc_force_max_seg) {
@@ -14777,10 +17968,78 @@ rack_get_pacing_len(struct tcp_rack *rack, uint64_t bw, uint32_t mss)
 		/* Use the user mss since we are not exactly matched */
 		return (user_max);
 	}
-	new_tso = tcp_get_pacing_burst_size(rack->rc_tp, bw, mss, rack_pace_one_seg, rack->r_ctl.crte, NULL);
+	if (rack_pace_one_seg ||
+	    (rack->r_ctl.rc_user_set_min_segs == 1))
+		pace_one = 1;
+	else
+		pace_one = 0;
+
+	new_tso = tcp_get_pacing_burst_size_w_divisor(rack->rc_tp, bw, mss,
+		     pace_one, rack->r_ctl.crte, NULL, rack->r_ctl.pace_len_divisor);
 	if (new_tso > user_max)
 		new_tso = user_max;
+	if (rack->rc_hybrid_mode && rack->r_ctl.client_suggested_maxseg) {
+		if (((uint32_t)rack->r_ctl.client_suggested_maxseg * mss) > new_tso)
+			new_tso = (uint32_t)rack->r_ctl.client_suggested_maxseg * mss;
+	}
+	if (rack->r_ctl.rc_user_set_min_segs &&
+	    ((rack->r_ctl.rc_user_set_min_segs * mss) > new_tso))
+	    new_tso = rack->r_ctl.rc_user_set_min_segs * mss;
 	return (new_tso);
+}
+
+static uint64_t
+rack_arrive_at_discounted_rate(struct tcp_rack *rack, uint64_t window_input, uint32_t *rate_set, uint32_t *gain_b)
+{
+	uint64_t reduced_win;
+	uint32_t gain;
+
+	if (window_input < rc_init_window(rack)) {
+		/*
+		 * The cwnd is collapsed to
+		 * nearly zero, maybe because of a time-out?
+		 * Lets drop back to the lt-bw.
+		 */
+		reduced_win = rack_get_lt_bw(rack);
+		/* Set the flag so the caller knows its a rate and not a reduced window */
+		*rate_set = 1;
+		gain = 100;
+	} else if  (IN_RECOVERY(rack->rc_tp->t_flags)) {
+		/*
+		 * If we are in recover our cwnd needs to be less for
+		 * our pacing consideration.
+		 */
+		if (rack->rack_hibeta == 0) {
+			reduced_win = window_input / 2;
+			gain = 50;
+		} else {
+			reduced_win = window_input * rack->r_ctl.saved_hibeta;
+			reduced_win /= 100;
+			gain = rack->r_ctl.saved_hibeta;
+		}
+	} else {
+		/*
+		 * Apply Timely factor to increase/decrease the
+		 * amount we are pacing at.
+		 */
+		gain = rack_get_output_gain(rack, NULL);
+		if (gain > rack_gain_p5_ub) {
+			gain = rack_gain_p5_ub;
+		}
+		reduced_win = window_input * gain;
+		reduced_win /= 100;
+	}
+	if (gain_b != NULL)
+		*gain_b = gain;
+	/*
+	 * What is being returned here is a trimmed down
+	 * window values in all cases where rate_set is left
+	 * at 0. In one case we actually return the rate (lt_bw).
+	 * the "reduced_win" is returned as a slimmed down cwnd that
+	 * is then calculated by the caller into a rate when rate_set
+	 * is 0.
+	 */
+	return (reduced_win);
 }
 
 static int32_t
@@ -14788,7 +18047,6 @@ pace_to_fill_cwnd(struct tcp_rack *rack, int32_t slot, uint32_t len, uint32_t se
 {
 	uint64_t lentim, fill_bw;
 
-	/* Lets first see if we are full, if so continue with normal rate */
 	rack->r_via_fill_cw = 0;
 	if (ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked) > rack->r_ctl.cwnd_to_use)
 		return (slot);
@@ -14802,32 +18060,74 @@ pace_to_fill_cwnd(struct tcp_rack *rack, int32_t slot, uint32_t len, uint32_t se
 		/* The rtt is huge, N * smallest, lets not fill */
 		return (slot);
 	}
+	if (rack->r_ctl.fillcw_cap && *rate_wanted >= rack->r_ctl.fillcw_cap)
+		return (slot);
 	/*
 	 * first lets calculate the b/w based on the last us-rtt
-	 * and the sndwnd.
+	 * and the the smallest send window.
 	 */
-	fill_bw = rack->r_ctl.cwnd_to_use;
+	fill_bw = min(rack->rc_tp->snd_cwnd, rack->r_ctl.cwnd_to_use);
+	if (rack->rc_fillcw_apply_discount) {
+		uint32_t rate_set = 0;
+
+		fill_bw = rack_arrive_at_discounted_rate(rack, fill_bw, &rate_set, NULL);
+		if (rate_set) {
+			goto at_lt_bw;
+		}
+	}
 	/* Take the rwnd if its smaller */
 	if (fill_bw > rack->rc_tp->snd_wnd)
 		fill_bw = rack->rc_tp->snd_wnd;
-	if (rack->r_fill_less_agg) {
-		/*
-		 * Now take away the inflight (this will reduce our
-		 * aggressiveness and yeah, if we get that much out in 1RTT
-		 * we will have had acks come back and still be behind).
-		 */
-		fill_bw -= ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
-	}
 	/* Now lets make it into a b/w */
 	fill_bw *= (uint64_t)HPTS_USEC_IN_SEC;
 	fill_bw /= (uint64_t)rack->r_ctl.rc_last_us_rtt;
+	/* Adjust to any cap */
+	if (rack->r_ctl.fillcw_cap && fill_bw >= rack->r_ctl.fillcw_cap)
+		fill_bw = rack->r_ctl.fillcw_cap;
+
+at_lt_bw:
+	if (rack_bw_multipler > 0) {
+		/*
+		 * We want to limit fill-cw to the some multiplier
+		 * of the max(lt_bw, gp_est). The normal default
+		 * is 0 for off, so a sysctl has enabled it.
+		 */
+		uint64_t lt_bw, gp, rate;
+
+		gp = rack_get_gp_est(rack);
+		lt_bw = rack_get_lt_bw(rack);
+		if (lt_bw > gp)
+			rate = lt_bw;
+		else
+			rate = gp;
+		rate *= rack_bw_multipler;
+		rate /= 100;
+		if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
+			union tcp_log_stackspecific log;
+			struct timeval tv;
+
+			memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+			log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+			log.u_bbr.flex1 = rack_bw_multipler;
+			log.u_bbr.flex2 = len;
+			log.u_bbr.cur_del_rate = gp;
+			log.u_bbr.delRate = lt_bw;
+			log.u_bbr.bw_inuse = rate;
+			log.u_bbr.rttProp = fill_bw;
+			log.u_bbr.flex8 = 44;
+			tcp_log_event(rack->rc_tp, NULL, NULL, NULL,
+				      BBR_LOG_CWND, 0,
+				      0, &log, false, NULL,
+				      __func__, __LINE__, &tv);
+		}
+		if (fill_bw > rate)
+			fill_bw = rate;
+	}
 	/* We are below the min b/w */
 	if (non_paced)
 		*rate_wanted = fill_bw;
 	if ((fill_bw < RACK_MIN_BW) || (fill_bw < *rate_wanted))
 		return (slot);
-	if (rack->r_ctl.bw_rate_cap && (fill_bw > rack->r_ctl.bw_rate_cap))
-		fill_bw = rack->r_ctl.bw_rate_cap;
 	rack->r_via_fill_cw = 1;
 	if (rack->r_rack_hw_rate_caps &&
 	    (rack->r_ctl.crte != NULL)) {
@@ -14869,9 +18169,15 @@ pace_to_fill_cwnd(struct tcp_rack *rack, int32_t slot, uint32_t len, uint32_t se
 			}
 		}
 	}
+	if (rack->r_ctl.bw_rate_cap && (fill_bw > rack->r_ctl.bw_rate_cap)) {
+		rack_log_hybrid_bw(rack, rack->rc_tp->snd_max,
+				   fill_bw, 0, 0, HYBRID_LOG_RATE_CAP, 2, NULL, __LINE__);
+		fill_bw = rack->r_ctl.bw_rate_cap;
+	}
 	/*
 	 * Ok fill_bw holds our mythical b/w to fill the cwnd
-	 * in a rtt, what does that time wise equate too?
+	 * in an rtt (unless it was capped), what does that
+	 * time wise equate too?
 	 */
 	lentim = (uint64_t)(len) * (uint64_t)HPTS_USEC_IN_SEC;
 	lentim /= fill_bw;
@@ -14884,14 +18190,150 @@ pace_to_fill_cwnd(struct tcp_rack *rack, int32_t slot, uint32_t len, uint32_t se
 		return (slot);
 }
 
+static uint32_t
+rack_policer_check_send(struct tcp_rack *rack, uint32_t len, uint32_t segsiz, uint32_t *needs)
+{
+	uint64_t calc;
+
+	rack->rc_policer_should_pace = 0;
+	calc = rack_policer_bucket_reserve * rack->r_ctl.policer_bucket_size;
+	calc /= 100;
+	/*
+	 * Now lets look at if we want more than is in the bucket <or>
+	 * we want more than is reserved in the bucket.
+	 */
+	if (rack_verbose_logging > 0)
+		policer_detection_log(rack, len, segsiz, calc, rack->r_ctl.current_policer_bucket, 8);
+	if ((calc > rack->r_ctl.current_policer_bucket) ||
+	    (len >= (rack->r_ctl.current_policer_bucket - calc))) {
+		/*
+		 * We may want to pace depending on if we are going
+		 * into the reserve or not.
+		 */
+		uint32_t newlen;
+
+		if (calc > rack->r_ctl.current_policer_bucket) {
+			/*
+			 * This will eat into the reserve if we
+			 * don't have room at all some lines
+			 * below will catch it.
+			 */
+			newlen = rack->r_ctl.policer_max_seg;
+			rack->rc_policer_should_pace = 1;
+		} else {
+			/*
+			 * We have all of the reserve plus something in the bucket
+			 * that we can give out.
+			 */
+			newlen = rack->r_ctl.current_policer_bucket - calc;
+			if (newlen < rack->r_ctl.policer_max_seg) {
+				/*
+				 * Into the reserve to get a full policer_max_seg
+				 * so we set the len to that and eat into
+				 * the reserve. If we go over the code
+				 * below will make us wait.
+				 */
+				newlen = rack->r_ctl.policer_max_seg;
+				rack->rc_policer_should_pace = 1;
+			}
+		}
+		if (newlen > rack->r_ctl.current_policer_bucket) {
+			/* We have to wait some */
+			*needs = newlen - rack->r_ctl.current_policer_bucket;
+			return (0);
+		}
+		if (rack_verbose_logging > 0)
+			policer_detection_log(rack, len, segsiz, newlen, 0, 9);
+		len = newlen;
+	} /* else we have all len available above the reserve */
+	if (rack_verbose_logging > 0)
+		policer_detection_log(rack, len, segsiz, calc, 0, 10);
+	return (len);
+}
+
+static uint32_t
+rack_policed_sending(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, uint32_t segsiz, int call_line)
+{
+	/*
+	 * Given a send of len, and a token bucket set at current_policer_bucket_size
+	 * are we close enough to the end of the bucket that we need to pace? If so
+	 * calculate out a time and return it. Otherwise subtract the tokens from
+	 * the bucket.
+	 */
+	uint64_t calc;
+
+	if ((rack->r_ctl.policer_bw == 0) ||
+	    (rack->r_ctl.policer_bucket_size < segsiz)) {
+		/*
+		 * We should have an estimate here...
+		 */
+		return (0);
+	}
+	calc = (uint64_t)rack_policer_bucket_reserve * (uint64_t)rack->r_ctl.policer_bucket_size;
+	calc /= 100;
+	if ((rack->r_ctl.current_policer_bucket < len) ||
+	    (rack->rc_policer_should_pace == 1) ||
+	    ((rack->r_ctl.current_policer_bucket - len) <= (uint32_t)calc)) {
+		/* we need to pace */
+		uint64_t lentim, res;
+		uint32_t slot;
+
+		lentim = (uint64_t)len * (uint64_t)HPTS_USEC_IN_SEC;
+		res = lentim / rack->r_ctl.policer_bw;
+		slot = (uint32_t)res;
+		if (rack->r_ctl.current_policer_bucket > len)
+			rack->r_ctl.current_policer_bucket -= len;
+		else
+			rack->r_ctl.current_policer_bucket = 0;
+		policer_detection_log(rack, len, slot, (uint32_t)rack_policer_bucket_reserve, call_line, 5);
+		rack->rc_policer_should_pace = 0;
+		return(slot);
+	}
+	/* Just take tokens out of the bucket and let rack do whatever it would have */
+	policer_detection_log(rack, len, 0, (uint32_t)rack_policer_bucket_reserve, call_line, 6);
+	if (len < rack->r_ctl.current_policer_bucket) {
+		rack->r_ctl.current_policer_bucket -= len;
+	} else {
+		rack->r_ctl.current_policer_bucket = 0;
+	}
+	return (0);
+}
+
+
 static int32_t
-rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, struct rack_sendmap *rsm, uint32_t segsiz)
+rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, struct rack_sendmap *rsm, uint32_t segsiz, int line)
 {
 	uint64_t srtt;
 	int32_t slot = 0;
+	int32_t minslot = 0;
 	int can_start_hw_pacing = 1;
 	int err;
+	int pace_one;
 
+	if (rack_pace_one_seg ||
+	    (rack->r_ctl.rc_user_set_min_segs == 1))
+		pace_one = 1;
+	else
+		pace_one = 0;
+	if (rack->rc_policer_detected == 1) {
+		/*
+		 * A policer has been detected and we
+		 * have all of our data (policer-bw and
+		 * policer bucket size) calculated. Call
+		 * into the function to find out if we are
+		 * overriding the time.
+		 */
+		slot = rack_policed_sending(rack, tp, len, segsiz, line);
+		if (slot) {
+			uint64_t logbw;
+
+			logbw = rack->r_ctl.current_policer_bucket;
+			logbw <<= 32;
+			logbw |= rack->r_ctl.policer_bucket_size;
+			rack_log_pacing_delay_calc(rack, len, slot, rack->r_ctl.policer_bw, logbw, 0, 89, __LINE__, NULL, 0);
+			return(slot);
+		}
+	}
 	if (rack->rc_always_pace == 0) {
 		/*
 		 * We use the most optimistic possible cwnd/srtt for
@@ -14948,9 +18390,12 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 			rack_log_pacing_delay_calc(rack, len, slot, rate_wanted, 0, 0, 14, __LINE__, NULL, 0);
 		} else
 			rack_log_pacing_delay_calc(rack, len, slot, tr_perms, reduce, 0, 7, __LINE__, NULL, 0);
+		/*******************************************************/
+		/* RRS: We insert non-paced call to stats here for len */
+		/*******************************************************/
 	} else {
 		uint64_t bw_est, res, lentim, rate_wanted;
-		uint32_t orig_val, segs, oh;
+		uint32_t segs, oh;
 		int capped = 0;
 		int prev_fill;
 
@@ -14960,15 +18405,30 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 		if (rack->use_fixed_rate) {
 			rate_wanted = bw_est = rack_get_fixed_pacing_bw(rack);
 		} else if ((rack->r_ctl.init_rate == 0) &&
-#ifdef NETFLIX_PEAKRATE
-			   (rack->rc_tp->t_maxpeakrate == 0) &&
-#endif
 			   (rack->r_ctl.gp_bw == 0)) {
 			/* no way to yet do an estimate */
 			bw_est = rate_wanted = 0;
-		} else {
+		} else if (rack->dgp_on) {
 			bw_est = rack_get_bw(rack);
 			rate_wanted = rack_get_output_bw(rack, bw_est, rsm, &capped);
+		} else {
+			uint32_t gain, rate_set = 0;
+
+			rate_wanted = min(rack->rc_tp->snd_cwnd, rack->r_ctl.cwnd_to_use);
+			rate_wanted = rack_arrive_at_discounted_rate(rack, rate_wanted, &rate_set, &gain);
+			if (rate_set == 0) {
+				if (rate_wanted > rack->rc_tp->snd_wnd)
+					rate_wanted = rack->rc_tp->snd_wnd;
+				/* Now lets make it into a b/w */
+				rate_wanted *= (uint64_t)HPTS_USEC_IN_SEC;
+				rate_wanted /= (uint64_t)rack->r_ctl.rc_last_us_rtt;
+			}
+			bw_est = rate_wanted;
+			rack_log_pacing_delay_calc(rack, rack->rc_tp->snd_cwnd,
+						   rack->r_ctl.cwnd_to_use,
+						   rate_wanted, bw_est,
+						   rack->r_ctl.rc_last_us_rtt,
+						   88, __LINE__, NULL, gain);
 		}
 		if ((bw_est == 0) || (rate_wanted == 0) ||
 		    ((rack->gp_ready == 0) && (rack->use_fixed_rate == 0))) {
@@ -14978,6 +18438,7 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 			 */
 			goto old_method;
 		}
+		rack_rate_cap_bw(rack, &rate_wanted, &capped);
 		/* We need to account for all the overheads */
 		segs = (len + segsiz - 1) / segsiz;
 		/*
@@ -14986,27 +18447,58 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 		 * means we may be off if we are larger than 1500 bytes
 		 * or smaller. But this just makes us more conservative.
 		 */
-		if (rack_hw_rate_min &&
-		    (bw_est < rack_hw_rate_min))
-			can_start_hw_pacing = 0;
-		if (ETHERNET_SEGMENT_SIZE > segsiz)
-			oh = ETHERNET_SEGMENT_SIZE - segsiz;
-		else
-			oh = 0;
+
+		oh =  (tp->t_maxseg - segsiz) + sizeof(struct tcphdr);
+		if (rack->r_is_v6) {
+#ifdef INET6
+			oh += sizeof(struct ip6_hdr);
+#endif
+		} else {
+#ifdef INET
+			oh += sizeof(struct ip);
+#endif
+		}
+		/* We add a fixed 14 for the ethernet header */
+		oh += 14;
 		segs *= oh;
 		lentim = (uint64_t)(len + segs) * (uint64_t)HPTS_USEC_IN_SEC;
 		res = lentim / rate_wanted;
 		slot = (uint32_t)res;
-		orig_val = rack->r_ctl.rc_pace_max_segs;
-		if (rack->r_ctl.crte == NULL) {
+		if (rack_hw_rate_min &&
+		    (rate_wanted < rack_hw_rate_min)) {
+			can_start_hw_pacing = 0;
+			if (rack->r_ctl.crte) {
+				/*
+				 * Ok we need to release it, we
+				 * have fallen too low.
+				 */
+				tcp_rel_pacing_rate(rack->r_ctl.crte, rack->rc_tp);
+				rack->r_ctl.crte = NULL;
+				rack->rack_attempt_hdwr_pace = 0;
+				rack->rack_hdrw_pacing = 0;
+			}
+		}
+		if (rack->r_ctl.crte &&
+		    (tcp_hw_highest_rate(rack->r_ctl.crte) < rate_wanted)) {
 			/*
-			 * Only do this if we are not hardware pacing
-			 * since if we are doing hw-pacing below we will
-			 * set make a call after setting up or changing
-			 * the rate.
+			 * We want more than the hardware can give us,
+			 * don't start any hw pacing.
 			 */
-			rack_set_pace_segments(rack->rc_tp, rack, __LINE__, NULL);
-		} else if (rack->rc_inp->inp_snd_tag == NULL) {
+			can_start_hw_pacing = 0;
+			if (rack->r_rack_hw_rate_caps == 0) {
+				/*
+				 * Ok we need to release it, we
+				 * want more than the card can give us and
+				 * no rate cap is in place. Set it up so
+				 * when we want less we can retry.
+				 */
+				tcp_rel_pacing_rate(rack->r_ctl.crte, rack->rc_tp);
+				rack->r_ctl.crte = NULL;
+				rack->rack_attempt_hdwr_pace = 0;
+				rack->rack_hdrw_pacing = 0;
+			}
+		}
+		if ((rack->r_ctl.crte != NULL) && (rack->rc_inp->inp_snd_tag == NULL)) {
 			/*
 			 * We lost our rate somehow, this can happen
 			 * if the interface changed underneath us.
@@ -15020,12 +18512,10 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 					     rate_wanted, bw_est, __LINE__,
 					     0, 6);
 		}
-		/* Did we change the TSO size, if so log it */
-		if (rack->r_ctl.rc_pace_max_segs != orig_val)
-			rack_log_pacing_delay_calc(rack, len, slot, orig_val, 0, 0, 15, __LINE__, NULL, 0);
 		prev_fill = rack->r_via_fill_cw;
 		if ((rack->rc_pace_to_cwnd) &&
 		    (capped == 0) &&
+		    (rack->dgp_on == 1) &&
 		    (rack->use_fixed_rate == 0) &&
 		    (rack->in_probe_rtt == 0) &&
 		    (IN_FASTRECOVERY(rack->rc_tp->t_flags) == 0)) {
@@ -15034,6 +18524,28 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 			 * fill the cwnd to the max if its not full.
 			 */
 			slot = pace_to_fill_cwnd(rack, slot, (len+segs), segsiz, &capped, &rate_wanted, 0);
+			/* Re-check to make sure we are not exceeding our max b/w */
+			if ((rack->r_ctl.crte != NULL) &&
+			    (tcp_hw_highest_rate(rack->r_ctl.crte) < rate_wanted)) {
+				/*
+				 * We want more than the hardware can give us,
+				 * don't start any hw pacing.
+				 */
+				can_start_hw_pacing = 0;
+				if (rack->r_rack_hw_rate_caps == 0) {
+					/*
+					 * Ok we need to release it, we
+					 * want more than the card can give us and
+					 * no rate cap is in place. Set it up so
+					 * when we want less we can retry.
+					 */
+					tcp_rel_pacing_rate(rack->r_ctl.crte, rack->rc_tp);
+					rack->r_ctl.crte = NULL;
+					rack->rack_attempt_hdwr_pace = 0;
+					rack->rack_hdrw_pacing = 0;
+					rack_set_pace_segments(rack->rc_tp, rack, __LINE__, NULL);
+				}
+			}
 		}
 		if ((rack->rc_inp->inp_route.ro_nh != NULL) &&
 		    (rack->rc_inp->inp_route.ro_nh->nh_ifp != NULL)) {
@@ -15053,9 +18565,9 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 								       &err, &rack->r_ctl.crte_prev_rate);
 				if (rack->r_ctl.crte) {
 					rack->rack_hdrw_pacing = 1;
-					rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size(tp, rate_wanted, segsiz,
-												 0, rack->r_ctl.crte,
-												 NULL);
+					rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size_w_divisor(tp, rate_wanted, segsiz,
+													   pace_one, rack->r_ctl.crte,
+													   NULL, rack->r_ctl.pace_len_divisor);
 					rack_log_hdwr_pacing(rack,
 							     rate_wanted, rack->r_ctl.crte->rate, __LINE__,
 							     err, 0);
@@ -15097,8 +18609,8 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 						 * do allow hardware pacing to be restarted.
 						 */
 						rack_log_hdwr_pacing(rack,
-							     bw_est, rack->r_ctl.crte->rate, __LINE__,
-							     0, 5);
+								     bw_est, rack->r_ctl.crte->rate, __LINE__,
+								     0, 5);
 						tcp_rel_pacing_rate(rack->r_ctl.crte, rack->rc_tp);
 						rack->r_ctl.crte = NULL;
 						rack->rack_attempt_hdwr_pace = 0;
@@ -15113,7 +18625,10 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 								   RS_PACING_GEQ,
 								   &err, &rack->r_ctl.crte_prev_rate);
 					if (nrte == NULL) {
-						/* Lost the rate */
+						/*
+						 * Lost the rate, lets drop hardware pacing
+						 * period.
+						 */
 						rack->rack_hdrw_pacing = 0;
 						rack->r_ctl.crte = NULL;
 						rack_log_hdwr_pacing(rack,
@@ -15123,10 +18638,9 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 						counter_u64_add(rack_hw_pace_lost, 1);
 					} else if (nrte != rack->r_ctl.crte) {
 						rack->r_ctl.crte = nrte;
-						rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size(tp, rate_wanted,
-													 segsiz, 0,
-													 rack->r_ctl.crte,
-													 NULL);
+						rack->r_ctl.rc_pace_max_segs = tcp_get_pacing_burst_size_w_divisor(tp, rate_wanted,
+														   segsiz, pace_one, rack->r_ctl.crte,
+														   NULL, rack->r_ctl.pace_len_divisor);
 						rack_log_hdwr_pacing(rack,
 								     rate_wanted, rack->r_ctl.crte->rate, __LINE__,
 								     err, 2);
@@ -15142,24 +18656,14 @@ rack_get_pacing_delay(struct tcp_rack *rack, struct tcpcb *tp, uint32_t len, str
 				}
 			}
 		}
-		if ((rack->r_ctl.crte != NULL) &&
-		    (rack->r_ctl.crte->rate == rate_wanted)) {
-			/*
-			 * We need to add a extra if the rates
-			 * are exactly matched. The idea is
-			 * we want the software to make sure the
-			 * queue is empty before adding more, this
-			 * gives us N MSS extra pace times where
-			 * N is our sysctl
-			 */
-			slot += (rack->r_ctl.crte->time_between * rack_hw_pace_extra_slots);
+		if (minslot && (minslot > slot)) {
+			rack_log_pacing_delay_calc(rack, minslot, slot, rack->r_ctl.crte->rate, bw_est, lentim,
+						   98, __LINE__, NULL, 0);
+			slot = minslot;
 		}
-done_w_hdwr:
+	done_w_hdwr:
 		if (rack_limit_time_with_srtt &&
 		    (rack->use_fixed_rate == 0) &&
-#ifdef NETFLIX_PEAKRATE
-		    (rack->rc_tp->t_maxpeakrate == 0) &&
-#endif
 		    (rack->rack_hdrw_pacing == 0)) {
 			/*
 			 * Sanity check, we do not allow the pacing delay
@@ -15180,6 +18684,9 @@ done_w_hdwr:
 				slot = srtt;
 			}
 		}
+		/*******************************************************************/
+		/* RRS: We insert paced call to stats here for len and rate_wanted */
+		/*******************************************************************/
 		rack_log_pacing_delay_calc(rack, len, slot, rate_wanted, bw_est, lentim, 2, __LINE__, rsm, 0);
 	}
 	if (rack->r_ctl.crte && (rack->r_ctl.crte->rs_num_enobufs > 0)) {
@@ -15207,7 +18714,6 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
     tcp_seq startseq, uint32_t sb_offset)
 {
 	struct rack_sendmap *my_rsm = NULL;
-	struct rack_sendmap fe;
 
 	if (tp->t_state < TCPS_ESTABLISHED) {
 		/*
@@ -15223,7 +18729,7 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		 * before we start a measurement.
 		 */
 
-		if (sbavail(&tp->t_inpcb->inp_socket->so_snd) <
+		if (sbavail(&tptosocket(tp)->so_snd) <
 		    max(rc_init_window(rack),
 			(MIN_GP_WIN * ctf_fixed_maxseg(tp)))) {
 			/* Nope not enough data */
@@ -15231,6 +18737,7 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		}
 	}
 	tp->t_flags |= TF_GPUTINPROG;
+	rack->r_ctl.rc_gp_cumack_ts = 0;
 	rack->r_ctl.rc_gp_lowrtt = 0xffffffff;
 	rack->r_ctl.rc_gp_high_rwnd = rack->rc_tp->snd_wnd;
 	tp->gput_seq = startseq;
@@ -15241,7 +18748,7 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		 (SEQ_GEQ(tp->gput_seq, rack->r_ctl.rc_probertt_sndmax_atexit)))
 		rack->measure_saw_probe_rtt = 0;
 	if (rack->rc_gp_filled)
-		tp->gput_ts = tcp_tv_to_usectick(&rack->r_ctl.act_rcv_time);
+		tp->gput_ts = rack->r_ctl.last_cumack_advance;
 	else {
 		/* Special case initial measurement */
 		struct timeval tv;
@@ -15266,9 +18773,11 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 					   tp->gput_ack,
 					   0,
 					   tp->gput_ts,
-					   rack->r_ctl.rc_app_limited_cnt,
+					   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) | (uint64_t)rack->r_ctl.rc_gp_output_ts),
 					   9,
 					   __LINE__, NULL, 0);
+		rack_tend_gp_marks(tp, rack);
+		rack_log_gpset(rack, tp->gput_ack, 0, 0, __LINE__, 1, NULL);
 		return;
 	}
 	if (sb_offset) {
@@ -15276,6 +18785,7 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		 * We are out somewhere in the sb
 		 * can we use the already outstanding data?
 		 */
+
 		if (rack->r_ctl.rc_app_limited_cnt == 0) {
 			/*
 			 * Yes first one is good and in this case
@@ -15283,7 +18793,7 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			 * the last ack that arrived (no need to
 			 * set things up when an ack comes in).
 			 */
-			my_rsm = RB_MIN(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+			my_rsm = tqhash_min(rack->r_ctl.tqh);
 			if ((my_rsm == NULL) ||
 			    (my_rsm->r_rtr_cnt != 1)) {
 				/* retransmission? */
@@ -15311,13 +18821,11 @@ rack_start_gp_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 			 * next with space i.e. over 1 MSS or the one
 			 * after that (after the app-limited).
 			 */
-			my_rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree,
-					 rack->r_ctl.rc_first_appl);
+			my_rsm = tqhash_next(rack->r_ctl.tqh, rack->r_ctl.rc_first_appl);
 			if (my_rsm) {
 				if ((my_rsm->r_end - my_rsm->r_start) <= ctf_fixed_maxseg(tp))
 					/* Have to use the next one */
-					my_rsm = RB_NEXT(rack_rb_tree_head, &rack->r_ctl.rc_mtree,
-							 my_rsm);
+					my_rsm = tqhash_next(rack->r_ctl.tqh, my_rsm);
 				else {
 					/* Use after the first MSS of it is acked */
 					tp->gput_seq = my_rsm->r_start + ctf_fixed_maxseg(tp);
@@ -15339,19 +18847,54 @@ start_set:
 			/*
 			 * This one has been acked use the arrival ack time
 			 */
+			struct rack_sendmap *nrsm;
+
 			tp->gput_ts = (uint32_t)my_rsm->r_ack_arrival;
 			rack->app_limited_needs_set = 0;
+			/*
+			 * Ok in this path we need to use the r_end now
+			 * since this guy is the starting ack.
+			 */
+			tp->gput_seq = my_rsm->r_end;
+			/*
+			 * We also need to adjust up the sendtime
+			 * to the send of the next data after my_rsm.
+			 */
+			nrsm = tqhash_next(rack->r_ctl.tqh, my_rsm);
+			if (nrsm != NULL)
+				my_rsm = nrsm;
+			else {
+				/*
+				 * The next as not been sent, thats the
+				 * case for using the latest.
+				 */
+				goto use_latest;
+			}
 		}
-		rack->r_ctl.rc_gp_output_ts = my_rsm->r_tim_lastsent[(my_rsm->r_rtr_cnt-1)];
+		rack->r_ctl.rc_gp_output_ts = my_rsm->r_tim_lastsent[0];
 		tp->gput_ack = tp->gput_seq + rack_get_measure_window(tp, rack);
+		rack->r_ctl.rc_gp_cumack_ts = 0;
+		if ((rack->r_ctl.cleared_app_ack == 1) &&
+		    (SEQ_GEQ(rack->r_ctl.cleared_app_ack, tp->gput_seq))) {
+			/*
+			 * We just cleared an application limited period
+			 * so the next seq out needs to skip the first
+			 * ack.
+			 */
+			rack->app_limited_needs_set = 1;
+			rack->r_ctl.cleared_app_ack = 0;
+		}
 		rack_log_pacing_delay_calc(rack,
 					   tp->gput_seq,
 					   tp->gput_ack,
-					   (uint64_t)my_rsm,
+					   (uintptr_t)my_rsm,
 					   tp->gput_ts,
-					   rack->r_ctl.rc_app_limited_cnt,
+					   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) | (uint64_t)rack->r_ctl.rc_gp_output_ts),
 					   9,
-					   __LINE__, NULL, 0);
+					   __LINE__, my_rsm, 0);
+		/* Now lets make sure all are marked as they should be */
+		rack_tend_gp_marks(tp, rack);
+		rack_log_gpset(rack, tp->gput_ack, 0, 0, __LINE__, 1, NULL);
 		return;
 	}
 
@@ -15365,11 +18908,11 @@ use_latest:
 	 */
 	rack->app_limited_needs_set = 1;
 	tp->gput_ack = startseq + rack_get_measure_window(tp, rack);
+	rack->r_ctl.rc_gp_cumack_ts = 0;
 	/* Find this guy so we can pull the send time */
-	fe.r_start = startseq;
-	my_rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
+	my_rsm = tqhash_find(rack->r_ctl.tqh, startseq);
 	if (my_rsm) {
-		rack->r_ctl.rc_gp_output_ts = my_rsm->r_tim_lastsent[(my_rsm->r_rtr_cnt-1)];
+		rack->r_ctl.rc_gp_output_ts = my_rsm->r_tim_lastsent[0];
 		if (my_rsm->r_flags & RACK_ACKED) {
 			/*
 			 * Unlikely since its probably what was
@@ -15393,13 +18936,15 @@ use_latest:
 		microuptime(&tv);
 		rack->r_ctl.rc_gp_output_ts = rack_to_usec_ts(&tv);
 	}
+	rack_tend_gp_marks(tp, rack);
 	rack_log_pacing_delay_calc(rack,
 				   tp->gput_seq,
 				   tp->gput_ack,
-				   (uint64_t)my_rsm,
+				   (uintptr_t)my_rsm,
 				   tp->gput_ts,
-				   rack->r_ctl.rc_app_limited_cnt,
+				   (((uint64_t)rack->r_ctl.rc_app_limited_cnt << 32) | (uint64_t)rack->r_ctl.rc_gp_output_ts),
 				   9, __LINE__, NULL, 0);
+	rack_log_gpset(rack, tp->gput_ack, 0, 0, __LINE__, 1, NULL);
 }
 
 static inline uint32_t
@@ -15449,12 +18994,12 @@ rack_log_fsb(struct tcp_rack *rack, struct tcpcb *tp, struct socket *so, uint32_
 	     unsigned ipoptlen, int32_t orig_len, int32_t len, int error,
 	     int rsm_is_null, int optlen, int line, uint16_t mode)
 {
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (rack_verbose_logging && tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 		struct timeval tv;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		log.u_bbr.flex1 = error;
 		log.u_bbr.flex2 = flags;
 		log.u_bbr.flex3 = rsm_is_null;
@@ -15472,8 +19017,8 @@ rack_log_fsb(struct tcp_rack *rack, struct tcpcb *tp, struct socket *so, uint32_
 		log.u_bbr.delivered = line;
 		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
-		tcp_log_event_(tp, NULL, &so->so_rcv, &so->so_snd, TCP_LOG_FSB, 0,
-			       len, &log, false, NULL, NULL, 0, &tv);
+		tcp_log_event(tp, NULL, &so->so_rcv, &so->so_snd, TCP_LOG_FSB, 0,
+			       len, &log, false, NULL, __func__, __LINE__, &tv);
 	}
 }
 
@@ -15583,7 +19128,7 @@ rack_fo_base_copym(struct mbuf *the_m, uint32_t the_off, int32_t *plen,
 		n->m_len = mlen;
 		soff += mlen;
 		len_cp += n->m_len;
-		if (m->m_flags & (M_EXT|M_EXTPG)) {
+		if (m->m_flags & (M_EXT | M_EXTPG)) {
 			n->m_data = m->m_data + off;
 			mb_dupcl(n, m);
 		} else {
@@ -15616,6 +19161,7 @@ rack_fo_base_copym(struct mbuf *the_m, uint32_t the_off, int32_t *plen,
 			 * come in.
 			 */
 			fsb->o_m_len = smb->m_len;
+			fsb->o_t_len = M_TRAILINGROOM(smb);
 		} else {
 			/*
 			 * This is the case where the next mbuf went to NULL. This
@@ -15626,6 +19172,7 @@ rack_fo_base_copym(struct mbuf *the_m, uint32_t the_off, int32_t *plen,
 			 * us send more.
 			 */
 			fsb->o_m_len = 0;
+			fsb->o_t_len = 0;
 		}
 	}
 	return (top);
@@ -15647,24 +19194,48 @@ rack_fo_m_copym(struct tcp_rack *rack, int32_t *plen,
 	struct mbuf *m, *n;
 	int32_t soff;
 
-	soff = rack->r_ctl.fsb.off;
 	m = rack->r_ctl.fsb.m;
-	if (rack->r_ctl.fsb.o_m_len > m->m_len) {
+	if (M_TRAILINGROOM(m) != rack->r_ctl.fsb.o_t_len) {
 		/*
-		 * The mbuf had the front of it chopped off by an ack
-		 * we need to adjust the soff/off by that difference.
+		 * The trailing space changed, mbufs can grow
+		 * at the tail but they can't shrink from
+		 * it, KASSERT that. Adjust the orig_m_len to
+		 * compensate for this change.
 		 */
-		uint32_t delta;
-
-		delta = rack->r_ctl.fsb.o_m_len - m->m_len;
-		soff -= delta;
-	} else if (rack->r_ctl.fsb.o_m_len < m->m_len) {
-		/*
-		 * The mbuf was expanded probably by
-		 * a m_compress. Just update o_m_len.
-		 */
-		rack->r_ctl.fsb.o_m_len = m->m_len;
+		KASSERT((rack->r_ctl.fsb.o_t_len > M_TRAILINGROOM(m)),
+			("mbuf:%p rack:%p trailing_space:%jd ots:%u oml:%u mlen:%u\n",
+			 m,
+			 rack,
+			 (intmax_t)M_TRAILINGROOM(m),
+			 rack->r_ctl.fsb.o_t_len,
+			 rack->r_ctl.fsb.o_m_len,
+			 m->m_len));
+		rack->r_ctl.fsb.o_m_len += (rack->r_ctl.fsb.o_t_len - M_TRAILINGROOM(m));
+		rack->r_ctl.fsb.o_t_len = M_TRAILINGROOM(m);
 	}
+	if (m->m_len < rack->r_ctl.fsb.o_m_len) {
+		/*
+		 * Mbuf shrank, trimmed off the top by an ack, our
+		 * offset changes.
+		 */
+		KASSERT((rack->r_ctl.fsb.off >= (rack->r_ctl.fsb.o_m_len - m->m_len)),
+			("mbuf:%p len:%u rack:%p oml:%u soff:%u\n",
+			 m, m->m_len,
+			 rack, rack->r_ctl.fsb.o_m_len,
+			 rack->r_ctl.fsb.off));
+
+		if (rack->r_ctl.fsb.off >= (rack->r_ctl.fsb.o_m_len- m->m_len))
+			rack->r_ctl.fsb.off -= (rack->r_ctl.fsb.o_m_len - m->m_len);
+		else
+			rack->r_ctl.fsb.off = 0;
+		rack->r_ctl.fsb.o_m_len = m->m_len;
+#ifdef INVARIANTS
+	} else if (m->m_len > rack->r_ctl.fsb.o_m_len) {
+		panic("rack:%p m:%p m_len grew outside of t_space compensation",
+		      rack, m);
+#endif
+	}
+	soff = rack->r_ctl.fsb.off;
 	KASSERT(soff >= 0, ("%s, negative off %d", __FUNCTION__, soff));
 	KASSERT(*plen >= 0, ("%s, negative len %d", __FUNCTION__, *plen));
 	KASSERT(soff < m->m_len, ("%s rack:%p len:%u m:%p m->m_len:%u < off?",
@@ -15677,6 +19248,105 @@ rack_fo_m_copym(struct tcp_rack *rack, int32_t *plen,
 			       &rack->r_ctl.fsb,
 			       seglimit, segsize, rack->r_ctl.fsb.hw_tls);
 	return (n);
+}
+
+/* Log the buffer level */
+static void
+rack_log_queue_level(struct tcpcb *tp, struct tcp_rack *rack,
+		     int len, struct timeval *tv,
+		     uint32_t cts)
+{
+	uint32_t p_rate = 0, p_queue = 0, err = 0;
+	union tcp_log_stackspecific log;
+
+#ifdef RATELIMIT
+	err = in_pcbquery_txrlevel(rack->rc_inp, &p_queue);
+	err = in_pcbquery_txrtlmt(rack->rc_inp,	&p_rate);
+#endif
+	memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+	log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
+	log.u_bbr.flex1 = p_rate;
+	log.u_bbr.flex2 = p_queue;
+	log.u_bbr.flex4 = (uint32_t)rack->r_ctl.crte->using;
+	log.u_bbr.flex5 = (uint32_t)rack->r_ctl.crte->rs_num_enobufs;
+	log.u_bbr.flex6 = rack->r_ctl.crte->time_between;
+	log.u_bbr.flex7 = 99;
+	log.u_bbr.flex8 = 0;
+	log.u_bbr.pkts_out = err;
+	log.u_bbr.delRate = rack->r_ctl.crte->rate;
+	log.u_bbr.timeStamp = cts;
+	log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+	tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_HDWR_PACE, 0,
+		       len, &log, false, NULL, __func__, __LINE__, tv);
+
+}
+
+static uint32_t
+rack_check_queue_level(struct tcp_rack *rack, struct tcpcb *tp,
+		       struct timeval *tv, uint32_t cts, int len, uint32_t segsiz)
+{
+	uint64_t lentime = 0;
+#ifdef RATELIMIT
+	uint32_t p_rate = 0, p_queue = 0, err;
+	union tcp_log_stackspecific log;
+	uint64_t bw;
+
+	err = in_pcbquery_txrlevel(rack->rc_inp, &p_queue);
+	/* Failed or queue is zero */
+	if (err || (p_queue == 0)) {
+		lentime = 0;
+		goto out;
+	}
+	err = in_pcbquery_txrtlmt(rack->rc_inp, &p_rate);
+	if (err) {
+		lentime = 0;
+		goto out;
+	}
+	/*
+	 * If we reach here we have some bytes in
+	 * the queue. The number returned is a value
+	 * between 0 and 0xffff where ffff is full
+	 * and 0 is empty. So how best to make this into
+	 * something usable?
+	 *
+	 * The "safer" way is lets take the b/w gotten
+	 * from the query (which should be our b/w rate)
+	 * and pretend that a full send (our rc_pace_max_segs)
+	 * is outstanding. We factor it so its as if a full
+	 * number of our MSS segment is terms of full
+	 * ethernet segments are outstanding.
+	 */
+	bw = p_rate / 8;
+	if (bw) {
+		lentime = (rack->r_ctl.rc_pace_max_segs / segsiz);
+		lentime *= ETHERNET_SEGMENT_SIZE;
+		lentime *= (uint64_t)HPTS_USEC_IN_SEC;
+		lentime /= bw;
+	} else {
+		/* TSNH -- KASSERT? */
+		lentime = 0;
+	}
+out:
+	if (tcp_bblogging_on(tp)) {
+		memset(&log, 0, sizeof(log));
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
+		log.u_bbr.flex1 = p_rate;
+		log.u_bbr.flex2 = p_queue;
+		log.u_bbr.flex4 = (uint32_t)rack->r_ctl.crte->using;
+		log.u_bbr.flex5 = (uint32_t)rack->r_ctl.crte->rs_num_enobufs;
+		log.u_bbr.flex6 = rack->r_ctl.crte->time_between;
+		log.u_bbr.flex7 = 99;
+		log.u_bbr.flex8 = 0;
+		log.u_bbr.pkts_out = err;
+		log.u_bbr.delRate = rack->r_ctl.crte->rate;
+		log.u_bbr.cur_del_rate = lentime;
+		log.u_bbr.timeStamp = cts;
+		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		tcp_log_event(tp, NULL, NULL, NULL, BBR_LOG_HDWR_PACE, 0,
+			       len, &log, false, NULL, __func__, __LINE__,tv);
+	}
+#endif
+	return ((uint32_t)lentime);
 }
 
 static int
@@ -15705,10 +19375,11 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	struct tcpopt to;
 	u_char opt[TCP_MAXOLEN];
 	uint32_t hdrlen, optlen;
-	int32_t slot, segsiz, max_val, tso = 0, error, ulen = 0;
+	int32_t slot, segsiz, max_val, tso = 0, error = 0, ulen = 0;
 	uint16_t flags;
 	uint32_t if_hw_tsomaxsegcount = 0, startseq;
 	uint32_t if_hw_tsomaxsegsize;
+	int32_t ip_sendflag = IP_NO_SND_TAG_RL;
 
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
@@ -15753,6 +19424,11 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		to.to_tsecr = tp->ts_recent;
 		to.to_flags = TOF_TS;
 	}
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	/* TCP-MD5 (RFC2385). */
+	if (tp->t_flags & TF_SIGNATURE)
+		to.to_flags |= TOF_SIGNATURE;
+#endif
 	optlen = tcp_addoptions(&to, opt);
 	hdrlen += optlen;
 	udp = rack->r_ctl.fsb.udp;
@@ -15783,7 +19459,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	/* Establish the len to send */
 	if (len > max_val)
 		len = max_val;
-	if ((tso) && (len + optlen > tp->t_maxseg)) {
+	if ((tso) && (len + optlen > segsiz)) {
 		uint32_t if_hw_tsomax;
 		int32_t max_len;
 
@@ -15817,6 +19493,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	}
 	if ((tso == 0) && (len > segsiz))
 		len = segsiz;
+	(void)tcp_get_usecs(tv);
 	if ((len == 0) ||
 	    (len <= MHLEN - hdrlen - max_linkhdr)) {
 		goto failed;
@@ -15857,7 +19534,9 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 #endif
 	if (rsm->m == NULL)
 		goto failed;
-	if (rsm->orig_m_len != rsm->m->m_len) {
+	if (rsm->m &&
+	    ((rsm->orig_m_len != rsm->m->m_len) ||
+	     (M_TRAILINGROOM(rsm->m) != rsm->orig_t_space))) {
 		/* Fix up the orig_m_len and possibly the mbuf offset */
 		rack_adjust_orig_mlen(rsm);
 	}
@@ -15883,7 +19562,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	}
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 	if (TCPS_HAVERCVDSYN(tp->t_state) &&
-	    (tp->t_flags2 & TF2_ECN_PERMIT)) {
+	    (tp->t_flags2 & (TF2_ECN_PERMIT | TF2_ACE_PERMIT))) {
 		int ect = tcp_ecn_output_established(tp, &flags, len, true);
 		if ((tp->t_state == TCPS_SYN_RECEIVED) &&
 		    (tp->t_flags2 & TF2_ECN_SND_ECE))
@@ -15900,8 +19579,33 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		    ip->ip_tos |= ect;
 		}
 	}
+	if (rack->r_ctl.crte != NULL) {
+		/* See if we can send via the hw queue */
+		slot = rack_check_queue_level(rack, tp, tv, cts, len, segsiz);
+		/* If there is nothing in queue (no pacing time) we can send via the hw queue */
+		if (slot == 0)
+			ip_sendflag = 0;
+	}
 	tcp_set_flags(th, flags);
 	m->m_pkthdr.len = hdrlen + len;	/* in6_cksum() need this */
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	if (to.to_flags & TOF_SIGNATURE) {
+		/*
+		 * Calculate MD5 signature and put it into the place
+		 * determined before.
+		 * NOTE: since TCP options buffer doesn't point into
+		 * mbuf's data, calculate offset and use it.
+		 */
+		if (!TCPMD5_ENABLED() || TCPMD5_OUTPUT(m, th,
+						       (u_char *)(th + 1) + (to.to_signature - opt)) != 0) {
+			/*
+			 * Do not send segment if the calculation of MD5
+			 * digest has failed.
+			 */
+			goto failed;
+		}
+	}
+#endif
 #ifdef INET6
 	if (rack->r_is_v6) {
 		if (tp->t_port) {
@@ -15944,10 +19648,15 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	}
 #endif
 	if (tso) {
-		KASSERT(len > tp->t_maxseg - optlen,
+		/*
+		 * Here we use segsiz since we have no added options besides
+		 * any standard timestamp options (no DSACKs or SACKS are sent
+		 * via either fast-path).
+		 */
+		KASSERT(len > segsiz,
 			("%s: len <= tso_segsz tp:%p", __func__, tp));
 		m->m_pkthdr.csum_flags |= CSUM_TSO;
-		m->m_pkthdr.tso_segsz = tp->t_maxseg - optlen;
+		m->m_pkthdr.tso_segsz = segsiz;
 	}
 #ifdef INET6
 	if (rack->r_is_v6) {
@@ -15976,6 +19685,19 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		}
 	}
 #endif
+	if (doing_tlp == 0) {
+		/* Set we retransmitted */
+		rack->rc_gp_saw_rec = 1;
+	} else {
+		/* Its a TLP set ca or ss */
+		if (tp->snd_cwnd > tp->snd_ssthresh) {
+			/* Set we sent in CA */
+			rack->rc_gp_saw_ca = 1;
+		} else {
+			/* Set we sent in SS */
+			rack->rc_gp_saw_ss = 1;
+		}
+	}
 	/* Time to copy in our header */
 	cpto = mtod(m, uint8_t *);
 	memcpy(cpto, rack->r_ctl.fsb.tcp_ip_hdr, rack->r_ctl.fsb.tcp_ip_hdr_len);
@@ -15986,7 +19708,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	} else {
 		th->th_off = sizeof(struct tcphdr) >> 2;
 	}
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		if (rsm->r_flags & RACK_RWND_COLLAPSED) {
@@ -15995,7 +19717,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 			counter_u64_add(rack_collapsed_win_rxt_bytes, (rsm->r_end - rsm->r_start));
 		}
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		if (rack->rack_no_prr)
 			log.u_bbr.flex1 = 0;
 		else
@@ -16003,11 +19725,11 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		log.u_bbr.flex2 = rack->r_ctl.rc_pace_min_segs;
 		log.u_bbr.flex3 = rack->r_ctl.rc_pace_max_segs;
 		log.u_bbr.flex4 = max_val;
-		log.u_bbr.flex5 = 0;
 		/* Save off the early/late values */
 		log.u_bbr.flex6 = rack->r_ctl.rc_agg_early;
 		log.u_bbr.applimited = rack->r_ctl.rc_agg_delayed;
 		log.u_bbr.bw_inuse = rack_get_bw(rack);
+		log.u_bbr.cur_del_rate = rack->r_ctl.gp_bw;
 		if (doing_tlp == 0)
 			log.u_bbr.flex8 = 1;
 		else
@@ -16017,27 +19739,51 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		log.u_bbr.pkts_out = tp->t_maxseg;
 		log.u_bbr.timeStamp = cts;
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		if (rsm && (rsm->r_rtr_cnt > 0)) {
+			/*
+			 * When we have a retransmit we want to log the
+			 * burst at send and flight at send from before.
+			 */
+			log.u_bbr.flex5 = rsm->r_fas;
+			log.u_bbr.bbr_substate = rsm->r_bas;
+		} else {
+			/*
+			 * This is currently unlikely until we do the
+			 * packet pair probes but I will add it for completeness.
+			 */
+			log.u_bbr.flex5 = log.u_bbr.inflight;
+			log.u_bbr.bbr_substate = (uint8_t)((len + segsiz - 1)/segsiz);
+		}
 		log.u_bbr.lt_epoch = rack->r_ctl.cwnd_to_use;
 		log.u_bbr.delivered = 0;
-		lgb = tcp_log_event_(tp, th, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
-				     len, &log, false, NULL, NULL, 0, tv);
+		log.u_bbr.rttProp = (uintptr_t)rsm;
+		log.u_bbr.delRate = rsm->r_flags;
+		log.u_bbr.delRate <<= 31;
+		log.u_bbr.delRate |= rack->r_must_retran;
+		log.u_bbr.delRate <<= 1;
+		log.u_bbr.delRate |= 1;
+		log.u_bbr.pkt_epoch = __LINE__;
+		lgb = tcp_log_event(tp, th, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
+				     len, &log, false, NULL, __func__, __LINE__, tv);
 	} else
 		lgb = NULL;
+	if ((rack->r_ctl.crte != NULL) &&
+	    tcp_bblogging_on(tp)) {
+		rack_log_queue_level(tp, rack, len, tv, cts);
+	}
 #ifdef INET6
 	if (rack->r_is_v6) {
-		error = ip6_output(m, NULL,
+		error = ip6_output(m, inp->in6p_outputopts,
 				   &inp->inp_route6,
-				   0, NULL, NULL, inp);
+				   ip_sendflag, NULL, NULL, inp);
 	}
-#endif
-#if defined(INET) && defined(INET6)
 	else
 #endif
 #ifdef INET
 	{
 		error = ip_output(m, NULL,
 				  &inp->inp_route,
-				  0, 0, inp);
+				  ip_sendflag, 0, inp);
 	}
 #endif
 	m = NULL;
@@ -16045,16 +19791,25 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		lgb->tlb_errno = error;
 		lgb = NULL;
 	}
+	/* Move snd_nxt to snd_max so we don't have false retransmissions */
+	tp->snd_nxt = tp->snd_max;
 	if (error) {
 		goto failed;
+	} else if (rack->rc_hw_nobuf && (ip_sendflag != IP_NO_SND_TAG_RL)) {
+		rack->rc_hw_nobuf = 0;
+		rack->r_ctl.rc_agg_delayed = 0;
+		rack->r_early = 0;
+		rack->r_late = 0;
+		rack->r_ctl.rc_agg_early = 0;
 	}
 	rack_log_output(tp, &to, len, rsm->r_start, flags, error, rack_to_usec_ts(tv),
-			rsm, RACK_SENT_FP, rsm->m, rsm->soff, rsm->r_hw_tls);
-	if (doing_tlp && (rack->fast_rsm_hack == 0)) {
+			rsm, RACK_SENT_FP, rsm->m, rsm->soff, rsm->r_hw_tls, segsiz);
+	if (doing_tlp) {
 		rack->rc_tlp_in_progress = 1;
 		rack->r_ctl.rc_tlp_cnt_out++;
 	}
 	if (error == 0) {
+		counter_u64_add(rack_total_bytes, len);
 		tcp_account_for_send(tp, len, 1, doing_tlp, rsm->r_hw_tls);
 		if (doing_tlp) {
 			rack->rc_last_sent_tlp_past_cumack = 0;
@@ -16062,6 +19817,10 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 			rack->r_ctl.last_sent_tlp_seq = rsm->r_start;
 			rack->r_ctl.last_sent_tlp_len = rsm->r_end - rsm->r_start;
 		}
+		if (rack->r_ctl.rc_prr_sndcnt >= len)
+			rack->r_ctl.rc_prr_sndcnt -= len;
+		else
+			rack->r_ctl.rc_prr_sndcnt = 0;
 	}
 	tp->t_flags &= ~(TF_ACKNOW | TF_DELACK);
 	rack->forced_ack = 0;	/* If we send something zap the FA flag */
@@ -16084,25 +19843,23 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	counter_u64_add(rack_fto_rsm_send, 1);
 	if (error && (error == ENOBUFS)) {
 		if (rack->r_ctl.crte != NULL) {
-			rack_trace_point(rack, RACK_TP_HWENOBUF);
+			tcp_trace_point(rack->rc_tp, TCP_TP_HWENOBUF);
+			if (tcp_bblogging_on(rack->rc_tp))
+				rack_log_queue_level(tp, rack, len, tv, cts);
 		} else
-			rack_trace_point(rack, RACK_TP_ENOBUF);
+			tcp_trace_point(rack->rc_tp, TCP_TP_ENOBUF);
 		slot = ((1 + rack->rc_enobuf) * HPTS_USEC_IN_MSEC);
 		if (rack->rc_enobuf < 0x7f)
 			rack->rc_enobuf++;
 		if (slot < (10 * HPTS_USEC_IN_MSEC))
 			slot = 10 * HPTS_USEC_IN_MSEC;
-	} else
-		slot = rack_get_pacing_delay(rack, tp, len, NULL, segsiz);
-	if ((slot == 0) ||
-	    (rack->rc_always_pace == 0) ||
-	    (rack->r_rr_config == 1)) {
-		/*
-		 * We have no pacing set or we
-		 * are using old-style rack or
-		 * we are overriden to use the old 1ms pacing.
-		 */
-		slot = rack->r_ctl.rc_min_to;
+		if (rack->r_ctl.crte != NULL) {
+			counter_u64_add(rack_saw_enobuf_hw, 1);
+			tcp_rl_log_enobuf(rack->r_ctl.crte);
+		}
+		counter_u64_add(rack_saw_enobuf, 1);
+	} else {
+		slot = rack_get_pacing_delay(rack, tp, len, NULL, segsiz, __LINE__);
 	}
 	rack_start_hpts_timer(rack, tp, cts, slot, len, 0);
 #ifdef TCP_ACCOUNTING
@@ -16110,15 +19867,12 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_cnt_counters[SND_OUT_DATA] += cnt_thru;
 	}
-	counter_u64_add(tcp_cnt_counters[SND_OUT_DATA], cnt_thru);
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_proc_time[SND_OUT_DATA] += (crtsc - ts_val);
 	}
-	counter_u64_add(tcp_proc_time[SND_OUT_DATA], (crtsc - ts_val));
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_cnt_counters[CNT_OF_MSS_OUT] += ((len + segsiz - 1) / segsiz);
 	}
-	counter_u64_add(tcp_cnt_counters[CNT_OF_MSS_OUT], ((len + segsiz - 1) / segsiz));
 	sched_unpin();
 #endif
 	return (0);
@@ -16167,7 +19921,7 @@ rack_sndbuf_autoscale(struct tcp_rack *rack)
 		    (so->so_snd.sb_hiwat / 8 * 7) &&
 		    sbused(&so->so_snd) < V_tcp_autosndbuf_max &&
 		    sendwin >= (sbused(&so->so_snd) -
-		    (tp->snd_nxt - tp->snd_una))) {
+		    (tp->snd_max - tp->snd_una))) {
 			if (rack_autosndbuf_inc)
 				scaleup = (rack_autosndbuf_inc * so->so_snd.sb_hiwat) / 100;
 			else
@@ -16196,7 +19950,9 @@ rack_fast_output(struct tcpcb *tp, struct tcp_rack *rack, uint64_t ts_val,
 	 * the max-burst). We have how much to send and all the info we
 	 * need to just send.
 	 */
+#ifdef INET
 	struct ip *ip = NULL;
+#endif
 	struct udphdr *udp = NULL;
 	struct tcphdr *th = NULL;
 	struct mbuf *m, *s_mb;
@@ -16217,7 +19973,7 @@ rack_fast_output(struct tcpcb *tp, struct tcp_rack *rack, uint64_t ts_val,
 	uint32_t s_soff;
 	uint32_t if_hw_tsomaxsegcount = 0, startseq;
 	uint32_t if_hw_tsomaxsegsize;
-	uint16_t add_flag = RACK_SENT_FP;
+	uint32_t add_flag = RACK_SENT_FP;
 #ifdef INET6
 	struct ip6_hdr *ip6 = NULL;
 
@@ -16227,13 +19983,16 @@ rack_fast_output(struct tcpcb *tp, struct tcp_rack *rack, uint64_t ts_val,
 	} else
 #endif				/* INET6 */
 	{
+#ifdef INET
 		ip = (struct ip *)rack->r_ctl.fsb.tcp_ip_hdr;
 		hdrlen = sizeof(struct tcpiphdr);
+#endif
 	}
 	if (tp->t_port && (V_tcp_udp_tunneling_port == 0)) {
 		m = NULL;
 		goto failed;
 	}
+	rack->r_ctl.cwnd_to_use = tp->snd_cwnd;
 	startseq = tp->snd_max;
 	segsiz = min(ctf_fixed_maxseg(tp), rack->r_ctl.rc_pace_min_segs);
 	inp = rack->rc_inp;
@@ -16245,6 +20004,11 @@ rack_fast_output(struct tcpcb *tp, struct tcp_rack *rack, uint64_t ts_val,
 		to.to_tsecr = tp->ts_recent;
 		to.to_flags = TOF_TS;
 	}
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	/* TCP-MD5 (RFC2385). */
+	if (tp->t_flags & TF_SIGNATURE)
+		to.to_flags |= TOF_SIGNATURE;
+#endif
 	optlen = tcp_addoptions(&to, opt);
 	hdrlen += optlen;
 	udp = rack->r_ctl.fsb.udp;
@@ -16276,7 +20040,7 @@ again:
 	/* Establish the len to send */
 	if (len > max_val)
 		len = max_val;
-	if ((tso) && (len + optlen > tp->t_maxseg)) {
+	if ((tso) && (len + optlen > segsiz)) {
 		uint32_t if_hw_tsomax;
 		int32_t max_len;
 
@@ -16310,6 +20074,7 @@ again:
 	}
 	if ((tso == 0) && (len > segsiz))
 		len = segsiz;
+	(void)tcp_get_usecs(tv);
 	if ((len == 0) ||
 	    (len <= MHLEN - hdrlen - max_linkhdr)) {
 		goto failed;
@@ -16347,7 +20112,7 @@ again:
 	}
 	if (rack->r_ctl.fsb.rfo_apply_push &&
 	    (len == rack->r_ctl.fsb.left_to_send)) {
-		flags |= TH_PUSH;
+		tcp_set_flags(th, flags | TH_PUSH);
 		add_flag |= RACK_HAD_PUSH;
 	}
 	if ((m->m_next == NULL) || (len <= 0)){
@@ -16362,7 +20127,7 @@ again:
 	}
 	m->m_pkthdr.rcvif = (struct ifnet *)0;
 	if (TCPS_HAVERCVDSYN(tp->t_state) &&
-	    (tp->t_flags2 & TF2_ECN_PERMIT)) {
+	    (tp->t_flags2 & (TF2_ECN_PERMIT | TF2_ACE_PERMIT))) {
 		int ect = tcp_ecn_output_established(tp, &flags, len, false);
 		if ((tp->t_state == TCPS_SYN_RECEIVED) &&
 		    (tp->t_flags2 & TF2_ECN_SND_ECE))
@@ -16375,12 +20140,32 @@ again:
 		else
 #endif
 		{
+#ifdef INET
 			ip->ip_tos &= ~IPTOS_ECN_MASK;
 			ip->ip_tos |= ect;
+#endif
 		}
 	}
 	tcp_set_flags(th, flags);
 	m->m_pkthdr.len = hdrlen + len;	/* in6_cksum() need this */
+#if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
+	if (to.to_flags & TOF_SIGNATURE) {
+		/*
+		 * Calculate MD5 signature and put it into the place
+		 * determined before.
+		 * NOTE: since TCP options buffer doesn't point into
+		 * mbuf's data, calculate offset and use it.
+		 */
+		if (!TCPMD5_ENABLED() || TCPMD5_OUTPUT(m, th,
+						       (u_char *)(th + 1) + (to.to_signature - opt)) != 0) {
+			/*
+			 * Do not send segment if the calculation of MD5
+			 * digest has failed.
+			 */
+			goto failed;
+		}
+	}
+#endif
 #ifdef INET6
 	if (rack->r_is_v6) {
 		if (tp->t_port) {
@@ -16423,10 +20208,15 @@ again:
 	}
 #endif
 	if (tso) {
-		KASSERT(len > tp->t_maxseg - optlen,
+		/*
+		 * Here we use segsiz since we have no added options besides
+		 * any standard timestamp options (no DSACKs or SACKS are sent
+		 * via either fast-path).
+		 */
+		KASSERT(len > segsiz,
 			("%s: len <= tso_segsz tp:%p", __func__, tp));
 		m->m_pkthdr.csum_flags |= CSUM_TSO;
-		m->m_pkthdr.tso_segsz = tp->t_maxseg - optlen;
+		m->m_pkthdr.tso_segsz = segsiz;
 	}
 #ifdef INET6
 	if (rack->r_is_v6) {
@@ -16455,6 +20245,13 @@ again:
 		}
 	}
 #endif
+	if (tp->snd_cwnd > tp->snd_ssthresh) {
+		/* Set we sent in CA */
+		rack->rc_gp_saw_ca = 1;
+	} else {
+		/* Set we sent in SS */
+		rack->rc_gp_saw_ss = 1;
+	}
 	/* Time to copy in our header */
 	cpto = mtod(m, uint8_t *);
 	memcpy(cpto, rack->r_ctl.fsb.tcp_ip_hdr, rack->r_ctl.fsb.tcp_ip_hdr_len);
@@ -16465,11 +20262,15 @@ again:
 	} else {
 		th->th_off = sizeof(struct tcphdr) >> 2;
 	}
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if ((rack->r_ctl.crte != NULL) &&
+	    tcp_bblogging_on(tp)) {
+		rack_log_queue_level(tp, rack, len, tv, cts);
+	}
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		if (rack->rack_no_prr)
 			log.u_bbr.flex1 = 0;
 		else
@@ -16477,26 +20278,34 @@ again:
 		log.u_bbr.flex2 = rack->r_ctl.rc_pace_min_segs;
 		log.u_bbr.flex3 = rack->r_ctl.rc_pace_max_segs;
 		log.u_bbr.flex4 = max_val;
-		log.u_bbr.flex5 = 0;
 		/* Save off the early/late values */
 		log.u_bbr.flex6 = rack->r_ctl.rc_agg_early;
 		log.u_bbr.applimited = rack->r_ctl.rc_agg_delayed;
 		log.u_bbr.bw_inuse = rack_get_bw(rack);
+		log.u_bbr.cur_del_rate = rack->r_ctl.gp_bw;
 		log.u_bbr.flex8 = 0;
 		log.u_bbr.pacing_gain = rack_get_output_gain(rack, NULL);
 		log.u_bbr.flex7 = 44;
 		log.u_bbr.pkts_out = tp->t_maxseg;
 		log.u_bbr.timeStamp = cts;
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		log.u_bbr.flex5 = log.u_bbr.inflight;
 		log.u_bbr.lt_epoch = rack->r_ctl.cwnd_to_use;
 		log.u_bbr.delivered = 0;
-		lgb = tcp_log_event_(tp, th, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
-				     len, &log, false, NULL, NULL, 0, tv);
+		log.u_bbr.rttProp = 0;
+		log.u_bbr.delRate = rack->r_must_retran;
+		log.u_bbr.delRate <<= 1;
+		log.u_bbr.pkt_epoch = __LINE__;
+		/* For fast output no retrans so just inflight and how many mss we send */
+		log.u_bbr.flex5 = log.u_bbr.inflight;
+		log.u_bbr.bbr_substate = (uint8_t)((len + segsiz - 1)/segsiz);
+		lgb = tcp_log_event(tp, th, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
+				     len, &log, false, NULL, __func__, __LINE__, tv);
 	} else
 		lgb = NULL;
 #ifdef INET6
 	if (rack->r_is_v6) {
-		error = ip6_output(m, NULL,
+		error = ip6_output(m, inp->in6p_outputopts,
 				   &inp->inp_route6,
 				   0, NULL, NULL, inp);
 	}
@@ -16519,17 +20328,45 @@ again:
 		*send_err = error;
 		m = NULL;
 		goto failed;
+	} else if (rack->rc_hw_nobuf) {
+		rack->rc_hw_nobuf = 0;
+		rack->r_ctl.rc_agg_delayed = 0;
+		rack->r_early = 0;
+		rack->r_late = 0;
+		rack->r_ctl.rc_agg_early = 0;
+	}
+	if ((error == 0) && (rack->lt_bw_up == 0)) {
+		/* Unlikely */
+		rack->r_ctl.lt_timemark = tcp_tv_to_lusectick(tv);
+		rack->r_ctl.lt_seq = tp->snd_una;
+		rack->lt_bw_up = 1;
+	} else if ((error == 0) &&
+		   (((tp->snd_max + len) - rack->r_ctl.lt_seq) > 0x7fffffff)) {
+		/*
+		 * Need to record what we have since we are
+		 * approaching seq wrap.
+		 */
+		struct timeval tv;
+		uint64_t tmark;
+
+		rack->r_ctl.lt_bw_bytes += (tp->snd_una - rack->r_ctl.lt_seq);
+		rack->r_ctl.lt_seq = tp->snd_una;
+		tmark = tcp_get_u64_usecs(&tv);
+		if (tmark > rack->r_ctl.lt_timemark) {
+			rack->r_ctl.lt_bw_time += (tmark - rack->r_ctl.lt_timemark);
+			rack->r_ctl.lt_timemark = tmark;
+		}
 	}
 	rack_log_output(tp, &to, len, tp->snd_max, flags, error, rack_to_usec_ts(tv),
-			NULL, add_flag, s_mb, s_soff, rack->r_ctl.fsb.hw_tls);
+			NULL, add_flag, s_mb, s_soff, rack->r_ctl.fsb.hw_tls, segsiz);
 	m = NULL;
 	if (tp->snd_una == tp->snd_max) {
 		rack->r_ctl.rc_tlp_rxt_last_time = cts;
 		rack_log_progress_event(rack, tp, ticks, PROGRESS_START, __LINE__);
 		tp->t_acktime = ticks;
 	}
-	if (error == 0)
-		tcp_account_for_send(tp, len, 0, 0, rack->r_ctl.fsb.hw_tls);
+	counter_u64_add(rack_total_bytes, len);
+	tcp_account_for_send(tp, len, 0, 0, rack->r_ctl.fsb.hw_tls);
 
 	rack->forced_ack = 0;	/* If we send something zap the FA flag */
 	tot_len += len;
@@ -16537,6 +20374,9 @@ again:
 		rack_start_gp_measurement(tp, rack, tp->snd_max, sb_offset);
 	tp->snd_max += len;
 	tp->snd_nxt = tp->snd_max;
+	if (rack->rc_new_rnd_needed) {
+		rack_new_round_starts(tp, rack, tp->snd_max);
+	}
 	{
 		int idx;
 
@@ -16576,22 +20416,19 @@ again:
 	}
 	tp->t_flags &= ~(TF_ACKNOW | TF_DELACK);
 	counter_u64_add(rack_fto_send, 1);
-	slot = rack_get_pacing_delay(rack, tp, tot_len, NULL, segsiz);
+	slot = rack_get_pacing_delay(rack, tp, tot_len, NULL, segsiz, __LINE__);
 	rack_start_hpts_timer(rack, tp, cts, slot, tot_len, 0);
 #ifdef TCP_ACCOUNTING
 	crtsc = get_cyclecount();
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_cnt_counters[SND_OUT_DATA] += cnt_thru;
 	}
-	counter_u64_add(tcp_cnt_counters[SND_OUT_DATA], cnt_thru);
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_proc_time[SND_OUT_DATA] += (crtsc - ts_val);
 	}
-	counter_u64_add(tcp_proc_time[SND_OUT_DATA], (crtsc - ts_val));
 	if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 		tp->tcp_cnt_counters[CNT_OF_MSS_OUT] += ((tot_len + segsiz - 1) / segsiz);
 	}
-	counter_u64_add(tcp_cnt_counters[CNT_OF_MSS_OUT], ((tot_len + segsiz - 1) / segsiz));
 	sched_unpin();
 #endif
 	return (0);
@@ -16602,16 +20439,65 @@ failed:
 	return (-1);
 }
 
+static inline void
+rack_setup_fast_output(struct tcpcb *tp, struct tcp_rack *rack,
+		       struct sockbuf *sb,
+		       int len, int orig_len, int segsiz, uint32_t pace_max_seg,
+		       bool hw_tls,
+		       uint16_t flags)
+{
+	rack->r_fast_output = 1;
+	rack->r_ctl.fsb.m = sbsndmbuf(sb, (tp->snd_max - tp->snd_una), &rack->r_ctl.fsb.off);
+	rack->r_ctl.fsb.o_m_len = rack->r_ctl.fsb.m->m_len;
+	rack->r_ctl.fsb.o_t_len = M_TRAILINGROOM(rack->r_ctl.fsb.m);
+	rack->r_ctl.fsb.tcp_flags = flags;
+	rack->r_ctl.fsb.left_to_send = orig_len - len;
+	if (rack->r_ctl.fsb.left_to_send < pace_max_seg) {
+		/* Less than a full sized pace, lets not  */
+		rack->r_fast_output = 0;
+		return;
+	} else {
+		/* Round down to the nearest pace_max_seg */
+		rack->r_ctl.fsb.left_to_send = rounddown(rack->r_ctl.fsb.left_to_send, pace_max_seg);
+	}
+	if (hw_tls)
+		rack->r_ctl.fsb.hw_tls = 1;
+	else
+		rack->r_ctl.fsb.hw_tls = 0;
+	KASSERT((rack->r_ctl.fsb.left_to_send <= (sbavail(sb) - (tp->snd_max - tp->snd_una))),
+		("rack:%p left_to_send:%u sbavail:%u out:%u",
+		 rack, rack->r_ctl.fsb.left_to_send, sbavail(sb),
+		 (tp->snd_max - tp->snd_una)));
+	if (rack->r_ctl.fsb.left_to_send < segsiz)
+		rack->r_fast_output = 0;
+	else {
+		if (rack->r_ctl.fsb.left_to_send == (sbavail(sb) - (tp->snd_max - tp->snd_una)))
+			rack->r_ctl.fsb.rfo_apply_push = 1;
+		else
+			rack->r_ctl.fsb.rfo_apply_push = 0;
+	}
+}
+
+static uint32_t
+rack_get_hpts_pacing_min_for_bw(struct tcp_rack *rack, int32_t segsiz)
+{
+	uint64_t min_time;
+	uint32_t maxlen;
+
+	min_time = (uint64_t)get_hpts_min_sleep_time();
+	maxlen = (uint32_t)((rack->r_ctl.gp_bw * min_time) / (uint64_t)HPTS_USEC_IN_SEC);
+	maxlen = roundup(maxlen, segsiz);
+	return (maxlen);
+}
+
 static struct rack_sendmap *
 rack_check_collapsed(struct tcp_rack *rack, uint32_t cts)
 {
 	struct rack_sendmap *rsm = NULL;
-	struct rack_sendmap fe;
 	int thresh;
 
 restart:
-	fe.r_start = rack->r_ctl.last_collapse_point;
-	rsm = RB_FIND(rack_rb_tree_head, &rack->r_ctl.rc_mtree, &fe);
+	rsm = tqhash_find(rack->r_ctl.tqh, rack->r_ctl.last_collapse_point);
 	if ((rsm == NULL) || ((rsm->r_flags & RACK_RWND_COLLAPSED) == 0)) {
 		/* Nothing, strange turn off validity  */
 		rack->r_collapse_point_valid = 0;
@@ -16640,7 +20526,7 @@ restart:
 		goto restart;
 	}
 	/* Now has it been long enough ? */
-	thresh = rack_calc_thresh_rack(rack, rack_grab_rtt(rack->rc_tp, rack), cts);
+	thresh = rack_calc_thresh_rack(rack, rack_grab_rtt(rack->rc_tp, rack), cts, __LINE__, 1);
 	if ((cts - ((uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)])) > thresh) {
 		rack_log_collapse(rack, rsm->r_start,
 				  (cts - ((uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)])),
@@ -16652,6 +20538,54 @@ restart:
 			  (cts - ((uint32_t)rsm->r_tim_lastsent[(rsm->r_rtr_cnt-1)])),
 			  thresh, __LINE__, 7, rsm->r_flags, rsm);
 	return (NULL);
+}
+
+static void
+rack_credit_back_policer_idle_time(struct tcp_rack *rack, uint64_t idle_t, int line)
+{
+	/*
+	 * We were idle some time (idle_t) and so our policer bucket
+	 * needs to grow. It can go no higher than policer_bucket_size.
+	 */
+	uint64_t len;
+
+	len = idle_t * rack->r_ctl.policer_bw;
+	len /= HPTS_USEC_IN_SEC;
+	rack->r_ctl.current_policer_bucket += (uint32_t)len;
+	if (rack->r_ctl.policer_bucket_size < rack->r_ctl.current_policer_bucket) {
+		rack->r_ctl.current_policer_bucket = rack->r_ctl.policer_bucket_size;
+	}
+	if (rack_verbose_logging > 0)
+		policer_detection_log(rack, (uint32_t)len, line, (uint32_t)idle_t, 0, 7);
+}
+
+static inline void
+rack_validate_sizes(struct tcp_rack *rack, int32_t *len, int32_t segsiz, uint32_t pace_max_seg)
+{
+	if ((rack->full_size_rxt == 0) &&
+	    (rack->shape_rxt_to_pacing_min == 0) &&
+	    (*len >= segsiz)) {
+		*len = segsiz;
+	} else if (rack->shape_rxt_to_pacing_min &&
+		 rack->gp_ready) {
+		/* We use pacing min as shaping len req */
+		uint32_t maxlen;
+
+		maxlen = rack_get_hpts_pacing_min_for_bw(rack, segsiz);
+		if (*len > maxlen)
+			*len = maxlen;
+	} else {
+		/*
+		 * The else is full_size_rxt is on so send it all
+		 * note we do need to check this for exceeding
+		 * our max segment size due to the fact that
+		 * we do sometimes merge chunks together i.e.
+		 * we cannot just assume that we will never have
+		 * a chunk greater than pace_max_seg
+		 */
+		if (*len > pace_max_seg)
+			*len = pace_max_seg;
+	}
 }
 
 static int
@@ -16676,6 +20610,7 @@ rack_output(struct tcpcb *tp)
 	struct tcphdr *th;
 	uint8_t pass = 0;
 	uint8_t mark = 0;
+	uint8_t check_done = 0;
 	uint8_t wanted_cookie = 0;
 	u_char opt[TCP_MAXOLEN];
 	unsigned ipoptlen, optlen, hdrlen, ulen=0;
@@ -16686,6 +20621,7 @@ rack_output(struct tcpcb *tp)
 
 #endif
 	int32_t idle, sendalot;
+	uint32_t tot_idle;
 	int32_t sub_from_prr = 0;
 	volatile int32_t sack_rxmit;
 	struct rack_sendmap *rsm = NULL;
@@ -16694,9 +20630,9 @@ rack_output(struct tcpcb *tp)
 	int32_t slot = 0;
 	int32_t sup_rack = 0;
 	uint32_t cts, ms_cts, delayed, early;
-	uint16_t add_flag = RACK_SENT_SP;
+	uint32_t add_flag = RACK_SENT_SP;
 	/* The doing_tlp flag will be set by the actual rack_timeout_tlp() */
-	uint8_t hpts_calling,  doing_tlp = 0;
+	uint8_t doing_tlp = 0;
 	uint32_t cwnd_to_use, pace_max_seg;
 	int32_t do_a_prefetch = 0;
 	int32_t prefetch_rsm = 0;
@@ -16704,7 +20640,7 @@ rack_output(struct tcpcb *tp)
 	struct timeval tv;
 	int32_t prefetch_so_done = 0;
 	struct tcp_log_buffer *lgb;
-	struct inpcb *inp;
+	struct inpcb *inp = tptoinpcb(tp);
 	struct sockbuf *sb;
 	uint64_t ts_val = 0;
 #ifdef TCP_ACCOUNTING
@@ -16714,7 +20650,10 @@ rack_output(struct tcpcb *tp)
 	struct ip6_hdr *ip6 = NULL;
 	int32_t isipv6;
 #endif
-	bool hw_tls = false;
+	bool hpts_calling, hw_tls = false;
+
+	NET_EPOCH_ASSERT();
+	INP_WLOCK_ASSERT(inp);
 
 	/* setup and take the cache hits here */
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
@@ -16722,9 +20661,8 @@ rack_output(struct tcpcb *tp)
 	sched_pin();
 	ts_val = get_cyclecount();
 #endif
-	hpts_calling = rack->rc_inp->inp_hpts_calls;
-	NET_EPOCH_ASSERT();
-	INP_WLOCK_ASSERT(rack->rc_inp);
+	hpts_calling = !!(tp->t_flags2 & TF2_HPTS_CALLS);
+	tp->t_flags2 &= ~TF2_HPTS_CALLS;
 #ifdef TCP_OFFLOAD
 	if (tp->t_flags & TF_TOE) {
 #ifdef TCP_ACCOUNTING
@@ -16733,11 +20671,20 @@ rack_output(struct tcpcb *tp)
 		return (tcp_offload_output(tp));
 	}
 #endif
+	if (rack->rack_deferred_inited == 0) {
+		/*
+		 * If we are the connecting socket we will
+		 * hit rack_init() when no sequence numbers
+		 * are setup. This makes it so we must defer
+		 * some initialization. Call that now.
+		 */
+		rack_deferred_init(tp, rack);
+	}
 	/*
 	 * For TFO connections in SYN_RECEIVED, only allow the initial
 	 * SYN|ACK and those sent by the retransmit timer.
 	 */
-	if (IS_FASTOPEN(tp->t_flags) &&
+	if ((tp->t_flags & TF_FASTOPEN) &&
 	    (tp->t_state == TCPS_SYN_RECEIVED) &&
 	    SEQ_GT(tp->snd_max, tp->snd_una) &&    /* initial SYN|ACK sent */
 	    (rack->r_ctl.rc_resend == NULL)) {         /* not a retransmit */
@@ -16758,7 +20705,7 @@ rack_output(struct tcpcb *tp)
 	cts = tcp_get_usecs(&tv);
 	ms_cts = tcp_tv_to_mssectick(&tv);
 	if (((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) == 0) &&
-	    tcp_in_hpts(rack->rc_inp)) {
+	    tcp_in_hpts(rack->rc_tp)) {
 		/*
 		 * We are on the hpts for some timer but not hptsi output.
 		 * Remove from the hpts unconditionally.
@@ -16778,7 +20725,7 @@ rack_output(struct tcpcb *tp)
 		int retval;
 
 		retval = rack_process_timers(tp, rack, cts, hpts_calling,
-		    &doing_tlp);
+					     &doing_tlp);
 		if (retval != 0) {
 			counter_u64_add(rack_out_size[TCP_MSS_ACCT_ATIMER], 1);
 #ifdef TCP_ACCOUNTING
@@ -16792,7 +20739,19 @@ rack_output(struct tcpcb *tp)
 		}
 	}
 	if (rack->rc_in_persist) {
-		if (tcp_in_hpts(rack->rc_inp) == 0) {
+		if (tcp_in_hpts(rack->rc_tp) == 0) {
+			/* Timer is not running */
+			rack_start_hpts_timer(rack, tp, cts, 0, 0, 0);
+		}
+#ifdef TCP_ACCOUNTING
+		sched_unpin();
+#endif
+		return (0);
+	}
+	if ((rack->rc_ack_required == 1) &&
+	    (rack->r_timer_override == 0)){
+		/* A timeout occurred and no ack has arrived */
+		if (tcp_in_hpts(rack->rc_tp) == 0) {
 			/* Timer is not running */
 			rack_start_hpts_timer(rack, tp, cts, 0, 0, 0);
 		}
@@ -16806,9 +20765,9 @@ rack_output(struct tcpcb *tp)
 	    (delayed) ||
 	    (tp->t_state < TCPS_ESTABLISHED)) {
 		rack->rc_ack_can_sendout_data = 0;
-		if (tcp_in_hpts(rack->rc_inp))
-			tcp_hpts_remove(rack->rc_inp);
-	} else if (tcp_in_hpts(rack->rc_inp)) {
+		if (tcp_in_hpts(rack->rc_tp))
+			tcp_hpts_remove(rack->rc_tp);
+	} else if (tcp_in_hpts(rack->rc_tp)) {
 		/*
 		 * On the hpts you can't pass even if ACKNOW is on, we will
 		 * when the hpts fires.
@@ -16818,29 +20777,30 @@ rack_output(struct tcpcb *tp)
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_proc_time[SND_BLOCKED] += (crtsc - ts_val);
 		}
-		counter_u64_add(tcp_proc_time[SND_BLOCKED], (crtsc - ts_val));
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[SND_BLOCKED]++;
 		}
-		counter_u64_add(tcp_cnt_counters[SND_BLOCKED], 1);
 		sched_unpin();
 #endif
 		counter_u64_add(rack_out_size[TCP_MSS_ACCT_INPACE], 1);
 		return (0);
 	}
-	rack->rc_inp->inp_hpts_calls = 0;
 	/* Finish out both pacing early and late accounting */
 	if ((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) &&
 	    TSTMP_GT(rack->r_ctl.rc_last_output_to, cts)) {
 		early = rack->r_ctl.rc_last_output_to - cts;
 	} else
 		early = 0;
-	if (delayed) {
+	if (delayed && (rack->rc_always_pace == 1)) {
 		rack->r_ctl.rc_agg_delayed += delayed;
 		rack->r_late = 1;
-	} else if (early) {
+	} else if (early && (rack->rc_always_pace == 1)) {
 		rack->r_ctl.rc_agg_early += early;
 		rack->r_early = 1;
+	} else if (rack->rc_always_pace == 0) {
+		/* Non-paced we are not late */
+		rack->r_ctl.rc_agg_delayed = rack->r_ctl.rc_agg_early = 0;
+		rack->r_early = rack->r_late = 0;
 	}
 	/* Now that early/late accounting is done turn off the flag */
 	rack->r_ctl.rc_hpts_flags &= ~PACE_PKT_OUTPUT;
@@ -16872,7 +20832,7 @@ rack_output(struct tcpcb *tp)
 	 * only allow the initial SYN or SYN|ACK and those sent
 	 * by the retransmit timer.
 	 */
-	if (IS_FASTOPEN(tp->t_flags) &&
+	if ((tp->t_flags & TF_FASTOPEN) &&
 	    ((tp->t_state == TCPS_SYN_RECEIVED) ||
 	     (tp->t_state == TCPS_SYN_SENT)) &&
 	    SEQ_GT(tp->snd_max, tp->snd_una) && /* initial SYN or SYN|ACK sent */
@@ -16902,9 +20862,9 @@ rack_output(struct tcpcb *tp)
 	}
 	if ((tp->snd_una == tp->snd_max) &&
 	    rack->r_ctl.rc_went_idle_time &&
-	    TSTMP_GT(cts, rack->r_ctl.rc_went_idle_time)) {
-		idle = cts - rack->r_ctl.rc_went_idle_time;
-		if (idle > rack_min_probertt_hold) {
+	    (cts > rack->r_ctl.rc_went_idle_time)) {
+		tot_idle = (cts - rack->r_ctl.rc_went_idle_time);
+		if (tot_idle > rack_min_probertt_hold) {
 			/* Count as a probe rtt */
 			if (rack->in_probe_rtt == 0) {
 				rack->r_ctl.rc_lower_rtt_us_cts = cts;
@@ -16915,16 +20875,76 @@ rack_output(struct tcpcb *tp)
 				rack_exit_probertt(rack, cts);
 			}
 		}
-		idle = 0;
 	}
-	if (rack_use_fsb && (rack->r_fsb_inited == 0) && (rack->r_state != TCPS_CLOSED))
-		rack_init_fsb_block(tp, rack);
+	if(rack->policer_detect_on) {
+		/*
+		 * If we are doing policer detetion we at a minium
+		 * record the time but if possible add back to
+		 * the bucket based on the idle time.
+		 */
+		uint64_t idle_t, u64_cts;
+
+		segsiz = min(ctf_fixed_maxseg(tp),
+			     rack->r_ctl.rc_pace_min_segs);
+		u64_cts = tcp_tv_to_lusectick(&tv);
+		if ((rack->rc_policer_detected == 1) &&
+		    (rack->r_ctl.policer_bucket_size > segsiz) &&
+		    (rack->r_ctl.policer_bw > 0) &&
+		    (u64_cts > rack->r_ctl.last_sendtime)) {
+			/* We are being policed add back the time */
+			idle_t = u64_cts - rack->r_ctl.last_sendtime;
+			rack_credit_back_policer_idle_time(rack, idle_t, __LINE__);
+		}
+		rack->r_ctl.last_sendtime = u64_cts;
+	}
+	if (rack_use_fsb &&
+	    (rack->r_ctl.fsb.tcp_ip_hdr) &&
+	    (rack->r_fsb_inited == 0) &&
+	    (rack->r_state != TCPS_CLOSED))
+		rack_init_fsb_block(tp, rack, tcp_outflags[tp->t_state]);
+	if (rack->rc_sendvars_notset == 1) {
+		rack->r_ctl.idle_snd_una = tp->snd_una;
+		rack->rc_sendvars_notset = 0;
+		/*
+		 * Make sure any TCP timers (keep-alive) is not running.
+		 */
+		tcp_timer_stop(tp);
+	}
+	if ((rack->rack_no_prr == 1) &&
+	    (rack->rc_always_pace == 0)) {
+		/*
+		 * Sanity check before sending, if we have
+		 * no-pacing enabled and prr is turned off that
+		 * is a logistics error. Correct this by turnning
+		 * prr back on. A user *must* set some form of
+		 * pacing in order to turn PRR off. We do this
+		 * in the output path so that we can avoid socket
+		 * option ordering issues that would occur if we
+		 * tried to do it while setting rack_no_prr on.
+		 */
+		rack->rack_no_prr = 0;
+	}
+	if ((rack->pcm_enabled == 1) &&
+	    (rack->pcm_needed == 0) &&
+	    (tot_idle > 0)) {
+		/*
+		 * We have been idle some micro seconds. We need
+		 * to factor this in to see if a PCM is needed.
+		 */
+		uint32_t rtts_idle, rnds;
+
+		if (tp->t_srtt)
+			rtts_idle = tot_idle / tp->t_srtt;
+		else
+			rtts_idle = 0;
+		rnds = rack->r_ctl.current_round - rack->r_ctl.last_pcm_round;
+		rack->r_ctl.pcm_idle_rounds += rtts_idle;
+		if ((rnds + rack->r_ctl.pcm_idle_rounds)  >= rack_pcm_every_n_rounds) {
+			rack->pcm_needed = 1;
+			rack_log_pcm(rack, 8, rack->r_ctl.last_pcm_round, rtts_idle, rack->r_ctl.current_round );
+		}
+	}
 again:
-	/*
-	 * If we've recently taken a timeout, snd_max will be greater than
-	 * snd_nxt.  There may be SACK information that allows us to avoid
-	 * resending already delivered data.  Adjust snd_nxt accordingly.
-	 */
 	sendalot = 0;
 	cts = tcp_get_usecs(&tv);
 	ms_cts = tcp_tv_to_mssectick(&tv);
@@ -16936,13 +20956,51 @@ again:
 		pace_max_seg = rack->rc_user_set_max_segs * segsiz;
 	else
 		pace_max_seg = rack->r_ctl.rc_pace_max_segs;
+	if (TCPS_HAVEESTABLISHED(tp->t_state) &&
+	    (rack->r_ctl.pcm_max_seg == 0)) {
+		/*
+		 * We set in our first send so we know that the ctf_fixed_maxseg
+		 * has been fully set. If we do it in rack_init() we most likely
+		 * see 512 bytes so we end up at 5120, not desirable.
+		 */
+		rack->r_ctl.pcm_max_seg = rc_init_window(rack);
+		if (rack->r_ctl.pcm_max_seg < (ctf_fixed_maxseg(tp) * 10)) {
+			/*
+			 * Assure our initial PCM probe is at least 10 MSS.
+			 */
+			rack->r_ctl.pcm_max_seg = ctf_fixed_maxseg(tp) * 10;
+		}
+	}
+	if ((rack->r_ctl.pcm_max_seg != 0)  && (rack->pcm_needed == 1)) {
+		uint32_t rw_avail, cwa;
+
+		if (tp->snd_wnd > ctf_outstanding(tp))
+			rw_avail = tp->snd_wnd - ctf_outstanding(tp);
+		else
+			rw_avail = 0;
+		if (tp->snd_cwnd > ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked))
+			cwa = tp->snd_cwnd -ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		else
+			cwa = 0;
+		if ((cwa >= rack->r_ctl.pcm_max_seg) &&
+		    (rw_avail > rack->r_ctl.pcm_max_seg)) {
+			/* Raise up the max seg for this trip through */
+			pace_max_seg = rack->r_ctl.pcm_max_seg;
+			/* Disable any fast output */
+			rack->r_fast_output = 0;
+		}
+		if (rack_verbose_logging) {
+			rack_log_pcm(rack, 4,
+				     cwa, rack->r_ctl.pcm_max_seg, rw_avail);
+		}
+	}
 	sb_offset = tp->snd_max - tp->snd_una;
 	cwnd_to_use = rack->r_ctl.cwnd_to_use = tp->snd_cwnd;
 	flags = tcp_outflags[tp->t_state];
 	while (rack->rc_free_cnt < rack_free_cache) {
 		rsm = rack_alloc(rack);
 		if (rsm == NULL) {
-			if (inp->inp_hpts_calls)
+			if (hpts_calling)
 				/* Retry in a ms */
 				slot = (1 * HPTS_USEC_IN_MSEC);
 			so = inp->inp_socket;
@@ -16953,8 +21011,6 @@ again:
 		rack->rc_free_cnt++;
 		rsm = NULL;
 	}
-	if (inp->inp_hpts_calls)
-		inp->inp_hpts_calls = 0;
 	sack_rxmit = 0;
 	len = 0;
 	rsm = NULL;
@@ -16976,8 +21032,7 @@ again:
 			 __func__, __LINE__,
 			 rsm->r_start, tp->snd_una, tp, rack, rsm));
 		sb_offset = rsm->r_start - tp->snd_una;
-		if (len >= segsiz)
-			len = segsiz;
+		rack_validate_sizes(rack, &len, segsiz, pace_max_seg);
 	} else if (rack->r_collapse_point_valid &&
 		   ((rsm = rack_check_collapsed(rack, cts)) != NULL)) {
 		/*
@@ -16985,7 +21040,7 @@ again:
 		 * for us to retransmit it. Move up the collapse point,
 		 * since this rsm has its chance to retransmit now.
 		 */
-		rack_trace_point(rack, RACK_TP_COLLAPSED_RXT);
+		tcp_trace_point(rack->rc_tp, TCP_TP_COLLAPSED_RXT);
 		rack->r_ctl.last_collapse_point = rsm->r_end;
 		/* Are we done? */
 		if (SEQ_GEQ(rack->r_ctl.last_collapse_point,
@@ -16997,10 +21052,7 @@ again:
 		len = rsm->r_end - rsm->r_start;
 		sb_offset = rsm->r_start - tp->snd_una;
 		sendalot = 0;
-		if ((rack->full_size_rxt == 0) &&
-		    (rack->shape_rxt_to_pacing_min == 0) &&
-		    (len >= segsiz))
-			len = segsiz;
+		rack_validate_sizes(rack, &len, segsiz, pace_max_seg);
 	} else if ((rsm = tcp_rack_output(tp, rack, cts)) != NULL) {
 		/* We have a retransmit that takes precedence */
 		if ((!IN_FASTRECOVERY(tp->t_flags)) &&
@@ -17022,13 +21074,12 @@ again:
 			 rsm->r_start, tp->snd_una, tp, rack, rsm));
 		sb_offset = rsm->r_start - tp->snd_una;
 		sendalot = 0;
-		if (len >= segsiz)
-			len = segsiz;
+		rack_validate_sizes(rack, &len, segsiz, pace_max_seg);
 		if (len > 0) {
 			sack_rxmit = 1;
 			KMOD_TCPSTAT_INC(tcps_sack_rexmits);
 			KMOD_TCPSTAT_ADD(tcps_sack_rexmit_bytes,
-			    min(len, segsiz));
+					 min(len, segsiz));
 		}
 	} else if (rack->r_ctl.rc_tlpsend) {
 		/* Tail loss probe */
@@ -17120,6 +21171,15 @@ again:
 			    (rack->shape_rxt_to_pacing_min == 0) &&
 			    (len >= segsiz))
 				len = segsiz;
+			else if (rack->shape_rxt_to_pacing_min &&
+				 rack->gp_ready) {
+				/* We use pacing min as shaping len req */
+				uint32_t maxlen;
+
+				maxlen = rack_get_hpts_pacing_min_for_bw(rack, segsiz);
+				if (len > maxlen)
+					len = maxlen;
+			}
 			/*
 			 * Delay removing the flag RACK_MUST_RXT so
 			 * that the fastpath for retransmit will
@@ -17132,7 +21192,6 @@ again:
 	 * as long as we are not retransmiting.
 	 */
 	if ((rsm == NULL) &&
-	    (rack->do_detection == 0) &&
 	    (V_tcp_map_entries_limit > 0) &&
 	    (rack->r_ctl.rc_num_maps_alloced >= V_tcp_map_entries_limit)) {
 		counter_u64_add(rack_to_alloc_limited, 1);
@@ -17155,14 +21214,24 @@ again:
 			flags &= ~TH_FIN;
 		}
 	}
-	if (rsm && rack->r_fsb_inited && rack_use_rsm_rfo &&
+	if (rsm && rack->r_fsb_inited &&
+	    rack_use_rsm_rfo &&
 	    ((rsm->r_flags & RACK_HAS_FIN) == 0)) {
 		int ret;
 
+		if ((rack->rc_policer_detected == 1) &&
+		    (rack->r_ctl.policer_bucket_size > segsiz) &&
+		    (rack->r_ctl.policer_bw > 0)) {
+			/* Check to see if there is room */
+			if (rack->r_ctl.current_policer_bucket < len) {
+				goto skip_fast_output;
+			}
+		}
 		ret = rack_fast_rsm_output(tp, rack, rsm, ts_val, cts, ms_cts, &tv, len, doing_tlp);
 		if (ret == 0)
 			return (0);
 	}
+skip_fast_output:
 	so = inp->inp_socket;
 	sb = &so->so_snd;
 	if (do_a_prefetch == 0) {
@@ -17194,8 +21263,8 @@ again:
 		if (rack->r_ctl.rc_scw) {
 			/* First lets update and get the cwnd */
 			rack->r_ctl.cwnd_to_use = cwnd_to_use = tcp_shared_cwnd_update(rack->r_ctl.rc_scw,
-								    rack->r_ctl.rc_scw_index,
-								    tp->snd_cwnd, tp->snd_wnd, segsiz);
+										       rack->r_ctl.rc_scw_index,
+										       tp->snd_cwnd, tp->snd_wnd, segsiz);
 		}
 	}
 #endif
@@ -17215,28 +21284,20 @@ again:
 		prefetch_rsm = 1;
 	}
 	SOCKBUF_LOCK(sb);
-	/*
-	 * If snd_nxt == snd_max and we have transmitted a FIN, the
-	 * sb_offset will be > 0 even if so_snd.sb_cc is 0, resulting in a
-	 * negative length.  This can also occur when TCP opens up its
-	 * congestion window while receiving additional duplicate acks after
-	 * fast-retransmit because TCP will reset snd_nxt to snd_max after
-	 * the fast-retransmit.
-	 *
-	 * In the normal retransmit-FIN-only case, however, snd_nxt will be
-	 * set to snd_una, the sb_offset will be 0, and the length may wind
-	 * up 0.
-	 *
-	 * If sack_rxmit is true we are retransmitting from the scoreboard
-	 * in which case len is already set.
-	 */
 	if ((sack_rxmit == 0) &&
-	    (TCPS_HAVEESTABLISHED(tp->t_state) || IS_FASTOPEN(tp->t_flags))) {
+	    (TCPS_HAVEESTABLISHED(tp->t_state) ||
+	    (tp->t_flags & TF_FASTOPEN))) {
+		/*
+		 * We are not retransmitting (sack_rxmit is 0) so we
+		 * are sending new data. This is always based on snd_max.
+		 * Now in theory snd_max may be equal to snd_una, if so
+		 * then nothing is outstanding and the offset would be 0.
+		 */
 		uint32_t avail;
 
 		avail = sbavail(sb);
-		if (SEQ_GT(tp->snd_nxt, tp->snd_una) && avail)
-			sb_offset = tp->snd_nxt - tp->snd_una;
+		if (SEQ_GT(tp->snd_max, tp->snd_una) && avail)
+			sb_offset = tp->snd_max - tp->snd_una;
 		else
 			sb_offset = 0;
 		if ((IN_FASTRECOVERY(tp->t_flags) == 0) || rack->rack_no_prr) {
@@ -17257,7 +21318,11 @@ again:
 			}  else {
 				len = rack_what_can_we_send(tp, rack, cwnd_to_use, avail, sb_offset);
 			}
-			if ((rack->r_ctl.crte == NULL) && IN_FASTRECOVERY(tp->t_flags) && (len > segsiz)) {
+			if ((rack->r_ctl.crte == NULL) &&
+			    IN_FASTRECOVERY(tp->t_flags) &&
+			    (rack->full_size_rxt == 0) &&
+			    (rack->shape_rxt_to_pacing_min == 0) &&
+			    (len > segsiz)) {
 				/*
 				 * For prr=off, we need to send only 1 MSS
 				 * at a time. We do this because another sack could
@@ -17266,7 +21331,15 @@ again:
 				 * that keeps us from sending out the retransmit.
 				 */
 				len = segsiz;
-			}
+			} else if (rack->shape_rxt_to_pacing_min &&
+				   rack->gp_ready) {
+				/* We use pacing min as shaping len req */
+				uint32_t maxlen;
+
+				maxlen = rack_get_hpts_pacing_min_for_bw(rack, segsiz);
+				if (len > maxlen)
+					len = maxlen;
+			}/* The else is full_size_rxt is on so send it all */
 		} else {
 			uint32_t outstanding;
 			/*
@@ -17339,7 +21412,7 @@ again:
 		 * no data please.
 		 */
 		if ((sack_rxmit == 0) &&
-		    (!IS_FASTOPEN(tp->t_flags))){
+		    !(tp->t_flags & TF_FASTOPEN)) {
 			len = 0;
 			sb_offset = 0;
 		}
@@ -17348,18 +21421,58 @@ again:
 		kern_prefetch(so, &prefetch_so_done);
 		prefetch_so_done = 1;
 	}
+	orig_len = len;
+	if ((rack->rc_policer_detected == 1) &&
+	    (rack->r_ctl.policer_bucket_size > segsiz) &&
+	    (rack->r_ctl.policer_bw > 0) &&
+	    (len > 0)) {
+		/*
+		 * Ok we believe we have a policer watching
+		 * what we send, can we send len? If not can
+		 * we tune it down to a smaller value?
+		 */
+		uint32_t plen, buck_needs;
+
+		plen = rack_policer_check_send(rack, len, segsiz, &buck_needs);
+		if (plen == 0) {
+			/*
+			 * We are not allowed to send. How long
+			 * do we need to pace for i.e. how long
+			 * before len is available to send?
+			 */
+			uint64_t lentime;
+
+			lentime = buck_needs;
+			lentime *= HPTS_USEC_IN_SEC;
+			lentime /= rack->r_ctl.policer_bw;
+			slot = (uint32_t)lentime;
+			tot_len_this_send = 0;
+			SOCKBUF_UNLOCK(sb);
+			if (rack_verbose_logging > 0)
+				policer_detection_log(rack, len, slot, buck_needs, 0, 12);
+			rack_start_hpts_timer(rack, tp, cts, slot, 0, 0);
+			rack_log_type_just_return(rack, cts, 0, slot, hpts_calling, 0, cwnd_to_use);
+			goto just_return_clean;
+		}
+		if (plen < len) {
+			sendalot = 0;
+			len = plen;
+		}
+	}
 	/*
 	 * Lop off SYN bit if it has already been sent.  However, if this is
 	 * SYN-SENT state and if segment contains data and if we don't know
 	 * that foreign host supports TAO, suppress sending segment.
 	 */
-	if ((flags & TH_SYN) && SEQ_GT(tp->snd_nxt, tp->snd_una) &&
-	    ((sack_rxmit == 0) && (tp->t_rxtshift == 0))) {
+	if ((flags & TH_SYN) &&
+	    SEQ_GT(tp->snd_max, tp->snd_una) &&
+	    ((sack_rxmit == 0) &&
+	     (tp->t_rxtshift == 0))) {
 		/*
 		 * When sending additional segments following a TFO SYN|ACK,
 		 * do not include the SYN bit.
 		 */
-		if (IS_FASTOPEN(tp->t_flags) &&
+		if ((tp->t_flags & TF_FASTOPEN) &&
 		    (tp->t_state == TCPS_SYN_RECEIVED))
 			flags &= ~TH_SYN;
 	}
@@ -17384,7 +21497,7 @@ again:
 	 *
 	 *  - When the socket is in the CLOSED state (RST is being sent)
 	 */
-	if (IS_FASTOPEN(tp->t_flags) &&
+	if ((tp->t_flags & TF_FASTOPEN) &&
 	    (((flags & TH_SYN) && (tp->t_rxtshift > 0)) ||
 	     ((tp->t_state == TCPS_SYN_SENT) &&
 	      (tp->t_tfo_client_cookie_len == 0)) ||
@@ -17393,8 +21506,7 @@ again:
 		len = 0;
 	}
 	/* Without fast-open there should never be data sent on a SYN */
-	if ((flags & TH_SYN) && (!IS_FASTOPEN(tp->t_flags))) {
-		tp->snd_nxt = tp->iss;
+	if ((flags & TH_SYN) && !(tp->t_flags & TF_FASTOPEN)) {
 		len = 0;
 	}
 	if ((len > segsiz) && (tcp_dsack_block_exists(tp))) {
@@ -17402,29 +21514,17 @@ again:
 		add_flag |= RACK_SENT_W_DSACK;
 		len = segsiz;
 	}
-	orig_len = len;
 	if (len <= 0) {
 		/*
-		 * If FIN has been sent but not acked, but we haven't been
-		 * called to retransmit, len will be < 0.  Otherwise, window
-		 * shrank after we sent into it.  If window shrank to 0,
-		 * cancel pending retransmit, pull snd_nxt back to (closed)
-		 * window, and set the persist timer if it isn't already
-		 * going.  If the window didn't close completely, just wait
-		 * for an ACK.
-		 *
-		 * We also do a general check here to ensure that we will
-		 * set the persist timer when we have data to send, but a
-		 * 0-byte window. This makes sure the persist timer is set
-		 * even if the packet hits one of the "goto send" lines
-		 * below.
+		 * We have nothing to send, or the window shrank, or
+		 * is closed, do we need to go into persists?
 		 */
 		len = 0;
 		if ((tp->snd_wnd == 0) &&
 		    (TCPS_HAVEESTABLISHED(tp->t_state)) &&
 		    (tp->snd_una == tp->snd_max) &&
 		    (sb_offset < (int)sbavail(sb))) {
-			rack_enter_persist(tp, rack, cts);
+			rack_enter_persist(tp, rack, cts, tp->snd_una);
 		}
 	} else if ((rsm == NULL) &&
 		   (doing_tlp == 0) &&
@@ -17452,9 +21552,9 @@ again:
 				 * Nothing out we can
 				 * go into persists.
 				 */
-				rack_enter_persist(tp, rack, cts);
+				rack_enter_persist(tp, rack, cts, tp->snd_una);
 			}
-		     } else if ((cwnd_to_use >= max(minseg, (segsiz * 4))) &&
+		} else if ((cwnd_to_use >= max(minseg, (segsiz * 4))) &&
 			   (ctf_flight_size(tp, rack->r_ctl.rc_sacked) > (2 * segsiz)) &&
 			   (len < (int)(sbavail(sb) - sb_offset)) &&
 			   (len < minseg)) {
@@ -17511,7 +21611,6 @@ again:
 			 * larger TSO's out).
 			 */
 			len = 0;
-
 		}
 
 	}
@@ -17542,14 +21641,14 @@ again:
 	 */
 #ifdef INET6
 	if (isipv6 && IPSEC_ENABLED(ipv6))
-		ipsec_optlen = IPSEC_HDRSIZE(ipv6, tp->t_inpcb);
+		ipsec_optlen = IPSEC_HDRSIZE(ipv6, inp);
 #ifdef INET
 	else
 #endif
 #endif				/* INET6 */
 #ifdef INET
 		if (IPSEC_ENABLED(ipv4))
-			ipsec_optlen = IPSEC_HDRSIZE(ipv4, tp->t_inpcb);
+			ipsec_optlen = IPSEC_HDRSIZE(ipv4, inp);
 #endif				/* INET */
 #endif
 
@@ -17576,14 +21675,10 @@ again:
 		if (sack_rxmit) {
 			if ((rsm->r_flags & RACK_HAS_FIN) == 0)
 				flags &= ~TH_FIN;
-		} else {
-			if (SEQ_LT(tp->snd_nxt + len, tp->snd_una +
-				   sbused(sb)))
-				flags &= ~TH_FIN;
 		}
 	}
 	recwin = lmin(lmax(sbspace(&so->so_rcv), 0),
-	    (long)TCP_MAXWIN << tp->rcv_scale);
+		      (long)TCP_MAXWIN << tp->rcv_scale);
 
 	/*
 	 * Sender silly window avoidance.   We transmit under the following
@@ -17618,10 +21713,6 @@ again:
 		}
 		if (len >= tp->max_sndwnd / 2 && tp->max_sndwnd > 0) {
 			pass = 4;
-			goto send;
-		}
-		if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {	/* retransmit case */
-			pass = 5;
 			goto send;
 		}
 		if (sack_rxmit) {
@@ -17684,7 +21775,7 @@ again:
 		if (SEQ_GT(tp->rcv_adv, tp->rcv_nxt)) {
 			oldwin = (tp->rcv_adv - tp->rcv_nxt);
 			if (adv > oldwin)
-			    adv -= oldwin;
+				adv -= oldwin;
 			else {
 				/* We can't increase the window */
 				adv = 0;
@@ -17731,7 +21822,7 @@ dontupdate:
 	 * yet done so, then we need to send.
 	 */
 	if ((flags & TH_FIN) &&
-	    (tp->snd_nxt == tp->snd_una)) {
+	    (tp->snd_max == tp->snd_una)) {
 		pass = 11;
 		goto send;
 	}
@@ -17744,18 +21835,36 @@ just_return_nolock:
 	{
 		int app_limited = CTF_JR_SENT_DATA;
 
+		if ((tp->t_flags & TF_FASTOPEN) == 0 &&
+		    (flags & TH_FIN) &&
+		    (len == 0) &&
+		    (sbused(sb) == (tp->snd_max - tp->snd_una)) &&
+		    ((tp->snd_max - tp->snd_una) <= segsiz)) {
+			/*
+			 * Ok less than or right at a MSS is
+			 * outstanding. The original FreeBSD stack would
+			 * have sent a FIN, which can speed things up for
+			 * a transactional application doing a MSG_WAITALL.
+			 * To speed things up since we do *not* send a FIN
+			 * if data is outstanding, we send a "challenge ack".
+			 * The idea behind that is instead of having to have
+			 * the peer wait for the delayed-ack timer to run off
+			 * we send an ack that makes the peer send us an ack.
+			 */
+			rack_send_ack_challange(rack);
+		}
 		if (tot_len_this_send > 0) {
-			/* Make sure snd_nxt is up to max */
 			rack->r_ctl.fsb.recwin = recwin;
-			slot = rack_get_pacing_delay(rack, tp, tot_len_this_send, NULL, segsiz);
+			slot = rack_get_pacing_delay(rack, tp, tot_len_this_send, NULL, segsiz, __LINE__);
 			if ((error == 0) &&
+			    (rack->rc_policer_detected == 0)  &&
 			    rack_use_rfo &&
 			    ((flags & (TH_SYN|TH_FIN)) == 0) &&
 			    (ipoptlen == 0) &&
-			    (tp->snd_nxt == tp->snd_max) &&
 			    (tp->rcv_numsacks == 0) &&
 			    rack->r_fsb_inited &&
 			    TCPS_HAVEESTABLISHED(tp->t_state) &&
+			    ((IN_RECOVERY(tp->t_flags)) == 0) &&
 			    (rack->r_must_retran == 0) &&
 			    ((tp->t_flags & TF_NEEDFIN) == 0) &&
 			    (len > 0) && (orig_len > 0) &&
@@ -17764,42 +21873,21 @@ just_return_nolock:
 			    ((optlen == 0) ||
 			     ((optlen == TCPOLEN_TSTAMP_APPA) && (to.to_flags & TOF_TS)))) {
 				/* We can send at least one more MSS using our fsb */
-
-				rack->r_fast_output = 1;
-				rack->r_ctl.fsb.m = sbsndmbuf(sb, (tp->snd_max - tp->snd_una), &rack->r_ctl.fsb.off);
-				rack->r_ctl.fsb.o_m_len = rack->r_ctl.fsb.m->m_len;
-				rack->r_ctl.fsb.tcp_flags = flags;
-				rack->r_ctl.fsb.left_to_send = orig_len - len;
-				if (hw_tls)
-					rack->r_ctl.fsb.hw_tls = 1;
-				else
-					rack->r_ctl.fsb.hw_tls = 0;
-				KASSERT((rack->r_ctl.fsb.left_to_send <= (sbavail(sb) - (tp->snd_max - tp->snd_una))),
-					("rack:%p left_to_send:%u sbavail:%u out:%u",
-					rack, rack->r_ctl.fsb.left_to_send, sbavail(sb),
-					 (tp->snd_max - tp->snd_una)));
-				if (rack->r_ctl.fsb.left_to_send < segsiz)
-					rack->r_fast_output = 0;
-				else {
-					if (rack->r_ctl.fsb.left_to_send == (sbavail(sb) - (tp->snd_max - tp->snd_una)))
-						rack->r_ctl.fsb.rfo_apply_push = 1;
-					else
-						rack->r_ctl.fsb.rfo_apply_push = 0;
-				}
+				rack_setup_fast_output(tp, rack, sb, len, orig_len,
+						       segsiz, pace_max_seg, hw_tls, flags);
 			} else
 				rack->r_fast_output = 0;
-
-
 			rack_log_fsb(rack, tp, so, flags,
 				     ipoptlen, orig_len, len, 0,
 				     1, optlen, __LINE__, 1);
+			/* Assure when we leave that snd_nxt will point to top */
 			if (SEQ_GT(tp->snd_max, tp->snd_nxt))
 				tp->snd_nxt = tp->snd_max;
 		} else {
 			int end_window = 0;
 			uint32_t seq = tp->gput_ack;
 
-			rsm = RB_MAX(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+			rsm = tqhash_max(rack->r_ctl.tqh);
 			if (rsm) {
 				/*
 				 * Mark the last sent that we just-returned (hinting
@@ -17818,12 +21906,12 @@ just_return_nolock:
 				/* We are limited by the rwnd */
 				app_limited = CTF_JR_RWND_LIMITED;
 				if (IN_FASTRECOVERY(tp->t_flags))
-				    rack->r_ctl.rc_prr_sndcnt = 0;
+					rack->r_ctl.rc_prr_sndcnt = 0;
 			} else if (ctf_outstanding(tp) >= sbavail(sb)) {
 				/* We are limited by whats available -- app limited */
 				app_limited = CTF_JR_APP_LIMITED;
 				if (IN_FASTRECOVERY(tp->t_flags))
-				    rack->r_ctl.rc_prr_sndcnt = 0;
+					rack->r_ctl.rc_prr_sndcnt = 0;
 			} else if ((idle == 0) &&
 				   ((tp->t_flags & TF_NODELAY) == 0) &&
 				   ((uint32_t)len + (uint32_t)sb_offset >= sbavail(sb)) &&
@@ -17919,7 +22007,7 @@ just_return_nolock:
 						log = 1;
 				}
 				/* Mark the last packet has app limited */
-				rsm = RB_MAX(rack_rb_tree_head, &rack->r_ctl.rc_mtree);
+				rsm = tqhash_max(rack->r_ctl.tqh);
 				if (rsm && ((rsm->r_flags & RACK_APP_LIMITED) == 0)) {
 					if (rack->r_ctl.rc_app_limited_cnt == 0)
 						rack->r_ctl.rc_end_appl = rack->r_ctl.rc_first_appl = rsm;
@@ -17949,11 +22037,12 @@ just_return_nolock:
 		    (sbavail(sb) > tp->snd_wnd) &&
 		    (tp->snd_wnd < min((rack->r_ctl.rc_high_rwnd/2), minseg))) {
 			/* Yes lets make sure to move to persist before timer-start */
-			rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime);
+			rack_enter_persist(tp, rack, rack->r_ctl.rc_rcvtime, tp->snd_una);
 		}
 		rack_start_hpts_timer(rack, tp, cts, slot, tot_len_this_send, sup_rack);
 		rack_log_type_just_return(rack, cts, tot_len_this_send, slot, hpts_calling, app_limited, cwnd_to_use);
 	}
+just_return_clean:
 #ifdef NETFLIX_SHARED_CWND
 	if ((sbavail(sb) == 0) &&
 	    rack->r_ctl.rc_scw) {
@@ -17967,31 +22056,46 @@ just_return_nolock:
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[SND_OUT_DATA]++;
 		}
-		counter_u64_add(tcp_cnt_counters[SND_OUT_DATA], 1);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_proc_time[SND_OUT_DATA] += (crtsc - ts_val);
 		}
-		counter_u64_add(tcp_proc_time[SND_OUT_DATA], (crtsc - ts_val));
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[CNT_OF_MSS_OUT] += ((tot_len_this_send + segsiz - 1) / segsiz);
 		}
-		counter_u64_add(tcp_cnt_counters[CNT_OF_MSS_OUT], ((tot_len_this_send + segsiz - 1) / segsiz));
 	} else {
 		crtsc = get_cyclecount();
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[SND_LIMITED]++;
 		}
-		counter_u64_add(tcp_cnt_counters[SND_LIMITED], 1);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_proc_time[SND_LIMITED] += (crtsc - ts_val);
 		}
-		counter_u64_add(tcp_proc_time[SND_LIMITED], (crtsc - ts_val));
 	}
 	sched_unpin();
 #endif
 	return (0);
 
 send:
+	if ((rack->r_ctl.crte != NULL) &&
+	    (rsm == NULL) &&
+	    ((rack->rc_hw_nobuf == 1) ||
+	     (rack_hw_check_queue && (check_done == 0)))) {
+		/*
+		 * We only want to do this once with the hw_check_queue,
+		 * for the enobuf case we would only do it once if
+		 * we come around to again, the flag will be clear.
+		 */
+		check_done = 1;
+		slot = rack_check_queue_level(rack, tp, &tv, cts, len, segsiz);
+		if (slot) {
+			rack->r_ctl.rc_agg_delayed = 0;
+			rack->r_ctl.rc_agg_early = 0;
+			rack->r_early = 0;
+			rack->r_late = 0;
+			SOCKBUF_UNLOCK(&so->so_snd);
+			goto skip_all_send;
+		}
+	}
 	if (rsm || sack_rxmit)
 		counter_u64_add(rack_nfto_resend, 1);
 	else
@@ -18005,13 +22109,40 @@ send:
 		 * is acked first.
 		 */
 		flags &= ~TH_FIN;
+		if (TCPS_HAVEESTABLISHED(tp->t_state) &&
+		    (sbused(sb) == (tp->snd_max - tp->snd_una)) &&
+		    ((tp->snd_max - tp->snd_una) <= segsiz)) {
+			/*
+			 * Ok less than or right at a MSS is
+			 * outstanding. The original FreeBSD stack would
+			 * have sent a FIN, which can speed things up for
+			 * a transactional application doing a MSG_WAITALL.
+			 * To speed things up since we do *not* send a FIN
+			 * if data is outstanding, we send a "challenge ack".
+			 * The idea behind that is instead of having to have
+			 * the peer wait for the delayed-ack timer to run off
+			 * we send an ack that makes the peer send us an ack.
+			 */
+			rack_send_ack_challange(rack);
+		}
 	}
 	/* Enforce stack imposed max seg size if we have one */
-	if (rack->r_ctl.rc_pace_max_segs &&
-	    (len > rack->r_ctl.rc_pace_max_segs)) {
+	if (pace_max_seg &&
+	    (len > pace_max_seg)) {
 		mark = 1;
-		len = rack->r_ctl.rc_pace_max_segs;
+		len = pace_max_seg;
 	}
+	if ((rsm == NULL) &&
+	    (rack->pcm_in_progress == 0) &&
+	    (rack->r_ctl.pcm_max_seg > 0) &&
+	    (len >= rack->r_ctl.pcm_max_seg)) {
+		/* It is large enough for a measurement */
+		add_flag |= RACK_IS_PCM;
+		rack_log_pcm(rack, 5, len, rack->r_ctl.pcm_max_seg,  add_flag);
+	} else if (rack_verbose_logging) {
+		rack_log_pcm(rack, 6, len, rack->r_ctl.pcm_max_seg,  add_flag);
+	}
+
 	SOCKBUF_LOCK_ASSERT(sb);
 	if (len > 0) {
 		if (len >= segsiz)
@@ -18035,6 +22166,24 @@ send:
 		hdrlen = sizeof(struct tcpiphdr);
 
 	/*
+	 * Ok what seq are we sending from. If we have
+	 * no rsm to use, then we look at various bits,
+	 * if we are putting out a SYN it will be ISS.
+	 * If we are retransmitting a FIN it will
+	 * be snd_max-1 else its snd_max.
+	 */
+	if (rsm == NULL) {
+		if (flags & TH_SYN)
+			rack_seq = tp->iss;
+		else if ((flags & TH_FIN) &&
+			 (tp->t_flags & TF_SENTFIN))
+			rack_seq = tp->snd_max - 1;
+		else
+			rack_seq = tp->snd_max;
+	} else {
+		rack_seq = rsm->r_start;
+	}
+	/*
 	 * Compute options for segment. We only have to care about SYN and
 	 * established connection segments.  Options for SYN-ACK segments
 	 * are handled in TCP syncache.
@@ -18043,7 +22192,6 @@ send:
 	if ((tp->t_flags & TF_NOOPT) == 0) {
 		/* Maximum segment size. */
 		if (flags & TH_SYN) {
-			tp->snd_nxt = tp->iss;
 			to.to_mss = tcp_mssopt(&inp->inp_inc);
 			if (tp->t_port)
 				to.to_mss -= V_tcp_udp_tunneling_overhead;
@@ -18056,7 +22204,7 @@ send:
 			 * have caused the original SYN or SYN|ACK to have
 			 * been dropped by a middlebox.
 			 */
-			if (IS_FASTOPEN(tp->t_flags) &&
+			if ((tp->t_flags & TF_FASTOPEN) &&
 			    (tp->t_rxtshift == 0)) {
 				if (tp->t_state == TCPS_SYN_RECEIVED) {
 					to.to_tfo_len = TCP_FASTOPEN_COOKIE_LEN;
@@ -18090,14 +22238,47 @@ send:
 		/* Timestamps. */
 		if ((tp->t_flags & TF_RCVD_TSTMP) ||
 		    ((flags & TH_SYN) && (tp->t_flags & TF_REQ_TSTMP))) {
-			to.to_tsval = ms_cts + tp->ts_offset;
+			uint32_t ts_to_use;
+
+			if ((rack->r_rcvpath_rtt_up == 1) &&
+			    (ms_cts == rack->r_ctl.last_rcv_tstmp_for_rtt)) {
+				/*
+				 * When we are doing a rcv_rtt probe all
+				 * other timestamps use the next msec. This
+				 * is safe since our previous ack is in the
+				 * air and we will just have a few more
+				 * on the next ms. This assures that only
+				 * the one ack has the ms_cts that was on
+				 * our ack-probe.
+				 */
+				ts_to_use = ms_cts + 1;
+			} else {
+				ts_to_use = ms_cts;
+			}
+			to.to_tsval = ts_to_use + tp->ts_offset;
 			to.to_tsecr = tp->ts_recent;
 			to.to_flags |= TOF_TS;
+			if ((len == 0) &&
+			    (TCPS_HAVEESTABLISHED(tp->t_state)) &&
+			    ((ms_cts - rack->r_ctl.last_rcv_tstmp_for_rtt) > RCV_PATH_RTT_MS) &&
+			    (tp->snd_una == tp->snd_max) &&
+			    (flags & TH_ACK) &&
+			    (sbavail(sb) == 0) &&
+			    (rack->r_ctl.current_round != 0) &&
+			    ((flags & (TH_SYN|TH_FIN)) == 0) &&
+			    (rack->r_rcvpath_rtt_up == 0)) {
+				rack->r_ctl.last_rcv_tstmp_for_rtt = ms_cts;
+				rack->r_ctl.last_time_of_arm_rcv = cts;
+				rack->r_rcvpath_rtt_up = 1;
+				/* Subtract 1 from seq to force a response */
+				rack_seq--;
+			}
 		}
 		/* Set receive buffer autosizing timestamp. */
 		if (tp->rfbuf_ts == 0 &&
-		    (so->so_rcv.sb_flags & SB_AUTOSIZE))
-			tp->rfbuf_ts = tcp_ts_getticks();
+		    (so->so_rcv.sb_flags & SB_AUTOSIZE)) {
+			tp->rfbuf_ts = ms_cts;
+		}
 		/* Selective ACK's. */
 		if (tp->t_flags & TF_SACK_PERMIT) {
 			if (flags & TH_SYN)
@@ -18113,7 +22294,7 @@ send:
 		/* TCP-MD5 (RFC2385). */
 		if (tp->t_flags & TF_SIGNATURE)
 			to.to_flags |= TOF_SIGNATURE;
-#endif				/* TCP_SIGNATURE */
+#endif
 
 		/* Processing the options. */
 		hdrlen += optlen = tcp_addoptions(&to, opt);
@@ -18121,7 +22302,7 @@ send:
 		 * If we wanted a TFO option to be added, but it was unable
 		 * to fit, ensure no data is sent.
 		 */
-		if (IS_FASTOPEN(tp->t_flags) && wanted_cookie &&
+		if ((tp->t_flags & TF_FASTOPEN) && wanted_cookie &&
 		    !(to.to_flags & TOF_FASTOPEN))
 			len = 0;
 	}
@@ -18134,11 +22315,9 @@ send:
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_cnt_counters[SND_OUT_FAIL]++;
 			}
-			counter_u64_add(tcp_cnt_counters[SND_OUT_FAIL], 1);
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[SND_OUT_FAIL] += (crtsc - ts_val);
 			}
-			counter_u64_add(tcp_proc_time[SND_OUT_FAIL], (crtsc - ts_val));
 			sched_unpin();
 #endif
 			return (EHOSTUNREACH);
@@ -18147,11 +22326,11 @@ send:
 	}
 #ifdef INET6
 	if (isipv6)
-		ipoptlen = ip6_optlen(tp->t_inpcb);
+		ipoptlen = ip6_optlen(inp);
 	else
 #endif
-		if (tp->t_inpcb->inp_options)
-			ipoptlen = tp->t_inpcb->inp_options->m_len -
+		if (inp->inp_options)
+			ipoptlen = inp->inp_options->m_len -
 				offsetof(struct ipoption, ipopt_list);
 		else
 			ipoptlen = 0;
@@ -18209,7 +22388,7 @@ send:
 			 * In case there are too many small fragments don't
 			 * use TSO:
 			 */
-			if (len <= segsiz) {
+			if (len <= max_len) {
 				mark = 4;
 				tso = 0;
 			}
@@ -18267,7 +22446,24 @@ send:
 	    (sbused(sb))) {
 		/*
 		 * We have outstanding data, don't send a fin by itself!.
+		 *
+		 * Check to see if we need to send a challenge ack.
 		 */
+		if ((sbused(sb) == (tp->snd_max - tp->snd_una)) &&
+		    ((tp->snd_max - tp->snd_una) <= segsiz)) {
+			/*
+			 * Ok less than or right at a MSS is
+			 * outstanding. The original FreeBSD stack would
+			 * have sent a FIN, which can speed things up for
+			 * a transactional application doing a MSG_WAITALL.
+			 * To speed things up since we do *not* send a FIN
+			 * if data is outstanding, we send a "challenge ack".
+			 * The idea behind that is instead of having to have
+			 * the peer wait for the delayed-ack timer to run off
+			 * we send an ack that makes the peer send us an ack.
+			 */
+			rack_send_ack_challange(rack);
+		}
 		goto just_return;
 	}
 	/*
@@ -18275,15 +22471,13 @@ send:
 	 * and initialize the header from the template for sends on this
 	 * connection.
 	 */
-	hw_tls = (sb->sb_flags & SB_TLS_IFNET) != 0;
+	hw_tls = tp->t_nic_ktls_xmit != 0;
 	if (len) {
 		uint32_t max_val;
 		uint32_t moff;
 
-		if (rack->r_ctl.rc_pace_max_segs)
-			max_val = rack->r_ctl.rc_pace_max_segs;
-		else if (rack->rc_user_set_max_segs)
-			max_val = rack->rc_user_set_max_segs * segsiz;
+		if (pace_max_seg)
+			max_val = pace_max_seg;
 		else
 			max_val = len;
 		/*
@@ -18319,16 +22513,28 @@ send:
 		if (len <= MHLEN - hdrlen - max_linkhdr && !hw_tls) {
 			m_copydata(mb, moff, (int)len,
 				   mtod(m, caddr_t)+hdrlen);
-			if (SEQ_LT(tp->snd_nxt, tp->snd_max))
+			/*
+			 * If we are not retransmitting advance the
+			 * sndptr to help remember the next place in
+			 * the sb.
+			 */
+			if (rsm == NULL)
 				sbsndptr_adv(sb, mb, len);
 			m->m_len += len;
 		} else {
 			struct sockbuf *msb;
 
-			if (SEQ_LT(tp->snd_nxt, tp->snd_max))
-				msb = NULL;
-			else
+			/*
+			 * If we are not retransmitting pass in msb so
+			 * the socket buffer can be advanced. Otherwise
+			 * set it to NULL if its a retransmission since
+			 * we don't want to change the sb remembered
+			 * location.
+			 */
+			if (rsm == NULL)
 				msb = sb;
+			else
+				msb = NULL;
 			m->m_next = tcp_m_copym(
 				mb, moff, &len,
 				if_hw_tsomaxsegcount, if_hw_tsomaxsegsize, msb,
@@ -18354,7 +22560,7 @@ send:
 				goto out;
 			}
 		}
-		if (SEQ_LT(tp->snd_nxt, tp->snd_max) || sack_rxmit) {
+		if (sack_rxmit) {
 			if (rsm && (rsm->r_flags & RACK_TLP)) {
 				/*
 				 * TLP should not count in retran count, but
@@ -18427,7 +22633,9 @@ send:
 			ip6 = (struct ip6_hdr *)rack->r_ctl.fsb.tcp_ip_hdr;
 		else
 #endif				/* INET6 */
+#ifdef INET
 			ip = (struct ip *)rack->r_ctl.fsb.tcp_ip_hdr;
+#endif
 		th = rack->r_ctl.fsb.th;
 		udp = rack->r_ctl.fsb.udp;
 		if (udp) {
@@ -18456,6 +22664,7 @@ send:
 		} else
 #endif				/* INET6 */
 		{
+#ifdef INET
 			ip = mtod(m, struct ip *);
 			if (tp->t_port) {
 				udp = (struct udphdr *)((caddr_t)ip + sizeof(struct ip));
@@ -18467,16 +22676,9 @@ send:
 			} else
 				th = (struct tcphdr *)(ip + 1);
 			tcpip_fillheaders(inp, tp->t_port, ip, th);
+#endif
 		}
 	}
-	/*
-	 * Fill in fields, remembering maximum advertised window for use in
-	 * delaying messages about window sizes. If resending a FIN, be sure
-	 * not to use a new sequence number.
-	 */
-	if (flags & TH_FIN && tp->t_flags & TF_SENTFIN &&
-	    tp->snd_nxt == tp->snd_max)
-		tp->snd_nxt--;
 	/*
 	 * If we are starting a connection, send ECN setup SYN packet. If we
 	 * are on a retransmit, we may resend those bits a number of times
@@ -18487,7 +22689,7 @@ send:
 	}
 	/* Also handle parallel SYN for ECN */
 	if (TCPS_HAVERCVDSYN(tp->t_state) &&
-	    (tp->t_flags2 & TF2_ECN_PERMIT)) {
+	    (tp->t_flags2 & (TF2_ECN_PERMIT | TF2_ACE_PERMIT))) {
 		int ect = tcp_ecn_output_established(tp, &flags, len, sack_rxmit);
 		if ((tp->t_state == TCPS_SYN_RECEIVED) &&
 		    (tp->t_flags2 & TF2_ECN_SND_ECE))
@@ -18500,33 +22702,13 @@ send:
 		else
 #endif
 		{
+#ifdef INET
 			ip->ip_tos &= ~IPTOS_ECN_MASK;
 			ip->ip_tos |= ect;
+#endif
 		}
 	}
-	/*
-	 * If we are doing retransmissions, then snd_nxt will not reflect
-	 * the first unsent octet.  For ACK only packets, we do not want the
-	 * sequence number of the retransmitted packet, we want the sequence
-	 * number of the next unsent octet.  So, if there is no data (and no
-	 * SYN or FIN), use snd_max instead of snd_nxt when filling in
-	 * ti_seq.  But if we are in persist state, snd_max might reflect
-	 * one byte beyond the right edge of the window, so use snd_nxt in
-	 * that case, since we know we aren't doing a retransmission.
-	 * (retransmit and persist are mutually exclusive...)
-	 */
-	if (sack_rxmit == 0) {
-		if (len || (flags & (TH_SYN | TH_FIN))) {
-			th->th_seq = htonl(tp->snd_nxt);
-			rack_seq = tp->snd_nxt;
-		} else {
-			th->th_seq = htonl(tp->snd_max);
-			rack_seq = tp->snd_max;
-		}
-	} else {
-		th->th_seq = htonl(rsm->r_start);
-		rack_seq = rsm->r_start;
-	}
+	th->th_seq = htonl(rack_seq);
 	th->th_ack = htonl(tp->rcv_nxt);
 	tcp_set_flags(th, flags);
 	/*
@@ -18595,12 +22777,23 @@ send:
 			ip6 = mtod(m, struct ip6_hdr *);
 		else
 #endif				/* INET6 */
+#ifdef INET
 			ip = mtod(m, struct ip *);
+#endif
 		th = (struct tcphdr *)(cpto + ((uint8_t *)rack->r_ctl.fsb.th - rack->r_ctl.fsb.tcp_ip_hdr));
 		/* If we have a udp header lets set it into the mbuf as well */
 		if (udp)
 			udp = (struct udphdr *)(cpto + ((uint8_t *)rack->r_ctl.fsb.udp - rack->r_ctl.fsb.tcp_ip_hdr));
 	}
+	if (optlen) {
+		bcopy(opt, th + 1, optlen);
+		th->th_off = (sizeof(struct tcphdr) + optlen) >> 2;
+	}
+	/*
+	 * Put TCP length in extended header, and then checksum extended
+	 * header and data.
+	 */
+	m->m_pkthdr.len = hdrlen + len;	/* in6_cksum() need this */
 #if defined(IPSEC_SUPPORT) || defined(TCP_SIGNATURE)
 	if (to.to_flags & TOF_SIGNATURE) {
 		/*
@@ -18619,15 +22812,6 @@ send:
 		}
 	}
 #endif
-	if (optlen) {
-		bcopy(opt, th + 1, optlen);
-		th->th_off = (sizeof(struct tcphdr) + optlen) >> 2;
-	}
-	/*
-	 * Put TCP length in extended header, and then checksum extended
-	 * header and data.
-	 */
-	m->m_pkthdr.len = hdrlen + len;	/* in6_cksum() need this */
 #ifdef INET6
 	if (isipv6) {
 		/*
@@ -18679,6 +22863,10 @@ send:
 	 * not the case for IPv6.
 	 */
 	if (tso) {
+		/*
+		 * Here we must use t_maxseg and the optlen since
+		 * the optlen may include SACK's (or DSACK).
+		 */
 		KASSERT(len > tp->t_maxseg - optlen,
 			("%s: len <= tso_segsz", __func__));
 		m->m_pkthdr.csum_flags |= CSUM_TSO;
@@ -18692,12 +22880,17 @@ send:
 	/* Run HHOOK_TCP_ESTABLISHED_OUT helper hooks. */
 	hhook_run_tcp_est_out(tp, th, &to, len, tso);
 #endif
+	if ((rack->r_ctl.crte != NULL) &&
+	    (rack->rc_hw_nobuf == 0) &&
+	    tcp_bblogging_on(tp)) {
+		rack_log_queue_level(tp, rack, len, &tv, cts);
+	}
 	/* We're getting ready to send; log now. */
-	if (tp->t_logstate != TCP_LOG_STATE_OFF) {
+	if (tcp_bblogging_on(rack->rc_tp)) {
 		union tcp_log_stackspecific log;
 
 		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
-		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_inp);
+		log.u_bbr.inhpts = tcp_in_hpts(rack->rc_tp);
 		if (rack->rack_no_prr)
 			log.u_bbr.flex1 = 0;
 		else
@@ -18709,6 +22902,7 @@ send:
 		log.u_bbr.flex6 = rack->r_ctl.rc_agg_early;
 		log.u_bbr.applimited = rack->r_ctl.rc_agg_delayed;
 		log.u_bbr.bw_inuse = rack_get_bw(rack);
+		log.u_bbr.cur_del_rate = rack->r_ctl.gp_bw;
 		log.u_bbr.flex8 = 0;
 		if (rsm) {
 			if (rsm->r_flags & RACK_RWND_COLLAPSED) {
@@ -18723,8 +22917,6 @@ send:
 		} else {
 			if (doing_tlp)
 				log.u_bbr.flex8 = 3;
-			else
-				log.u_bbr.flex8 = 0;
 		}
 		log.u_bbr.pacing_gain = rack_get_output_gain(rack, rsm);
 		log.u_bbr.flex7 = mark;
@@ -18733,10 +22925,39 @@ send:
 		log.u_bbr.pkts_out = tp->t_maxseg;
 		log.u_bbr.timeStamp = cts;
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
+		if (rsm && (rsm->r_rtr_cnt > 0)) {
+			/*
+			 * When we have a retransmit we want to log the
+			 * burst at send and flight at send from before.
+			 */
+			log.u_bbr.flex5 = rsm->r_fas;
+			log.u_bbr.bbr_substate = rsm->r_bas;
+		} else {
+			/*
+			 * New transmits we log in flex5 the inflight again as
+			 * well as the number of segments in our send in the
+			 * substate field.
+			 */
+			log.u_bbr.flex5 = log.u_bbr.inflight;
+			log.u_bbr.bbr_substate = (uint8_t)((len + segsiz - 1)/segsiz);
+		}
 		log.u_bbr.lt_epoch = cwnd_to_use;
 		log.u_bbr.delivered = sendalot;
-		lgb = tcp_log_event_(tp, th, &so->so_rcv, &so->so_snd, TCP_LOG_OUT, ERRNO_UNK,
-				     len, &log, false, NULL, NULL, 0, &tv);
+		log.u_bbr.rttProp = (uintptr_t)rsm;
+		log.u_bbr.pkt_epoch = __LINE__;
+		if (rsm) {
+			log.u_bbr.delRate = rsm->r_flags;
+			log.u_bbr.delRate <<= 31;
+			log.u_bbr.delRate |= rack->r_must_retran;
+			log.u_bbr.delRate <<= 1;
+			log.u_bbr.delRate |= (sack_rxmit & 0x00000001);
+		} else {
+			log.u_bbr.delRate = rack->r_must_retran;
+			log.u_bbr.delRate <<= 1;
+			log.u_bbr.delRate |= (sack_rxmit & 0x00000001);
+		}
+		lgb = tcp_log_event(tp, th, &so->so_rcv, &so->so_snd, TCP_LOG_OUT, ERRNO_UNK,
+				    len, &log, false, NULL, __func__, __LINE__, &tv);
 	} else
 		lgb = NULL;
 
@@ -18777,11 +22998,7 @@ send:
 		TCP_PROBE5(send, NULL, tp, ip6, tp, th);
 		/* TODO: IPv6 IP6TOS_ECT bit on */
 		error = ip6_output(m,
-#if defined(IPSEC) || defined(IPSEC_SUPPORT)
 				   inp->in6p_outputopts,
-#else
-				   NULL,
-#endif
 				   &inp->inp_route6,
 				   ((rsm || sack_rxmit) ? IP_NO_SND_TAG_RL : 0),
 				   NULL, NULL, inp);
@@ -18838,17 +23055,50 @@ send:
 			mtu = inp->inp_route.ro_nh->nh_mtu;
 	}
 #endif				/* INET */
-
-out:
 	if (lgb) {
 		lgb->tlb_errno = error;
 		lgb = NULL;
 	}
+
+out:
 	/*
 	 * In transmit state, time the transmission and arrange for the
 	 * retransmit.  In persist state, just set snd_max.
 	 */
+	rack_log_output(tp, &to, len, rack_seq, (uint8_t) flags, error,
+			rack_to_usec_ts(&tv),
+			rsm, add_flag, s_mb, s_moff, hw_tls, segsiz);
 	if (error == 0) {
+		if (add_flag & RACK_IS_PCM) {
+			/* We just launched a PCM */
+			/* rrs here log */
+			rack->pcm_in_progress = 1;
+			rack->pcm_needed = 0;
+			rack_log_pcm(rack, 7, len, rack->r_ctl.pcm_max_seg,  add_flag);
+		}
+		if (rsm == NULL) {
+			if (rack->lt_bw_up == 0) {
+				rack->r_ctl.lt_timemark = tcp_tv_to_lusectick(&tv);
+				rack->r_ctl.lt_seq = tp->snd_una;
+				rack->lt_bw_up = 1;
+			} else if (((rack_seq + len) - rack->r_ctl.lt_seq) > 0x7fffffff) {
+				/*
+				 * Need to record what we have since we are
+				 * approaching seq wrap.
+				 */
+				uint64_t tmark;
+
+				rack->r_ctl.lt_bw_bytes += (tp->snd_una - rack->r_ctl.lt_seq);
+				rack->r_ctl.lt_seq = tp->snd_una;
+				tmark = tcp_get_u64_usecs(&tv);
+				if (tmark > rack->r_ctl.lt_timemark) {
+					rack->r_ctl.lt_bw_time += (tmark - rack->r_ctl.lt_timemark);
+					rack->r_ctl.lt_timemark = tmark;
+				}
+			}
+		}
+		rack->forced_ack = 0;	/* If we send something zap the FA flag */
+		counter_u64_add(rack_total_bytes, len);
 		tcp_account_for_send(tp, len, (rsm != NULL), doing_tlp, hw_tls);
 		if (rsm && doing_tlp) {
 			rack->rc_last_sent_tlp_past_cumack = 0;
@@ -18856,7 +23106,13 @@ out:
 			rack->r_ctl.last_sent_tlp_seq = rsm->r_start;
 			rack->r_ctl.last_sent_tlp_len = rsm->r_end - rsm->r_start;
 		}
-		rack->forced_ack = 0;	/* If we send something zap the FA flag */
+		if (rack->rc_hw_nobuf) {
+			rack->rc_hw_nobuf = 0;
+			rack->r_ctl.rc_agg_delayed = 0;
+			rack->r_early = 0;
+			rack->r_late = 0;
+			rack->r_ctl.rc_agg_early = 0;
+		}
 		if (rsm && (doing_tlp == 0)) {
 			/* Set we retransmitted */
 			rack->rc_gp_saw_rec = 1;
@@ -18874,11 +23130,9 @@ out:
 		    tp->rcv_numsacks > 0)
 			tcp_clean_dsack_blocks(tp);
 		tot_len_this_send += len;
-		if (len == 0)
+		if (len == 0) {
 			counter_u64_add(rack_out_size[TCP_MSS_ACCT_SNDACK], 1);
-		else if (len == 1) {
-			counter_u64_add(rack_out_size[TCP_MSS_ACCT_PERSIST], 1);
-		} else if (len > 1) {
+		} else {
 			int idx;
 
 			idx = (len / segsiz) + 3;
@@ -18904,24 +23158,23 @@ out:
 		/* If its a resend without TLP then it must not have the flag */
 		rsm->r_flags &= ~RACK_TLP;
 	}
-	rack_log_output(tp, &to, len, rack_seq, (uint8_t) flags, error,
-			rack_to_usec_ts(&tv),
-			rsm, add_flag, s_mb, s_moff, hw_tls);
 
 
 	if ((error == 0) &&
 	    (len > 0) &&
 	    (tp->snd_una == tp->snd_max))
 		rack->r_ctl.rc_tlp_rxt_last_time = cts;
-	{
-		tcp_seq startseq = tp->snd_nxt;
 
-		/* Track our lost count */
+	{
+		/*
+		 * This block is not associated with the above error == 0 test.
+		 * It is used to advance snd_max if we have a new transmit.
+		 */
+		tcp_seq startseq = tp->snd_max;
+
+
 		if (rsm && (doing_tlp == 0))
 			rack->r_ctl.rc_loss_count += rsm->r_end - rsm->r_start;
-		/*
-		 * Advance snd_nxt over sequence space of this segment.
-		 */
 		if (error)
 			/* We don't log or do anything with errors */
 			goto nomore;
@@ -18944,44 +23197,53 @@ out:
 			rack->rc_tlp_in_progress = 1;
 			rack->r_ctl.rc_tlp_cnt_out++;
 		}
+		/*
+		 * If we are retransmitting we are done, snd_max
+		 * does not get updated.
+		 */
+		if (sack_rxmit)
+			goto nomore;
+		if ((tp->snd_una == tp->snd_max) && (len > 0)) {
+			/*
+			 * Update the time we just added data since
+			 * nothing was outstanding.
+			 */
+			rack_log_progress_event(rack, tp, ticks, PROGRESS_START, __LINE__);
+			tp->t_acktime = ticks;
+		}
+		/*
+		 * Now for special SYN/FIN handling.
+		 */
 		if (flags & (TH_SYN | TH_FIN)) {
-			if (flags & TH_SYN)
-				tp->snd_nxt++;
-			if (flags & TH_FIN) {
-				tp->snd_nxt++;
+			if ((flags & TH_SYN) &&
+			    ((tp->t_flags & TF_SENTSYN) == 0)) {
+				tp->snd_max++;
+				tp->t_flags |= TF_SENTSYN;
+			}
+			if ((flags & TH_FIN) &&
+			    ((tp->t_flags & TF_SENTFIN) == 0)) {
+				tp->snd_max++;
 				tp->t_flags |= TF_SENTFIN;
 			}
 		}
-		/* In the ENOBUFS case we do *not* update snd_max */
-		if (sack_rxmit)
-			goto nomore;
-
-		tp->snd_nxt += len;
-		if (SEQ_GT(tp->snd_nxt, tp->snd_max)) {
-			if (tp->snd_una == tp->snd_max) {
-				/*
-				 * Update the time we just added data since
-				 * none was outstanding.
-				 */
-				rack_log_progress_event(rack, tp, ticks, PROGRESS_START, __LINE__);
-				tp->t_acktime = ticks;
-			}
-			tp->snd_max = tp->snd_nxt;
-			/*
-			 * Time this transmission if not a retransmission and
-			 * not currently timing anything.
-			 * This is only relevant in case of switching back to
-			 * the base stack.
-			 */
-			if (tp->t_rtttime == 0) {
-				tp->t_rtttime = ticks;
-				tp->t_rtseq = startseq;
-				KMOD_TCPSTAT_INC(tcps_segstimed);
-			}
-			if (len &&
-			    ((tp->t_flags & TF_GPUTINPROG) == 0))
-				rack_start_gp_measurement(tp, rack, startseq, sb_offset);
+		tp->snd_max += len;
+		if (rack->rc_new_rnd_needed) {
+			rack_new_round_starts(tp, rack, tp->snd_max);
 		}
+		/*
+		 * Time this transmission if not a retransmission and
+		 * not currently timing anything.
+		 * This is only relevant in case of switching back to
+		 * the base stack.
+		 */
+		if (tp->t_rtttime == 0) {
+			tp->t_rtttime = ticks;
+			tp->t_rtseq = startseq;
+			KMOD_TCPSTAT_INC(tcps_segstimed);
+		}
+		if (len &&
+		    ((tp->t_flags & TF_GPUTINPROG) == 0))
+			rack_start_gp_measurement(tp, rack, startseq, sb_offset);
 		/*
 		 * If we are doing FO we need to update the mbuf position and subtract
 		 * this happens when the peer sends us duplicate information and
@@ -19001,6 +23263,48 @@ out:
 			if (rack->r_fast_output) {
 				rack->r_ctl.fsb.m = sbsndmbuf(sb, (tp->snd_max - tp->snd_una), &rack->r_ctl.fsb.off);
 				rack->r_ctl.fsb.o_m_len = rack->r_ctl.fsb.m->m_len;
+				rack->r_ctl.fsb.o_t_len = M_TRAILINGROOM(rack->r_ctl.fsb.m);
+			}
+		}
+		if (rack_pcm_blast == 0) {
+			if ((orig_len > len) &&
+			    (add_flag & RACK_IS_PCM) &&
+			    (len < pace_max_seg) &&
+			    ((pace_max_seg - len) > segsiz)) {
+				/*
+				 * We are doing a PCM measurement and we did
+				 * not get enough data in the TSO to meet the
+				 * burst requirement.
+				 */
+				uint32_t n_len;
+
+				n_len = (orig_len - len);
+				orig_len -= len;
+				pace_max_seg -= len;
+				len = n_len;
+				sb_offset = tp->snd_max - tp->snd_una;
+				/* Re-lock for the next spin */
+				SOCKBUF_LOCK(sb);
+				goto send;
+			}
+		} else {
+			if ((orig_len > len) &&
+			    (add_flag & RACK_IS_PCM) &&
+			    ((orig_len - len) > segsiz)) {
+				/*
+				 * We are doing a PCM measurement and we did
+				 * not get enough data in the TSO to meet the
+				 * burst requirement.
+				 */
+				uint32_t n_len;
+
+				n_len = (orig_len - len);
+				orig_len -= len;
+				len = n_len;
+				sb_offset = tp->snd_max - tp->snd_una;
+				/* Re-lock for the next spin */
+				SOCKBUF_LOCK(sb);
+				goto send;
 			}
 		}
 	}
@@ -19023,17 +23327,16 @@ nomore:
 		sendalot = 0;
 		switch (error) {
 		case EPERM:
+		case EACCES:
 			tp->t_softerror = error;
 #ifdef TCP_ACCOUNTING
 			crtsc = get_cyclecount();
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_cnt_counters[SND_OUT_FAIL]++;
 			}
-			counter_u64_add(tcp_cnt_counters[SND_OUT_FAIL], 1);
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[SND_OUT_FAIL] += (crtsc - ts_val);
 			}
-			counter_u64_add(tcp_proc_time[SND_OUT_FAIL], (crtsc - ts_val));
 			sched_unpin();
 #endif
 			return (error);
@@ -19043,9 +23346,11 @@ nomore:
 			 * time
 			 */
 			if (rack->r_ctl.crte != NULL) {
-				rack_trace_point(rack, RACK_TP_HWENOBUF);
+				tcp_trace_point(rack->rc_tp, TCP_TP_HWENOBUF);
+				if (tcp_bblogging_on(rack->rc_tp))
+					rack_log_queue_level(tp, rack, len, &tv, cts);
 			} else
-				rack_trace_point(rack, RACK_TP_ENOBUF);
+				tcp_trace_point(rack->rc_tp, TCP_TP_ENOBUF);
 			slot = ((1 + rack->rc_enobuf) * HPTS_USEC_IN_MSEC);
 			if (rack->rc_enobuf < 0x7f)
 				rack->rc_enobuf++;
@@ -19069,8 +23374,13 @@ nomore:
 			if (tso)
 				tp->t_flags &= ~TF_TSO;
 			if (mtu != 0) {
+				int saved_mtu;
+
+				saved_mtu = tp->t_maxseg;
 				tcp_mss_update(tp, -1, mtu, NULL, NULL);
-				goto again;
+				if (saved_mtu > tp->t_maxseg) {
+					goto again;
+				}
 			}
 			slot = 10 * HPTS_USEC_IN_MSEC;
 			rack_start_hpts_timer(rack, tp, cts, slot, 0, 0);
@@ -19079,11 +23389,9 @@ nomore:
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_cnt_counters[SND_OUT_FAIL]++;
 			}
-			counter_u64_add(tcp_cnt_counters[SND_OUT_FAIL], 1);
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[SND_OUT_FAIL] += (crtsc - ts_val);
 			}
-			counter_u64_add(tcp_proc_time[SND_OUT_FAIL], (crtsc - ts_val));
 			sched_unpin();
 #endif
 			return (error);
@@ -19104,11 +23412,9 @@ nomore:
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_cnt_counters[SND_OUT_FAIL]++;
 			}
-			counter_u64_add(tcp_cnt_counters[SND_OUT_FAIL], 1);
 			if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 				tp->tcp_proc_time[SND_OUT_FAIL] += (crtsc - ts_val);
 			}
-			counter_u64_add(tcp_proc_time[SND_OUT_FAIL], (crtsc - ts_val));
 			sched_unpin();
 #endif
 			return (error);
@@ -19133,13 +23439,9 @@ nomore:
 enobufs:
 	if (sendalot) {
 		/* Do we need to turn off sendalot? */
-		if (rack->r_ctl.rc_pace_max_segs &&
-		    (tot_len_this_send >= rack->r_ctl.rc_pace_max_segs)) {
+		if (pace_max_seg &&
+		    (tot_len_this_send >= pace_max_seg)) {
 			/* We hit our max. */
-			sendalot = 0;
-		} else if ((rack->rc_user_set_max_segs) &&
-			   (tot_len_this_send >= (rack->rc_user_set_max_segs * segsiz))) {
-			/* We hit the user defined max */
 			sendalot = 0;
 		}
 	}
@@ -19160,22 +23462,7 @@ enobufs:
 		 * hit the else if with slot preset. Other
 		 * errors return.
 		 */
-		slot = rack_get_pacing_delay(rack, tp, tot_len_this_send, rsm, segsiz);
-	}
-	if (rsm &&
-	    (rsm->r_flags & RACK_HAS_SYN) == 0 &&
-	    rack->use_rack_rr) {
-		/* Its a retransmit and we use the rack cheat? */
-		if ((slot == 0) ||
-		    (rack->rc_always_pace == 0) ||
-		    (rack->r_rr_config == 1)) {
-			/*
-			 * We have no pacing set or we
-			 * are using old-style rack or
-			 * we are overriden to use the old 1ms pacing.
-			 */
-			slot = rack->r_ctl.rc_min_to;
-		}
+		slot = rack_get_pacing_delay(rack, tp, tot_len_this_send, rsm, segsiz, __LINE__);
 	}
 	/* We have sent clear the flag */
 	rack->r_ent_rec_ns = 0;
@@ -19213,11 +23500,12 @@ enobufs:
 		    rack_use_rfo &&
 		    ((flags & (TH_SYN|TH_FIN)) == 0) &&
 		    (rsm == NULL) &&
-		    (tp->snd_nxt == tp->snd_max) &&
 		    (ipoptlen == 0) &&
 		    (tp->rcv_numsacks == 0) &&
+		    (rack->rc_policer_detected == 0)  &&
 		    rack->r_fsb_inited &&
 		    TCPS_HAVEESTABLISHED(tp->t_state) &&
+		    ((IN_RECOVERY(tp->t_flags)) == 0) &&
 		    (rack->r_must_retran == 0) &&
 		    ((tp->t_flags & TF_NEEDFIN) == 0) &&
 		    (len > 0) && (orig_len > 0) &&
@@ -19226,28 +23514,8 @@ enobufs:
 		    ((optlen == 0) ||
 		     ((optlen == TCPOLEN_TSTAMP_APPA) && (to.to_flags & TOF_TS)))) {
 			/* We can send at least one more MSS using our fsb */
-
-			rack->r_fast_output = 1;
-			rack->r_ctl.fsb.m = sbsndmbuf(sb, (tp->snd_max - tp->snd_una), &rack->r_ctl.fsb.off);
-			rack->r_ctl.fsb.o_m_len = rack->r_ctl.fsb.m->m_len;
-			rack->r_ctl.fsb.tcp_flags = flags;
-			rack->r_ctl.fsb.left_to_send = orig_len - len;
-			if (hw_tls)
-				rack->r_ctl.fsb.hw_tls = 1;
-			else
-				rack->r_ctl.fsb.hw_tls = 0;
-			KASSERT((rack->r_ctl.fsb.left_to_send <= (sbavail(sb) - (tp->snd_max - tp->snd_una))),
-				("rack:%p left_to_send:%u sbavail:%u out:%u",
-				 rack, rack->r_ctl.fsb.left_to_send, sbavail(sb),
-				 (tp->snd_max - tp->snd_una)));
-			if (rack->r_ctl.fsb.left_to_send < segsiz)
-				rack->r_fast_output = 0;
-			else {
-				if (rack->r_ctl.fsb.left_to_send == (sbavail(sb) - (tp->snd_max - tp->snd_una)))
-					rack->r_ctl.fsb.rfo_apply_push = 1;
-				else
-					rack->r_ctl.fsb.rfo_apply_push = 0;
-			}
+			rack_setup_fast_output(tp, rack, sb, len, orig_len,
+					       segsiz, pace_max_seg, hw_tls, flags);
 		} else
 			rack->r_fast_output = 0;
 		rack_log_fsb(rack, tp, so, flags,
@@ -19263,10 +23531,10 @@ enobufs:
 		    (rsm == NULL) &&
 		    (ipoptlen == 0) &&
 		    (tp->rcv_numsacks == 0) &&
-		    (tp->snd_nxt == tp->snd_max) &&
 		    (rack->r_must_retran == 0) &&
 		    rack->r_fsb_inited &&
 		    TCPS_HAVEESTABLISHED(tp->t_state) &&
+		    ((IN_RECOVERY(tp->t_flags)) == 0) &&
 		    ((tp->t_flags & TF_NEEDFIN) == 0) &&
 		    (len > 0) && (orig_len > 0) &&
 		    (orig_len > len) &&
@@ -19274,31 +23542,9 @@ enobufs:
 		    ((optlen == 0) ||
 		     ((optlen == TCPOLEN_TSTAMP_APPA) && (to.to_flags & TOF_TS)))) {
 			/* we can use fast_output for more */
-
-			rack->r_fast_output = 1;
-			rack->r_ctl.fsb.m = sbsndmbuf(sb, (tp->snd_max - tp->snd_una), &rack->r_ctl.fsb.off);
-			rack->r_ctl.fsb.o_m_len = rack->r_ctl.fsb.m->m_len;
-			rack->r_ctl.fsb.tcp_flags = flags;
-			rack->r_ctl.fsb.left_to_send = orig_len - len;
-			if (hw_tls)
-				rack->r_ctl.fsb.hw_tls = 1;
-			else
-				rack->r_ctl.fsb.hw_tls = 0;
-			KASSERT((rack->r_ctl.fsb.left_to_send <= (sbavail(sb) - (tp->snd_max - tp->snd_una))),
-				("rack:%p left_to_send:%u sbavail:%u out:%u",
-				 rack, rack->r_ctl.fsb.left_to_send, sbavail(sb),
-				 (tp->snd_max - tp->snd_una)));
-			if (rack->r_ctl.fsb.left_to_send < segsiz) {
-				rack->r_fast_output = 0;
-			}
+			rack_setup_fast_output(tp, rack, sb, len, orig_len,
+					       segsiz, pace_max_seg, hw_tls, flags);
 			if (rack->r_fast_output) {
-				if (rack->r_ctl.fsb.left_to_send == (sbavail(sb) - (tp->snd_max - tp->snd_una)))
-					rack->r_ctl.fsb.rfo_apply_push = 1;
-				else
-					rack->r_ctl.fsb.rfo_apply_push = 0;
-				rack_log_fsb(rack, tp, so, flags,
-					     ipoptlen, orig_len, len, error,
-					     (rsm == NULL), optlen, __LINE__, 3);
 				error = 0;
 				ret = rack_fast_output(tp, rack, ts_val, cts, ms_cts, &tv, tot_len_this_send, &error);
 				if (ret >= 0)
@@ -19310,6 +23556,7 @@ enobufs:
 		}
 		goto again;
 	}
+skip_all_send:
 	/* Assure when we leave that snd_nxt will point to top */
 	if (SEQ_GT(tp->snd_max, tp->snd_nxt))
 		tp->snd_nxt = tp->snd_max;
@@ -19320,24 +23567,19 @@ enobufs:
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[SND_OUT_DATA]++;
 		}
-		counter_u64_add(tcp_cnt_counters[SND_OUT_DATA], 1);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_proc_time[SND_OUT_DATA] += crtsc;
 		}
-		counter_u64_add(tcp_proc_time[SND_OUT_DATA], crtsc);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[CNT_OF_MSS_OUT] += ((tot_len_this_send + segsiz - 1) /segsiz);
 		}
-		counter_u64_add(tcp_cnt_counters[CNT_OF_MSS_OUT], ((tot_len_this_send + segsiz - 1) /segsiz));
 	} else {
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_cnt_counters[SND_OUT_ACK]++;
 		}
-		counter_u64_add(tcp_cnt_counters[SND_OUT_ACK], 1);
 		if (tp->t_flags2 & TF2_TCP_ACCOUNTING) {
 			tp->tcp_proc_time[SND_OUT_ACK] += crtsc;
 		}
-		counter_u64_add(tcp_proc_time[SND_OUT_ACK], crtsc);
 	}
 	sched_unpin();
 #endif
@@ -19383,7 +23625,7 @@ rack_mtu_change(struct tcpcb *tp)
 		rack->r_must_retran = 1;
 		/* Mark all inflight to needing to be rxt'd */
 		TAILQ_FOREACH(rsm, &rack->r_ctl.rc_tmap, r_tnext) {
-			rsm->r_flags |= RACK_MUST_RXT;
+			rsm->r_flags |= (RACK_MUST_RXT|RACK_PMTU_CHG);
 		}
 	}
 	sack_filter_clear(&rack->r_ctl.rack_sf, tp->snd_una);
@@ -19392,133 +23634,106 @@ rack_mtu_change(struct tcpcb *tp)
 }
 
 static int
+rack_set_dgp(struct tcp_rack *rack)
+{
+	if (rack->dgp_on == 1)
+		return(0);
+	if ((rack->use_fixed_rate == 1) &&
+	    (rack->rc_always_pace == 1)) {
+		/*
+		 * We are already pacing another
+		 * way.
+		 */
+		return (EBUSY);
+	}
+	if (rack->rc_always_pace == 1) {
+		rack_remove_pacing(rack);
+	}
+	if (tcp_incr_dgp_pacing_cnt() == 0)
+		return (ENOSPC);
+	rack->r_ctl.pacing_method |= RACK_DGP_PACING;
+	rack->rc_fillcw_apply_discount = 0;
+	rack->dgp_on = 1;
+	rack->rc_always_pace = 1;
+	rack->rc_pace_dnd = 1;
+	rack->use_fixed_rate = 0;
+	if (rack->gp_ready)
+		rack_set_cc_pacing(rack);
+	rack->rc_tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
+	rack->rack_attempt_hdwr_pace = 0;
+	/* rxt settings */
+	rack->full_size_rxt = 1;
+	rack->shape_rxt_to_pacing_min  = 0;
+	/* cmpack=1 */
+	rack->r_use_cmp_ack = 1;
+	if (TCPS_HAVEESTABLISHED(rack->rc_tp->t_state) &&
+	    rack->r_use_cmp_ack)
+		rack->rc_tp->t_flags2 |= TF2_MBUF_ACKCMP;
+	/* scwnd=1 */
+	rack->rack_enable_scwnd = 1;
+	/* dynamic=100 */
+	rack->rc_gp_dyn_mul = 1;
+	/* gp_inc_ca */
+	rack->r_ctl.rack_per_of_gp_ca = 100;
+	/* rrr_conf=3 */
+	rack->r_rr_config = 3;
+	/* npush=2 */
+	rack->r_ctl.rc_no_push_at_mrtt = 2;
+	/* fillcw=1 */
+	rack->rc_pace_to_cwnd = 1;
+	rack->rc_pace_fill_if_rttin_range = 0;
+	rack->rtt_limit_mul = 0;
+	/* noprr=1 */
+	rack->rack_no_prr = 1;
+	/* lscwnd=1 */
+	rack->r_limit_scw = 1;
+	/* gp_inc_rec */
+	rack->r_ctl.rack_per_of_gp_rec = 90;
+	return (0);
+}
+
+static int
 rack_set_profile(struct tcp_rack *rack, int prof)
 {
 	int err = EINVAL;
 	if (prof == 1) {
-		/* pace_always=1 */
-		if (rack->rc_always_pace == 0) {
-			if (tcp_can_enable_pacing() == 0)
-				return (EBUSY);
-		}
-		rack->rc_always_pace = 1;
-		if (rack->use_fixed_rate || rack->gp_ready)
-			rack_set_cc_pacing(rack);
-		rack->rc_inp->inp_flags2 |= INP_SUPPORTS_MBUFQ;
-		rack->rack_attempt_hdwr_pace = 0;
-		/* cmpack=1 */
-		if (rack_use_cmp_acks)
-			rack->r_use_cmp_ack = 1;
-		if (TCPS_HAVEESTABLISHED(rack->rc_tp->t_state) &&
-		    rack->r_use_cmp_ack)
-			rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
-		/* scwnd=1 */
-		rack->rack_enable_scwnd = 1;
-		/* dynamic=100 */
-		rack->rc_gp_dyn_mul = 1;
-		/* gp_inc_ca */
-		rack->r_ctl.rack_per_of_gp_ca = 100;
-		/* rrr_conf=3 */
-		rack->r_rr_config = 3;
-		/* npush=2 */
-		rack->r_ctl.rc_no_push_at_mrtt = 2;
-		/* fillcw=1 */
-		rack->rc_pace_to_cwnd = 1;
-		rack->rc_pace_fill_if_rttin_range = 0;
-		rack->rtt_limit_mul = 0;
-		/* noprr=1 */
-		rack->rack_no_prr = 1;
-		/* lscwnd=1 */
-		rack->r_limit_scw = 1;
-		/* gp_inc_rec */
-		rack->r_ctl.rack_per_of_gp_rec = 90;
-		err = 0;
-
-	} else if (prof == 3) {
-		/* Same as profile one execept fill_cw becomes 2 (less aggressive set) */
-		/* pace_always=1 */
-		if (rack->rc_always_pace == 0) {
-			if (tcp_can_enable_pacing() == 0)
-				return (EBUSY);
-		}
-		rack->rc_always_pace = 1;
-		if (rack->use_fixed_rate || rack->gp_ready)
-			rack_set_cc_pacing(rack);
-		rack->rc_inp->inp_flags2 |= INP_SUPPORTS_MBUFQ;
-		rack->rack_attempt_hdwr_pace = 0;
-		/* cmpack=1 */
-		if (rack_use_cmp_acks)
-			rack->r_use_cmp_ack = 1;
-		if (TCPS_HAVEESTABLISHED(rack->rc_tp->t_state) &&
-		    rack->r_use_cmp_ack)
-			rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
-		/* scwnd=1 */
-		rack->rack_enable_scwnd = 1;
-		/* dynamic=100 */
-		rack->rc_gp_dyn_mul = 1;
-		/* gp_inc_ca */
-		rack->r_ctl.rack_per_of_gp_ca = 100;
-		/* rrr_conf=3 */
-		rack->r_rr_config = 3;
-		/* npush=2 */
-		rack->r_ctl.rc_no_push_at_mrtt = 2;
-		/* fillcw=2 */
-		rack->rc_pace_to_cwnd = 1;
-		rack->r_fill_less_agg = 1;
-		rack->rc_pace_fill_if_rttin_range = 0;
-		rack->rtt_limit_mul = 0;
-		/* noprr=1 */
-		rack->rack_no_prr = 1;
-		/* lscwnd=1 */
-		rack->r_limit_scw = 1;
-		/* gp_inc_rec */
-		rack->r_ctl.rack_per_of_gp_rec = 90;
-		err = 0;
-
-
-	} else if (prof == 2) {
-		/* cmpack=1 */
-		if (rack->rc_always_pace == 0) {
-			if (tcp_can_enable_pacing() == 0)
-				return (EBUSY);
-		}
-		rack->rc_always_pace = 1;
-		if (rack->use_fixed_rate || rack->gp_ready)
-			rack_set_cc_pacing(rack);
-		rack->r_use_cmp_ack = 1;
-		if (TCPS_HAVEESTABLISHED(rack->rc_tp->t_state))
-			rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
-		/* pace_always=1 */
-		rack->rc_inp->inp_flags2 |= INP_SUPPORTS_MBUFQ;
-		/* scwnd=1 */
-		rack->rack_enable_scwnd = 1;
-		/* dynamic=100 */
-		rack->rc_gp_dyn_mul = 1;
-		rack->r_ctl.rack_per_of_gp_ca = 100;
-		/* rrr_conf=3 */
-		rack->r_rr_config = 3;
-		/* npush=2 */
-		rack->r_ctl.rc_no_push_at_mrtt = 2;
-		/* fillcw=1 */
-		rack->rc_pace_to_cwnd = 1;
-		rack->rc_pace_fill_if_rttin_range = 0;
-		rack->rtt_limit_mul = 0;
-		/* noprr=1 */
-		rack->rack_no_prr = 1;
-		/* lscwnd=0 */
-		rack->r_limit_scw = 0;
-		err = 0;
+		/*
+		 * Profile 1 is "standard" DGP. It ignores
+		 * client buffer level.
+		 */
+		err = rack_set_dgp(rack);
+		if (err)
+			return (err);
+	} else if (prof == 6) {
+		err = rack_set_dgp(rack);
+		if (err)
+			return (err);
+		/*
+		 * Profile 6 tweaks DGP so that it will apply to
+		 * fill-cw the same settings that profile5 does
+		 * to replace DGP. It gets then the max(dgp-rate, fillcw(discounted).
+		 */
+		rack->rc_fillcw_apply_discount = 1;
 	} else if (prof == 0) {
 		/* This changes things back to the default settings */
-		err = 0;
-		if (rack->rc_always_pace) {
-			tcp_decrement_paced_conn();
-			rack_undo_cc_pacing(rack);
-			rack->rc_always_pace = 0;
+		if (rack->rc_always_pace == 1) {
+			rack_remove_pacing(rack);
+		} else {
+			/* Make sure any stray flags are off */
+			rack->dgp_on = 0;
+			rack->rc_hybrid_mode = 0;
+			rack->use_fixed_rate = 0;
 		}
+		err = 0;
+		if (rack_fill_cw_state)
+			rack->rc_pace_to_cwnd = 1;
+		else
+			rack->rc_pace_to_cwnd = 0;
+
 		if (rack_pace_every_seg && tcp_can_enable_pacing()) {
+			rack->r_ctl.pacing_method |= RACK_REG_PACING;
 			rack->rc_always_pace = 1;
-			if (rack->use_fixed_rate || rack->gp_ready)
+			if (rack->rack_hibeta)
 				rack_set_cc_pacing(rack);
 		} else
 			rack->rc_always_pace = 0;
@@ -19545,11 +23760,11 @@ rack_set_profile(struct tcp_rack *rack, int prof)
 		if (rack_enable_mqueue_for_nonpaced || rack->r_use_cmp_ack) {
 			rack->r_mbuf_queue = 1;
 			if (TCPS_HAVEESTABLISHED(rack->rc_tp->t_state))
-				rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
-			rack->rc_inp->inp_flags2 |= INP_SUPPORTS_MBUFQ;
+				rack->rc_tp->t_flags2 |= TF2_MBUF_ACKCMP;
+			rack->rc_tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
 		} else {
 			rack->r_mbuf_queue = 0;
-			rack->rc_inp->inp_flags2 &= ~INP_SUPPORTS_MBUFQ;
+			rack->rc_tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
 		}
 		if (rack_enable_shared_cwnd)
 			rack->rack_enable_scwnd = 1;
@@ -19566,7 +23781,6 @@ rack_set_profile(struct tcp_rack *rack, int prof)
 		}
 		rack->r_rr_config = 0;
 		rack->r_ctl.rc_no_push_at_mrtt = 0;
-		rack->rc_pace_to_cwnd = 0;
 		rack->rc_pace_fill_if_rttin_range = 0;
 		rack->rtt_limit_mul = 0;
 
@@ -19582,6 +23796,7 @@ rack_set_profile(struct tcp_rack *rack, int prof)
 			rack->r_limit_scw  = 1;
 		else
 			rack->r_limit_scw  = 0;
+		rack_init_retransmit_value(rack, rack_rxt_controls);
 		err = 0;
 	}
 	return (err);
@@ -19593,7 +23808,7 @@ rack_add_deferred_option(struct tcp_rack *rack, int sopt_name, uint64_t loptval)
 	struct deferred_opt_list *dol;
 
 	dol = malloc(sizeof(struct deferred_opt_list),
-		     M_TCPFSB, M_NOWAIT|M_ZERO);
+		     M_TCPDO, M_NOWAIT|M_ZERO);
 	if (dol == NULL) {
 		/*
 		 * No space yikes -- fail out..
@@ -19607,8 +23822,128 @@ rack_add_deferred_option(struct tcp_rack *rack, int sopt_name, uint64_t loptval)
 }
 
 static int
+process_hybrid_pacing(struct tcp_rack *rack, struct tcp_hybrid_req *hybrid)
+{
+#ifdef TCP_REQUEST_TRK
+	struct tcp_sendfile_track *sft;
+	struct timeval tv;
+	tcp_seq seq;
+	int err;
+
+	microuptime(&tv);
+
+	/* Make sure no fixed rate is on */
+	rack->use_fixed_rate = 0;
+	rack->r_ctl.rc_fixed_pacing_rate_rec = 0;
+	rack->r_ctl.rc_fixed_pacing_rate_ca = 0;
+	rack->r_ctl.rc_fixed_pacing_rate_ss = 0;
+	/* Now allocate or find our entry that will have these settings */
+	sft = tcp_req_alloc_req_full(rack->rc_tp, &hybrid->req, tcp_tv_to_lusectick(&tv), 0);
+	if (sft == NULL) {
+		rack->rc_tp->tcp_hybrid_error++;
+		/* no space, where would it have gone? */
+		seq = rack->rc_tp->snd_una + rack->rc_tp->t_inpcb.inp_socket->so_snd.sb_ccc;
+		rack_log_hybrid(rack, seq, NULL, HYBRID_LOG_NO_ROOM, __LINE__, 0);
+		return (ENOSPC);
+	}
+	/* mask our internal flags */
+	hybrid->hybrid_flags &= TCP_HYBRID_PACING_USER_MASK;
+	/* The seq will be snd_una + everything in the buffer */
+	seq = sft->start_seq;
+	if ((hybrid->hybrid_flags & TCP_HYBRID_PACING_ENABLE) == 0) {
+		/* Disabling hybrid pacing */
+		if (rack->rc_hybrid_mode) {
+			rack_set_profile(rack, 0);
+			rack->rc_tp->tcp_hybrid_stop++;
+		}
+		rack_log_hybrid(rack, seq, sft, HYBRID_LOG_TURNED_OFF, __LINE__, 0);
+		return (0);
+	}
+	if (rack->dgp_on == 0) {
+		/*
+		 * If we have not yet turned DGP on, do so
+		 * now setting pure DGP mode, no buffer level
+		 * response.
+		 */
+		if ((err = rack_set_profile(rack, 1)) != 0){
+			/* Failed to turn pacing on */
+			rack->rc_tp->tcp_hybrid_error++;
+			rack_log_hybrid(rack, seq, sft, HYBRID_LOG_NO_PACING, __LINE__, 0);
+			return (err);
+		}
+	}
+	/*
+	 * Now we must switch to hybrid mode as well which also
+	 * means moving to regular pacing.
+	 */
+	if (rack->rc_hybrid_mode == 0) {
+		/* First time */
+		if (tcp_can_enable_pacing()) {
+			rack->r_ctl.pacing_method |= RACK_REG_PACING;
+			rack->rc_hybrid_mode = 1;
+		} else {
+			return (ENOSPC);
+		}
+		if (rack->r_ctl.pacing_method & RACK_DGP_PACING) {
+			/*
+			 * This should be true.
+			 */
+			tcp_dec_dgp_pacing_cnt();
+			rack->r_ctl.pacing_method &= ~RACK_DGP_PACING;
+		}
+	}
+	/* Now set in our flags */
+	sft->hybrid_flags = hybrid->hybrid_flags | TCP_HYBRID_PACING_WASSET;
+	if (hybrid->hybrid_flags & TCP_HYBRID_PACING_CSPR)
+		sft->cspr = hybrid->cspr;
+	else
+		sft->cspr = 0;
+	if (hybrid->hybrid_flags & TCP_HYBRID_PACING_H_MS)
+		sft->hint_maxseg = hybrid->hint_maxseg;
+	else
+		sft->hint_maxseg = 0;
+	rack->rc_tp->tcp_hybrid_start++;
+	rack_log_hybrid(rack, seq, sft, HYBRID_LOG_RULES_SET, __LINE__,0);
+	return (0);
+#else
+	return (ENOTSUP);
+#endif
+}
+
+static int
+rack_stack_information(struct tcpcb *tp, struct stack_specific_info *si)
+{
+	/*
+	 * Gather rack specific information.
+	 */
+	struct tcp_rack *rack;
+
+	rack = (struct tcp_rack *)tp->t_fb_ptr;
+	/* We pulled a SSI info log out what was there */
+	policer_detection_log(rack, rack->rc_highly_buffered, 0, 0, 0, 20);
+	if (rack->policer_detect_on) {
+		si->policer_detection_enabled = 1;
+		if (rack->rc_policer_detected) {
+			si->policer_detected = 1;
+			si->policer_bucket_size = rack->r_ctl.policer_bucket_size;
+			si->policer_last_bw = rack->r_ctl.policer_bw;
+		} else {
+			si->policer_detected = 0;
+			si->policer_bucket_size = 0;
+			si->policer_last_bw = 0;
+		}
+		si->current_round = rack->r_ctl.current_round;
+		si->highly_buffered = rack->rc_highly_buffered;
+	}
+	si->bytes_transmitted = tp->t_sndbytes;
+	si->bytes_retransmitted = tp->t_snd_rxt_bytes;
+	return (0);
+}
+
+static int
 rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
-		    uint32_t optval, uint64_t loptval)
+		    uint32_t optval, uint64_t loptval, struct tcp_hybrid_req *hybrid)
+
 {
 	struct epoch_tracker et;
 	struct sockopt sopt;
@@ -19618,7 +23953,17 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 	uint16_t ca, ss;
 
 	switch (sopt_name) {
-
+	case TCP_RACK_SET_RXT_OPTIONS:
+		if ((optval >= 0) && (optval <= 2)) {
+			rack_init_retransmit_value(rack, optval);
+		} else {
+			/*
+			 * You must send in 0, 1 or 2 all else is
+			 * invalid.
+			 */
+			error = EINVAL;
+		}
+		break;
 	case TCP_RACK_DSACK_OPT:
 		RACK_OPTS_INC(tcp_rack_dsack_opt);
 		if (optval & 0x1) {
@@ -19633,35 +23978,41 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		}
 		rack_log_dsack_event(rack, 5, __LINE__, 0, 0);
 		break;
-	case TCP_RACK_PACING_BETA:
-		RACK_OPTS_INC(tcp_rack_beta);
-		if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0) {
-			/* This only works for newreno. */
-			error = EINVAL;
-			break;
-		}
-		if (rack->rc_pacing_cc_set) {
-			/*
-			 * Set them into the real CC module
-			 * whats in the rack pcb is the old values
-			 * to be used on restoral/
-			 */
-			sopt.sopt_dir = SOPT_SET;
-			opt.name = CC_NEWRENO_BETA;
-			opt.val = optval;
-			if (CC_ALGO(tp)->ctl_output != NULL)
-				error = CC_ALGO(tp)->ctl_output(tp->ccv, &sopt, &opt);
-			else {
-				error = ENOENT;
-				break;
-			}
+	case TCP_RACK_PACING_DIVISOR:
+		RACK_OPTS_INC(tcp_rack_pacing_divisor);
+		if (optval == 0) {
+			rack->r_ctl.pace_len_divisor = rack_default_pacing_divisor;
 		} else {
-			/*
-			 * Not pacing yet so set it into our local
-			 * rack pcb storage.
-			 */
-			rack->r_ctl.rc_saved_beta.beta = optval;
+			if (optval < RL_MIN_DIVISOR)
+				rack->r_ctl.pace_len_divisor = RL_MIN_DIVISOR;
+			else
+				rack->r_ctl.pace_len_divisor = optval;
 		}
+		break;
+	case TCP_RACK_HI_BETA:
+		RACK_OPTS_INC(tcp_rack_hi_beta);
+		if (optval > 0) {
+			rack->rack_hibeta = 1;
+			if ((optval >= 50) &&
+			    (optval <= 100)) {
+				/*
+				 * User wants to set a custom beta.
+				 */
+				rack->r_ctl.saved_hibeta = optval;
+				if (rack->rc_pacing_cc_set)
+					rack_undo_cc_pacing(rack);
+				rack->r_ctl.rc_saved_beta.beta = optval;
+			}
+			if (rack->rc_pacing_cc_set == 0)
+				rack_set_cc_pacing(rack);
+		} else {
+			rack->rack_hibeta = 0;
+			if (rack->rc_pacing_cc_set)
+				rack_undo_cc_pacing(rack);
+		}
+		break;
+	case TCP_RACK_PACING_BETA:
+		error = EINVAL;
 		break;
 	case TCP_RACK_TIMER_SLOP:
 		RACK_OPTS_INC(tcp_rack_timer_slop);
@@ -19678,7 +24029,7 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		break;
 	case TCP_RACK_PACING_BETA_ECN:
 		RACK_OPTS_INC(tcp_rack_beta_ecn);
-		if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0) {
+		if (strcmp(tp->t_cc->name, CCALGONAME_NEWRENO) != 0) {
 			/* This only works for newreno. */
 			error = EINVAL;
 			break;
@@ -19693,7 +24044,7 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 			opt.name = CC_NEWRENO_BETA_ECN;
 			opt.val = optval;
 			if (CC_ALGO(tp)->ctl_output != NULL)
-				error = CC_ALGO(tp)->ctl_output(tp->ccv, &sopt, &opt);
+				error = CC_ALGO(tp)->ctl_output(&tp->t_ccv, &sopt, &opt);
 			else
 				error = ENOENT;
 		} else {
@@ -19745,9 +24096,47 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->r_up_only = 0;
 		break;
+	case TCP_FILLCW_RATE_CAP:		/*  URL:fillcw_cap */
+		RACK_OPTS_INC(tcp_fillcw_rate_cap);
+		rack->r_ctl.fillcw_cap = loptval;
+		break;
 	case TCP_PACING_RATE_CAP:
 		RACK_OPTS_INC(tcp_pacing_rate_cap);
+		if ((rack->dgp_on == 1) &&
+		    (rack->r_ctl.pacing_method & RACK_DGP_PACING)) {
+			/*
+			 * If we are doing DGP we need to switch
+			 * to using the pacing limit.
+			 */
+			if (tcp_can_enable_pacing() == 0) {
+				error = ENOSPC;
+				break;
+			}
+			/*
+			 * Now change up the flags and counts to be correct.
+			 */
+			rack->r_ctl.pacing_method |= RACK_REG_PACING;
+			tcp_dec_dgp_pacing_cnt();
+			rack->r_ctl.pacing_method &= ~RACK_DGP_PACING;
+		}
 		rack->r_ctl.bw_rate_cap = loptval;
+		break;
+	case TCP_HYBRID_PACING:
+		if (hybrid == NULL) {
+			error = EINVAL;
+			break;
+		}
+		if (rack->r_ctl.side_chan_dis_mask & HYBRID_DIS_MASK) {
+			error = EPERM;
+			break;
+		}
+		error = process_hybrid_pacing(rack, hybrid);
+		break;
+	case TCP_SIDECHAN_DIS:			/*  URL:scodm */
+		if (optval)
+			rack->r_ctl.side_chan_dis_mask = optval;
+		else
+			rack->r_ctl.side_chan_dis_mask = 0;
 		break;
 	case TCP_RACK_PROFILE:
 		RACK_OPTS_INC(tcp_profile);
@@ -19755,16 +24144,16 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		break;
 	case TCP_USE_CMP_ACKS:
 		RACK_OPTS_INC(tcp_use_cmp_acks);
-		if ((optval == 0) && (rack->rc_inp->inp_flags2 & INP_MBUF_ACKCMP)) {
+		if ((optval == 0) && (tp->t_flags2 & TF2_MBUF_ACKCMP)) {
 			/* You can't turn it off once its on! */
 			error = EINVAL;
 		} else if ((optval == 1) && (rack->r_use_cmp_ack == 0)) {
 			rack->r_use_cmp_ack = 1;
 			rack->r_mbuf_queue = 1;
-			tp->t_inpcb->inp_flags2 |= INP_SUPPORTS_MBUFQ;
+			tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
 		}
 		if (rack->r_use_cmp_ack && TCPS_HAVEESTABLISHED(tp->t_state))
-			rack->rc_inp->inp_flags2 |= INP_MBUF_ACKCMP;
+			tp->t_flags2 |= TF2_MBUF_ACKCMP;
 		break;
 	case TCP_SHARED_CWND_TIME_LIMIT:
 		RACK_OPTS_INC(tcp_lscwnd);
@@ -19773,14 +24162,45 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->r_limit_scw = 0;
 		break;
+	case TCP_RACK_DGP_IN_REC:
+		error = EINVAL;
+		break;
+	case TCP_POLICER_DETECT:		/*  URL:pol_det */
+		RACK_OPTS_INC(tcp_pol_detect);
+		rack_translate_policer_detect(rack, optval);
+		break;
+	case TCP_POLICER_MSS:
+		RACK_OPTS_INC(tcp_pol_mss);
+		rack->r_ctl.policer_del_mss = (uint8_t)optval;
+		if (optval & 0x00000100) {
+			/*
+			 * Value is setup like so:
+			 * VVVV VVVV VVVV VVVV VVVV VVAI MMMM MMMM
+			 * Where MMMM MMMM is MSS setting
+			 * I (9th bit) is the Postive value that
+			 * says it is being set (if its 0 then the
+			 * upper bits 11 - 32 have no meaning.
+			 * This allows setting it off with
+			 * 0x000001MM.
+			 *
+			 * The 10th bit is used to turn on the
+			 * alternate median (not the expanded one).
+			 *
+			 */
+			rack->r_ctl.pol_bw_comp = (optval >> 10);
+		}
+		if (optval & 0x00000200) {
+			rack->r_ctl.policer_alt_median = 1;
+		} else {
+			rack->r_ctl.policer_alt_median = 0;
+		}
+		break;
  	case TCP_RACK_PACE_TO_FILL:
 		RACK_OPTS_INC(tcp_fillcw);
 		if (optval == 0)
 			rack->rc_pace_to_cwnd = 0;
 		else {
 			rack->rc_pace_to_cwnd = 1;
-			if (optval > 1)
-				rack->r_fill_less_agg = 1;
 		}
 		if ((optval >= rack_gp_rtt_maxmul) &&
 		    rack_gp_rtt_maxmul &&
@@ -19816,9 +24236,9 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->r_mbuf_queue = 0;
 		if  (rack->r_mbuf_queue || rack->rc_always_pace || rack->r_use_cmp_ack)
-			tp->t_inpcb->inp_flags2 |= INP_SUPPORTS_MBUFQ;
+			tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
 		else
-			tp->t_inpcb->inp_flags2 &= ~INP_SUPPORTS_MBUFQ;
+			tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
 		break;
 	case TCP_RACK_NONRXT_CFG_RATE:
 		RACK_OPTS_INC(tcp_rack_cfg_rate);
@@ -19838,6 +24258,12 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			error = EINVAL;
 		break;
+	case RACK_CSPR_IS_FCC:			/*  URL:csprisfcc */
+		if (optval > 0)
+			rack->cspr_is_fcc = 1;
+		else
+			rack->cspr_is_fcc = 0;
+		break;
 	case TCP_TIMELY_DYN_ADJ:
 		RACK_OPTS_INC(tcp_timely_dyn);
 		if (optval == 0)
@@ -19854,11 +24280,7 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		}
 		break;
 	case TCP_RACK_DO_DETECTION:
-		RACK_OPTS_INC(tcp_rack_do_detection);
-		if (optval == 0)
-			rack->do_detection = 0;
-		else
-			rack->do_detection = 1;
+		error = EINVAL;
 		break;
 	case TCP_RACK_TLP_USE:
 		if ((optval < TLP_USE_ID) || (optval > TLP_USE_TWO_TWO)) {
@@ -19873,20 +24295,25 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		RACK_OPTS_INC(tcp_rack_tlp_reduce);
 		rack->r_ctl.rc_tlp_cwnd_reduce = optval;
 		break;
-	/*  Pacing related ones */
+		/*  Pacing related ones */
 	case TCP_RACK_PACE_ALWAYS:
 		/*
 		 * zero is old rack method, 1 is new
 		 * method using a pacing rate.
 		 */
 		RACK_OPTS_INC(tcp_rack_pace_always);
+		if (rack->r_ctl.side_chan_dis_mask & CCSP_DIS_MASK) {
+			error = EPERM;
+			break;
+		}
 		if (optval > 0) {
 			if (rack->rc_always_pace) {
 				error = EALREADY;
 				break;
 			} else if (tcp_can_enable_pacing()) {
+				rack->r_ctl.pacing_method |= RACK_REG_PACING;
 				rack->rc_always_pace = 1;
-				if (rack->use_fixed_rate || rack->gp_ready)
+				if (rack->rack_hibeta)
 					rack_set_cc_pacing(rack);
 			}
 			else {
@@ -19894,16 +24321,14 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 				break;
 			}
 		} else {
-			if (rack->rc_always_pace) {
-				tcp_decrement_paced_conn();
-				rack->rc_always_pace = 0;
-				rack_undo_cc_pacing(rack);
+			if (rack->rc_always_pace == 1) {
+				rack_remove_pacing(rack);
 			}
 		}
 		if  (rack->r_mbuf_queue || rack->rc_always_pace || rack->r_use_cmp_ack)
-			tp->t_inpcb->inp_flags2 |= INP_SUPPORTS_MBUFQ;
+			tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
 		else
-			tp->t_inpcb->inp_flags2 &= ~INP_SUPPORTS_MBUFQ;
+			tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
 		/* A rate may be set irate or other, if so set seg size */
 		rack_update_seg(rack);
 		break;
@@ -19914,61 +24339,11 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		val *= 1000;
 		val /= 8;
 		rack->r_ctl.init_rate = val;
-		if (rack->rc_init_win != rack_default_init_window) {
-			uint32_t win, snt;
-
-			/*
-			 * Options don't always get applied
-			 * in the order you think. So in order
-			 * to assure we update a cwnd we need
-			 * to check and see if we are still
-			 * where we should raise the cwnd.
-			 */
-			win = rc_init_window(rack);
-			if (SEQ_GT(tp->snd_max, tp->iss))
-				snt = tp->snd_max - tp->iss;
-			else
-				snt = 0;
-			if ((snt < win) &&
-			    (tp->snd_cwnd < win))
-				tp->snd_cwnd = win;
-		}
 		if (rack->rc_always_pace)
 			rack_update_seg(rack);
 		break;
 	case TCP_BBR_IWINTSO:
-		RACK_OPTS_INC(tcp_initial_win);
-		if (optval && (optval <= 0xff)) {
-			uint32_t win, snt;
-
-			rack->rc_init_win = optval;
-			win = rc_init_window(rack);
-			if (SEQ_GT(tp->snd_max, tp->iss))
-				snt = tp->snd_max - tp->iss;
-			else
-				snt = 0;
-			if ((snt < win) &&
-			    (tp->t_srtt |
-#ifdef NETFLIX_PEAKRATE
-			     tp->t_maxpeakrate |
-#endif
-			     rack->r_ctl.init_rate)) {
-				/*
-				 * We are not past the initial window
-				 * and we have some bases for pacing,
-				 * so we need to possibly adjust up
-				 * the cwnd. Note even if we don't set
-				 * the cwnd, its still ok to raise the rc_init_win
-				 * which can be used coming out of idle when we
-				 * would have a rate.
-				 */
-				if (tp->snd_cwnd < win)
-					tp->snd_cwnd = win;
-			}
-			if (rack->rc_always_pace)
-				rack_update_seg(rack);
-		} else
-			error = EINVAL;
+		error = EINVAL;
 		break;
 	case TCP_RACK_FORCE_MSEG:
 		RACK_OPTS_INC(tcp_rack_force_max_seg);
@@ -19977,22 +24352,60 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->rc_force_max_seg = 0;
 		break;
+	case TCP_RACK_PACE_MIN_SEG:
+		RACK_OPTS_INC(tcp_rack_min_seg);
+		rack->r_ctl.rc_user_set_min_segs = (0x0000ffff & optval);
+		rack_set_pace_segments(tp, rack, __LINE__, NULL);
+		break;
 	case TCP_RACK_PACE_MAX_SEG:
 		/* Max segments size in a pace in bytes */
 		RACK_OPTS_INC(tcp_rack_max_seg);
-		rack->rc_user_set_max_segs = optval;
+		if ((rack->dgp_on == 1) &&
+		    (rack->r_ctl.pacing_method & RACK_DGP_PACING)) {
+			/*
+			 * If we set a max-seg and are doing DGP then
+			 * we now fall under the pacing limits not the
+			 * DGP ones.
+			 */
+			if (tcp_can_enable_pacing() == 0) {
+				error = ENOSPC;
+				break;
+			}
+			/*
+			 * Now change up the flags and counts to be correct.
+			 */
+			rack->r_ctl.pacing_method |= RACK_REG_PACING;
+			tcp_dec_dgp_pacing_cnt();
+			rack->r_ctl.pacing_method &= ~RACK_DGP_PACING;
+		}
+		if (optval <= MAX_USER_SET_SEG)
+			rack->rc_user_set_max_segs = optval;
+		else
+			rack->rc_user_set_max_segs = MAX_USER_SET_SEG;
 		rack_set_pace_segments(tp, rack, __LINE__, NULL);
 		break;
 	case TCP_RACK_PACE_RATE_REC:
 		/* Set the fixed pacing rate in Bytes per second ca */
 		RACK_OPTS_INC(tcp_rack_pace_rate_rec);
+		if (rack->r_ctl.side_chan_dis_mask & CCSP_DIS_MASK) {
+			error = EPERM;
+			break;
+		}
+		if (rack->dgp_on) {
+			/*
+			 * We are already pacing another
+			 * way.
+			 */
+			error = EBUSY;
+			break;
+		}
 		rack->r_ctl.rc_fixed_pacing_rate_rec = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_ca == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_ca = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_ss == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_ss = optval;
 		rack->use_fixed_rate = 1;
-		if (rack->rc_always_pace)
+		if (rack->rack_hibeta)
 			rack_set_cc_pacing(rack);
 		rack_log_pacing_delay_calc(rack,
 					   rack->r_ctl.rc_fixed_pacing_rate_ss,
@@ -20004,13 +24417,25 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 	case TCP_RACK_PACE_RATE_SS:
 		/* Set the fixed pacing rate in Bytes per second ca */
 		RACK_OPTS_INC(tcp_rack_pace_rate_ss);
+		if (rack->r_ctl.side_chan_dis_mask & CCSP_DIS_MASK) {
+			error = EPERM;
+			break;
+		}
+		if (rack->dgp_on) {
+			/*
+			 * We are already pacing another
+			 * way.
+			 */
+			error = EBUSY;
+			break;
+		}
 		rack->r_ctl.rc_fixed_pacing_rate_ss = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_ca == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_ca = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_rec == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_rec = optval;
 		rack->use_fixed_rate = 1;
-		if (rack->rc_always_pace)
+		if (rack->rack_hibeta)
 			rack_set_cc_pacing(rack);
 		rack_log_pacing_delay_calc(rack,
 					   rack->r_ctl.rc_fixed_pacing_rate_ss,
@@ -20022,13 +24447,25 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 	case TCP_RACK_PACE_RATE_CA:
 		/* Set the fixed pacing rate in Bytes per second ca */
 		RACK_OPTS_INC(tcp_rack_pace_rate_ca);
+		if (rack->r_ctl.side_chan_dis_mask & CCSP_DIS_MASK) {
+			error = EPERM;
+			break;
+		}
+		if (rack->dgp_on) {
+			/*
+			 * We are already pacing another
+			 * way.
+			 */
+			error = EBUSY;
+			break;
+		}
 		rack->r_ctl.rc_fixed_pacing_rate_ca = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_ss == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_ss = optval;
 		if (rack->r_ctl.rc_fixed_pacing_rate_rec == 0)
 			rack->r_ctl.rc_fixed_pacing_rate_rec = optval;
 		rack->use_fixed_rate = 1;
-		if (rack->rc_always_pace)
+		if (rack->rack_hibeta)
 			rack_set_cc_pacing(rack);
 		rack_log_pacing_delay_calc(rack,
 					   rack->r_ctl.rc_fixed_pacing_rate_ss,
@@ -20088,6 +24525,12 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->r_rr_config = 0;
 		break;
+	case TCP_PACING_DND:			/*  URL:dnd */
+		if (optval > 0)
+			rack->rc_pace_dnd = 1;
+		else
+			rack->rc_pace_dnd = 0;
+		break;
 	case TCP_HDWR_RATE_CAP:
 		RACK_OPTS_INC(tcp_hdwr_rate_cap);
 		if (optval) {
@@ -20098,6 +24541,45 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		} else {
 			rack->r_rack_hw_rate_caps = 0;
 		}
+		break;
+	case TCP_DGP_UPPER_BOUNDS:
+	{
+		uint8_t val;
+		val = optval & 0x0000ff;
+		rack->r_ctl.rack_per_upper_bound_ca = val;
+		val = (optval >> 16) & 0x0000ff;
+		rack->r_ctl.rack_per_upper_bound_ss = val;
+		break;
+	}
+	case TCP_SS_EEXIT:			/*  URL:eexit */
+		if (optval > 0) {
+			rack->r_ctl.gp_rnd_thresh =  optval & 0x0ff;
+			if (optval & 0x10000) {
+				rack->r_ctl.gate_to_fs = 1;
+			} else {
+				rack->r_ctl.gate_to_fs = 0;
+			}
+			if (optval & 0x20000) {
+				rack->r_ctl.use_gp_not_last = 1;
+			} else {
+				rack->r_ctl.use_gp_not_last = 0;
+			}
+			if (optval & 0xfffc0000) {
+				uint32_t v;
+
+				v = (optval >> 18) & 0x00003fff;
+				if (v >= 1000)
+					rack->r_ctl.gp_gain_req = v;
+			}
+		} else {
+			/* We do not do ss early exit at all */
+			rack->rc_initial_ss_comp = 1;
+			rack->r_ctl.gp_rnd_thresh = 0;
+		}
+		break;
+	case TCP_RACK_SPLIT_LIMIT:
+		RACK_OPTS_INC(tcp_split_limit);
+		rack->r_ctl.rc_split_limit = optval;
 		break;
 	case TCP_BBR_HDWR_PACE:
 		RACK_OPTS_INC(tcp_hdwr_pacing);
@@ -20119,7 +24601,7 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 #endif
 		}
 		break;
-	/*  End Pacing related ones */
+		/*  End Pacing related ones */
 	case TCP_RACK_PRR_SENDALOT:
 		/* Allow PRR to send more than one seg */
 		RACK_OPTS_INC(tcp_rack_prr_sendalot);
@@ -20138,13 +24620,13 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 	case TCP_RACK_ENABLE_HYSTART:
 	{
 		if (optval) {
-			tp->ccv->flags |= CCF_HYSTART_ALLOWED;
+			tp->t_ccv.flags |= CCF_HYSTART_ALLOWED;
 			if (rack_do_hystart > RACK_HYSTART_ON)
-				tp->ccv->flags |= CCF_HYSTART_CAN_SH_CWND;
+				tp->t_ccv.flags |= CCF_HYSTART_CAN_SH_CWND;
 			if (rack_do_hystart > RACK_HYSTART_ON_W_SC)
-				tp->ccv->flags |= CCF_HYSTART_CONS_SSTH;
+				tp->t_ccv.flags |= CCF_HYSTART_CONS_SSTH;
 		} else {
-			tp->ccv->flags &= ~(CCF_HYSTART_ALLOWED|CCF_HYSTART_CAN_SH_CWND|CCF_HYSTART_CONS_SSTH);
+			tp->t_ccv.flags &= ~(CCF_HYSTART_ALLOWED|CCF_HYSTART_CAN_SH_CWND|CCF_HYSTART_CONS_SSTH);
 		}
 	}
 	break;
@@ -20176,13 +24658,6 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->use_rack_rr = 0;
 		break;
-	case TCP_FAST_RSM_HACK:
-		RACK_OPTS_INC(tcp_rack_fastrsm_hack);
-		if (optval)
-			rack->fast_rsm_hack = 1;
-		else
-			rack->fast_rsm_hack = 0;
-		break;
 	case TCP_RACK_PKT_DELAY:
 		/* RACK added ms i.e. rack-rtt + reord + N */
 		RACK_OPTS_INC(tcp_rack_pkt_delay);
@@ -20212,6 +24687,50 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 		else
 			rack->r_ctl.rc_rate_sample_method = optval;
 		break;
+	case TCP_HONOR_HPTS_MIN:
+		RACK_OPTS_INC(tcp_honor_hpts);
+		if (optval) {
+			rack->r_use_hpts_min = 1;
+			/*
+			 * Must be between 2 - 80% to be a reduction else
+			 * we keep the default (10%).
+			 */
+			if ((optval > 1) && (optval <= 80)) {
+				rack->r_ctl.max_reduction = optval;
+			}
+		} else
+			rack->r_use_hpts_min = 0;
+		break;
+	case TCP_REC_IS_DYN:			/*  URL:dynrec */
+		RACK_OPTS_INC(tcp_dyn_rec);
+		if (optval)
+			rack->rc_gp_no_rec_chg = 1;
+		else
+			rack->rc_gp_no_rec_chg = 0;
+		break;
+	case TCP_NO_TIMELY:
+		RACK_OPTS_INC(tcp_notimely);
+		if (optval) {
+			rack->rc_skip_timely = 1;
+			rack->r_ctl.rack_per_of_gp_rec = 90;
+			rack->r_ctl.rack_per_of_gp_ca = 100;
+			rack->r_ctl.rack_per_of_gp_ss = 250;
+		} else {
+			rack->rc_skip_timely = 0;
+		}
+		break;
+	case TCP_GP_USE_LTBW:
+		if (optval == 0) {
+			rack->use_lesser_lt_bw = 0;
+			rack->dis_lt_bw = 1;
+		} else if (optval == 1) {
+			rack->use_lesser_lt_bw = 1;
+			rack->dis_lt_bw = 0;
+		} else if (optval == 2) {
+			rack->use_lesser_lt_bw = 0;
+			rack->dis_lt_bw = 0;
+		}
+		break;
 	case TCP_DATA_AFTER_CLOSE:
 		RACK_OPTS_INC(tcp_data_after_close);
 		if (optval)
@@ -20222,10 +24741,428 @@ rack_process_option(struct tcpcb *tp, struct tcp_rack *rack, int sopt_name,
 	default:
 		break;
 	}
-#ifdef NETFLIX_STATS
 	tcp_log_socket_option(tp, sopt_name, optval, error);
-#endif
 	return (error);
+}
+
+static void
+rack_inherit(struct tcpcb *tp, struct inpcb *parent)
+{
+	/*
+	 * A new connection has been created (tp) and
+	 * the parent is the inpcb given. We want to
+	 * apply a read-lock to the parent (we are already
+	 * holding a write lock on the tp) and copy anything
+	 * out of the rack specific data as long as its tfb is
+	 * the same as ours i.e. we are the same stack. Otherwise
+	 * we just return.
+	 */
+	struct tcpcb *par;
+	struct tcp_rack *dest, *src;
+	int cnt = 0;
+
+	par = intotcpcb(parent);
+	if (par->t_fb != tp->t_fb) {
+		/* Not the same stack */
+		tcp_log_socket_option(tp, 0, 0, 1);
+		return;
+	}
+	/* Ok if we reach here lets setup the two rack pointers */
+	dest = (struct tcp_rack *)tp->t_fb_ptr;
+	src = (struct tcp_rack *)par->t_fb_ptr;
+	if ((src == NULL) || (dest == NULL)) {
+		/* Huh? */
+		tcp_log_socket_option(tp, 0, 0, 2);
+		return;
+	}
+	/* Now copy out anything we wish to inherit i.e. things in socket-options */
+	/* TCP_RACK_PROFILE we can't know but we can set DGP if its on */
+	if ((src->dgp_on) && (dest->dgp_on == 0)) {
+		/* Profile 1 had to be set via sock opt */
+		rack_set_dgp(dest);
+		cnt++;
+	}
+	/* TCP_RACK_SET_RXT_OPTIONS */
+	if (dest->full_size_rxt != src->full_size_rxt) {
+		dest->full_size_rxt = src->full_size_rxt;
+		cnt++;
+	}
+	if (dest->shape_rxt_to_pacing_min  != src->shape_rxt_to_pacing_min) {
+		dest->shape_rxt_to_pacing_min = src->shape_rxt_to_pacing_min;
+		cnt++;
+	}
+	/* TCP_RACK_DSACK_OPT */
+	if (dest->rc_rack_tmr_std_based != src->rc_rack_tmr_std_based) {
+		dest->rc_rack_tmr_std_based = src->rc_rack_tmr_std_based;
+		cnt++;
+	}
+	if (dest->rc_rack_use_dsack != src->rc_rack_use_dsack) {
+		dest->rc_rack_use_dsack = src->rc_rack_use_dsack;
+		cnt++;
+	}
+	/* TCP_RACK_PACING_DIVISOR */
+	if (dest->r_ctl.pace_len_divisor != src->r_ctl.pace_len_divisor) {
+		dest->r_ctl.pace_len_divisor = src->r_ctl.pace_len_divisor;
+		cnt++;
+	}
+	/* TCP_RACK_HI_BETA */
+	if (src->rack_hibeta != dest->rack_hibeta) {
+		cnt++;
+		if (src->rack_hibeta) {
+			dest->r_ctl.rc_saved_beta.beta = src->r_ctl.rc_saved_beta.beta;
+			dest->rack_hibeta = 1;
+		} else {
+			dest->rack_hibeta = 0;
+		}
+	}
+	/* TCP_RACK_TIMER_SLOP */
+	if (dest->r_ctl.timer_slop != src->r_ctl.timer_slop) {
+		dest->r_ctl.timer_slop = src->r_ctl.timer_slop;
+		cnt++;
+	}
+	/* TCP_RACK_PACING_BETA_ECN */
+	if (dest->r_ctl.rc_saved_beta.beta_ecn != src->r_ctl.rc_saved_beta.beta_ecn) {
+		dest->r_ctl.rc_saved_beta.beta_ecn = src->r_ctl.rc_saved_beta.beta_ecn;
+		cnt++;
+	}
+	if (dest->r_ctl.rc_saved_beta.newreno_flags != src->r_ctl.rc_saved_beta.newreno_flags) {
+		dest->r_ctl.rc_saved_beta.newreno_flags = src->r_ctl.rc_saved_beta.newreno_flags;
+		cnt++;
+	}
+	/* We do not do TCP_DEFER_OPTIONS */
+	/* TCP_RACK_MEASURE_CNT */
+	if (dest->r_ctl.req_measurements != src->r_ctl.req_measurements) {
+		dest->r_ctl.req_measurements = src->r_ctl.req_measurements;
+		cnt++;
+	}
+	/* TCP_HDWR_UP_ONLY */
+	if (dest->r_up_only != src->r_up_only) {
+		dest->r_up_only = src->r_up_only;
+		cnt++;
+	}
+	/* TCP_FILLCW_RATE_CAP */
+	if (dest->r_ctl.fillcw_cap != src->r_ctl.fillcw_cap) {
+		dest->r_ctl.fillcw_cap = src->r_ctl.fillcw_cap;
+		cnt++;
+	}
+	/* TCP_PACING_RATE_CAP */
+	if (dest->r_ctl.bw_rate_cap != src->r_ctl.bw_rate_cap) {
+		dest->r_ctl.bw_rate_cap = src->r_ctl.bw_rate_cap;
+		cnt++;
+	}
+	/* A listener can't set TCP_HYBRID_PACING */
+	/* TCP_SIDECHAN_DIS */
+	if (dest->r_ctl.side_chan_dis_mask != src->r_ctl.side_chan_dis_mask) {
+		dest->r_ctl.side_chan_dis_mask = src->r_ctl.side_chan_dis_mask;
+		cnt++;
+	}
+	/* TCP_SHARED_CWND_TIME_LIMIT */
+	if (dest->r_limit_scw != src->r_limit_scw) {
+		dest->r_limit_scw = src->r_limit_scw;
+		cnt++;
+	}
+	/* TCP_POLICER_DETECT */
+	if (dest->r_ctl.policer_rxt_threshold != src->r_ctl.policer_rxt_threshold) {
+		dest->r_ctl.policer_rxt_threshold = src->r_ctl.policer_rxt_threshold;
+		cnt++;
+	}
+	if (dest->r_ctl.policer_avg_threshold != src->r_ctl.policer_avg_threshold) {
+		dest->r_ctl.policer_avg_threshold = src->r_ctl.policer_avg_threshold;
+		cnt++;
+	}
+	if (dest->r_ctl.policer_med_threshold != src->r_ctl.policer_med_threshold) {
+		dest->r_ctl.policer_med_threshold = src->r_ctl.policer_med_threshold;
+		cnt++;
+	}
+	if (dest->policer_detect_on != src->policer_detect_on) {
+		dest->policer_detect_on = src->policer_detect_on;
+		cnt++;
+	}
+
+	if (dest->r_ctl.saved_policer_val != src->r_ctl.saved_policer_val) {
+		dest->r_ctl.saved_policer_val = src->r_ctl.saved_policer_val;
+		cnt++;
+	}
+	/* TCP_POLICER_MSS */
+	if (dest->r_ctl.policer_del_mss != src->r_ctl.policer_del_mss) {
+		dest->r_ctl.policer_del_mss = src->r_ctl.policer_del_mss;
+		cnt++;
+	}
+
+	if (dest->r_ctl.pol_bw_comp != src->r_ctl.pol_bw_comp) {
+		dest->r_ctl.pol_bw_comp = src->r_ctl.pol_bw_comp;
+		cnt++;
+	}
+
+	if (dest->r_ctl.policer_alt_median != src->r_ctl.policer_alt_median) {
+		dest->r_ctl.policer_alt_median = src->r_ctl.policer_alt_median;
+		cnt++;
+	}
+	/* TCP_RACK_PACE_TO_FILL */
+	if (dest->rc_pace_to_cwnd != src->rc_pace_to_cwnd) {
+		dest->rc_pace_to_cwnd = src->rc_pace_to_cwnd;
+		cnt++;
+	}
+	if (dest->rc_pace_fill_if_rttin_range != src->rc_pace_fill_if_rttin_range) {
+		dest->rc_pace_fill_if_rttin_range = src->rc_pace_fill_if_rttin_range;
+		cnt++;
+	}
+	if (dest->rtt_limit_mul != src->rtt_limit_mul) {
+		dest->rtt_limit_mul = src->rtt_limit_mul;
+		cnt++;
+	}
+	/* TCP_RACK_NO_PUSH_AT_MAX */
+	if (dest->r_ctl.rc_no_push_at_mrtt != src->r_ctl.rc_no_push_at_mrtt) {
+		dest->r_ctl.rc_no_push_at_mrtt = src->r_ctl.rc_no_push_at_mrtt;
+		cnt++;
+	}
+	/* TCP_SHARED_CWND_ENABLE */
+	if (dest->rack_enable_scwnd != src->rack_enable_scwnd) {
+		dest->rack_enable_scwnd = src->rack_enable_scwnd;
+		cnt++;
+	}
+	/* TCP_USE_CMP_ACKS */
+	if (dest->r_use_cmp_ack != src->r_use_cmp_ack) {
+		dest->r_use_cmp_ack = src->r_use_cmp_ack;
+		cnt++;
+	}
+
+	if (dest->r_mbuf_queue != src->r_mbuf_queue) {
+		dest->r_mbuf_queue = src->r_mbuf_queue;
+		cnt++;
+	}
+	/* TCP_RACK_MBUF_QUEUE */
+	if (dest->r_mbuf_queue != src->r_mbuf_queue) {
+		dest->r_mbuf_queue = src->r_mbuf_queue;
+		cnt++;
+	}
+	if  (dest->r_mbuf_queue || dest->rc_always_pace || dest->r_use_cmp_ack) {
+		tp->t_flags2 |= TF2_SUPPORTS_MBUFQ;
+	} else {
+		tp->t_flags2 &= ~TF2_SUPPORTS_MBUFQ;
+	}
+	if (dest->r_use_cmp_ack && TCPS_HAVEESTABLISHED(tp->t_state)) {
+		tp->t_flags2 |= TF2_MBUF_ACKCMP;
+	}
+	/* TCP_RACK_NONRXT_CFG_RATE */
+	if (dest->rack_rec_nonrxt_use_cr != src->rack_rec_nonrxt_use_cr) {
+		dest->rack_rec_nonrxt_use_cr = src->rack_rec_nonrxt_use_cr;
+		cnt++;
+	}
+	/* TCP_NO_PRR */
+	if (dest->rack_no_prr != src->rack_no_prr) {
+		dest->rack_no_prr = src->rack_no_prr;
+		cnt++;
+	}
+	if (dest->no_prr_addback != src->no_prr_addback) {
+		dest->no_prr_addback = src->no_prr_addback;
+		cnt++;
+	}
+	/* RACK_CSPR_IS_FCC */
+	if (dest->cspr_is_fcc != src->cspr_is_fcc) {
+		dest->cspr_is_fcc = src->cspr_is_fcc;
+		cnt++;
+	}
+	/* TCP_TIMELY_DYN_ADJ */
+	if (dest->rc_gp_dyn_mul != src->rc_gp_dyn_mul) {
+		dest->rc_gp_dyn_mul = src->rc_gp_dyn_mul;
+		cnt++;
+	}
+	if (dest->r_ctl.rack_per_of_gp_ca != src->r_ctl.rack_per_of_gp_ca) {
+		dest->r_ctl.rack_per_of_gp_ca = src->r_ctl.rack_per_of_gp_ca;
+		cnt++;
+	}
+	/* TCP_RACK_TLP_USE */
+	if (dest->rack_tlp_threshold_use != src->rack_tlp_threshold_use) {
+		dest->rack_tlp_threshold_use = src->rack_tlp_threshold_use;
+		cnt++;
+	}
+	/* we don't allow inheritence of TCP_RACK_PACE_ALWAYS */
+	/* TCP_BBR_RACK_INIT_RATE */
+	if (dest->r_ctl.init_rate != src->r_ctl.init_rate) {
+		dest->r_ctl.init_rate = src->r_ctl.init_rate;
+		cnt++;
+	}
+	/* TCP_RACK_FORCE_MSEG */
+	if (dest->rc_force_max_seg != src->rc_force_max_seg) {
+		dest->rc_force_max_seg = src->rc_force_max_seg;
+		cnt++;
+	}
+	/* TCP_RACK_PACE_MIN_SEG */
+	if (dest->r_ctl.rc_user_set_min_segs != src->r_ctl.rc_user_set_min_segs) {
+		dest->r_ctl.rc_user_set_min_segs = src->r_ctl.rc_user_set_min_segs;
+		cnt++;
+	}
+	/* we don't allow TCP_RACK_PACE_MAX_SEG */
+	/* TCP_RACK_PACE_RATE_REC, TCP_RACK_PACE_RATE_SS,  TCP_RACK_PACE_RATE_CA */
+	if (dest->r_ctl.rc_fixed_pacing_rate_ca != src->r_ctl.rc_fixed_pacing_rate_ca) {
+		dest->r_ctl.rc_fixed_pacing_rate_ca = src->r_ctl.rc_fixed_pacing_rate_ca;
+		cnt++;
+	}
+	if (dest->r_ctl.rc_fixed_pacing_rate_ss != src->r_ctl.rc_fixed_pacing_rate_ss) {
+		dest->r_ctl.rc_fixed_pacing_rate_ss = src->r_ctl.rc_fixed_pacing_rate_ss;
+		cnt++;
+	}
+	if (dest->r_ctl.rc_fixed_pacing_rate_rec != src->r_ctl.rc_fixed_pacing_rate_rec) {
+		dest->r_ctl.rc_fixed_pacing_rate_rec = src->r_ctl.rc_fixed_pacing_rate_rec;
+		cnt++;
+	}
+	/* TCP_RACK_GP_INCREASE_REC, TCP_RACK_GP_INCREASE_CA, TCP_RACK_GP_INCREASE_SS */
+	if (dest->r_ctl.rack_per_of_gp_rec != src->r_ctl.rack_per_of_gp_rec) {
+		dest->r_ctl.rack_per_of_gp_rec = src->r_ctl.rack_per_of_gp_rec;
+		cnt++;
+	}
+	if (dest->r_ctl.rack_per_of_gp_ca != src->r_ctl.rack_per_of_gp_ca) {
+		dest->r_ctl.rack_per_of_gp_ca = src->r_ctl.rack_per_of_gp_ca;
+		cnt++;
+	}
+
+	if (dest->r_ctl.rack_per_of_gp_ss != src->r_ctl.rack_per_of_gp_ss) {
+		dest->r_ctl.rack_per_of_gp_ss = src->r_ctl.rack_per_of_gp_ss;
+		cnt++;
+	}
+	/* TCP_RACK_RR_CONF */
+	if (dest->r_rr_config != src->r_rr_config) {
+		dest->r_rr_config = src->r_rr_config;
+		cnt++;
+	}
+	/* TCP_PACING_DND */
+	if (dest->rc_pace_dnd != src->rc_pace_dnd) {
+		dest->rc_pace_dnd = src->rc_pace_dnd;
+		cnt++;
+	}
+	/* TCP_HDWR_RATE_CAP */
+	if (dest->r_rack_hw_rate_caps != src->r_rack_hw_rate_caps) {
+		dest->r_rack_hw_rate_caps = src->r_rack_hw_rate_caps;
+		cnt++;
+	}
+	/* TCP_DGP_UPPER_BOUNDS */
+	if (dest->r_ctl.rack_per_upper_bound_ca != src->r_ctl.rack_per_upper_bound_ca) {
+		dest->r_ctl.rack_per_upper_bound_ca = src->r_ctl.rack_per_upper_bound_ca;
+		cnt++;
+	}
+	if (dest->r_ctl.rack_per_upper_bound_ss != src->r_ctl.rack_per_upper_bound_ss) {
+		dest->r_ctl.rack_per_upper_bound_ss = src->r_ctl.rack_per_upper_bound_ss;
+		cnt++;
+	}
+	/* TCP_SS_EEXIT */
+	if (dest->r_ctl.gp_rnd_thresh != src->r_ctl.gp_rnd_thresh) {
+		dest->r_ctl.gp_rnd_thresh = src->r_ctl.gp_rnd_thresh;
+		cnt++;
+	}
+	if (dest->r_ctl.gate_to_fs != src->r_ctl.gate_to_fs) {
+		dest->r_ctl.gate_to_fs = src->r_ctl.gate_to_fs;
+		cnt++;
+	}
+	if (dest->r_ctl.use_gp_not_last != src->r_ctl.use_gp_not_last) {
+		dest->r_ctl.use_gp_not_last = src->r_ctl.use_gp_not_last;
+		cnt++;
+	}
+	if (dest->r_ctl.gp_gain_req != src->r_ctl.gp_gain_req) {
+		dest->r_ctl.gp_gain_req = src->r_ctl.gp_gain_req;
+		cnt++;
+	}
+	/* TCP_BBR_HDWR_PACE */
+	if (dest->rack_hdw_pace_ena != src->rack_hdw_pace_ena) {
+		dest->rack_hdw_pace_ena = src->rack_hdw_pace_ena;
+		cnt++;
+	}
+	if (dest->rack_attempt_hdwr_pace != src->rack_attempt_hdwr_pace) {
+		dest->rack_attempt_hdwr_pace = src->rack_attempt_hdwr_pace;
+		cnt++;
+	}
+	/* TCP_RACK_PRR_SENDALOT */
+	if (dest->r_ctl.rc_prr_sendalot != src->r_ctl.rc_prr_sendalot) {
+		dest->r_ctl.rc_prr_sendalot = src->r_ctl.rc_prr_sendalot;
+		cnt++;
+	}
+	/* TCP_RACK_MIN_TO */
+	if (dest->r_ctl.rc_min_to != src->r_ctl.rc_min_to) {
+		dest->r_ctl.rc_min_to = src->r_ctl.rc_min_to;
+		cnt++;
+	}
+	/* TCP_RACK_EARLY_SEG */
+	if (dest->r_ctl.rc_early_recovery_segs != src->r_ctl.rc_early_recovery_segs) {
+		dest->r_ctl.rc_early_recovery_segs = src->r_ctl.rc_early_recovery_segs;
+		cnt++;
+	}
+	/* TCP_RACK_ENABLE_HYSTART */
+	if (par->t_ccv.flags != tp->t_ccv.flags) {
+		cnt++;
+		if (par->t_ccv.flags & CCF_HYSTART_ALLOWED) {
+			tp->t_ccv.flags |= CCF_HYSTART_ALLOWED;
+			if (rack_do_hystart > RACK_HYSTART_ON)
+				tp->t_ccv.flags |= CCF_HYSTART_CAN_SH_CWND;
+			if (rack_do_hystart > RACK_HYSTART_ON_W_SC)
+				tp->t_ccv.flags |= CCF_HYSTART_CONS_SSTH;
+		} else {
+			tp->t_ccv.flags &= ~(CCF_HYSTART_ALLOWED|CCF_HYSTART_CAN_SH_CWND|CCF_HYSTART_CONS_SSTH);
+		}
+	}
+	/* TCP_RACK_REORD_THRESH */
+	if (dest->r_ctl.rc_reorder_shift != src->r_ctl.rc_reorder_shift) {
+		dest->r_ctl.rc_reorder_shift = src->r_ctl.rc_reorder_shift;
+		cnt++;
+	}
+	/* TCP_RACK_REORD_FADE */
+	if (dest->r_ctl.rc_reorder_fade != src->r_ctl.rc_reorder_fade) {
+		dest->r_ctl.rc_reorder_fade = src->r_ctl.rc_reorder_fade;
+		cnt++;
+	}
+	/* TCP_RACK_TLP_THRESH */
+	if (dest->r_ctl.rc_tlp_threshold != src->r_ctl.rc_tlp_threshold) {
+		dest->r_ctl.rc_tlp_threshold = src->r_ctl.rc_tlp_threshold;
+		cnt++;
+	}
+	/* TCP_BBR_USE_RACK_RR */
+	if (dest->use_rack_rr != src->use_rack_rr) {
+		dest->use_rack_rr = src->use_rack_rr;
+		cnt++;
+	}
+	/* TCP_RACK_PKT_DELAY */
+	if (dest->r_ctl.rc_pkt_delay != src->r_ctl.rc_pkt_delay) {
+		dest->r_ctl.rc_pkt_delay = src->r_ctl.rc_pkt_delay;
+		cnt++;
+	}
+	/* TCP_DELACK will get copied via the main code if applicable */
+	/* TCP_BBR_RACK_RTT_USE */
+	if (dest->r_ctl.rc_rate_sample_method != src->r_ctl.rc_rate_sample_method) {
+		dest->r_ctl.rc_rate_sample_method = src->r_ctl.rc_rate_sample_method;
+		cnt++;
+	}
+	/* TCP_HONOR_HPTS_MIN */
+	if (dest->r_use_hpts_min != src->r_use_hpts_min) {
+		dest->r_use_hpts_min = src->r_use_hpts_min;
+		cnt++;
+	}
+	if (dest->r_ctl.max_reduction != src->r_ctl.max_reduction) {
+		dest->r_ctl.max_reduction = src->r_ctl.max_reduction;
+		cnt++;
+	}
+	/* TCP_REC_IS_DYN */
+	if (dest->rc_gp_no_rec_chg != src->rc_gp_no_rec_chg) {
+		dest->rc_gp_no_rec_chg = src->rc_gp_no_rec_chg;
+		cnt++;
+	}
+	if (dest->rc_skip_timely != src->rc_skip_timely) {
+		dest->rc_skip_timely = src->rc_skip_timely;
+		cnt++;
+	}
+	/* TCP_DATA_AFTER_CLOSE */
+	if (dest->rc_allow_data_af_clo != src->rc_allow_data_af_clo) {
+		dest->rc_allow_data_af_clo = src->rc_allow_data_af_clo;
+		cnt++;
+	}
+	/* TCP_GP_USE_LTBW */
+	if (src->use_lesser_lt_bw != dest->use_lesser_lt_bw) {
+		dest->use_lesser_lt_bw = src->use_lesser_lt_bw;
+		cnt++;
+	}
+	if (dest->dis_lt_bw != src->dis_lt_bw) {
+		dest->dis_lt_bw = src->dis_lt_bw;
+		cnt++;
+	}
+	tcp_log_socket_option(tp, 0, cnt, 0);
 }
 
 
@@ -20239,7 +25176,7 @@ rack_apply_deferred_options(struct tcp_rack *rack)
 		TAILQ_REMOVE(&rack->r_ctl.opt_list, dol, next);
 		/* Disadvantage of deferal is you loose the error return */
 		s_optval = (uint32_t)dol->optval;
-		(void)rack_process_option(rack->rc_tp, rack, dol->optname, s_optval, dol->optval);
+		(void)rack_process_option(rack->rc_tp, rack, dol->optname, s_optval, dol->optval, NULL);
 		free(dol, M_TCPDO);
 	}
 }
@@ -20247,20 +25184,10 @@ rack_apply_deferred_options(struct tcp_rack *rack)
 static void
 rack_hw_tls_change(struct tcpcb *tp, int chg)
 {
-	/*
-	 * HW tls state has changed.. fix all
-	 * rsm's in flight.
-	 */
+	/* Update HW tls state */
 	struct tcp_rack *rack;
-	struct rack_sendmap *rsm;
 
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
-	RB_FOREACH(rsm, rack_rb_tree_head, &rack->r_ctl.rc_mtree) {
-		if (chg)
-			rsm->r_hw_tls = 1;
-		else
-			rsm->r_hw_tls = 0;
-	}
 	if (chg)
 		rack->r_ctl.fsb.hw_tls = 1;
 	else
@@ -20275,6 +25202,33 @@ rack_pru_options(struct tcpcb *tp, int flags)
 	return (0);
 }
 
+static bool
+rack_wake_check(struct tcpcb *tp)
+{
+	struct tcp_rack *rack;
+	struct timeval tv;
+	uint32_t cts;
+
+	rack = (struct tcp_rack *)tp->t_fb_ptr;
+	if (rack->r_ctl.rc_hpts_flags) {
+		cts = tcp_get_usecs(&tv);
+		if ((rack->r_ctl.rc_hpts_flags & PACE_PKT_OUTPUT) == PACE_PKT_OUTPUT){
+			/*
+			 * Pacing timer is up, check if we are ready.
+			 */
+			if (TSTMP_GEQ(cts, rack->r_ctl.rc_last_output_to))
+				return (true);
+		} else if ((rack->r_ctl.rc_hpts_flags & PACE_TMR_MASK) != 0) {
+			/*
+			 * A timer is up, check if we are ready.
+			 */
+			if (TSTMP_GEQ(cts, rack->r_ctl.rc_timer_exp))
+				return (true);
+		}
+	}
+	return (false);
+}
+
 static struct tcp_function_block __tcp_rack = {
 	.tfb_tcp_block_name = __XSTRING(STACKNAME),
 	.tfb_tcp_output = rack_output,
@@ -20285,15 +25239,19 @@ static struct tcp_function_block __tcp_rack = {
 	.tfb_tcp_fb_init = rack_init,
 	.tfb_tcp_fb_fini = rack_fini,
 	.tfb_tcp_timer_stop_all = rack_stopall,
-	.tfb_tcp_timer_activate = rack_timer_activate,
-	.tfb_tcp_timer_active = rack_timer_active,
-	.tfb_tcp_timer_stop = rack_timer_stop,
 	.tfb_tcp_rexmit_tmr = rack_remxt_tmr,
 	.tfb_tcp_handoff_ok = rack_handoff_ok,
 	.tfb_tcp_mtu_chg = rack_mtu_change,
 	.tfb_pru_options = rack_pru_options,
 	.tfb_hwtls_change = rack_hw_tls_change,
+	.tfb_chg_query = rack_chg_query,
+	.tfb_switch_failed = rack_switch_failed,
+	.tfb_early_wake_check = rack_wake_check,
+	.tfb_compute_pipe = rack_compute_pipe,
+	.tfb_stack_info = rack_stack_information,
+	.tfb_inherit = rack_inherit,
 	.tfb_flags = TCP_FUNC_OUTPUT_CANDROP,
+
 };
 
 /*
@@ -20303,28 +25261,22 @@ static struct tcp_function_block __tcp_rack = {
  * option.
  */
 static int
-rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
+rack_set_sockopt(struct tcpcb *tp, struct sockopt *sopt)
 {
-#ifdef INET6
-	struct ip6_hdr *ip6;
-#endif
+	struct inpcb *inp = tptoinpcb(tp);
 #ifdef INET
 	struct ip *ip;
 #endif
-	struct tcpcb *tp;
 	struct tcp_rack *rack;
+	struct tcp_hybrid_req hybrid;
 	uint64_t loptval;
 	int32_t error = 0, optval;
 
-	tp = intotcpcb(inp);
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	if (rack == NULL) {
 		INP_WUNLOCK(inp);
 		return (EINVAL);
 	}
-#ifdef INET6
-	ip6 = (struct ip6_hdr *)rack->r_ctl.fsb.tcp_ip_hdr;
-#endif
 #ifdef INET
 	ip = (struct ip *)rack->r_ctl.fsb.tcp_ip_hdr;
 #endif
@@ -20336,13 +25288,6 @@ rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		switch (sopt->sopt_name) {
 		case IPV6_USE_MIN_MTU:
 			tcp6_use_min_mtu(tp);
-			break;
-		case IPV6_TCLASS:
-			/*
-			 * The DSCP codepoint has changed, update the fsb.
-			 */
-			ip6->ip6_flow = (ip6->ip6_flow & ~IPV6_FLOWINFO_MASK) |
-			    (rack->rc_inp->inp_flow & IPV6_FLOWINFO_MASK);
 			break;
 		}
 		INP_WUNLOCK(inp);
@@ -20367,75 +25312,110 @@ rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		INP_WUNLOCK(inp);
 		return (0);
 #endif
-	}
-
-	switch (sopt->sopt_name) {
-	case TCP_RACK_TLP_REDUCE:		/*  URL:tlp_reduce */
-	/*  Pacing related ones */
-	case TCP_RACK_PACE_ALWAYS:		/*  URL:pace_always */
-	case TCP_BBR_RACK_INIT_RATE:		/*  URL:irate */
-	case TCP_BBR_IWINTSO:			/*  URL:tso_iwin */
-	case TCP_RACK_PACE_MAX_SEG:		/*  URL:pace_max_seg */
-	case TCP_RACK_FORCE_MSEG:		/*  URL:force_max_seg */
-	case TCP_RACK_PACE_RATE_CA:		/*  URL:pr_ca */
-	case TCP_RACK_PACE_RATE_SS:		/*  URL:pr_ss*/
-	case TCP_RACK_PACE_RATE_REC:		/*  URL:pr_rec */
-	case TCP_RACK_GP_INCREASE_CA:		/*  URL:gp_inc_ca */
-	case TCP_RACK_GP_INCREASE_SS:		/*  URL:gp_inc_ss */
-	case TCP_RACK_GP_INCREASE_REC:		/*  URL:gp_inc_rec */
-	case TCP_RACK_RR_CONF:			/*  URL:rrr_conf */
-	case TCP_BBR_HDWR_PACE:			/*  URL:hdwrpace */
-	case TCP_HDWR_RATE_CAP:			/*  URL:hdwrcap boolean */
-	case TCP_PACING_RATE_CAP:		/*  URL:cap  -- used by side-channel */
-	case TCP_HDWR_UP_ONLY:			/*  URL:uponly -- hardware pacing  boolean */
-       /* End pacing related */
-	case TCP_FAST_RSM_HACK:			/*  URL:frsm_hack */
-	case TCP_DELACK:			/*  URL:delack (in base TCP i.e. tcp_hints along with cc etc ) */
-	case TCP_RACK_PRR_SENDALOT:		/*  URL:prr_sendalot */
-	case TCP_RACK_MIN_TO:			/*  URL:min_to */
-	case TCP_RACK_EARLY_SEG:		/*  URL:early_seg */
-	case TCP_RACK_REORD_THRESH:		/*  URL:reord_thresh */
-	case TCP_RACK_REORD_FADE:		/*  URL:reord_fade */
-	case TCP_RACK_TLP_THRESH:		/*  URL:tlp_thresh */
-	case TCP_RACK_PKT_DELAY:		/*  URL:pkt_delay */
-	case TCP_RACK_TLP_USE:			/*  URL:tlp_use */
-	case TCP_BBR_RACK_RTT_USE:		/*  URL:rttuse */
-	case TCP_BBR_USE_RACK_RR:		/*  URL:rackrr */
-	case TCP_RACK_DO_DETECTION:		/*  URL:detect */
-	case TCP_NO_PRR:			/*  URL:noprr */
-	case TCP_TIMELY_DYN_ADJ:      		/*  URL:dynamic */
-	case TCP_DATA_AFTER_CLOSE:		/*  no URL */
-	case TCP_RACK_NONRXT_CFG_RATE:		/*  URL:nonrxtcr */
-	case TCP_SHARED_CWND_ENABLE:		/*  URL:scwnd */
-	case TCP_RACK_MBUF_QUEUE:		/*  URL:mqueue */
-	case TCP_RACK_NO_PUSH_AT_MAX:		/*  URL:npush */
-	case TCP_RACK_PACE_TO_FILL:		/*  URL:fillcw */
-	case TCP_SHARED_CWND_TIME_LIMIT:	/*  URL:lscwnd */
-	case TCP_RACK_PROFILE:			/*  URL:profile */
-	case TCP_USE_CMP_ACKS:			/*  URL:cmpack */
-	case TCP_RACK_ABC_VAL:			/*  URL:labc */
-	case TCP_REC_ABC_VAL:			/*  URL:reclabc */
-	case TCP_RACK_MEASURE_CNT:		/*  URL:measurecnt */
-	case TCP_DEFER_OPTIONS:			/*  URL:defer */
-	case TCP_RACK_DSACK_OPT:		/*  URL:dsack */
-	case TCP_RACK_PACING_BETA:		/*  URL:pacing_beta */
-	case TCP_RACK_PACING_BETA_ECN:		/*  URL:pacing_beta_ecn */
-	case TCP_RACK_TIMER_SLOP:		/*  URL:timer_slop */
-	case TCP_RACK_ENABLE_HYSTART:		/*  URL:hystart */
-		break;
+#ifdef SO_PEERPRIO
+	case SOL_SOCKET:
+		switch (sopt->sopt_name) {
+		case SO_PEERPRIO:			/*  SC-URL:bs */
+			/* Already read in and sanity checked in sosetopt(). */
+			if (inp->inp_socket) {
+				rack->client_bufferlvl = inp->inp_socket->so_peerprio;
+			}
+			break;
+		}
+		INP_WUNLOCK(inp);
+		return (0);
+#endif
+	case IPPROTO_TCP:
+		switch (sopt->sopt_name) {
+		case TCP_RACK_TLP_REDUCE:		/*  URL:tlp_reduce */
+		/*  Pacing related ones */
+		case TCP_RACK_PACE_ALWAYS:		/*  URL:pace_always */
+		case TCP_BBR_RACK_INIT_RATE:		/*  URL:irate */
+		case TCP_RACK_PACE_MIN_SEG:		/*  URL:pace_min_seg */
+		case TCP_RACK_PACE_MAX_SEG:		/*  URL:pace_max_seg */
+		case TCP_RACK_FORCE_MSEG:		/*  URL:force_max_seg */
+		case TCP_RACK_PACE_RATE_CA:		/*  URL:pr_ca */
+		case TCP_RACK_PACE_RATE_SS:		/*  URL:pr_ss*/
+		case TCP_RACK_PACE_RATE_REC:		/*  URL:pr_rec */
+		case TCP_RACK_GP_INCREASE_CA:		/*  URL:gp_inc_ca */
+		case TCP_RACK_GP_INCREASE_SS:		/*  URL:gp_inc_ss */
+		case TCP_RACK_GP_INCREASE_REC:		/*  URL:gp_inc_rec */
+		case TCP_RACK_RR_CONF:			/*  URL:rrr_conf */
+		case TCP_BBR_HDWR_PACE:			/*  URL:hdwrpace */
+		case TCP_HDWR_RATE_CAP:			/*  URL:hdwrcap boolean */
+		case TCP_PACING_RATE_CAP:		/*  URL:cap  -- used by side-channel */
+		case TCP_HDWR_UP_ONLY:			/*  URL:uponly -- hardware pacing  boolean */
+		case TCP_FILLCW_RATE_CAP:		/*  URL:fillcw_cap */
+		case TCP_RACK_PACING_BETA_ECN:		/*  URL:pacing_beta_ecn */
+		case TCP_RACK_PACE_TO_FILL:		/*  URL:fillcw */
+			/* End pacing related */
+		case TCP_POLICER_DETECT:		/*  URL:pol_det */
+		case TCP_POLICER_MSS:			/*  URL:pol_mss */
+		case TCP_DELACK:			/*  URL:delack (in base TCP i.e. tcp_hints along with cc etc ) */
+		case TCP_RACK_PRR_SENDALOT:		/*  URL:prr_sendalot */
+		case TCP_RACK_MIN_TO:			/*  URL:min_to */
+		case TCP_RACK_EARLY_SEG:		/*  URL:early_seg */
+		case TCP_RACK_REORD_THRESH:		/*  URL:reord_thresh */
+		case TCP_RACK_REORD_FADE:		/*  URL:reord_fade */
+		case TCP_RACK_TLP_THRESH:		/*  URL:tlp_thresh */
+		case TCP_RACK_PKT_DELAY:		/*  URL:pkt_delay */
+		case TCP_RACK_TLP_USE:			/*  URL:tlp_use */
+		case TCP_BBR_RACK_RTT_USE:		/*  URL:rttuse */
+		case TCP_BBR_USE_RACK_RR:		/*  URL:rackrr */
+		case TCP_NO_PRR:			/*  URL:noprr */
+		case TCP_TIMELY_DYN_ADJ:      		/*  URL:dynamic */
+		case TCP_DATA_AFTER_CLOSE:		/*  no URL */
+		case TCP_RACK_NONRXT_CFG_RATE:		/*  URL:nonrxtcr */
+		case TCP_SHARED_CWND_ENABLE:		/*  URL:scwnd */
+		case TCP_RACK_MBUF_QUEUE:		/*  URL:mqueue */
+		case TCP_RACK_NO_PUSH_AT_MAX:		/*  URL:npush */
+		case TCP_SHARED_CWND_TIME_LIMIT:	/*  URL:lscwnd */
+		case TCP_RACK_PROFILE:			/*  URL:profile */
+		case TCP_SIDECHAN_DIS:			/*  URL:scodm */
+		case TCP_HYBRID_PACING:			/*  URL:pacing=hybrid */
+		case TCP_USE_CMP_ACKS:			/*  URL:cmpack */
+		case TCP_RACK_ABC_VAL:			/*  URL:labc */
+		case TCP_REC_ABC_VAL:			/*  URL:reclabc */
+		case TCP_RACK_MEASURE_CNT:		/*  URL:measurecnt */
+		case TCP_DEFER_OPTIONS:			/*  URL:defer */
+		case TCP_RACK_DSACK_OPT:		/*  URL:dsack */
+		case TCP_RACK_TIMER_SLOP:		/*  URL:timer_slop */
+		case TCP_RACK_ENABLE_HYSTART:		/*  URL:hystart */
+		case TCP_RACK_SET_RXT_OPTIONS:		/*  URL:rxtsz */
+		case TCP_RACK_HI_BETA:			/*  URL:hibeta */
+		case TCP_RACK_SPLIT_LIMIT:		/*  URL:split */
+		case TCP_SS_EEXIT:			/*  URL:eexit */
+		case TCP_DGP_UPPER_BOUNDS:		/*  URL:upper */
+		case TCP_RACK_PACING_DIVISOR:		/*  URL:divisor */
+		case TCP_PACING_DND:			/*  URL:dnd */
+		case TCP_NO_TIMELY:			/*  URL:notimely */
+		case RACK_CSPR_IS_FCC:			/*  URL:csprisfcc */
+		case TCP_HONOR_HPTS_MIN:		/*  URL:hptsmin */
+		case TCP_REC_IS_DYN:			/*  URL:dynrec */
+		case TCP_GP_USE_LTBW:			/*  URL:useltbw */
+			goto process_opt;
+			break;
+		default:
+			/* Filter off all unknown options to the base stack */
+			return (tcp_default_ctloutput(tp, sopt));
+			break;
+		}
 	default:
-		/* Filter off all unknown options to the base stack */
-		return (tcp_default_ctloutput(inp, sopt));
-		break;
+		INP_WUNLOCK(inp);
+		return (0);
 	}
+process_opt:
 	INP_WUNLOCK(inp);
-	if (sopt->sopt_name == TCP_PACING_RATE_CAP) {
+	if ((sopt->sopt_name == TCP_PACING_RATE_CAP) ||
+	    (sopt->sopt_name == TCP_FILLCW_RATE_CAP)) {
 		error = sooptcopyin(sopt, &loptval, sizeof(loptval), sizeof(loptval));
 		/*
 		 * We truncate it down to 32 bits for the socket-option trace this
 		 * means rates > 34Gbps won't show right, but thats probably ok.
 		 */
 		optval = (uint32_t)loptval;
+	} else if (sopt->sopt_name == TCP_HYBRID_PACING) {
+		error = sooptcopyin(sopt, &hybrid, sizeof(hybrid), sizeof(hybrid));
 	} else {
 		error = sooptcopyin(sopt, &optval, sizeof(optval), sizeof(optval));
 		/* Save it in 64 bit form too */
@@ -20444,20 +25424,17 @@ rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	if (error)
 		return (error);
 	INP_WLOCK(inp);
-	if (inp->inp_flags & (INP_TIMEWAIT | INP_DROPPED)) {
-		INP_WUNLOCK(inp);
-		return (ECONNRESET);
-	}
 	if (tp->t_fb != &__tcp_rack) {
 		INP_WUNLOCK(inp);
 		return (ENOPROTOOPT);
 	}
 	if (rack->defer_options && (rack->gp_ready == 0) &&
 	    (sopt->sopt_name != TCP_DEFER_OPTIONS) &&
-	    (sopt->sopt_name != TCP_RACK_PACING_BETA) &&
+	    (sopt->sopt_name != TCP_HYBRID_PACING) &&
+	    (sopt->sopt_name != TCP_RACK_SET_RXT_OPTIONS) &&
 	    (sopt->sopt_name != TCP_RACK_PACING_BETA_ECN) &&
 	    (sopt->sopt_name != TCP_RACK_MEASURE_CNT)) {
-		/* Options are beind deferred */
+		/* Options are being deferred */
 		if (rack_add_deferred_option(rack, sopt->sopt_name, loptval)) {
 			INP_WUNLOCK(inp);
 			return (0);
@@ -20467,7 +25444,7 @@ rack_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 			return (ENOMEM);
 		}
 	}
-	error = rack_process_option(tp, rack, sopt->sopt_name, optval, loptval);
+	error = rack_process_option(tp, rack, sopt->sopt_name, optval, loptval, &hybrid);
 	INP_WUNLOCK(inp);
 	return (error);
 }
@@ -20476,7 +25453,7 @@ static void
 rack_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 {
 
-	INP_WLOCK_ASSERT(tp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 	bzero(ti, sizeof(*ti));
 
 	ti->tcpi_state = tp->t_state;
@@ -20489,7 +25466,7 @@ rack_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 		ti->tcpi_snd_wscale = tp->snd_scale;
 		ti->tcpi_rcv_wscale = tp->rcv_scale;
 	}
-	if (tp->t_flags2 & TF2_ECN_PERMIT)
+	if (tp->t_flags2 & (TF2_ECN_PERMIT | TF2_ACE_PERMIT))
 		ti->tcpi_options |= TCPI_OPT_ECN;
 	if (tp->t_flags & TF_FASTOPEN)
 		ti->tcpi_options |= TCPI_OPT_TFO;
@@ -20514,9 +25491,10 @@ rack_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 	ti->tcpi_snd_rexmitpack = tp->t_sndrexmitpack;
 	ti->tcpi_rcv_ooopack = tp->t_rcvoopack;
 	ti->tcpi_snd_zerowin = tp->t_sndzerowin;
-#ifdef NETFLIX_STATS
 	ti->tcpi_total_tlp = tp->t_sndtlppack;
 	ti->tcpi_total_tlp_bytes = tp->t_sndtlpbyte;
+	ti->tcpi_rttmin = tp->t_rttlow;
+#ifdef NETFLIX_STATS
 	memcpy(&ti->tcpi_rxsyninfo, &tp->t_rxsyninfo, sizeof(struct tcpsyninfo));
 #endif
 #ifdef TCP_OFFLOAD
@@ -20528,9 +25506,9 @@ rack_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 }
 
 static int
-rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
+rack_get_sockopt(struct tcpcb *tp, struct sockopt *sopt)
 {
-	struct tcpcb *tp;
+	struct inpcb *inp = tptoinpcb(tp);
 	struct tcp_rack *rack;
 	int32_t error, optval;
 	uint64_t val, loptval;
@@ -20542,7 +25520,6 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	 * impact to this routine.
 	 */
 	error = 0;
-	tp = intotcpcb(inp);
 	rack = (struct tcp_rack *)tp->t_fb_ptr;
 	if (rack == NULL) {
 		INP_WUNLOCK(inp);
@@ -20563,21 +25540,6 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	 * when you exit recovery.
 	 */
 	case TCP_RACK_PACING_BETA:
-		if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0)
-			error = EINVAL;
-		else if (rack->rc_pacing_cc_set == 0)
-			optval = rack->r_ctl.rc_saved_beta.beta;
-		else {
-			/*
-			 * Reach out into the CC data and report back what
-			 * I have previously set. Yeah it looks hackish but
-			 * we don't want to report the saved values.
-			 */
-			if (tp->ccv->cc_data)
-				optval = ((struct newreno *)tp->ccv->cc_data)->beta;
-			else
-				error = EINVAL;
-		}
 		break;
 		/*
 		 * Beta_ecn is the congestion control value for NewReno that influences how
@@ -20588,7 +25550,7 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		 */
 
 	case TCP_RACK_PACING_BETA_ECN:
-		if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0)
+		if (strcmp(tp->t_cc->name, CCALGONAME_NEWRENO) != 0)
 			error = EINVAL;
 		else if (rack->rc_pacing_cc_set == 0)
 			optval = rack->r_ctl.rc_saved_beta.beta_ecn;
@@ -20598,8 +25560,8 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 			 * I have previously set. Yeah it looks hackish but
 			 * we don't want to report the saved values.
 			 */
-			if (tp->ccv->cc_data)
-				optval = ((struct newreno *)tp->ccv->cc_data)->beta_ecn;
+			if (tp->t_ccv.cc_data)
+				optval = ((struct newreno *)tp->t_ccv.cc_data)->beta_ecn;
 			else
 				error = EINVAL;
 		}
@@ -20613,21 +25575,30 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 			optval |= 2;
 		}
 		break;
- 	case TCP_RACK_ENABLE_HYSTART:
+	case TCP_RACK_ENABLE_HYSTART:
 	{
-		if (tp->ccv->flags & CCF_HYSTART_ALLOWED) {
+		if (tp->t_ccv.flags & CCF_HYSTART_ALLOWED) {
 			optval = RACK_HYSTART_ON;
-			if (tp->ccv->flags & CCF_HYSTART_CAN_SH_CWND)
+			if (tp->t_ccv.flags & CCF_HYSTART_CAN_SH_CWND)
 				optval = RACK_HYSTART_ON_W_SC;
-			if (tp->ccv->flags & CCF_HYSTART_CONS_SSTH)
+			if (tp->t_ccv.flags & CCF_HYSTART_CONS_SSTH)
 				optval = RACK_HYSTART_ON_W_SC_C;
 		} else {
 			optval = RACK_HYSTART_OFF;
 		}
 	}
 	break;
-	case TCP_FAST_RSM_HACK:
-		optval = rack->fast_rsm_hack;
+	case TCP_RACK_DGP_IN_REC:
+		error = EINVAL;
+		break;
+	case TCP_RACK_HI_BETA:
+		optval = rack->rack_hibeta;
+		break;
+	case TCP_POLICER_MSS:
+		optval = rack->r_ctl.policer_del_mss;
+		break;
+	case TCP_POLICER_DETECT:
+		optval = rack->r_ctl.saved_policer_val;
 		break;
 	case TCP_DEFER_OPTIONS:
 		optval = rack->defer_options;
@@ -20644,6 +25615,9 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_HDWR_UP_ONLY:
 		optval= rack->r_up_only;
 		break;
+	case TCP_FILLCW_RATE_CAP:
+		loptval = rack->r_ctl.fillcw_cap;
+		break;
 	case TCP_PACING_RATE_CAP:
 		loptval = rack->r_ctl.bw_rate_cap;
 		break;
@@ -20651,13 +25625,18 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		/* You cannot retrieve a profile, its write only */
 		error = EINVAL;
 		break;
+	case TCP_SIDECHAN_DIS:
+		optval = rack->r_ctl.side_chan_dis_mask;
+		break;
+	case TCP_HYBRID_PACING:
+		/* You cannot retrieve hybrid pacing information, its write only */
+		error = EINVAL;
+		break;
 	case TCP_USE_CMP_ACKS:
 		optval = rack->r_use_cmp_ack;
 		break;
 	case TCP_RACK_PACE_TO_FILL:
 		optval = rack->rc_pace_to_cwnd;
-		if (optval && rack->r_fill_less_agg)
-			optval++;
 		break;
 	case TCP_RACK_NO_PUSH_AT_MAX:
 		optval = rack->r_ctl.rc_no_push_at_mrtt;
@@ -20676,18 +25655,33 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		else
 			optval = 0;
 		break;
+	case TCP_GP_USE_LTBW:
+		if (rack->dis_lt_bw) {
+			/* It is not used */
+			optval = 0;
+		} else if (rack->use_lesser_lt_bw) {
+			/* we use min() */
+			optval = 1;
+		} else {
+			/* we use max() */
+			optval = 2;
+		}
+		break;
 	case TCP_RACK_DO_DETECTION:
-		optval = rack->do_detection;
+		error = EINVAL;
 		break;
 	case TCP_RACK_MBUF_QUEUE:
 		/* Now do we use the LRO mbuf-queue feature */
 		optval = rack->r_mbuf_queue;
 		break;
+	case RACK_CSPR_IS_FCC:
+		optval = rack->cspr_is_fcc;
+		break;
 	case TCP_TIMELY_DYN_ADJ:
 		optval = rack->rc_gp_dyn_mul;
 		break;
 	case TCP_BBR_IWINTSO:
-		optval = rack->rc_init_win;
+		error = EINVAL;
 		break;
 	case TCP_RACK_TLP_REDUCE:
 		/* RACK TLP cwnd reduction (bool) */
@@ -20702,6 +25696,9 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		break;
 	case TCP_RACK_FORCE_MSEG:
 		optval = rack->rc_force_max_seg;
+		break;
+	case TCP_RACK_PACE_MIN_SEG:
+		optval = rack->r_ctl.rc_user_set_min_segs;
 		break;
 	case TCP_RACK_PACE_MAX_SEG:
 		/* Max segments in a pace */
@@ -20719,6 +25716,9 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		/* Minimum time between rack t-o's in ms */
 		optval = rack->r_ctl.rc_min_to;
 		break;
+	case TCP_RACK_SPLIT_LIMIT:
+		optval = rack->r_ctl.rc_split_limit;
+		break;
 	case TCP_RACK_EARLY_SEG:
 		/* If early recovery max segments */
 		optval = rack->r_ctl.rc_early_recovery_segs;
@@ -20726,6 +25726,18 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_RACK_REORD_THRESH:
 		/* RACK reorder threshold (shift amount) */
 		optval = rack->r_ctl.rc_reorder_shift;
+		break;
+	case TCP_SS_EEXIT:
+		if (rack->r_ctl.gp_rnd_thresh) {
+			uint32_t v;
+
+			v = rack->r_ctl.gp_gain_req;
+			v <<= 17;
+			optval = v | (rack->r_ctl.gp_rnd_thresh & 0xff);
+			if (rack->r_ctl.gate_to_fs == 1)
+				optval |= 0x10000;
+		} else
+			optval = 0;
 		break;
 	case TCP_RACK_REORD_FADE:
 		/* Does reordering fade after ms time */
@@ -20755,6 +25767,9 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_RACK_TLP_USE:
 		optval = rack->rack_tlp_threshold_use;
 		break;
+	case TCP_PACING_DND:
+		optval = rack->rc_pace_dnd;
+		break;
 	case TCP_RACK_PACE_RATE_CA:
 		optval = rack->r_ctl.rc_fixed_pacing_rate_ca;
 		break;
@@ -20764,11 +25779,19 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_RACK_PACE_RATE_REC:
 		optval = rack->r_ctl.rc_fixed_pacing_rate_rec;
 		break;
+	case TCP_DGP_UPPER_BOUNDS:
+		optval = rack->r_ctl.rack_per_upper_bound_ss;
+		optval <<= 16;
+		optval |= rack->r_ctl.rack_per_upper_bound_ca;
+		break;
 	case TCP_RACK_GP_INCREASE_SS:
 		optval = rack->r_ctl.rack_per_of_gp_ca;
 		break;
 	case TCP_RACK_GP_INCREASE_CA:
 		optval = rack->r_ctl.rack_per_of_gp_ss;
+		break;
+	case TCP_RACK_PACING_DIVISOR:
+		optval = rack->r_ctl.pace_len_divisor;
 		break;
 	case TCP_BBR_RACK_RTT_USE:
 		optval = rack->r_ctl.rc_rate_sample_method;
@@ -20782,16 +25805,29 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_SHARED_CWND_TIME_LIMIT:
 		optval = rack->r_limit_scw;
 		break;
+	case TCP_HONOR_HPTS_MIN:
+		if (rack->r_use_hpts_min)
+			optval = rack->r_ctl.max_reduction;
+		else
+			optval = 0;
+		break;
+	case TCP_REC_IS_DYN:
+		optval = rack->rc_gp_no_rec_chg;
+		break;
+	case TCP_NO_TIMELY:
+		optval = rack->rc_skip_timely;
+		break;
 	case TCP_RACK_TIMER_SLOP:
 		optval = rack->r_ctl.timer_slop;
 		break;
 	default:
-		return (tcp_default_ctloutput(inp, sopt));
+		return (tcp_default_ctloutput(tp, sopt));
 		break;
 	}
 	INP_WUNLOCK(inp);
 	if (error == 0) {
-		if (TCP_PACING_RATE_CAP)
+		if ((sopt->sopt_name == TCP_PACING_RATE_CAP) ||
+		    (sopt->sopt_name == TCP_FILLCW_RATE_CAP))
 			error = sooptcopyout(sopt, &loptval, sizeof loptval);
 		else
 			error = sooptcopyout(sopt, &optval, sizeof optval);
@@ -20800,12 +25836,12 @@ rack_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 }
 
 static int
-rack_ctloutput(struct inpcb *inp, struct sockopt *sopt)
+rack_ctloutput(struct tcpcb *tp, struct sockopt *sopt)
 {
 	if (sopt->sopt_dir == SOPT_SET) {
-		return (rack_set_sockopt(inp, sopt));
+		return (rack_set_sockopt(tp, sopt));
 	} else if (sopt->sopt_dir == SOPT_GET) {
-		return (rack_get_sockopt(inp, sopt));
+		return (rack_get_sockopt(tp, sopt));
 	} else {
 		panic("%s: sopt_dir $%d", __func__, sopt->sopt_dir);
 	}
@@ -20916,3 +25952,5 @@ static moduledata_t tcp_rack = {
 MODULE_VERSION(MODNAME, 1);
 DECLARE_MODULE(MODNAME, tcp_rack, SI_SUB_PROTO_DOMAIN, SI_ORDER_ANY);
 MODULE_DEPEND(MODNAME, tcphpts, 1, 1, 1);
+
+#endif /* #if !defined(INET) && !defined(INET6) */

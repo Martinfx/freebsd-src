@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.init.mk>
 
 ATF=		${SRCTOP}/contrib/atf

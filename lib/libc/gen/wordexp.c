@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002 Tim J. Robbins.
  * All rights reserved.
@@ -27,7 +27,6 @@
  */
 
 #include "namespace.h"
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
@@ -42,9 +41,6 @@
 #include <wordexp.h>
 #include "un-namespace.h"
 #include "libc_private.h"
-
-__FBSDID("$FreeBSD$");
-
 static int	we_askshell(const char *, wordexp_t *, int);
 static int	we_check(const char *);
 

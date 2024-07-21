@@ -24,7 +24,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 
 # PROVIDE: var
@@ -39,6 +38,9 @@ desc="Populate /var directory"
 stop_cmd=':'
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: mounting
+var_svcj="NO"
 
 populate_var()
 {

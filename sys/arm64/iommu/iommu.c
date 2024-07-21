@@ -35,9 +35,6 @@
 
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -136,8 +133,9 @@ iommu_domain_alloc(struct iommu_unit *iommu)
 	if (iodom == NULL)
 		return (NULL);
 
+	KASSERT(iodom->end != 0, ("domain end is not set"));
+
 	iommu_domain_init(iommu, iodom, &domain_map_ops);
-	iodom->end = VM_MAXUSER_ADDRESS;
 	iodom->iommu = iommu;
 	iommu_gas_init_domain(iodom);
 
@@ -168,13 +166,12 @@ iommu_domain_free(struct iommu_domain *iodom)
 }
 
 static void
-iommu_tag_init(struct bus_dma_tag_iommu *t)
+iommu_tag_init(struct iommu_domain *iodom, struct bus_dma_tag_iommu *t)
 {
 	bus_addr_t maxaddr;
 
-	maxaddr = BUS_SPACE_MAXADDR;
+	maxaddr = MIN(iodom->end, BUS_SPACE_MAXADDR);
 
-	t->common.ref_count = 0;
 	t->common.impl = &bus_dma_iommu_impl;
 	t->common.alignment = 1;
 	t->common.boundary = 0;
@@ -223,7 +220,7 @@ iommu_ctx_init(device_t requester, struct iommu_ctx *ioctx)
 	tag->ctx = ioctx;
 	tag->ctx->domain = iodom;
 
-	iommu_tag_init(tag);
+	iommu_tag_init(iodom, tag);
 
 	return (error);
 }
@@ -247,6 +244,7 @@ iommu_lookup(device_t dev)
 	return (NULL);
 }
 
+#ifdef FDT
 struct iommu_ctx *
 iommu_get_ctx_ofw(device_t dev, int channel)
 {
@@ -332,6 +330,7 @@ iommu_get_ctx_ofw(device_t dev, int channel)
 
 	return (ioctx);
 }
+#endif
 
 struct iommu_ctx *
 iommu_get_ctx(struct iommu_unit *iommu, device_t requester,

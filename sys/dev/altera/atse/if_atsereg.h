@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 Bjoern A. Zeeb
  * All rights reserved.
@@ -28,8 +28,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_IF_ATSEREG_H
@@ -406,7 +404,7 @@ static char *fifo_memory_block[] = {
 /* -------------------------------------------------------------------------- */
 
 struct atse_softc {
-	struct ifnet		*atse_ifp;
+	if_t			atse_ifp;
 	struct resource		*atse_mem_res;
 	device_t		atse_miibus;
 	device_t		atse_dev;

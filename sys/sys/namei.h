@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)namei.h	8.5 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_NAMEI_H_
@@ -41,13 +38,14 @@
 #include <sys/_seqc.h>
 #include <sys/_uio.h>
 
+#include <vm/uma.h>
+
 enum nameiop { LOOKUP, CREATE, DELETE, RENAME };
 
 struct componentname {
 	/*
 	 * Arguments to lookup.
 	 */
-	u_int64_t cn_origflags;	/* flags to namei */
 	u_int64_t cn_flags;	/* flags to namei */
 	struct	ucred *cn_cred;	/* credentials */
 	enum nameiop cn_nameiop;	/* namei operation */
@@ -158,21 +156,10 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 
 /*
  * Namei parameter descriptors.
- *
- * SAVENAME may be set by either the callers of namei or by VOP_LOOKUP.
- * If the caller of namei sets the flag (for example execve wants to
- * know the name of the program that is being executed), then it must
- * free the buffer. If VOP_LOOKUP sets the flag, then the buffer must
- * be freed by either the commit routine or the VOP_ABORT routine.
- * SAVESTART is set only by the callers of namei. It implies SAVENAME
- * plus the addition of saving the parent directory that contains the
- * name in ni_startdir. It allows repeated calls to lookup for the
- * name being sought. The caller is responsible for releasing the
- * buffer and for vrele'ing ni_startdir.
  */
 #define	RDONLY		0x00000200 /* lookup with read-only semantics */
-#define	SAVENAME	0x00000400 /* save pathname buffer */
-#define	SAVESTART	0x00000800 /* save starting directory */
+#define	ISRESTARTED	0x00000400 /* restarted namei */
+/* UNUSED		0x00000800 */
 #define	ISWHITEOUT	0x00001000 /* found whiteout */
 #define	DOWHITEOUT	0x00002000 /* do whiteouts */
 #define	WILLBEDIR	0x00004000 /* new files will be dirs; allow trailing / */
@@ -185,7 +172,7 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 #define	OPENREAD	0x00200000 /* open for reading */
 #define	OPENWRITE	0x00400000 /* open for writing */
 #define	WANTIOCTLCAPS	0x00800000 /* leave ioctl caps for the caller */
-#define	HASBUF		0x01000000 /* has allocated pathname buffer */
+/* UNUSED		0x01000000 */
 #define	NOEXECCHECK	0x02000000 /* do not perform exec check on dir */
 #define	MAKEENTRY	0x04000000 /* entry is to be added to name cache */
 #define	ISSYMLINK	0x08000000 /* symlink needs interpretation */
@@ -198,8 +185,8 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
  * Flags which must not be passed in by callers.
  */
 #define NAMEI_INTERNAL_FLAGS	\
-	(HASBUF | NOEXECCHECK | MAKEENTRY | ISSYMLINK | ISLASTCN | ISDOTDOT | \
-	 TRAILINGSLASH)
+	(NOEXECCHECK | MAKEENTRY | ISSYMLINK | ISLASTCN | ISDOTDOT | \
+	 TRAILINGSLASH | ISRESTARTED)
 
 /*
  * Namei results flags
@@ -211,8 +198,12 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 /*
  * Flags in ni_lcf, valid for the duration of the namei call.
  */
-#define	NI_LCF_STRICTRELATIVE	0x0001	/* relative lookup only */
+#define	NI_LCF_STRICTREL	0x0001	/* relative lookup only */
 #define	NI_LCF_CAP_DOTDOT	0x0002	/* ".." in strictrelative case */
+/* Track capability restrictions seperately for violation ktracing. */
+#define	NI_LCF_STRICTREL_KTR	0x0004	/* trace relative lookups */
+#define	NI_LCF_CAP_DOTDOT_KTR	0x0008	/* ".." in strictrelative case */
+#define	NI_LCF_KTR_FLAGS	(NI_LCF_STRICTREL_KTR | NI_LCF_CAP_DOTDOT_KTR)
 
 /*
  * Initialization of a nameidata structure.
@@ -280,34 +271,29 @@ do {										\
 	(ndp)->ni_vp_seqc = SEQC_MOD;						\
 } while (0)
 
-#define NDF_NO_DVP_RELE		0x00000001
-#define NDF_NO_DVP_UNLOCK	0x00000002
-#define NDF_NO_DVP_PUT		0x00000003
-#define NDF_NO_VP_RELE		0x00000004
-#define NDF_NO_VP_UNLOCK	0x00000008
-#define NDF_NO_VP_PUT		0x0000000c
-#define NDF_NO_STARTDIR_RELE	0x00000010
-#define NDF_NO_FREE_PNBUF	0x00000020
-
 #define NDFREE_IOCTLCAPS(ndp) do {						\
 	struct nameidata *_ndp = (ndp);						\
 	filecaps_free(&_ndp->ni_filecaps);					\
 } while (0)
-void NDFREE_PNBUF(struct nameidata *);
-void NDFREE(struct nameidata *, const u_int);
 
-#ifdef INVARIANTS
-void NDFREE_NOTHING(struct nameidata *);
-void NDVALIDATE(struct nameidata *);
-#else
-#define NDFREE_NOTHING(ndp)	do { } while (0)
-#define NDVALIDATE(ndp)	do { } while (0)
-#endif
+#define	NDFREE_PNBUF(ndp) do {							\
+	struct nameidata *_ndp = (ndp);						\
+	MPASS(_ndp->ni_cnd.cn_pnbuf != NULL);					\
+	uma_zfree(namei_zone, _ndp->ni_cnd.cn_pnbuf);				\
+	_ndp->ni_cnd.cn_pnbuf = NULL;						\
+} while (0)
 
 int	namei(struct nameidata *ndp);
 int	vfs_lookup(struct nameidata *ndp);
 int	vfs_relookup(struct vnode *dvp, struct vnode **vpp,
-	    struct componentname *cnp);
+	    struct componentname *cnp, bool refstart);
+
+#define namei_setup_rootdir(ndp, cnp, pwd) do {					\
+	if (__predict_true((cnp->cn_flags & ISRESTARTED) == 0))			\
+		ndp->ni_rootdir = pwd->pwd_adir;				\
+	else									\
+		ndp->ni_rootdir = pwd->pwd_rdir;				\
+} while (0)
 #endif
 
 /*

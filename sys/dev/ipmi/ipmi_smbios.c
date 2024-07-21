@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 IronPort Systems Inc. <ambrisko@ironport.com>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -104,6 +101,7 @@ smbios_ipmi_info(struct smbios_structure_header *h, void *arg)
 	switch (s->interface_type) {
 	case KCS_MODE:
 	case SMIC_MODE:
+	case BT_MODE:
 		info->address = IPMI_BAR_ADDR(s->base_address) |
 		    IPMI_BAM_ADDR_LSB(s->base_address_modifier);
 		info->io_mode = IPMI_BAR_MODE(s->base_address);
@@ -182,10 +180,10 @@ ipmi_smbios_probe(struct ipmi_get_info *info)
 	 */
 	header = pmap_mapbios(addr, sizeof(struct smbios_eps));
 	table = pmap_mapbios(addr, header->length);
-	pmap_unmapbios((vm_offset_t)header, sizeof(struct smbios_eps));
+	pmap_unmapbios(header, sizeof(struct smbios_eps));
 	header = table;
 	if (smbios_cksum(header) != 0) {
-		pmap_unmapbios((vm_offset_t)header, header->length);
+		pmap_unmapbios(header, header->length);
 		return;
 	}
 
@@ -196,8 +194,8 @@ ipmi_smbios_probe(struct ipmi_get_info *info)
 	    info);
 
 	/* Unmap everything. */
-	pmap_unmapbios((vm_offset_t)table, header->structure_table_length);
-	pmap_unmapbios((vm_offset_t)header, header->length);
+	pmap_unmapbios(table, header->structure_table_length);
+	pmap_unmapbios(header, header->length);
 }
 
 /*

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Gleb Popov
  * All rights reserved.
@@ -28,9 +28,6 @@
 /*
  * acl_extended_file_np: Check if the file has extended ACLs set.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/errno.h>

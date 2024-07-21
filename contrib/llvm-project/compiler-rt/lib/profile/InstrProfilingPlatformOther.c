@@ -7,8 +7,8 @@
 \*===----------------------------------------------------------------------===*/
 
 #if !defined(__APPLE__) && !defined(__linux__) && !defined(__FreeBSD__) &&     \
-    !(defined(__sun__) && defined(__svr4__)) && !defined(__NetBSD__) &&        \
-    !defined(_WIN32)
+    !defined(__Fuchsia__) && !(defined(__sun__) && defined(__svr4__)) &&       \
+    !defined(__NetBSD__) && !defined(_WIN32) && !defined(_AIX)
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -88,6 +88,10 @@ COMPILER_RT_VISIBILITY
 char *__llvm_profile_begin_counters(void) { return CountersFirst; }
 COMPILER_RT_VISIBILITY
 char *__llvm_profile_end_counters(void) { return CountersLast; }
+COMPILER_RT_VISIBILITY
+char *__llvm_profile_begin_bitmap(void) { return BitmapFirst; }
+COMPILER_RT_VISIBILITY
+char *__llvm_profile_end_bitmap(void) { return BitmapLast; }
 /* TODO: correctly set up OrderFileFirst. */
 COMPILER_RT_VISIBILITY
 uint32_t *__llvm_profile_begin_orderfile(void) { return OrderFileFirst; }

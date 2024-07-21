@@ -13,9 +13,6 @@
  * ====================================================
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "math.h"
 #include "math_private.h"
 
@@ -56,7 +53,7 @@ ivln2_h  =  1.4426879883e+00, /* 0x3fb8aa00 =16b 1/ln2*/
 ivln2_l  =  7.0526075433e-06; /* 0x36eca570 =1/ln2 tail*/
 
 float
-__ieee754_powf(float x, float y)
+powf(float x, float y)
 {
 	float z,ax,z_h,z_l,p_h,p_l;
 	float y1,t1,t2,r,s,sn,t,u,v,w;
@@ -108,7 +105,7 @@ __ieee754_powf(float x, float y)
 	if(hy==0x40000000) return x*x; /* y is  2 */
 	if(hy==0x3f000000) {	/* y is  0.5 */
 	    if(hx>=0)	/* x >= +0 */
-	    return __ieee754_sqrtf(x);
+	    return sqrtf(x);
 	}
 
 	ax   = fabsf(x);
@@ -245,7 +242,11 @@ __ieee754_powf(float x, float y)
 	r  = (z*t1)/(t1-two)-(w+z*w);
 	z  = one-(r-z);
 	GET_FLOAT_WORD(j,z);
-	j += (n<<23);
+    /*
+     * sign bit of z is 0.
+     * sign bit of j will indicate sign of 0x7f-biased exponent.
+     */
+	j += (int32_t)((u_int32_t)n<<23);
 	if((j>>23)<=0) z = scalbnf(z,n);	/* subnormal output */
 	else SET_FLOAT_WORD(z,j);
 	return sn*z;

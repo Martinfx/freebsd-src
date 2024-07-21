@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 ELFTCDIR=	${SRCTOP}/contrib/elftoolchain

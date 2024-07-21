@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * HID spec: http://www.usb.org/developers/devclass_docs/HID1_11.pdf
  */
@@ -122,6 +120,7 @@ struct ums_info {
 #define	UMS_FLAG_SBU        0x0010	/* spurious button up events */
 #define	UMS_FLAG_REVZ	    0x0020	/* Z-axis is reversed */
 #define	UMS_FLAG_W_AXIS     0x0040
+#define	UMS_FLAG_VBTN	    0x0080	/* Buttons in vendor usage page */
 
 	uint8_t	sc_iid_w;
 	uint8_t	sc_iid_x;
@@ -321,11 +320,12 @@ ums_intr_callback(struct usb_xfer *xfer, usb_error_t error)
 		if (++info != &sc->sc_info[UMS_INFO_MAX])
 			goto repeat;
 
+		/* keep old button value(s) for non-detected buttons */
+		buttons |= sc->sc_status.button & ~buttons_found;
+
 #ifdef EVDEV_SUPPORT
 		buttons_reported = buttons;
 #endif
-		/* keep old button value(s) for non-detected buttons */
-		buttons |= sc->sc_status.button & ~buttons_found;
 
 		if (dx || dy || dz || dt || dw ||
 		    (buttons != sc->sc_status.button)) {
@@ -538,12 +538,13 @@ ums_hid_parse(struct ums_softc *sc, device_t dev, const uint8_t *buf,
 	}
 
 	/* detect other buttons */
-
-	for (j = 0; (i < UMS_BUTTON_MAX) && (j < 2); i++, j++) {
-		if (!hid_locate(buf, len, HID_USAGE2(HUP_MICROSOFT, (j + 1)),
-		    hid_input, index, &info->sc_loc_btn[i], NULL, 
-		    &info->sc_iid_btn[i])) {
-			break;
+	if (info->sc_flags & UMS_FLAG_VBTN) {
+		for (j = 0; (i < UMS_BUTTON_MAX) && (j < 2); i++, j++) {
+			if (!hid_locate(buf, len, HID_USAGE2(HUP_MICROSOFT,
+			    (j + 1)), hid_input, index, &info->sc_loc_btn[i],
+			    NULL, &info->sc_iid_btn[i])) {
+				break;
+			}
 		}
 	}
 
@@ -617,6 +618,10 @@ ums_attach(device_t dev)
 	}
 
 	isize = hid_report_size_max(d_ptr, d_len, hid_input, &sc->sc_iid);
+
+	if (usb_test_quirk(uaa, UQ_MS_VENDOR_BTN))
+		for (i = 0; i < UMS_INFO_MAX; i++)
+			sc->sc_info[i].sc_flags |= UMS_FLAG_VBTN;
 
 	/*
 	 * The Microsoft Wireless Notebook Optical Mouse seems to be in worse
@@ -875,6 +880,10 @@ ums_put_queue(struct ums_softc *sc, int32_t dx, int32_t dy,
 {
 	uint8_t buf[8];
 
+#ifdef EVDEV_SUPPORT
+	if (evdev_is_grabbed(sc->sc_evdev))
+		return;
+#endif
 	if (1) {
 		if (dx > 254)
 			dx = 254;

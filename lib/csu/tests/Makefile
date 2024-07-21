@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=		dso
 TESTS_SUBDIRS=	dynamic
 TESTS_SUBDIRS+=	dynamiclib

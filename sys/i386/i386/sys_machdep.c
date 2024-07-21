@@ -27,19 +27,17 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)sys_machdep.c	5.5 (Berkeley) 1/19/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_capsicum.h"
 #include "opt_kstack_pages.h"
+#include "opt_ktrace.h"
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/systm.h>
+#include <sys/ktrace.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
@@ -154,26 +152,24 @@ sysarch(struct thread *td, struct sysarch_args *uap)
 	 * explicitly indicate whether or not the operation is safe to
 	 * perform in capability mode.
 	 */
-	if (IN_CAPABILITY_MODE(td)) {
-		switch (uap->op) {
-		case I386_GET_LDT:
-		case I386_SET_LDT:
-		case I386_GET_IOPERM:
-		case I386_GET_FSBASE:
-		case I386_SET_FSBASE:
-		case I386_GET_GSBASE:
-		case I386_SET_GSBASE:
-		case I386_GET_XFPUSTATE:
-			break;
+	switch (uap->op) {
+	case I386_GET_LDT:
+	case I386_SET_LDT:
+	case I386_GET_IOPERM:
+	case I386_GET_FSBASE:
+	case I386_SET_FSBASE:
+	case I386_GET_GSBASE:
+	case I386_SET_GSBASE:
+	case I386_GET_XFPUSTATE:
+		break;
 
-		case I386_SET_IOPERM:
-		default:
-#ifdef KTRACE
-			if (KTRPOINT(td, KTR_CAPFAIL))
-				ktrcapfail(CAPFAIL_SYSCALL, NULL, NULL);
-#endif
+	case I386_SET_IOPERM:
+	default:
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_SYSCALL, &uap->op);
+		if (IN_CAPABILITY_MODE(td))
 			return (ECAPMODE);
-		}
+		break;
 	}
 #endif
 
@@ -334,9 +330,7 @@ i386_extend_pcb(struct thread *td)
 }
 
 int
-i386_set_ioperm(td, uap)
-	struct thread *td;
-	struct i386_ioperm_args *uap;
+i386_set_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 {
 	char *iomap;
 	u_int i;
@@ -372,9 +366,7 @@ i386_set_ioperm(td, uap)
 }
 
 int
-i386_get_ioperm(td, uap)
-	struct thread *td;
-	struct i386_ioperm_args *uap;
+i386_get_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 {
 	int i, state;
 	char *iomap;

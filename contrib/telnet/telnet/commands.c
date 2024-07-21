@@ -32,8 +32,6 @@
 static const char sccsid[] = "@(#)commands.c	8.4 (Berkeley) 5/30/95";
 #endif
 #endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/un.h>
@@ -423,8 +421,7 @@ send_docmd(char *name)
 }
 
 static int
-send_dontcmd(name)
-    char *name;
+send_dontcmd(char *name)
 {
     return(send_tncmd(send_dont, "dont", name));
 }

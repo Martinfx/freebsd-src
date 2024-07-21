@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/fs/fdescfs
 
 KMOD=	fdescfs

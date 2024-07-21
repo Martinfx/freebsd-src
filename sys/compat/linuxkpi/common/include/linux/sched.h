@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_SCHED_H_
 #define	_LINUXKPI_LINUX_SCHED_H_
@@ -44,11 +42,14 @@
 #include <linux/completion.h>
 #include <linux/hrtimer.h>
 #include <linux/mm_types.h>
+#include <linux/nodemask.h>
 #include <linux/pid.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/spinlock.h>
 #include <linux/time.h>
+
+#include <linux/sched/mm.h>
 
 #include <asm/atomic.h>
 

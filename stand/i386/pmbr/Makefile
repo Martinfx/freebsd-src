@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	pmbr
 STRIP=
 BINMODE=${NOBINMODE}

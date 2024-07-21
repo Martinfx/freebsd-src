@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Alstom Group.
  * Copyright (c) 2021 Semihalf.
@@ -24,9 +24,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -98,6 +95,7 @@ static int	enetc_mtu_set(if_ctx_t, uint32_t);
 static void	enetc_setup_multicast(if_ctx_t);
 static void	enetc_timer(if_ctx_t, uint16_t);
 static void	enetc_update_admin_status(if_ctx_t);
+static bool	enetc_if_needs_restart(if_ctx_t, enum iflib_restart_event);
 
 static miibus_readreg_t		enetc_miibus_readreg;
 static miibus_writereg_t	enetc_miibus_writereg;
@@ -127,7 +125,7 @@ static int			enetc_ctrl_send(struct enetc_softc*,
 
 static const char enetc_driver_version[] = "1.0.0";
 
-static pci_vendor_info_t enetc_vendor_info_array[] = {
+static const pci_vendor_info_t enetc_vendor_info_array[] = {
 	PVID(PCI_VENDOR_FREESCALE, ENETC_DEV_ID_PF,
 	    "Freescale ENETC PCIe Gigabit Ethernet Controller"),
 	PVID_END
@@ -203,6 +201,8 @@ static device_method_t enetc_iflib_methods[] = {
 	DEVMETHOD(ifdi_promisc_set,		enetc_promisc_set),
 	DEVMETHOD(ifdi_timer,			enetc_timer),
 	DEVMETHOD(ifdi_update_admin_status,	enetc_update_admin_status),
+
+	DEVMETHOD(ifdi_needs_restart,		enetc_if_needs_restart),
 
 	DEVMETHOD_END
 };
@@ -581,7 +581,7 @@ enetc_get_hwaddr(struct enetc_softc *sc)
 static void
 enetc_set_hwaddr(struct enetc_softc *sc)
 {
-	struct ifnet *ifp;
+	if_t ifp;
 	uint16_t high;
 	uint32_t low;
 	uint8_t *hwaddr;
@@ -823,7 +823,7 @@ static void
 enetc_setup_multicast(if_ctx_t ctx)
 {
 	struct enetc_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	uint64_t bitmap = 0;
 	uint8_t revid;
 
@@ -905,7 +905,7 @@ enetc_init(if_ctx_t ctx)
 {
 	struct enetc_softc *sc;
 	struct mii_data *miid;
-	struct ifnet *ifp;
+	if_t ifp;
 	uint16_t max_frame_length;
 	int baudrate;
 
@@ -1335,7 +1335,7 @@ static uint64_t
 enetc_get_counter(if_ctx_t ctx, ift_counter cnt)
 {
 	struct enetc_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	sc = iflib_get_softc(ctx);
 	ifp = iflib_get_ifp(ctx);
@@ -1412,6 +1412,16 @@ enetc_update_admin_status(if_ctx_t ctx)
 	}
 }
 
+static bool
+enetc_if_needs_restart(if_ctx_t ctx __unused, enum iflib_restart_event event)
+{
+	switch (event) {
+	case IFLIB_RESTART_VLAN_CONFIG:
+	default:
+		return (false);
+	}
+}
+
 static int
 enetc_miibus_readreg(device_t dev, int phy, int reg)
 {
@@ -1481,7 +1491,7 @@ enetc_media_change(if_t ifp)
 	struct enetc_softc *sc;
 	struct mii_data *miid;
 
-	sc = iflib_get_softc(ifp->if_softc);
+	sc = iflib_get_softc(if_getsoftc(ifp));
 	miid = device_get_softc(sc->miibus);
 
 	mii_mediachg(miid);
@@ -1494,7 +1504,7 @@ enetc_media_status(if_t ifp, struct ifmediareq* ifmr)
 	struct enetc_softc *sc;
 	struct mii_data *miid;
 
-	sc = iflib_get_softc(ifp->if_softc);
+	sc = iflib_get_softc(if_getsoftc(ifp));
 	miid = device_get_softc(sc->miibus);
 
 	mii_pollstat(miid);
@@ -1515,7 +1525,7 @@ enetc_fixed_media_status(if_t ifp, struct ifmediareq* ifmr)
 {
 	struct enetc_softc *sc;
 
-	sc = iflib_get_softc(ifp->if_softc);
+	sc = iflib_get_softc(if_getsoftc(ifp));
 
 	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
 	ifmr->ifm_active = sc->fixed_ifmedia.ifm_cur->ifm_media;

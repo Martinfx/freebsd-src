@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MK_WERROR=	no
 NO_WTHREAD_SAFETY= true
 PACKAGE=	unbound

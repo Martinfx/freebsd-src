@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	dconschat
 MAN=	dconschat.8
 

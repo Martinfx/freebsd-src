@@ -1,7 +1,7 @@
 /*-
  * sar.c
  *
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Maksim Yevmenkin <m_evmenkin@yahoo.com>
  * All rights reserved.
@@ -28,9 +28,9 @@
  * SUCH DAMAGE.
  *
  * $Id: sar.c,v 1.2 2004/01/08 23:46:51 max Exp $
- * $FreeBSD$
  */
 
+#include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/uio.h>
 #include <netinet/in.h>
@@ -305,7 +305,7 @@ server_send_service_attribute_response(server_p srv, int32_t fd)
 	iov[3].iov_len = 1 + cs[0];
 
 	do {
-		size = writev(fd, (struct iovec const *) &iov, sizeof(iov)/sizeof(iov[0]));
+		size = writev(fd, (struct iovec const *) &iov, nitems(iov));
 	} while (size < 0 && errno == EINTR);
 
 	/* Check if we have sent (or failed to sent) last response chunk */

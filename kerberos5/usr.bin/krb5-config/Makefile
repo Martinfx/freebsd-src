@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	kerberos
 
 SCRIPTS=krb5-config

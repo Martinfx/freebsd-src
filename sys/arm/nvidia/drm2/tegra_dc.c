@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -39,8 +36,8 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 #include <dev/drm2/drmP.h>
 #include <dev/drm2/drm_crtc_helper.h>
 #include <dev/drm2/drm_fb_helper.h>
@@ -1231,7 +1228,8 @@ dc_init_client(device_t dev, device_t host1x, struct tegra_drm *drm)
 	sc->tegra_crtc.cursor_vbase = kmem_alloc_contig(256 * 256 * 4,
 	    M_WAITOK | M_ZERO, 0, -1UL, PAGE_SIZE, 0,
 	    VM_MEMATTR_WRITE_COMBINING);
-	sc->tegra_crtc.cursor_pbase = vtophys(sc->tegra_crtc.cursor_vbase);
+	sc->tegra_crtc.cursor_pbase =
+	    vtophys((uintptr_t)sc->tegra_crtc.cursor_vbase);
 	return (0);
 }
 

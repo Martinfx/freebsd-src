@@ -1,6 +1,3 @@
-#	@(#)Makefile	8.1 (Berkeley) 6/5/93
-# $FreeBSD$
-
 #	dump.h			header file
 #	itime.c			reads /etc/dumpdates
 #	main.c			driver
@@ -13,7 +10,7 @@
 #	DEBUG			use local directory to find ddate and dumpdates
 #	TDEBUG			trace out the process forking
 
-PACKAGE=runtime
+PACKAGE=ufs
 PROG=	dump
 CONFS=	/dev/null
 CONFSGRP=	operator

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * USB Open Host Controller driver.
  *
@@ -296,13 +294,8 @@ ohci_pci_attach(device_t self)
 
 	/* sc->sc_bus.usbrev; set by ohci_init() */
 
-#if (__FreeBSD_version >= 700031)
 	err = bus_setup_intr(self, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
 	    NULL, (driver_intr_t *)ohci_interrupt, sc, &sc->sc_intr_hdl);
-#else
-	err = bus_setup_intr(self, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
-	    (driver_intr_t *)ohci_interrupt, sc, &sc->sc_intr_hdl);
-#endif
 	if (err) {
 		device_printf(self, "Could not setup irq, %d\n", err);
 		sc->sc_intr_hdl = NULL;

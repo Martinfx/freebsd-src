@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 FWVERSION=	29
 NAME=		3168
 

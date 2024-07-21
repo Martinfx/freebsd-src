@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.init.mk>
 
 .PATH:	${GOOGLETEST_SRCROOT}/include ${GOOGLETEST_SRCROOT}/src

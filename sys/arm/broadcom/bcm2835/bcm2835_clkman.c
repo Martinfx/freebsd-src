@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2017 Poul-Henning Kamp <phk@FreeBSD.org>
  *
@@ -26,9 +26,6 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -51,6 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <arm/broadcom/bcm2835/bcm2835_clkman.h>
 
 static struct ofw_compat_data compat_data[] = {
+	{"brcm,bcm2711-cprman",		1},
 	{"brcm,bcm2835-cprman",		1},
 	{"broadcom,bcm2835-cprman",	1},
 	{NULL,				0}

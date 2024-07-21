@@ -26,9 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -48,7 +45,7 @@ int
 main(int argc, char **argv)
 {
 	char *p, *path;
-	ssize_t pathlen;
+	size_t pathlen;
 	int opt, status;
 
 	status = EXIT_SUCCESS;

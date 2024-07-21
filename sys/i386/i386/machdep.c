@@ -39,13 +39,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)machdep.c	7.4 (Berkeley) 6/3/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_apic.h"
 #include "opt_atpic.h"
 #include "opt_cpu.h"
@@ -115,6 +111,8 @@ __FBSDID("$FreeBSD$");
 #include <isa/rtc.h>
 
 #include <net/netisr.h>
+
+#include <dev/smbios/smbios.h>
 
 #include <machine/bootinfo.h>
 #include <machine/clock.h>
@@ -210,8 +208,7 @@ i386_clock_source_init(void)
 }
 
 static void
-cpu_startup(dummy)
-	void *dummy;
+cpu_startup(void *dummy)
 {
 	uintmax_t memsize;
 	char *sysenv;
@@ -737,9 +734,7 @@ DB_SHOW_COMMAND(frame, db_show_frame)
 #endif
 
 void
-sdtossd(sd, ssd)
-	struct segment_descriptor *sd;
-	struct soft_segment_descriptor *ssd;
+sdtossd(struct segment_descriptor *sd, struct soft_segment_descriptor *ssd)
 {
 	ssd->ssd_base  = (sd->sd_hibase << 24) | sd->sd_lobase;
 	ssd->ssd_limit = (sd->sd_hilimit << 16) | sd->sd_lolimit;
@@ -1135,10 +1130,11 @@ physmap_done:
 		if (physmap[i + 1] < end)
 			end = trunc_page(physmap[i + 1]);
 		for (pa = round_page(physmap[i]); pa < end; pa += PAGE_SIZE) {
-			int tmp, page_bad, full;
 			int *ptr;
+			int tmp;
+			bool full, page_bad;
 
-			full = FALSE;
+			full = false;
 			/*
 			 * block out kernel memory as not available.
 			 */
@@ -1153,7 +1149,7 @@ physmap_done:
 			    && pa < dcons_addr + dcons_size)
 				goto do_dump_avail;
 
-			page_bad = FALSE;
+			page_bad = false;
 			if (memtest == 0)
 				goto skip_memtest;
 
@@ -1168,25 +1164,25 @@ physmap_done:
 			 */
 			*(volatile int *)ptr = 0xaaaaaaaa;
 			if (*(volatile int *)ptr != 0xaaaaaaaa)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for alternating 0's and 1's
 			 */
 			*(volatile int *)ptr = 0x55555555;
 			if (*(volatile int *)ptr != 0x55555555)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 1's
 			 */
 			*(volatile int *)ptr = 0xffffffff;
 			if (*(volatile int *)ptr != 0xffffffff)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 0's
 			 */
 			*(volatile int *)ptr = 0x0;
 			if (*(volatile int *)ptr != 0x0)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Restore original value.
 			 */
@@ -1196,7 +1192,7 @@ skip_memtest:
 			/*
 			 * Adjust array of valid/good pages.
 			 */
-			if (page_bad == TRUE)
+			if (page_bad == true)
 				continue;
 			/*
 			 * If this good page is a continuation of the
@@ -1217,7 +1213,7 @@ skip_memtest:
 					printf(
 		"Too many holes in the physical address space, giving up\n");
 					pa_indx--;
-					full = TRUE;
+					full = true;
 					goto do_dump_avail;
 				}
 				phys_avail[pa_indx++] = pa;	/* start */
@@ -1433,6 +1429,7 @@ init386(int first)
 	}
 
 	identify_hypervisor();
+	identify_hypervisor_smbios();
 
 	/* Init basic tunables, hz etc */
 	init_param1();
@@ -1545,6 +1542,11 @@ init386(int first)
 		i386_kdb_init();
 	}
 
+	if (cpu_fxsr && (cpu_feature2 & CPUID2_XSAVE) != 0) {
+		use_xsave = 1;
+		TUNABLE_INT_FETCH("hw.use_xsave", &use_xsave);
+	}
+
 	kmdp = preload_search_by_type("elf kernel");
 	link_elf_ireloc(kmdp);
 
@@ -1565,6 +1567,7 @@ init386(int first)
 
 	msgbufinit(msgbufp, msgbufsize);
 	npxinit(true);
+
 	/*
 	 * Set up thread0 pcb after npxinit calculated pcb + fpu save
 	 * area size.  Zero out the extended state header in fpu save
@@ -1646,6 +1649,8 @@ machdep_init_trampoline(void)
 
 	/* Re-initialize new IDT since the handlers were relocated */
 	setidt_disp = trampoline - start_exceptions;
+	if (bootverbose)
+		printf("Trampoline disposition %#zx\n", setidt_disp);
 	fixup_idt();
 
 	r_idt.rd_limit = sizeof(struct gate_descriptor) * NIDT - 1;

@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef RTLD_MACHDEP_H
@@ -39,6 +37,9 @@
 
 struct Struct_Obj_Entry;
 
+#define	MD_OBJ_ENTRY	\
+    bool variant_pcs : 1;	/* Object has a variant pcs function */
+
 /* Return the address of the .dynamic section in the dynamic linker. */
 #define	rtld_dynamic(obj)						\
 ({									\
@@ -46,6 +47,10 @@ struct Struct_Obj_Entry;
 	asm volatile("adr	%0, _DYNAMIC" : "=&r"(_dynamic_addr));	\
 	(const Elf_Dyn *)_dynamic_addr;					\
 })
+
+bool arch_digest_dynamic(struct Struct_Obj_Entry *obj, const Elf_Dyn *dynp);
+
+bool arch_digest_note(struct Struct_Obj_Entry *obj, const Elf_Note *note);
 
 Elf_Addr reloc_jmpslot(Elf_Addr *where, Elf_Addr target,
     const struct Struct_Obj_Entry *defobj, const struct Struct_Obj_Entry *obj,
@@ -64,7 +69,7 @@ Elf_Addr reloc_jmpslot(Elf_Addr *where, Elf_Addr target,
  * Pass zeros into the ifunc resolver so we can change them later. The first
  * 8 arguments on arm64 are passed in registers so make them known values
  * if we decide to use them later. Because of this ifunc resolvers can assume
- * no arguments are passeed in, and if this changes later will be able to
+ * no arguments are passed in, and if this changes later will be able to
  * compare the argument with 0 to see if it is set.
  */
 #define	call_ifunc_resolver(ptr) \
@@ -86,9 +91,6 @@ typedef struct {
 } tls_index;
 
 extern void *__tls_get_addr(tls_index *ti);
-
-#define	RTLD_DEFAULT_STACK_PF_EXEC	PF_X
-#define	RTLD_DEFAULT_STACK_EXEC		PROT_EXEC
 
 #define md_abi_variant_hook(x)
 

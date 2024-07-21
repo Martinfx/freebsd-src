@@ -26,7 +26,6 @@
  */
 
 #include "archive_platform.h"
-__FBSDID("$FreeBSD$");
 
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
@@ -417,8 +416,8 @@ next_line(struct archive_read *a,
 }
 
 /*
- * Compare characters with a mtree keyword.
- * Returns the length of a mtree keyword if matched.
+ * Compare characters with an mtree keyword.
+ * Returns the length of an mtree keyword if matched.
  * Returns 0 if not matched.
  */
 static int
@@ -516,7 +515,7 @@ bid_keyword(const char *p,  ssize_t len)
 
 /*
  * Test whether there is a set of mtree keywords.
- * Returns the number of keyword.
+ * Returns the number of keywords.
  * Returns -1 if we got incorrect sequence.
  * This function expects a set of "<space characters>keyword=value".
  * When "unset" is specified, expects a set of "<space characters>keyword".
@@ -761,7 +760,7 @@ detect_form(struct archive_read *a, int *is_form_d)
 					multiline = 1;
 				else {
 					/* We've got plenty of correct lines
-					 * to assume that this file is a mtree
+					 * to assume that this file is an mtree
 					 * format. */
 					if (++entry_cnt >= MAX_BID_ENTRY)
 						break;
@@ -994,9 +993,11 @@ process_add_entry(struct archive_read *a, struct mtree *mtree,
 			struct mtree_entry *alt;
 			alt = (struct mtree_entry *)__archive_rb_tree_find_node(
 			    &mtree->rbtree, entry->name);
-			while (alt->next_dup)
-				alt = alt->next_dup;
-			alt->next_dup = entry;
+			if (alt != NULL) {
+				while (alt->next_dup)
+					alt = alt->next_dup;
+				alt->next_dup = entry;
+			}
 		}
 	}
 
@@ -1071,7 +1072,7 @@ read_mtree(struct archive_read *a, struct mtree *mtree)
 			continue;
 		/* Non-printable characters are not allowed */
 		for (s = p;s < p + len - 1; s++) {
-			if (!isprint((unsigned char)*s)) {
+			if (!isprint((unsigned char)*s) && *s != '\t') {
 				r = ARCHIVE_FATAL;
 				break;
 			}
@@ -1250,9 +1251,17 @@ parse_file(struct archive_read *a, struct archive_entry *entry,
 				archive_entry_filetype(entry) == AE_IFDIR) {
 			mtree->fd = open(path, O_RDONLY | O_BINARY | O_CLOEXEC);
 			__archive_ensure_cloexec_flag(mtree->fd);
-			if (mtree->fd == -1 &&
-				(errno != ENOENT ||
-				 archive_strlen(&mtree->contents_name) > 0)) {
+			if (mtree->fd == -1 && (
+#if defined(_WIN32) && !defined(__CYGWIN__)
+        /*
+         * On Windows, attempting to open a file with an
+         * invalid name result in EINVAL (Error 22)
+         */
+				(errno != ENOENT && errno != EINVAL)
+#else
+				errno != ENOENT
+#endif
+        || archive_strlen(&mtree->contents_name) > 0)) {
 				archive_set_error(&a->archive, errno,
 						"Can't open %s", path);
 				r = ARCHIVE_WARN;
@@ -1270,7 +1279,13 @@ parse_file(struct archive_read *a, struct archive_entry *entry,
 				mtree->fd = -1;
 				st = NULL;
 			}
-		} else if (lstat(path, st) == -1) {
+		}
+#ifdef HAVE_LSTAT
+		else if (lstat(path, st) == -1)
+#else
+		else if (la_stat(path, st) == -1)
+#endif
+		{
 			st = NULL;
 		}
 

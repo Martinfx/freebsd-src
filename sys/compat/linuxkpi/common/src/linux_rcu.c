@@ -25,9 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -44,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <ck_epoch.h>
 
 #include <linux/rcupdate.h>
+#include <linux/sched.h>
 #include <linux/srcu.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>

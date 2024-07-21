@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 FWVERSION=	29
 NAME=		7265D
 

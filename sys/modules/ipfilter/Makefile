@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/netpfil/ipfilter/netinet
 
 KMOD=	ipl

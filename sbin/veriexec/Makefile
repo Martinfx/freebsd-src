@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	veriexec
 MAN=	veriexec.8
 SRCS= \

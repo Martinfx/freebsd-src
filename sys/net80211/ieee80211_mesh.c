@@ -1,5 +1,5 @@
 /*- 
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 The FreeBSD Foundation 
  * 
@@ -27,10 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF 
  * SUCH DAMAGE. 
  */ 
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-__FBSDID("$FreeBSD$");
-#endif
 
 /*
  * IEEE 802.11s Mesh Point (MBSS) support.
@@ -58,6 +54,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_var.h>
 #include <net/if_media.h>
 #include <net/if_llc.h>
+#include <net/if_private.h>
 #include <net/ethernet.h>
 
 #include <net80211/ieee80211_var.h>
@@ -2194,7 +2191,7 @@ mesh_parse_meshpeering_action(struct ieee80211_node *ni,
 		sendclose = 1;
 		IEEE80211_DISCARD(vap,
 		    IEEE80211_MSG_ACTION | IEEE80211_MSG_MESH,
-		    wh, NULL, "%s", "configuration missmatch");
+		    wh, NULL, "%s", "configuration mismatch");
 	}
 
 	if (sendclose) {

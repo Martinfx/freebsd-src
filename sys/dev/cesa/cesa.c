@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2009-2011 Semihalf.
  * All rights reserved.
@@ -39,9 +39,6 @@
  * |  struct cesa_sa_hdesc  |
  * +------------------------+ <= sc->sc_sram_base_va
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -962,7 +959,7 @@ cesa_setup_sram(struct cesa_softc *sc)
 	sram_va = pmap_mapdev(sc->sc_sram_base_pa, sc->sc_sram_size);
 	if (sram_va == NULL)
 		return (ENOMEM);
-	sc->sc_sram_base_va = (vm_offset_t)sram_va;
+	sc->sc_sram_base_va = sram_va;
 
 	return (0);
 }
@@ -1072,7 +1069,7 @@ cesa_setup_sram_armada(struct cesa_softc *sc)
 	sram_va = pmap_mapdev(sc->sc_sram_base_pa, sc->sc_sram_size);
 	if (sram_va == NULL)
 		return (ENOMEM);
-	sc->sc_sram_base_va = (vm_offset_t)sram_va;
+	sc->sc_sram_base_va = sram_va;
 
 	return (0);
 }

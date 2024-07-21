@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	rdma
 PROG=	rping
 MAN=	rping.1

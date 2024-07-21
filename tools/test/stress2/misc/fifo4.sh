@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2018 Dell EMC Isilon
 #
@@ -27,7 +27,7 @@
 # SUCH DAMAGE.
 #
 
-# tmpfs(5) version of fifo2.sh
+# tmpfs(4) version of fifo2.sh
 # No problems seen on HEAD.
 
 [ `id -u ` -ne 0 ] && echo "Must be root!" && exit 1

@@ -23,8 +23,6 @@
 
 #include <sys/types.h>
 
-typedef int bool_t;
-
 /*
  * XDR enums and types.
  */
@@ -74,9 +72,6 @@ struct xdr_bytesrec {
  */
 void xdrmem_create(XDR *xdrs, const caddr_t addr, const uint_t size,
     const enum xdr_op op);
-
-/* Currently not needed. If needed later, we'll add it to struct xdr_ops */
-#define	xdr_destroy(xdrs) ((void) 0)
 
 #define	xdr_control(xdrs, req, info) \
 	(xdrs)->x_ops->xdr_control((xdrs), (req), (info))

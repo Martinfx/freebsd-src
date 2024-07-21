@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -26,16 +26,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /* Generic framebuffer */
 /* TODO unlink from VT(9) */
 /* TODO done normal /dev/fb methods */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -210,8 +205,8 @@ fbd_list(void)
 		return (ENOENT);
 
 	LIST_FOREACH(entry, &fb_list_head, fb_list) {
-		printf("FB %s @%p\n", entry->fb_info->fb_name,
-		    (void *)entry->fb_info->fb_pbase);
+		printf("FB %s @%#jx\n", entry->fb_info->fb_name,
+		    (uintmax_t)entry->fb_info->fb_pbase);
 	}
 
 	return (0);

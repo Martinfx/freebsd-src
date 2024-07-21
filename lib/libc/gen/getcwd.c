@@ -29,10 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__SCCSID("@(#)getcwd.c	8.5 (Berkeley) 2/7/95");
-__FBSDID("$FreeBSD$");
-
 #include "namespace.h"
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -44,6 +40,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ssp/ssp.h>
 #include "un-namespace.h"
 
 #include "gen-private.h"
@@ -55,7 +52,7 @@ __FBSDID("$FreeBSD$");
 extern int __getcwd(char *, size_t);
 
 char *
-getcwd(char *pt, size_t size)
+__ssp_real(getcwd)(char *pt, size_t size)
 {
 	struct dirent *dp;
 	DIR *dir = NULL;

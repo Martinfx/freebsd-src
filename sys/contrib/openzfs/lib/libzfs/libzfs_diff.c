@@ -44,6 +44,7 @@
 #include <pthread.h>
 #include <sys/zfs_ioctl.h>
 #include <libzfs.h>
+#include <libzutil.h>
 #include "libzfs_impl.h"
 
 #define	ZDIFF_SNAPDIR		"/.zfs/snapshot/"
@@ -54,6 +55,10 @@
 #define	ZDIFF_REMOVED	'-'
 #define	ZDIFF_RENAMED	"R"
 
+#define	ZDIFF_ADDED_COLOR    ANSI_GREEN
+#define	ZDIFF_MODIFIED_COLOR ANSI_YELLOW
+#define	ZDIFF_REMOVED_COLOR  ANSI_RED
+#define	ZDIFF_RENAMED_COLOR  ANSI_BOLD_BLUE
 
 /*
  * Given a {dsname, object id}, get the object path
@@ -128,6 +133,25 @@ stream_bytes(FILE *fp, const char *string)
 	}
 }
 
+/*
+ * Takes the type of change (like `print_file`), outputs the appropriate color
+ */
+static const char *
+type_to_color(char type)
+{
+	if (type == '+')
+		return (ZDIFF_ADDED_COLOR);
+	else if (type == '-')
+		return (ZDIFF_REMOVED_COLOR);
+	else if (type == 'M')
+		return (ZDIFF_MODIFIED_COLOR);
+	else if (type == 'R')
+		return (ZDIFF_RENAMED_COLOR);
+	else
+		return (NULL);
+}
+
+
 static char
 get_what(mode_t what)
 {
@@ -175,6 +199,8 @@ static void
 print_rename(FILE *fp, differ_info_t *di, const char *old, const char *new,
     zfs_stat_t *isb)
 {
+	if (isatty(fileno(fp)))
+		color_start(ZDIFF_RENAMED_COLOR);
 	if (di->timestamped)
 		(void) fprintf(fp, "%10lld.%09lld\t",
 		    (longlong_t)isb->zs_ctime[0],
@@ -186,12 +212,18 @@ print_rename(FILE *fp, differ_info_t *di, const char *old, const char *new,
 	(void) fputs(di->scripted ? "\t" : " -> ", fp);
 	print_cmn(fp, di, new);
 	(void) fputc('\n', fp);
+
+	if (isatty(fileno(fp)))
+		color_end();
 }
 
 static void
 print_link_change(FILE *fp, differ_info_t *di, int delta, const char *file,
     zfs_stat_t *isb)
 {
+	if (isatty(fileno(fp)))
+		color_start(ZDIFF_MODIFIED_COLOR);
+
 	if (di->timestamped)
 		(void) fprintf(fp, "%10lld.%09lld\t",
 		    (longlong_t)isb->zs_ctime[0],
@@ -201,12 +233,17 @@ print_link_change(FILE *fp, differ_info_t *di, int delta, const char *file,
 		(void) fprintf(fp, "%c\t", get_what(isb->zs_mode));
 	print_cmn(fp, di, file);
 	(void) fprintf(fp, "\t(%+d)\n", delta);
+	if (isatty(fileno(fp)))
+		color_end();
 }
 
 static void
 print_file(FILE *fp, differ_info_t *di, char type, const char *file,
     zfs_stat_t *isb)
 {
+	if (isatty(fileno(fp)))
+		color_start(type_to_color(type));
+
 	if (di->timestamped)
 		(void) fprintf(fp, "%10lld.%09lld\t",
 		    (longlong_t)isb->zs_ctime[0],
@@ -216,6 +253,9 @@ print_file(FILE *fp, differ_info_t *di, char type, const char *file,
 		(void) fprintf(fp, "%c\t", get_what(isb->zs_mode));
 	print_cmn(fp, di, file);
 	(void) fputc('\n', fp);
+
+	if (isatty(fileno(fp)))
+		color_end();
 }
 
 static int
@@ -243,7 +283,7 @@ write_inuse_diffs_one(FILE *fp, differ_info_t *di, uint64_t dobj)
 	fobjerr = get_stats_for_obj(di, di->fromsnap, dobj, fobjname,
 	    MAXPATHLEN, &fsb);
 	if (fobjerr && di->zerr != ENOTSUP && di->zerr != ENOENT) {
-		zfs_error_aux(di->zhp->zfs_hdl, "%s", strerror(di->zerr));
+		zfs_error_aux(di->zhp->zfs_hdl, "%s", zfs_strerror(di->zerr));
 		zfs_error(di->zhp->zfs_hdl, di->zerr, di->errbuf);
 		/*
 		 * Let's not print an error for the same object more than
@@ -258,7 +298,7 @@ write_inuse_diffs_one(FILE *fp, differ_info_t *di, uint64_t dobj)
 	if (tobjerr && di->zerr != ENOTSUP && di->zerr != ENOENT) {
 		if (!already_logged) {
 			zfs_error_aux(di->zhp->zfs_hdl,
-			    "%s", strerror(di->zerr));
+			    "%s", zfs_strerror(di->zerr));
 			zfs_error(di->zhp->zfs_hdl, di->zerr, di->errbuf);
 		}
 	}
@@ -377,7 +417,7 @@ write_free_diffs(FILE *fp, differ_info_t *di, dmu_diff_record_t *dr)
 			if (zc.zc_obj > dr->ddr_last) {
 				break;
 			}
-			err = describe_free(fp, di, zc.zc_obj, fobjname,
+			(void) describe_free(fp, di, zc.zc_obj, fobjname,
 			    MAXPATHLEN);
 		} else if (errno == ESRCH) {
 			break;
@@ -405,7 +445,7 @@ differ(void *arg)
 
 	if ((ofp = fdopen(di->outputfd, "w")) == NULL) {
 		di->zerr = errno;
-		strlcpy(di->errbuf, strerror(errno), sizeof (di->errbuf));
+		strlcpy(di->errbuf, zfs_strerror(errno), sizeof (di->errbuf));
 		(void) close(di->datafd);
 		return ((void *)-1);
 	}
@@ -572,8 +612,7 @@ get_snapshot_names(differ_info_t *di, const char *fromsnap,
 		zfs_handle_t *zhp;
 
 		di->ds = zfs_alloc(di->zhp->zfs_hdl, tdslen + 1);
-		(void) strncpy(di->ds, tosnap, tdslen);
-		di->ds[tdslen] = '\0';
+		(void) strlcpy(di->ds, tosnap, tdslen + 1);
 
 		zhp = zfs_open(hdl, di->ds, ZFS_TYPE_FILESYSTEM);
 		while (zhp != NULL) {
@@ -609,8 +648,7 @@ get_snapshot_names(differ_info_t *di, const char *fromsnap,
 		int dslen = fdslen ? fdslen : tdslen;
 
 		di->ds = zfs_alloc(hdl, dslen + 1);
-		(void) strncpy(di->ds, fdslen ? fromsnap : tosnap, dslen);
-		di->ds[dslen] = '\0';
+		(void) strlcpy(di->ds, fdslen ? fromsnap : tosnap, dslen + 1);
 
 		di->fromsnap = zfs_asprintf(hdl, "%s%s", di->ds, atptrf);
 		if (tsnlen) {
@@ -724,7 +762,7 @@ zfs_show_diffs(zfs_handle_t *zhp, int outfd, const char *fromsnap,
 	}
 
 	if (pipe2(pipefd, O_CLOEXEC)) {
-		zfs_error_aux(zhp->zfs_hdl, "%s", strerror(errno));
+		zfs_error_aux(zhp->zfs_hdl, "%s", zfs_strerror(errno));
 		teardown_differ_info(&di);
 		return (zfs_error(zhp->zfs_hdl, EZFS_PIPEFAILED, errbuf));
 	}
@@ -738,7 +776,7 @@ zfs_show_diffs(zfs_handle_t *zhp, int outfd, const char *fromsnap,
 	di.datafd = pipefd[0];
 
 	if (pthread_create(&tid, NULL, differ, &di)) {
-		zfs_error_aux(zhp->zfs_hdl, "%s", strerror(errno));
+		zfs_error_aux(zhp->zfs_hdl, "%s", zfs_strerror(errno));
 		(void) close(pipefd[0]);
 		(void) close(pipefd[1]);
 		teardown_differ_info(&di);
@@ -764,14 +802,15 @@ zfs_show_diffs(zfs_handle_t *zhp, int outfd, const char *fromsnap,
 			zfs_error_aux(zhp->zfs_hdl, dgettext(TEXT_DOMAIN,
 			    "\n   Not an earlier snapshot from the same fs"));
 		} else if (errno != EPIPE || di.zerr == 0) {
-			zfs_error_aux(zhp->zfs_hdl, "%s", strerror(errno));
+			zfs_error_aux(zhp->zfs_hdl, "%s", zfs_strerror(errno));
 		}
 		(void) close(pipefd[1]);
 		(void) pthread_cancel(tid);
 		(void) pthread_join(tid, NULL);
 		teardown_differ_info(&di);
 		if (di.zerr != 0 && di.zerr != EPIPE) {
-			zfs_error_aux(zhp->zfs_hdl, "%s", strerror(di.zerr));
+			zfs_error_aux(zhp->zfs_hdl, "%s",
+			    zfs_strerror(di.zerr));
 			return (zfs_error(zhp->zfs_hdl, EZFS_DIFF, di.errbuf));
 		} else {
 			return (zfs_error(zhp->zfs_hdl, EZFS_DIFFDATA, errbuf));
@@ -782,7 +821,7 @@ zfs_show_diffs(zfs_handle_t *zhp, int outfd, const char *fromsnap,
 	(void) pthread_join(tid, NULL);
 
 	if (di.zerr != 0) {
-		zfs_error_aux(zhp->zfs_hdl, "%s", strerror(di.zerr));
+		zfs_error_aux(zhp->zfs_hdl, "%s", zfs_strerror(di.zerr));
 		return (zfs_error(zhp->zfs_hdl, EZFS_DIFF, di.errbuf));
 	}
 	teardown_differ_info(&di);

@@ -9,6 +9,7 @@
 #include "cbor/internal/builder_callbacks.h"
 #include "cbor/internal/loaders.h"
 
+#pragma clang diagnostic push
 cbor_item_t *cbor_load(cbor_data source, size_t source_size,
                        struct cbor_load_result *result) {
   /* Context stack */
@@ -83,7 +84,7 @@ cbor_item_t *cbor_load(cbor_data source, size_t source_size,
           goto error;
         }
       case CBOR_DECODER_ERROR:
-        /* Reserved/malformated item */
+        /* Reserved/malformed item */
         {
           result->error.code = CBOR_ERR_MALFORMATED;
           goto error;
@@ -100,9 +101,7 @@ cbor_item_t *cbor_load(cbor_data source, size_t source_size,
     }
   } while (stack.size > 0);
 
-  /* Move the result before free */
-  cbor_item_t *result_item = context.root;
-  return result_item;
+  return context.root;
 
 error:
   result->error.position = result->read;
@@ -131,8 +130,6 @@ static cbor_item_t *_cbor_copy_int(cbor_item_t *item, bool negative) {
     case CBOR_INT_64:
       res = cbor_build_uint64(cbor_get_uint64(item));
       break;
-    default:
-      return NULL;
   }
 
   if (negative) cbor_mark_negint(res);
@@ -141,6 +138,7 @@ static cbor_item_t *_cbor_copy_int(cbor_item_t *item, bool negative) {
 }
 
 static cbor_item_t *_cbor_copy_float_ctrl(cbor_item_t *item) {
+  // cppcheck-suppress missingReturn
   switch (cbor_float_get_width(item)) {
     case CBOR_FLOAT_0:
       return cbor_build_ctrl(cbor_ctrl_value(item));
@@ -151,11 +149,10 @@ static cbor_item_t *_cbor_copy_float_ctrl(cbor_item_t *item) {
     case CBOR_FLOAT_64:
       return cbor_build_float8(cbor_float_get_float8(item));
   }
-
-  return NULL;
 }
 
 cbor_item_t *cbor_copy(cbor_item_t *item) {
+  // cppcheck-suppress missingReturn
   switch (cbor_typeof(item)) {
     case CBOR_TYPE_UINT:
       return _cbor_copy_int(item, false);
@@ -167,10 +164,24 @@ cbor_item_t *cbor_copy(cbor_item_t *item) {
                                      cbor_bytestring_length(item));
       } else {
         cbor_item_t *res = cbor_new_indefinite_bytestring();
-        for (size_t i = 0; i < cbor_bytestring_chunk_count(item); i++)
-          cbor_bytestring_add_chunk(
-              res,
-              cbor_move(cbor_copy(cbor_bytestring_chunks_handle(item)[i])));
+        if (res == NULL) {
+          return NULL;
+        }
+
+        for (size_t i = 0; i < cbor_bytestring_chunk_count(item); i++) {
+          cbor_item_t *chunk_copy =
+              cbor_copy(cbor_bytestring_chunks_handle(item)[i]);
+          if (chunk_copy == NULL) {
+            cbor_decref(&res);
+            return NULL;
+          }
+          if (!cbor_bytestring_add_chunk(res, chunk_copy)) {
+            cbor_decref(&chunk_copy);
+            cbor_decref(&res);
+            return NULL;
+          }
+          cbor_decref(&chunk_copy);
+        }
         return res;
       }
     case CBOR_TYPE_STRING:
@@ -179,53 +190,106 @@ cbor_item_t *cbor_copy(cbor_item_t *item) {
                                   cbor_string_length(item));
       } else {
         cbor_item_t *res = cbor_new_indefinite_string();
-        for (size_t i = 0; i < cbor_string_chunk_count(item); i++)
-          cbor_string_add_chunk(
-              res, cbor_move(cbor_copy(cbor_string_chunks_handle(item)[i])));
+        if (res == NULL) {
+          return NULL;
+        }
+
+        for (size_t i = 0; i < cbor_string_chunk_count(item); i++) {
+          cbor_item_t *chunk_copy =
+              cbor_copy(cbor_string_chunks_handle(item)[i]);
+          if (chunk_copy == NULL) {
+            cbor_decref(&res);
+            return NULL;
+          }
+          if (!cbor_string_add_chunk(res, chunk_copy)) {
+            cbor_decref(&chunk_copy);
+            cbor_decref(&res);
+            return NULL;
+          }
+          cbor_decref(&chunk_copy);
+        }
         return res;
       }
     case CBOR_TYPE_ARRAY: {
       cbor_item_t *res;
-      if (cbor_array_is_definite(item))
+      if (cbor_array_is_definite(item)) {
         res = cbor_new_definite_array(cbor_array_size(item));
-      else
+      } else {
         res = cbor_new_indefinite_array();
+      }
+      if (res == NULL) {
+        return NULL;
+      }
 
-      for (size_t i = 0; i < cbor_array_size(item); i++)
-        cbor_array_push(
-            res, cbor_move(cbor_copy(cbor_move(cbor_array_get(item, i)))));
+      for (size_t i = 0; i < cbor_array_size(item); i++) {
+        cbor_item_t *entry_copy = cbor_copy(cbor_move(cbor_array_get(item, i)));
+        if (entry_copy == NULL) {
+          cbor_decref(&res);
+          return NULL;
+        }
+        if (!cbor_array_push(res, entry_copy)) {
+          cbor_decref(&entry_copy);
+          cbor_decref(&res);
+          return NULL;
+        }
+        cbor_decref(&entry_copy);
+      }
       return res;
     }
     case CBOR_TYPE_MAP: {
       cbor_item_t *res;
-      if (cbor_map_is_definite(item))
+      if (cbor_map_is_definite(item)) {
         res = cbor_new_definite_map(cbor_map_size(item));
-      else
+      } else {
         res = cbor_new_indefinite_map();
+      }
+      if (res == NULL) {
+        return NULL;
+      }
 
       struct cbor_pair *it = cbor_map_handle(item);
-      for (size_t i = 0; i < cbor_map_size(item); i++)
-        cbor_map_add(res, (struct cbor_pair){
-                              .key = cbor_move(cbor_copy(it[i].key)),
-                              .value = cbor_move(cbor_copy(it[i].value))});
+      for (size_t i = 0; i < cbor_map_size(item); i++) {
+        cbor_item_t *key_copy = cbor_copy(it[i].key);
+        if (key_copy == NULL) {
+          cbor_decref(&res);
+          return NULL;
+        }
+        cbor_item_t *value_copy = cbor_copy(it[i].value);
+        if (value_copy == NULL) {
+          cbor_decref(&res);
+          cbor_decref(&key_copy);
+          return NULL;
+        }
+        if (!cbor_map_add(res, (struct cbor_pair){.key = key_copy,
+                                                  .value = value_copy})) {
+          cbor_decref(&res);
+          cbor_decref(&key_copy);
+          cbor_decref(&value_copy);
+          return NULL;
+        }
+        cbor_decref(&key_copy);
+        cbor_decref(&value_copy);
+      }
       return res;
     }
-    case CBOR_TYPE_TAG:
-      return cbor_build_tag(
-          cbor_tag_value(item),
-          cbor_move(cbor_copy(cbor_move(cbor_tag_item(item)))));
+    case CBOR_TYPE_TAG: {
+      cbor_item_t *item_copy = cbor_copy(cbor_move(cbor_tag_item(item)));
+      if (item_copy == NULL) {
+        return NULL;
+      }
+      cbor_item_t *tag = cbor_build_tag(cbor_tag_value(item), item_copy);
+      cbor_decref(&item_copy);
+      return tag;
+    }
     case CBOR_TYPE_FLOAT_CTRL:
       return _cbor_copy_float_ctrl(item);
   }
-
-  return NULL;
 }
 
 #if CBOR_PRETTY_PRINTER
 
 #include <inttypes.h>
 #include <locale.h>
-#include <stdlib.h>
 #include <wchar.h>
 
 #define __STDC_FORMAT_MACROS
@@ -237,89 +301,105 @@ static int _pow(int b, int ex) {
   return res;
 }
 
+static void _cbor_type_marquee(FILE *out, char *label, int indent) {
+  fprintf(out, "%*.*s[%s] ", indent, indent, " ", label);
+}
+
 static void _cbor_nested_describe(cbor_item_t *item, FILE *out, int indent) {
-  setlocale(LC_ALL, "");
+  const int indent_offset = 4;
   switch (cbor_typeof(item)) {
     case CBOR_TYPE_UINT: {
-      fprintf(out, "%*s[CBOR_TYPE_UINT] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_UINT", indent);
       fprintf(out, "Width: %dB, ", _pow(2, cbor_int_get_width(item)));
       fprintf(out, "Value: %" PRIu64 "\n", cbor_get_int(item));
       break;
-    };
+    }
     case CBOR_TYPE_NEGINT: {
-      fprintf(out, "%*s[CBOR_TYPE_NEGINT] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_NEGINT", indent);
       fprintf(out, "Width: %dB, ", _pow(2, cbor_int_get_width(item)));
-      fprintf(out, "Value: -%" PRIu64 " -1\n", cbor_get_int(item));
+      fprintf(out, "Value: -%" PRIu64 " - 1\n", cbor_get_int(item));
       break;
-    };
+    }
     case CBOR_TYPE_BYTESTRING: {
-      fprintf(out, "%*s[CBOR_TYPE_BYTESTRING] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_BYTESTRING", indent);
       if (cbor_bytestring_is_indefinite(item)) {
-        fprintf(out, "Indefinite, with %zu chunks:\n",
+        fprintf(out, "Indefinite, Chunks: %zu, Chunk data:\n",
                 cbor_bytestring_chunk_count(item));
         for (size_t i = 0; i < cbor_bytestring_chunk_count(item); i++)
           _cbor_nested_describe(cbor_bytestring_chunks_handle(item)[i], out,
-                                indent + 4);
+                                indent + indent_offset);
       } else {
-        fprintf(out, "Definite, length %zuB\n", cbor_bytestring_length(item));
-      }
-      break;
-    };
-    case CBOR_TYPE_STRING: {
-      fprintf(out, "%*s[CBOR_TYPE_STRING] ", indent, " ");
-      if (cbor_string_is_indefinite(item)) {
-        fprintf(out, "Indefinite, with %zu chunks:\n",
-                cbor_string_chunk_count(item));
-        for (size_t i = 0; i < cbor_string_chunk_count(item); i++)
-          _cbor_nested_describe(cbor_string_chunks_handle(item)[i], out,
-                                indent + 4);
-      } else {
-        fprintf(out, "Definite, length %zuB, %zu codepoints\n",
-                cbor_string_length(item), cbor_string_codepoint_count(item));
-        /* Careful - this doesn't support multibyte characters! */
-        /* Printing those is out of the scope of this demo :) */
-        /* libICU is your friend */
-        fprintf(out, "%*s", indent + 4, " ");
-        /* XXX: no null at the end -> confused vprintf */
-        fwrite(cbor_string_handle(item), (int)cbor_string_length(item), 1, out);
+        const unsigned char *data = cbor_bytestring_handle(item);
+        fprintf(out, "Definite, Length: %zuB, Data:\n",
+                cbor_bytestring_length(item));
+        fprintf(out, "%*s", indent + indent_offset, " ");
+        for (size_t i = 0; i < cbor_bytestring_length(item); i++)
+          fprintf(out, "%02x", (int)(data[i] & 0xff));
         fprintf(out, "\n");
       }
       break;
-    };
-    case CBOR_TYPE_ARRAY: {
-      fprintf(out, "%*s[CBOR_TYPE_ARRAY] ", indent, " ");
-      if (cbor_array_is_definite(item)) {
-        fprintf(out, "Definite, size: %zu\n", cbor_array_size(item));
+    }
+    case CBOR_TYPE_STRING: {
+      _cbor_type_marquee(out, "CBOR_TYPE_STRING", indent);
+      if (cbor_string_is_indefinite(item)) {
+        fprintf(out, "Indefinite, Chunks: %zu, Chunk data:\n",
+                cbor_string_chunk_count(item));
+        for (size_t i = 0; i < cbor_string_chunk_count(item); i++)
+          _cbor_nested_describe(cbor_string_chunks_handle(item)[i], out,
+                                indent + indent_offset);
       } else {
-        fprintf(out, "Indefinite, size:  %zu\n", cbor_array_size(item));
+        fprintf(out, "Definite, Length: %zuB, Codepoints: %zu, Data:\n",
+                cbor_string_length(item), cbor_string_codepoint_count(item));
+        fprintf(out, "%*s", indent + indent_offset, " ");
+        // Note: The string is not escaped, whitespace and control character
+        // will be printed in verbatim and take effect.
+        fwrite(cbor_string_handle(item), sizeof(unsigned char),
+               cbor_string_length(item), out);
+        fprintf(out, "\n");
+      }
+      break;
+    }
+    case CBOR_TYPE_ARRAY: {
+      _cbor_type_marquee(out, "CBOR_TYPE_ARRAY", indent);
+      if (cbor_array_is_definite(item)) {
+        fprintf(out, "Definite, Size: %zu, Contents:\n", cbor_array_size(item));
+      } else {
+        fprintf(out, "Indefinite, Size: %zu, Contents:\n",
+                cbor_array_size(item));
       }
 
       for (size_t i = 0; i < cbor_array_size(item); i++)
-        _cbor_nested_describe(cbor_array_handle(item)[i], out, indent + 4);
+        _cbor_nested_describe(cbor_array_handle(item)[i], out,
+                              indent + indent_offset);
       break;
-    };
+    }
     case CBOR_TYPE_MAP: {
-      fprintf(out, "%*s[CBOR_TYPE_MAP] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_MAP", indent);
       if (cbor_map_is_definite(item)) {
-        fprintf(out, "Definite, size: %zu\n", cbor_map_size(item));
+        fprintf(out, "Definite, Size: %zu, Contents:\n", cbor_map_size(item));
       } else {
-        fprintf(out, "Indefinite, size:  %zu\n", cbor_map_size(item));
+        fprintf(out, "Indefinite, Size: %zu, Contents:\n", cbor_map_size(item));
       }
 
+      // TODO: Label and group keys and values
       for (size_t i = 0; i < cbor_map_size(item); i++) {
-        _cbor_nested_describe(cbor_map_handle(item)[i].key, out, indent + 4);
-        _cbor_nested_describe(cbor_map_handle(item)[i].value, out, indent + 4);
+        fprintf(out, "%*sMap entry %zu\n", indent + indent_offset, " ", i);
+        _cbor_nested_describe(cbor_map_handle(item)[i].key, out,
+                              indent + 2 * indent_offset);
+        _cbor_nested_describe(cbor_map_handle(item)[i].value, out,
+                              indent + 2 * indent_offset);
       }
       break;
-    };
+    }
     case CBOR_TYPE_TAG: {
-      fprintf(out, "%*s[CBOR_TYPE_TAG] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_TAG", indent);
       fprintf(out, "Value: %" PRIu64 "\n", cbor_tag_value(item));
-      _cbor_nested_describe(cbor_move(cbor_tag_item(item)), out, indent + 4);
+      _cbor_nested_describe(cbor_move(cbor_tag_item(item)), out,
+                            indent + indent_offset);
       break;
-    };
+    }
     case CBOR_TYPE_FLOAT_CTRL: {
-      fprintf(out, "%*s[CBOR_TYPE_FLOAT_CTRL] ", indent, " ");
+      _cbor_type_marquee(out, "CBOR_TYPE_FLOAT_CTRL", indent);
       if (cbor_float_ctrl_is_ctrl(item)) {
         if (cbor_is_bool(item))
           fprintf(out, "Bool: %s\n", cbor_get_bool(item) ? "true" : "false");
@@ -328,13 +408,13 @@ static void _cbor_nested_describe(cbor_item_t *item, FILE *out, int indent) {
         else if (cbor_is_null(item))
           fprintf(out, "Null\n");
         else
-          fprintf(out, "Simple value %d\n", cbor_ctrl_value(item));
+          fprintf(out, "Simple value: %d\n", cbor_ctrl_value(item));
       } else {
         fprintf(out, "Width: %dB, ", _pow(2, cbor_float_get_width(item)));
-        fprintf(out, "value: %lf\n", cbor_float_get_float(item));
+        fprintf(out, "Value: %lf\n", cbor_float_get_float(item));
       }
       break;
-    };
+    }
   }
 }
 

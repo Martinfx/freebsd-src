@@ -29,21 +29,7 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1980, 1986, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/14/95";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#define	IN_RTLD			/* So we pickup the P_OSREL defines */
+#define _WANT_P_OSREL
 #include <sys/param.h>
 #include <sys/file.h>
 #include <sys/mount.h>
@@ -61,7 +47,6 @@ __FBSDID("$FreeBSD$");
 #include <fstab.h>
 #include <grp.h>
 #include <inttypes.h>
-#include <libufs.h>
 #include <mntopts.h>
 #include <paths.h>
 #include <stdint.h>
@@ -70,14 +55,13 @@ __FBSDID("$FreeBSD$");
 
 #include "fsck.h"
 
-static int	restarts;
+static int  restarts;
+static char snapname[BUFSIZ];	/* when doing snapshots, the name of the file */
 
 static void usage(void) __dead2;
 static intmax_t argtoimax(int flag, const char *req, const char *str, int base);
 static int checkfilesys(char *filesys);
 static int setup_bkgrdchk(struct statfs *mntp, int sbrdfailed, char **filesys);
-static int chkdoreload(struct statfs *mntp);
-static struct statfs *getmntpt(const char *);
 
 int
 main(int argc, char *argv[])
@@ -258,7 +242,7 @@ checkfilesys(char *filesys)
 	 * if it is listed among the mounted file systems. Failing that
 	 * check to see if it is listed in /etc/fstab.
 	 */
-	mntp = getmntpt(filesys);
+	mntp = getmntpoint(filesys);
 	if (mntp != NULL)
 		filesys = mntp->f_mntfromname;
 	else
@@ -276,9 +260,16 @@ checkfilesys(char *filesys)
 	if (bkgrdcheck) {
 		if (sbreadfailed)
 			exit(3);	/* Cannot read superblock */
-		/* Earlier background failed or journaled */
-		if (sblock.fs_flags & (FS_NEEDSFSCK | FS_SUJ))
-			exit(4);
+		if ((sblock.fs_flags & FS_NEEDSFSCK) == FS_NEEDSFSCK)
+			exit(4);	/* Earlier background failed */
+		if ((sblock.fs_flags & FS_SUJ) == FS_SUJ) {
+			maxino = sblock.fs_ncg * sblock.fs_ipg;
+			maxfsblock = sblock.fs_size;
+			bufinit();
+			preen = 1;
+			if (suj_check(filesys) == 0)
+				exit(4); /* Journal good, run it now */
+		}
 		if ((sblock.fs_flags & FS_DOSOFTDEP) == 0)
 			exit(5);	/* Not running soft updates */
 		size = MIBSIZE;
@@ -311,7 +302,7 @@ checkfilesys(char *filesys)
 			    (FS_UNCLEAN | FS_NEEDSFSCK)) == 0) {
 				bufinit();
 				gjournal_check(filesys);
-				if (chkdoreload(mntp) == 0)
+				if (chkdoreload(mntp, pwarn) == 0)
 					exit(0);
 				exit(4);
 			} else {
@@ -352,17 +343,19 @@ checkfilesys(char *filesys)
 	/*
 	 * Determine if we can and should do journal recovery.
 	 */
-	if ((sblock.fs_flags & FS_SUJ) == FS_SUJ) {
-		if ((sblock.fs_flags & FS_NEEDSFSCK) != FS_NEEDSFSCK && skipclean) {
+	if (bkgrdflag == 0 && (sblock.fs_flags & FS_SUJ) == FS_SUJ) {
+		if ((sblock.fs_flags & FS_NEEDSFSCK) != FS_NEEDSFSCK &&
+		    skipclean) {
 			sujrecovery = 1;
 			if (suj_check(filesys) == 0) {
-				printf("\n***** FILE SYSTEM MARKED CLEAN *****\n");
-				if (chkdoreload(mntp) == 0)
+				pwarn("\n**** FILE SYSTEM MARKED CLEAN ****\n");
+				if (chkdoreload(mntp, pwarn) == 0)
 					exit(0);
 				exit(4);
 			}
 			sujrecovery = 0;
-			printf("** Skipping journal, falling through to full fsck\n\n");
+			pwarn("Skipping journal, "
+			    "falling through to full fsck\n");
 		}
 		if (fswritefd != -1) {
 			/*
@@ -438,7 +431,7 @@ checkfilesys(char *filesys)
 	/*
 	 * 1: scan inodes tallying blocks used
 	 */
-	if (preen == 0) {
+	if (preen == 0 || debug) {
 		printf("** Last Mounted on %s\n", sblock.fs_fsmnt);
 		if (mntp != NULL && mntp->f_flags & MNT_ROOTFS)
 			printf("** Root file system\n");
@@ -457,7 +450,8 @@ checkfilesys(char *filesys)
 			    preen ? "-p" : "",
 			    (preen && usedsoftdep) ? " AND " : "",
 			    usedsoftdep ? "SOFTUPDATES" : "");
-		printf("** Phase 1b - Rescan For More DUPS\n");
+		if (preen == 0 || debug)
+			printf("** Phase 1b - Rescan For More DUPS\n");
 		pass1b();
 		IOstats("Pass1b");
 	}
@@ -465,7 +459,7 @@ checkfilesys(char *filesys)
 	/*
 	 * 2: traverse directories from root to mark all connected directories
 	 */
-	if (preen == 0)
+	if (preen == 0 || debug)
 		printf("** Phase 2 - Check Pathnames\n");
 	pass2();
 	IOstats("Pass2");
@@ -473,7 +467,7 @@ checkfilesys(char *filesys)
 	/*
 	 * 3: scan inodes looking for disconnected directories
 	 */
-	if (preen == 0)
+	if (preen == 0 || debug)
 		printf("** Phase 3 - Check Connectivity\n");
 	pass3();
 	IOstats("Pass3");
@@ -481,7 +475,7 @@ checkfilesys(char *filesys)
 	/*
 	 * 4: scan inodes looking for disconnected files; check reference counts
 	 */
-	if (preen == 0)
+	if (preen == 0 || debug)
 		printf("** Phase 4 - Check Reference Counts\n");
 	pass4();
 	IOstats("Pass4");
@@ -489,10 +483,16 @@ checkfilesys(char *filesys)
 	/*
 	 * 5: check and repair resource counts in cylinder groups
 	 */
-	if (preen == 0)
+	if (preen == 0 || debug)
 		printf("** Phase 5 - Check Cyl groups\n");
-	pass5();
-	IOstats("Pass5");
+	snapflush(std_checkblkavail);
+	if (cgheader_corrupt) {
+		printf("PHASE 5 SKIPPED DUE TO CORRUPT CYLINDER GROUP "
+		    "HEADER(S)\n\n");
+	} else {
+		pass5();
+		IOstats("Pass5");
+	}
 
 	/*
 	 * print out summary statistics
@@ -560,7 +560,7 @@ checkfilesys(char *filesys)
 			return (ERESTART);
 		printf("\n***** PLEASE RERUN FSCK *****\n");
 	}
-	if (chkdoreload(mntp) != 0) {
+	if (chkdoreload(mntp, pwarn) != 0) {
 		if (!fsmodified)
 			return (0);
 		if (!preen)
@@ -612,10 +612,6 @@ setup_bkgrdchk(struct statfs *mntp, int sbreadfailed, char **filesys)
 		pwarn("FULL FSCK NEEDED, CANNOT RUN IN BACKGROUND\n");
 		return (0);
 	}
-	if ((sblock.fs_flags & FS_SUJ) != 0) {
-		pwarn("JOURNALED FILESYSTEM, CANNOT RUN IN BACKGROUND\n");
-		return (0);
-	}
 	if (skipclean && ckclean &&
 	   (sblock.fs_flags & (FS_UNCLEAN|FS_NEEDSFSCK)) == 0) {
 		/*
@@ -656,8 +652,7 @@ setup_bkgrdchk(struct statfs *mntp, int sbreadfailed, char **filesys)
 		    "SUPPORT\n");
 	}
 	/* Find or create the snapshot directory */
-	snprintf(snapname, sizeof snapname, "%s/.snap",
-	    mntp->f_mntonname);
+	snprintf(snapname, sizeof snapname, "%s/.snap", mntp->f_mntonname);
 	if (stat(snapname, &snapdir) < 0) {
 		if (errno != ENOENT) {
 			pwarn("CANNOT FIND SNAPSHOT DIRECTORY %s: %s, CANNOT "
@@ -705,99 +700,18 @@ setup_bkgrdchk(struct statfs *mntp, int sbreadfailed, char **filesys)
 		    "BACKGROUND\n", snapname, strerror(errno));
 		return (0);
 	}
+	/* Immediately unlink snapshot so that it will be deleted when closed */
+	unlink(snapname);
 	free(sblock.fs_csp);
 	free(sblock.fs_si);
-	havesb = 0;
+	if (readsb() == 0) {
+		pwarn("CANNOT READ SNAPSHOT SUPERBLOCK\n");
+		return (0);
+	}
 	*filesys = snapname;
 	cmd.version = FFS_CMD_VERSION;
 	cmd.handle = fsreadfd;
 	return (1);
-}
-
-static int
-chkdoreload(struct statfs *mntp)
-{
-	struct iovec *iov;
-	int iovlen;
-	char errmsg[255];
-
-	if (mntp == NULL)
-		return (0);
-
-	iov = NULL;
-	iovlen = 0;
-	errmsg[0] = '\0';
-	/*
-	 * We modified a mounted file system.  Do a mount update on
-	 * it unless it is read-write, so we can continue using it
-	 * as safely as possible.
-	 */
-	if (mntp->f_flags & MNT_RDONLY) {
-		build_iovec(&iov, &iovlen, "fstype", "ffs", 4);
-		build_iovec(&iov, &iovlen, "from", mntp->f_mntfromname,
-		    (size_t)-1);
-		build_iovec(&iov, &iovlen, "fspath", mntp->f_mntonname,
-		    (size_t)-1);
-		build_iovec(&iov, &iovlen, "errmsg", errmsg,
-		    sizeof(errmsg));
-		build_iovec(&iov, &iovlen, "update", NULL, 0);
-		build_iovec(&iov, &iovlen, "reload", NULL, 0);
-		/*
-		 * XX: We need the following line until we clean up
-		 * nmount parsing of root mounts and NFS root mounts.
-		 */
-		build_iovec(&iov, &iovlen, "ro", NULL, 0);
-		if (nmount(iov, iovlen, mntp->f_flags) == 0) {
-			return (0);
-		}
-		pwarn("mount reload of '%s' failed: %s %s\n\n",
-		    mntp->f_mntonname, strerror(errno), errmsg);
-		return (1);
-	}
-	return (0);
-}
-
-/*
- * Get the mount point information for name.
- */
-static struct statfs *
-getmntpt(const char *name)
-{
-	struct stat devstat, mntdevstat;
-	char device[sizeof(_PATH_DEV) - 1 + MNAMELEN];
-	char *ddevname;
-	struct statfs *mntbuf, *statfsp;
-	int i, mntsize, isdev;
-
-	if (stat(name, &devstat) != 0)
-		return (NULL);
-	if (S_ISCHR(devstat.st_mode) || S_ISBLK(devstat.st_mode))
-		isdev = 1;
-	else
-		isdev = 0;
-	mntsize = getmntinfo(&mntbuf, MNT_NOWAIT);
-	for (i = 0; i < mntsize; i++) {
-		statfsp = &mntbuf[i];
-		ddevname = statfsp->f_mntfromname;
-		if (*ddevname != '/') {
-			if (strlen(_PATH_DEV) + strlen(ddevname) + 1 >
-			    sizeof(statfsp->f_mntfromname))
-				continue;
-			strcpy(device, _PATH_DEV);
-			strcat(device, ddevname);
-			strcpy(statfsp->f_mntfromname, device);
-		}
-		if (isdev == 0) {
-			if (strcmp(name, statfsp->f_mntonname))
-				continue;
-			return (statfsp);
-		}
-		if (stat(ddevname, &mntdevstat) == 0 &&
-		    mntdevstat.st_rdev == devstat.st_rdev)
-			return (statfsp);
-	}
-	statfsp = NULL;
-	return (statfsp);
 }
 
 static void

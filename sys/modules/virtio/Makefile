@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -23,6 +22,6 @@
 # SUCH DAMAGE.
 #
 
-SUBDIR=	virtio pci network block balloon scsi random console
+SUBDIR=	virtio pci network block balloon scsi random console p9fs
 
 .include <bsd.subdir.mk>

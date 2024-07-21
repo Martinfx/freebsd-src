@@ -16,7 +16,6 @@
 # If you are in doubt as to the purpose or necessity of a line, check first
 # in NOTES.
 #
-# $FreeBSD$
 
 cpu		HAMMER
 ident		GENERIC
@@ -31,14 +30,15 @@ options 	VIMAGE			# Subsystem virtualization, e.g. VNET
 options 	INET			# InterNETworking
 options 	INET6			# IPv6 communications protocols
 options 	IPSEC_SUPPORT		# Allow kldload of ipsec and tcpmd5
-options		ROUTE_MPATH		# Multipath routing support
-options		FIB_ALGO		# Modular fib lookups
+options 	IPSEC_OFFLOAD		# Inline ipsec offload infra
+options 	ROUTE_MPATH		# Multipath routing support
+options 	FIB_ALGO		# Modular fib lookups
 options 	TCP_OFFLOAD		# TCP offload
 options 	TCP_BLACKBOX		# Enhanced TCP event logging
 options 	TCP_HHOOK		# hhook(9) framework for TCP
-options		TCP_RFC7413		# TCP Fast Open
+options 	TCP_RFC7413		# TCP Fast Open
 options 	SCTP_SUPPORT		# Allow kldload of SCTP
-options		KERN_TLS		# TLS transmit & receive offload
+options 	KERN_TLS		# TLS transmit & receive offload
 options 	FFS			# Berkeley Fast Filesystem
 options 	SOFTUPDATES		# Enable FFS soft updates support
 options 	UFS_ACL			# Support for access control lists
@@ -68,6 +68,7 @@ options 	COMPAT_FREEBSD10	# Compatible with FreeBSD10
 options 	COMPAT_FREEBSD11	# Compatible with FreeBSD11
 options 	COMPAT_FREEBSD12	# Compatible with FreeBSD12
 options 	COMPAT_FREEBSD13	# Compatible with FreeBSD13
+options 	COMPAT_FREEBSD14	# Compatible with FreeBSD14
 options 	SCSI_DELAY=5000		# Delay (in ms) before probing SCSI
 options 	KTRACE			# ktrace(1) support
 options 	STACK			# stack(9) support
@@ -94,25 +95,7 @@ options 	RCTL			# Resource limits
 options 	KDB			# Enable kernel debugger support.
 options 	KDB_TRACE		# Print a stack trace for a panic.
 # For full debugger support use (turn off in stable branch):
-options 	BUF_TRACKING		# Track buffer history
-options 	DDB			# Support DDB.
-options 	FULL_BUF_TRACKING	# Track more buffer history
-options 	GDB			# Support remote GDB.
-options 	DEADLKRES		# Enable the deadlock resolver
-options 	INVARIANTS		# Enable calls of extra sanity checking
-options 	INVARIANT_SUPPORT	# Extra sanity checks of internal structures, required by INVARIANTS
-options 	QUEUE_MACRO_DEBUG_TRASH	# Trash queue(2) internal pointers on invalidation
-options 	WITNESS			# Enable checks to detect deadlocks and cycles
-options 	WITNESS_SKIPSPIN	# Don't run witness on spinlocks for speed
-options 	MALLOC_DEBUG_MAXZONES=8	# Separate malloc(9) zones
-options 	VERBOSE_SYSINIT=0	# Support debug.verbose_sysinit, off by default
-
-# Kernel Sanitizers
-#options 	COVERAGE		# Generic kernel coverage. Used by KCOV
-#options 	KCOV			# Kernel Coverage Sanitizer
-# Warning: KUBSAN can result in a kernel too large for loader to load
-#options 	KUBSAN			# Kernel Undefined Behavior Sanitizer
-#options 	KCSAN			# Kernel Concurrency Sanitizer
+include "std.debug"
 
 # Kernel dump features.
 options 	EKCD			# Support for encrypted kernel dumps
@@ -124,7 +107,6 @@ options 	NETGDB			# netgdb(4) client support
 
 # Make an SMP-capable kernel by default
 options 	SMP			# Symmetric MultiProcessor Kernel
-options 	EARLY_AP_STARTUP
 
 # CPU frequency control
 device		cpufreq
@@ -135,7 +117,7 @@ device		smbios
 options 	IOMMU
 device		pci
 options 	PCI_HP			# PCI-Express native HotPlug
-options		PCI_IOV			# PCI SR-IOV support
+options 	PCI_IOV			# PCI SR-IOV support
 
 options 	COMPAT_LINUXKPI
 
@@ -193,10 +175,8 @@ device		ida			# Compaq Smart RAID
 device		mfi			# LSI MegaRAID SAS
 device		mlx			# Mylex DAC960 family
 device		mrsas			# LSI/Avago MegaRAID SAS/SATA, 6Gb/s and 12Gb/s
-device		pmspcv			# PMC-Sierra SAS/SATA Controller driver
 #XXX pointer/int warnings
 #device		pst			# Promise Supertrak SX6000
-device		twe			# 3ware ATA RAID
 
 # NVM Express (NVMe) support
 device		nvme			# base NVMe driver
@@ -305,11 +285,9 @@ device		wlan_wep		# 802.11 WEP support
 device		wlan_ccmp		# 802.11 CCMP support
 device		wlan_tkip		# 802.11 TKIP support
 device		wlan_amrr		# AMRR transmit rate control algorithm
-device		ath			# Atheros NICs
-device		ath_pci			# Atheros pci/cardbus glue
-device		ath_hal			# pci/cardbus chip support
+device		ath			# Atheros CardBus/PCI NICs
+device		ath_hal			# Atheros CardBus/PCI chip support
 options 	AH_AR5416_INTERRUPT_MITIGATION # AR5416 interrupt mitigation
-options 	ATH_ENABLE_11N		# Enable 802.11n support for AR5416 and later
 device		ath_rate_sample		# SampleRate tx rate control for ath
 #device		bwi			# Broadcom BCM430x/BCM431x wireless NICs.
 #device		bwn			# Broadcom BCM43xx wireless NICs.
@@ -347,7 +325,9 @@ device		ohci			# OHCI PCI->USB interface
 device		ehci			# EHCI PCI->USB interface (USB 2.0)
 device		xhci			# XHCI PCI->USB interface (USB 3.0)
 device		usb			# USB Bus (required)
-device		ukbd			# Keyboard
+device		usbhid			# USB HID Transport
+device		hkbd			# HID Keyboard
+device		ukbd			# USB Keyboard
 device		umass			# Disks/Mass storage - Requires scbus and da
 
 # Sound support
@@ -364,7 +344,6 @@ device		snd_via8233		# VIA VT8233x Audio
 device		mmc			# MMC/SD bus
 device		mmcsd			# MMC/SD memory card
 device		sdhci			# Generic PCI SD Host Controller
-device		rtsx			# Realtek SD card reader
 
 # VirtIO support
 device		virtio			# Generic VirtIO bus (required)
@@ -378,12 +357,13 @@ device		virtio_balloon		# VirtIO Memory Balloon device
 device		kvm_clock		# KVM paravirtual clock driver
 
 # HyperV drivers and enhancement support
-device		hyperv			# HyperV drivers 
+device		hyperv			# HyperV drivers
 
 # Xen HVM Guest Optimizations
 # NOTE: XENHVM depends on xenpci and xentimer.
 # They must be added or removed together.
 options 	XENHVM			# Xen HVM kernel infrastructure
+device		xenefi			# Xen EFI timer device
 device		xenpci			# Xen HVM Hypervisor services driver
 device		xentimer		# Xen x86 PV timer device
 
@@ -398,4 +378,9 @@ device		uinput			# install /dev/uinput cdev
 # HID support
 options 	HID_DEBUG		# enable debug msgs
 device		hid			# Generic HID support
+device		hidbus			# Generic HID Bus
 options 	IICHID_SAMPLING		# Workaround missing GPIO INTR support
+
+# EFI devices
+device		efidev			# EFI pseudo-device
+device		efirtc			# EFI RTC

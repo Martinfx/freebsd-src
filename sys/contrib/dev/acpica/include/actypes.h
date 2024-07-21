@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2022, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2023, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -1335,6 +1335,12 @@ typedef struct acpi_pcc_info {
     UINT8                           *InternalBuffer;
 } ACPI_PCC_INFO;
 
+/* Special Context data for FFH Opregion (ACPI 6.5) */
+
+typedef struct acpi_ffh_info {
+    UINT64                          Offset;
+    UINT64                          Length;
+} ACPI_FFH_INFO;
 
 typedef
 ACPI_STATUS (*ACPI_ADR_SPACE_SETUP) (
@@ -1474,7 +1480,7 @@ typedef struct acpi_mem_space_context
 
 } ACPI_MEM_SPACE_CONTEXT;
 
-typedef struct acpi_data_table_space_context
+typedef struct acpi_data_table_mapping
 {
     void                            *Pointer;
 
@@ -1565,6 +1571,10 @@ typedef enum
 
 #ifndef ACPI_FALLTHROUGH
 #define ACPI_FALLTHROUGH do {} while(0)
+#endif
+
+#ifndef ACPI_FLEX_ARRAY
+#define ACPI_FLEX_ARRAY(TYPE, NAME)     TYPE NAME[0]
 #endif
 
 #endif /* __ACTYPES_H__ */

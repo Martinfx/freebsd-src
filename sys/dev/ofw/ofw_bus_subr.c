@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 - 2003 by Thomas Moestl <tmm@FreeBSD.org>.
  * Copyright (c) 2005 Marius Strobl <marius@FreeBSD.org>
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_platform.h"
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -102,6 +100,22 @@ ofw_bus_gen_child_pnpinfo(device_t cbdev, device_t child, struct sbuf *sb)
 	}
 
 	return (0);
+};
+
+int
+ofw_bus_gen_get_device_path(device_t cbdev, device_t child, const char *locator,
+			   struct sbuf *sb)
+{
+	int rv;
+
+	if ( strcmp(locator, BUS_LOCATOR_OFW) == 0){
+		rv = bus_generic_get_device_path(cbdev, child, locator, sb);
+		if (rv == 0){
+			sbuf_printf(sb, "/%s",  ofw_bus_get_name(child));
+		}
+		return (rv);
+	}
+	return (bus_generic_get_device_path(cbdev, child, locator, sb));
 };
 
 const char *
@@ -627,7 +641,7 @@ ofw_bus_intr_to_rl(device_t dev, phandle_t node,
 	phandle_t iparent;
 	uint32_t icells, *intr;
 	int err, i, irqnum, nintr, rid;
-	boolean_t extended;
+	bool extended;
 
 	nintr = OF_getencprop_alloc_multi(node, "interrupts",  sizeof(*intr),
 	    (void **)&intr);
@@ -693,7 +707,7 @@ ofw_bus_intr_by_rid(device_t dev, phandle_t node, int wanted_rid,
 	phandle_t iparent;
 	uint32_t icells, *intr;
 	int err, i, nintr, rid;
-	boolean_t extended;
+	bool extended;
 
 	nintr = OF_getencprop_alloc_multi(node, "interrupts",  sizeof(*intr),
 	    (void **)&intr);

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR= \
 	include \
 	libibverbs \

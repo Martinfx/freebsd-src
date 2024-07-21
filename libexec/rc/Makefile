@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 CONFGROUPS=	CONFETC CONFETCEXEC CONFETCDEFAULTS
@@ -10,9 +8,6 @@ CONFETCPACKAGE=	rc
 .if ${MK_IPFW} != "no"
 CONFETC+=	rc.firewall
 .endif
-.if ${MK_SENDMAIL} != "no"
-CONFETC+=	rc.sendmail
-.endif
 CONFETCMODE=	644
 CONFETCEXEC=	netstart pccard_ether rc.resume rc.suspend
 CONFETCEXECDIR=	/etc
@@ -21,6 +16,12 @@ CONFETCEXECPACKAGE=	rc
 CONFETCDEFAULTSDIR=	/etc/defaults
 CONFETCDEFAULTS=	rc.conf
 CONFETCDEFAULTSPACKAGE=	rc
+
+FILESGROUPS=	LIBEXEC_SCRIPTS
+LIBEXEC_SCRIPTS=	debug.sh safe_eval.sh
+LIBEXEC_SCRIPTSDIR=	/libexec
+LIBEXEC_SCRIPTSMODE=	755
+LIBEXEC_SCRIPTSPACKAGE=	rc
 
 SUBDIR+=	rc.d
 

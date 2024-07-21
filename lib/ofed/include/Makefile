@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 OFEDINCS=	${SRCTOP}/contrib/ofed/include
 IBVERBS=	${SRCTOP}/contrib/ofed/libibverbs
 IBMAD=		${SRCTOP}/contrib/ofed/libibmad

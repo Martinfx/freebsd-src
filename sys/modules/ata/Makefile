@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR = atacore
 SUBDIR += ataisa
 SUBDIR += atapci 

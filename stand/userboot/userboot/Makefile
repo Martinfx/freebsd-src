@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LOADER_MSDOS_SUPPORT?=	yes
 LOADER_UFS_SUPPORT?=	yes
 LOADER_CD9660_SUPPORT?=	no
@@ -32,18 +30,20 @@ SRCS+=		main.c
 SRCS+=		userboot_cons.c
 SRCS+=		userboot_disk.c
 SRCS+=		vers.c
-SRCS+=		gfx_fb_stub.c
 
 CFLAGS+=	-Wall
 CFLAGS+=	-I${BOOTSRC}/userboot
+
+.if ${MK_LOADER_ZFS} != "no"
 CFLAGS.main.c+=	-I${BOOTSRC}/libsa/zfs
 CFLAGS.main.c+=	-I${SYSDIR}/contrib/openzfs/include
 CFLAGS.main.c+=	-I${SYSDIR}/contrib/openzfs/include/os/freebsd/zfs
+.endif
+
 CWARNFLAGS.main.c += -Wno-implicit-function-declaration
-CFLAGS.gfx_fb_stub.c += -I${SRCTOP}/contrib/pnglite -I${SRCTOP}/sys/teken
 
 NEWVERSWHAT=	"User boot ${LOADER_INTERP}" ${MACHINE_CPUARCH}
-VERSION_FILE=	${.CURDIR}/../userboot/version
+VERSION_FILE?=	${.CURDIR}/../userboot/version
 
 .if ${LOADER_INTERP} == ${LOADER_DEFAULT_INTERP}
 LINKS+=		${BINDIR}/${SHLIB_NAME} ${BINDIR}/userboot.so
@@ -53,6 +53,8 @@ LINKS+=		${BINDIR}/${SHLIB_NAME} ${BINDIR}/userboot.so
 CFLAGS+=	-DUSERBOOT_ZFS_SUPPORT
 HAVE_ZFS=yes
 .endif
+
+HELP_FILENAME=	loader.help.userboot
 
 # Always add MI sources
 .include	"${BOOTSRC}/loader.mk"

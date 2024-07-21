@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	tabs
 
 LIBADD=	tinfow

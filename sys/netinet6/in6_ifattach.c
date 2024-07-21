@@ -31,9 +31,6 @@
  *	$KAME: in6_ifattach.c,v 1.118 2001/05/24 07:44:00 itojun Exp $
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -50,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_dl.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/vnet.h>

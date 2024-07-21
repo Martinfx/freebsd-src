@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021, Adrian Chadd <adrian@FreeBSD.org>
  *
@@ -27,9 +27,6 @@
 
 /* Driver for Qualcomm IPQ4018 clock and reset device */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -47,10 +44,10 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/clk/clk_div.h>
-#include <dev/extres/clk/clk_fixed.h>
-#include <dev/extres/clk/clk_mux.h>
-#include <dev/extres/clk/clk_link.h>
+#include <dev/clk/clk_div.h>
+#include <dev/clk/clk_fixed.h>
+#include <dev/clk/clk_mux.h>
+#include <dev/clk/clk_link.h>
 
 #include <dt-bindings/clock/qcom,gcc-ipq4019.h>
 
@@ -581,7 +578,7 @@ static struct qcom_clk_branch2_def branch2_tbl[] = {
 	    0x1e00c, 0, 0, 0, 0x1e00c, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
 	F_BRANCH2(GCC_USB2_SLEEP_CLK, "gcc_usb2_sleep_clk",
-	    "sleep_clk", 0x1e010, 0, 0, 0, 0x1e010,
+	    "gcc_sleep_clk_src", 0x1e010, 0, 0, 0, 0x1e010,
 	    QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
 	F_BRANCH2(GCC_USB2_MOCK_UTMI_CLK, "gcc_usb2_mock_utmi_clk",
@@ -591,7 +588,7 @@ static struct qcom_clk_branch2_def branch2_tbl[] = {
 	F_BRANCH2(GCC_USB3_MASTER_CLK, "gcc_usb3_master_clk", "fepll125",
 	    0x1e028, 0, 0, 0, 0x1e028, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
-	F_BRANCH2(GCC_USB3_SLEEP_CLK, "gcc_usb3_sleep_clk", "sleep_clk",
+	F_BRANCH2(GCC_USB3_SLEEP_CLK, "gcc_usb3_sleep_clk", "gcc_sleep_clk_src",
 	    0x1e02c, 0, 0, 0, 0x1e02c, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
 	F_BRANCH2(GCC_USB3_MOCK_UTMI_CLK, "gcc_usb3_mock_utmi_clk",
@@ -605,7 +602,7 @@ static struct qcom_clk_branch2_def branch2_tbl[] = {
 	F_BRANCH2(GCC_WCSS2G_REF_CLK, "gcc_wcss2g_ref_clk", "xo",
 	    0x1f00c, 0, 0, 0, 0x1f00c, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, QCOM_CLK_BRANCH2_FLAGS_SET_RATE_PARENT),
-	F_BRANCH2(GCC_WCSS2G_RTC_CLK, "gcc_wcss2g_rtc_clk", "sleep_clk",
+	F_BRANCH2(GCC_WCSS2G_RTC_CLK, "gcc_wcss2g_rtc_clk", "gcc_sleep_clk_src",
 	    0x1f010, 0, 0, 0, 0x1f010, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
 
@@ -616,7 +613,7 @@ static struct qcom_clk_branch2_def branch2_tbl[] = {
 	F_BRANCH2(GCC_WCSS5G_REF_CLK, "gcc_wcss5g_ref_clk", "xo",
 	    0x1f00c, 0, 0, 0, 0x2000c, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, QCOM_CLK_BRANCH2_FLAGS_SET_RATE_PARENT),
-	F_BRANCH2(GCC_WCSS5G_RTC_CLK, "gcc_wcss5g_rtc_clk", "sleep_clk",
+	F_BRANCH2(GCC_WCSS5G_RTC_CLK, "gcc_wcss5g_rtc_clk", "gcc_sleep_clk_src",
 	    0x1f010, 0, 0, 0, 0x20010, QCOM_CLK_BRANCH2_BRANCH_HALT,
 	    false, 0),
 

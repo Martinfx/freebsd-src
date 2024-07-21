@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_SLAB_H_
 #define	_LINUXKPI_LINUX_SLAB_H_
@@ -43,6 +41,7 @@
 
 MALLOC_DECLARE(M_KMALLOC);
 
+#define	kmalloc(size, flags)		lkpi_kmalloc(size, flags)
 #define	kvmalloc(size, flags)		kmalloc(size, flags)
 #define	kvzalloc(size, flags)		kmalloc(size, (flags) | __GFP_ZERO)
 #define	kvcalloc(n, size, flags)	kvmalloc_array(n, size, (flags) | __GFP_ZERO)
@@ -55,7 +54,6 @@ MALLOC_DECLARE(M_KMALLOC);
 #define	vmalloc_node(size, node)	__vmalloc_node(size, GFP_KERNEL, node)
 #define	vmalloc_user(size)		__vmalloc(size, GFP_KERNEL | __GFP_ZERO, 0)
 #define	vmalloc(size)			__vmalloc(size, GFP_KERNEL, 0)
-#define	__kmalloc(...)			kmalloc(__VA_ARGS__)
 
 /*
  * Prefix some functions with linux_ to avoid namespace conflict
@@ -90,6 +88,9 @@ struct linux_kmem_cache;
 /* drm-kmod 5.4 compat */
 #define kfree_async(ptr)	kfree(ptr);
 
+#define	ZERO_SIZE_PTR		((void *)16)
+#define ZERO_OR_NULL_PTR(x)	((x) == NULL || (x) == ZERO_SIZE_PTR)
+
 static inline gfp_t
 linux_check_m_flags(gfp_t flags)
 {
@@ -106,7 +107,7 @@ linux_check_m_flags(gfp_t flags)
 }
 
 static inline void *
-kmalloc(size_t size, gfp_t flags)
+__kmalloc(size_t size, gfp_t flags)
 {
 	return (malloc(MAX(size, sizeof(struct llist_node)), M_KMALLOC,
 	    linux_check_m_flags(flags)));
@@ -178,11 +179,24 @@ krealloc(void *ptr, size_t size, gfp_t flags)
 	return (realloc(ptr, size, M_KMALLOC, linux_check_m_flags(flags)));
 }
 
+static inline void *
+krealloc_array(void *ptr, size_t n, size_t size, gfp_t flags)
+{
+	if (WOULD_OVERFLOW(n, size)) {
+		return NULL;
+	}
+
+	return (realloc(ptr, n * size, M_KMALLOC, linux_check_m_flags(flags)));
+}
+
 extern void linux_kfree_async(void *);
 
 static inline void
 kfree(const void *ptr)
 {
+	if (ZERO_OR_NULL_PTR(ptr))
+		return;
+
 	if (curthread->td_critnest != 0)
 		linux_kfree_async(__DECONST(void *, ptr));
 	else
@@ -192,6 +206,9 @@ kfree(const void *ptr)
 static __inline void
 kfree_sensitive(const void *ptr)
 {
+	if (ZERO_OR_NULL_PTR(ptr))
+		return;
+
 	zfree(__DECONST(void *, ptr), M_KMALLOC);
 }
 
@@ -201,6 +218,7 @@ ksize(const void *ptr)
 	return (malloc_usable_size(ptr));
 }
 
+extern void *lkpi_kmalloc(size_t size, gfp_t flags);
 extern struct linux_kmem_cache *linux_kmem_cache_create(const char *name,
     size_t size, size_t align, unsigned flags, linux_kmem_ctor_t *ctor);
 extern void *lkpi_kmem_cache_alloc(struct linux_kmem_cache *, gfp_t);

@@ -32,14 +32,10 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifndef _NETINET_SCTP_OS_BSD_H_
 #define _NETINET_SCTP_OS_BSD_H_
-/*
- * includes
- */
+
+#include <sys/cdefs.h>
 #include "opt_inet6.h"
 #include "opt_inet.h"
 #include "opt_sctp.h"
@@ -73,6 +69,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_types.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/route.h>
 #include <net/route/nhop.h>
 #include <net/vnet.h>
@@ -92,7 +89,6 @@ __FBSDID("$FreeBSD$");
 #include <netinet6/in6_fib.h>
 #include <netinet6/ip6_var.h>
 #include <netinet6/in6_pcb.h>
-#include <netinet6/ip6protosw.h>
 #include <netinet6/nd6.h>
 #include <netinet6/scope6_var.h>
 #endif				/* INET6 */
@@ -222,13 +218,6 @@ MALLOC_DECLARE(SCTP_M_MCORE);
 	} while (0)
 
 #define SCTP_FREE(var, type)	free(var, type)
-
-#define SCTP_MALLOC_SONAME(var, type, size) \
-	do { \
-		var = (type)malloc(size, M_SONAME, M_WAITOK | M_ZERO); \
-	} while (0)
-
-#define SCTP_FREE_SONAME(var)	free(var, M_SONAME)
 
 #define SCTP_PROCESS_STRUCT struct proc *
 
@@ -372,11 +361,6 @@ typedef struct callout sctp_os_timer_t;
 #define SCTP_CLEAR_SO_NBIO(so)	((so)->so_state &= ~SS_NBIO)
 /* get the socket type */
 #define SCTP_SO_TYPE(so)	((so)->so_type)
-/* Use a macro for renaming sb_cc to sb_acc.
- * Initially sb_ccc was used, but this broke select() when used
- * with SCTP sockets.
- */
-#define sb_cc sb_acc
 /* reserve sb space for a socket */
 #define SCTP_SORESERVE(so, send, recv)	soreserve(so, send, recv)
 /* wakeup a socket */
@@ -384,8 +368,19 @@ typedef struct callout sctp_os_timer_t;
 /* number of bytes ready to read */
 #define SCTP_SBAVAIL(sb)	sbavail(sb)
 /* clear the socket buffer state */
+#define SCTP_SB_INCR(sb, incr)			\
+{						\
+	atomic_add_int(&(sb)->sb_acc, incr);	\
+	atomic_add_int(&(sb)->sb_ccc, incr);	\
+}
+#define SCTP_SB_DECR(sb, decr)					\
+{								\
+	SCTP_SAVE_ATOMIC_DECREMENT(&(sb)->sb_acc, decr);	\
+	SCTP_SAVE_ATOMIC_DECREMENT(&(sb)->sb_ccc, decr);	\
+}
 #define SCTP_SB_CLEAR(sb)	\
-	(sb).sb_cc = 0;		\
+	(sb).sb_acc = 0;	\
+	(sb).sb_ccc = 0;	\
 	(sb).sb_mb = NULL;	\
 	(sb).sb_mbcnt = 0;
 

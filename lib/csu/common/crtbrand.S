@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 2000 David E. O'Brien, John D. Polstra.
  * All rights reserved.
@@ -26,8 +26,6 @@
  */
 
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/elf_common.h>
 #include "notes.h"
@@ -47,3 +45,10 @@ __FBSDID("$FreeBSD$");
 2:	.p2align	2
 3:	.4byte		__FreeBSD_version
 4:
+
+	.section .note.GNU-stack,"",%progbits
+
+#ifdef __aarch64__
+/* This is needed in all objects for BTI to be used in the linked elf file */
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)
+#endif

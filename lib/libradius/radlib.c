@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 1998 Juniper Networks, Inc.
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -323,8 +320,10 @@ is_valid_request(struct rad_handle *h)
 	hctx = HMAC_CTX_new();
 	while (pos < len - 2) {
 		alen = h->in[pos + 1];
-		if (alen < 2)
+		if (alen < 2) {
+			HMAC_CTX_free(hctx);
 			return (0);
+		}
 		if (h->in[pos] == RAD_MESSAGE_AUTHENTIC) {
 			if (len - pos < MD5_DIGEST_LENGTH + 2) {
 				HMAC_CTX_free(hctx);

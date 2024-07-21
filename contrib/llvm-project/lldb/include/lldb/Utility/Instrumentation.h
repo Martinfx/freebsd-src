@@ -10,8 +10,6 @@
 
 #include "lldb/Utility/FileSpec.h"
 #include "lldb/Utility/Log.h"
-#include "lldb/Utility/Logging.h"
-
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -23,14 +21,12 @@
 namespace lldb_private {
 namespace instrumentation {
 
-template <typename T,
-          typename std::enable_if<std::is_fundamental<T>::value, int>::type = 0>
+template <typename T, std::enable_if_t<std::is_fundamental<T>::value, int> = 0>
 inline void stringify_append(llvm::raw_string_ostream &ss, const T &t) {
   ss << t;
 }
 
-template <typename T, typename std::enable_if<!std::is_fundamental<T>::value,
-                                              int>::type = 0>
+template <typename T, std::enable_if_t<!std::is_fundamental<T>::value, int> = 0>
 inline void stringify_append(llvm::raw_string_ostream &ss, const T &t) {
   ss << &t;
 }

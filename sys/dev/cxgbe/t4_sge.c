@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Chelsio Communications, Inc.
  * All rights reserved.
@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_kern_tls.h"
@@ -81,16 +79,7 @@ __FBSDID("$FreeBSD$");
 #include "t4_l2t.h"
 #include "t4_mp_ring.h"
 
-#ifdef T4_PKT_TIMESTAMP
-#define RX_COPY_THRESHOLD (MINCLSIZE - 8)
-#else
 #define RX_COPY_THRESHOLD MINCLSIZE
-#endif
-
-/* Internal mbuf flags stored in PH_loc.eight[1]. */
-#define	MC_NOMAP		0x01
-#define	MC_RAW_WR		0x02
-#define	MC_TLS			0x04
 
 /*
  * Ethernet frames are DMA'd at this byte offset into the freelist buffer.
@@ -124,10 +113,16 @@ SYSCTL_INT(_hw_cxgbe, OID_AUTO, spg_len, CTLFLAG_RDTUN, &spg_len, 0,
  * -1: no congestion feedback (not recommended).
  *  0: backpressure the channel instead of dropping packets right away.
  *  1: no backpressure, drop packets for the congested queue immediately.
+ *  2: both backpressure and drop.
  */
 static int cong_drop = 0;
 SYSCTL_INT(_hw_cxgbe, OID_AUTO, cong_drop, CTLFLAG_RDTUN, &cong_drop, 0,
-    "Congestion control for RX queues (0 = backpressure, 1 = drop");
+    "Congestion control for NIC RX queues (0 = backpressure, 1 = drop, 2 = both");
+#ifdef TCP_OFFLOAD
+static int ofld_cong_drop = 0;
+SYSCTL_INT(_hw_cxgbe, OID_AUTO, ofld_cong_drop, CTLFLAG_RDTUN, &ofld_cong_drop, 0,
+    "Congestion control for TOE RX queues (0 = backpressure, 1 = drop, 2 = both");
+#endif
 
 /*
  * Deliver multiple frames in the same free list buffer if they fit.
@@ -236,7 +231,7 @@ static struct mbuf *get_fl_payload(struct adapter *, struct sge_fl *, uint32_t);
 static int eth_rx(struct adapter *, struct sge_rxq *, const struct iq_desc *,
     u_int);
 static inline void init_iq(struct sge_iq *, struct adapter *, int, int, int,
-    int, int);
+    int, int, int);
 static inline void init_fl(struct adapter *, struct sge_fl *, int, int, char *);
 static inline void init_eq(struct adapter *, struct sge_eq *, int, int, uint8_t,
     struct sge_iq *, char *);
@@ -334,11 +329,12 @@ static void drain_wrq_wr_list(struct adapter *, struct sge_wrq *);
 
 static int sysctl_bufsizes(SYSCTL_HANDLER_ARGS);
 #ifdef RATELIMIT
-#if defined(INET) || defined(INET6)
-static inline u_int txpkt_eo_len16(u_int, u_int, u_int);
-#endif
 static int ethofld_fw4_ack(struct sge_iq *, const struct rss_header *,
     struct mbuf *);
+#if defined(INET) || defined(INET6)
+static inline u_int txpkt_eo_len16(u_int, u_int, u_int);
+static int ethofld_transmit(if_t, struct mbuf *);
+#endif
 #endif
 
 static counter_u64_t extfree_refs;
@@ -554,11 +550,18 @@ t4_sge_modload(void)
 		spg_len = len;
 	}
 
-	if (cong_drop < -1 || cong_drop > 1) {
+	if (cong_drop < -1 || cong_drop > 2) {
 		printf("Invalid hw.cxgbe.cong_drop value (%d),"
 		    " using 0 instead.\n", cong_drop);
 		cong_drop = 0;
 	}
+#ifdef TCP_OFFLOAD
+	if (ofld_cong_drop < -1 || ofld_cong_drop > 2) {
+		printf("Invalid hw.cxgbe.ofld_cong_drop value (%d),"
+		    " using 0 instead.\n", ofld_cong_drop);
+		ofld_cong_drop = 0;
+	}
+#endif
 
 	if (tscale != 1 && (tscale < 3 || tscale > 17)) {
 		printf("Invalid hw.cxgbe.tscale value (%d),"
@@ -1003,6 +1006,10 @@ t4_sge_sysctls(struct adapter *sc, struct sysctl_ctx_list *ctx,
 
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "cong_drop", CTLFLAG_RD,
 	    NULL, cong_drop, "congestion drop setting");
+#ifdef TCP_OFFLOAD
+	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "ofld_cong_drop", CTLFLAG_RD,
+	    NULL, ofld_cong_drop, "congestion drop setting");
+#endif
 
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "fl_pack", CTLFLAG_RD,
 	    NULL, sp->pack_boundary, "payload pack boundary (bytes)");
@@ -1082,13 +1089,13 @@ t4_teardown_adapter_queues(struct adapter *sc)
 
 /* Maximum payload that could arrive with a single iq descriptor. */
 static inline int
-max_rx_payload(struct adapter *sc, struct ifnet *ifp, const bool ofld)
+max_rx_payload(struct adapter *sc, if_t ifp, const bool ofld)
 {
 	int maxp;
 
 	/* large enough even when hw VLAN extraction is disabled */
 	maxp = sc->params.sge.fl_pktshift + ETHER_HDR_LEN +
-	    ETHER_VLAN_ENCAP_LEN + ifp->if_mtu;
+	    ETHER_VLAN_ENCAP_LEN + if_getmtu(ifp);
 	if (ofld && sc->tt.tls && sc->cryptocaps & FW_CAPS_CONFIG_TLSKEYS &&
 	    maxp < sc->params.tp.max_rx_pdu)
 		maxp = sc->params.tp.max_rx_pdu;
@@ -1113,7 +1120,7 @@ t4_setup_vi_queues(struct vi_info *vi)
 	struct sge_nm_txq *nm_txq;
 #endif
 	struct adapter *sc = vi->adapter;
-	struct ifnet *ifp = vi->ifp;
+	if_t ifp = vi->ifp;
 	int maxp;
 
 	/* Interrupt vector to start from (when using multiple vectors) */
@@ -1121,7 +1128,7 @@ t4_setup_vi_queues(struct vi_info *vi)
 
 #ifdef DEV_NETMAP
 	saved_idx = intr_idx;
-	if (ifp->if_capabilities & IFCAP_NETMAP) {
+	if (if_getcapabilities(ifp) & IFCAP_NETMAP) {
 
 		/* netmap is supported with direct interrupts only. */
 		MPASS(!forwarding_intr_to_fwq(sc));
@@ -1164,7 +1171,7 @@ t4_setup_vi_queues(struct vi_info *vi)
 			intr_idx++;
 	}
 #ifdef DEV_NETMAP
-	if (ifp->if_capabilities & IFCAP_NETMAP)
+	if (if_getcapabilities(ifp) & IFCAP_NETMAP)
 		intr_idx = saved_idx + max(vi->nrxq, vi->nnmrxq);
 #endif
 #ifdef TCP_OFFLOAD
@@ -1221,7 +1228,7 @@ t4_teardown_vi_queues(struct vi_info *vi)
 #endif
 
 #ifdef DEV_NETMAP
-	if (vi->ifp->if_capabilities & IFCAP_NETMAP) {
+	if (if_getcapabilities(vi->ifp) & IFCAP_NETMAP) {
 		for_each_nm_txq(vi, i, nm_txq) {
 			free_nm_txq(vi, nm_txq);
 		}
@@ -1503,15 +1510,43 @@ sort_before_lro(struct lro_ctrl *lro)
 }
 #endif
 
-static inline uint64_t
-last_flit_to_ns(struct adapter *sc, uint64_t lf)
-{
-	uint64_t n = be64toh(lf) & 0xfffffffffffffff;	/* 60b, not 64b. */
+#define CGBE_SHIFT_SCALE 10
 
-	if (n > UINT64_MAX / 1000000)
-		return (n / sc->params.vpd.cclk * 1000000);
-	else
-		return (n * 1000000 / sc->params.vpd.cclk);
+static inline uint64_t
+t4_tstmp_to_ns(struct adapter *sc, uint64_t lf)
+{
+	struct clock_sync *cur, dcur;
+	uint64_t hw_clocks;
+	uint64_t hw_clk_div;
+	sbintime_t sbt_cur_to_prev, sbt;
+	uint64_t hw_tstmp = lf & 0xfffffffffffffffULL;	/* 60b, not 64b. */
+	seqc_t gen;
+
+	for (;;) {
+		cur = &sc->cal_info[sc->cal_current];
+		gen = seqc_read(&cur->gen);
+		if (gen == 0)
+			return (0);
+		dcur = *cur;
+		if (seqc_consistent(&cur->gen, gen))
+			break;
+	}
+
+	/*
+	 * Our goal here is to have a result that is:
+	 *
+	 * (                             (cur_time - prev_time)   )
+	 * ((hw_tstmp - hw_prev) *  ----------------------------- ) + prev_time
+	 * (                             (hw_cur - hw_prev)       )
+	 *
+	 * With the constraints that we cannot use float and we
+	 * don't want to overflow the uint64_t numbers we are using.
+	 */
+	hw_clocks = hw_tstmp - dcur.hw_prev;
+	sbt_cur_to_prev = (dcur.sbt_cur - dcur.sbt_prev);
+	hw_clk_div = dcur.hw_cur - dcur.hw_prev;
+	sbt = hw_clocks * sbt_cur_to_prev / hw_clk_div + dcur.sbt_prev;
+	return (sbttons(sbt));
 }
 
 static inline void
@@ -1899,9 +1934,9 @@ eth_rx(struct adapter *sc, struct sge_rxq *rxq, const struct iq_desc *d,
     u_int plen)
 {
 	struct mbuf *m0;
-	struct ifnet *ifp = rxq->ifp;
+	if_t ifp = rxq->ifp;
 	struct sge_fl *fl = &rxq->fl;
-	struct vi_info *vi = ifp->if_softc;
+	struct vi_info *vi = if_getsoftc(ifp);
 	const struct cpl_rx_pkt *cpl;
 #if defined(INET) || defined(INET6)
 	struct lro_ctrl *lro = &rxq->lro;
@@ -1952,9 +1987,8 @@ eth_rx(struct adapter *sc, struct sge_rxq *rxq, const struct iq_desc *d,
 		slen = get_segment_len(sc, fl, plen) -
 		    sc->params.sge.fl_pktshift;
 		frame = sd->cl + fl->rx_offset + sc->params.sge.fl_pktshift;
-		CURVNET_SET_QUIET(ifp->if_vnet);
-		rc = pfil_run_hooks(vi->pfil, frame, ifp,
-		    slen | PFIL_MEMPTR | PFIL_IN, NULL);
+		CURVNET_SET_QUIET(if_getvnet(ifp));
+		rc = pfil_mem_in(vi->pfil, frame, slen, ifp, &m0);
 		CURVNET_RESTORE();
 		if (rc == PFIL_DROPPED || rc == PFIL_CONSUMED) {
 			skip_fl_payload(sc, fl, plen);
@@ -1962,7 +1996,6 @@ eth_rx(struct adapter *sc, struct sge_rxq *rxq, const struct iq_desc *d,
 		}
 		if (rc == PFIL_REALLOCED) {
 			skip_fl_payload(sc, fl, plen);
-			m0 = pfil_mem2mbuf(frame);
 			goto have_mbuf;
 		}
 	}
@@ -2001,11 +2034,11 @@ have_mbuf:
 		    (cpl->l2info & htobe32(F_RXF_IP6)));
 		m0->m_pkthdr.csum_data = be16toh(cpl->csum);
 		if (tnl_type == 0) {
-	    		if (!ipv6 && ifp->if_capenable & IFCAP_RXCSUM) {
+			if (!ipv6 && if_getcapenable(ifp) & IFCAP_RXCSUM) {
 				m0->m_pkthdr.csum_flags = CSUM_L3_CALC |
 				    CSUM_L3_VALID | CSUM_L4_CALC |
 				    CSUM_L4_VALID;
-			} else if (ipv6 && ifp->if_capenable & IFCAP_RXCSUM_IPV6) {
+			} else if (ipv6 && if_getcapenable(ifp) & IFCAP_RXCSUM_IPV6) {
 				m0->m_pkthdr.csum_flags = CSUM_L4_CALC |
 				    CSUM_L4_VALID;
 			}
@@ -2053,28 +2086,32 @@ have_mbuf:
 	}
 
 	if (cpl->vlan_ex) {
-		m0->m_pkthdr.ether_vtag = be16toh(cpl->vlan);
-		m0->m_flags |= M_VLANTAG;
-		rxq->vlan_extraction++;
+		if (sc->flags & IS_VF && sc->vlan_id) {
+			/*
+			 * HW is not setup correctly if extracted vlan_id does
+			 * not match the VF's setting.
+			 */
+			MPASS(be16toh(cpl->vlan) == sc->vlan_id);
+		} else {
+			m0->m_pkthdr.ether_vtag = be16toh(cpl->vlan);
+			m0->m_flags |= M_VLANTAG;
+			rxq->vlan_extraction++;
+		}
 	}
 
 	if (rxq->iq.flags & IQ_RX_TIMESTAMP) {
 		/*
-		 * Fill up rcv_tstmp but do not set M_TSTMP.
-		 * rcv_tstmp is not in the format that the
-		 * kernel expects and we don't want to mislead
-		 * it.  For now this is only for custom code
-		 * that knows how to interpret cxgbe's stamp.
+		 * Fill up rcv_tstmp but do not set M_TSTMP as
+		 * long as we get a non-zero back from t4_tstmp_to_ns().
 		 */
-		m0->m_pkthdr.rcv_tstmp =
-		    last_flit_to_ns(sc, d->rsp.u.last_flit);
-#ifdef notyet
-		m0->m_flags |= M_TSTMP;
-#endif
+		m0->m_pkthdr.rcv_tstmp = t4_tstmp_to_ns(sc,
+		    be64toh(d->rsp.u.last_flit));
+		if (m0->m_pkthdr.rcv_tstmp != 0)
+			m0->m_flags |= M_TSTMP;
 	}
 
 #ifdef NUMA
-	m0->m_pkthdr.numa_domain = ifp->if_numa_domain;
+	m0->m_pkthdr.numa_domain = if_getnumadomain(ifp);
 #endif
 #if defined(INET) || defined(INET6)
 	if (rxq->iq.flags & IQ_LRO_ENABLED && tnl_type == 0 &&
@@ -2088,7 +2125,7 @@ have_mbuf:
 			return (0); /* queued for LRO */
 	}
 #endif
-	ifp->if_input(ifp, m0);
+	if_input(ifp, m0);
 
 	return (0);
 }
@@ -2211,9 +2248,9 @@ t4_wrq_tx_locked(struct adapter *sc, struct sge_wrq *wrq, struct wrqe *wr)
 }
 
 void
-t4_update_fl_bufsize(struct ifnet *ifp)
+t4_update_fl_bufsize(if_t ifp)
 {
-	struct vi_info *vi = ifp->if_softc;
+	struct vi_info *vi = if_getsoftc(ifp);
 	struct adapter *sc = vi->adapter;
 	struct sge_rxq *rxq;
 #ifdef TCP_OFFLOAD
@@ -2242,64 +2279,6 @@ t4_update_fl_bufsize(struct ifnet *ifp)
 		FL_UNLOCK(fl);
 	}
 #endif
-}
-
-static inline int
-mbuf_nsegs(struct mbuf *m)
-{
-
-	M_ASSERTPKTHDR(m);
-	KASSERT(m->m_pkthdr.inner_l5hlen > 0,
-	    ("%s: mbuf %p missing information on # of segments.", __func__, m));
-
-	return (m->m_pkthdr.inner_l5hlen);
-}
-
-static inline void
-set_mbuf_nsegs(struct mbuf *m, uint8_t nsegs)
-{
-
-	M_ASSERTPKTHDR(m);
-	m->m_pkthdr.inner_l5hlen = nsegs;
-}
-
-static inline int
-mbuf_cflags(struct mbuf *m)
-{
-
-	M_ASSERTPKTHDR(m);
-	return (m->m_pkthdr.PH_loc.eight[4]);
-}
-
-static inline void
-set_mbuf_cflags(struct mbuf *m, uint8_t flags)
-{
-
-	M_ASSERTPKTHDR(m);
-	m->m_pkthdr.PH_loc.eight[4] = flags;
-}
-
-static inline int
-mbuf_len16(struct mbuf *m)
-{
-	int n;
-
-	M_ASSERTPKTHDR(m);
-	n = m->m_pkthdr.PH_loc.eight[0];
-	if (!(mbuf_cflags(m) & MC_TLS))
-		MPASS(n > 0 && n <= SGE_MAX_WR_LEN / 16);
-
-	return (n);
-}
-
-static inline void
-set_mbuf_len16(struct mbuf *m, uint8_t len16)
-{
-
-	M_ASSERTPKTHDR(m);
-	if (!(mbuf_cflags(m) & MC_TLS))
-		MPASS(len16 > 0 && len16 <= SGE_MAX_WR_LEN / 16);
-	m->m_pkthdr.PH_loc.eight[0] = len16;
 }
 
 #ifdef RATELIMIT
@@ -2714,16 +2693,12 @@ restart:
 #endif
 #ifdef KERN_TLS
 	if (mst != NULL && mst->sw->type == IF_SND_TAG_TYPE_TLS) {
-		int len16;
-
 		cflags |= MC_TLS;
 		set_mbuf_cflags(m0, cflags);
-		rc = t6_ktls_parse_pkt(m0, &nsegs, &len16);
+		rc = t6_ktls_parse_pkt(m0);
 		if (rc != 0)
 			goto fail;
-		set_mbuf_nsegs(m0, nsegs);
-		set_mbuf_len16(m0, len16);
-		return (0);
+		return (EINPROGRESS);
 	}
 #endif
 	if (nsegs > max_nsegs_allowed(m0, vm_wr)) {
@@ -2772,7 +2747,7 @@ restart:
 
 	if (!needs_hwcsum(m0)
 #ifdef RATELIMIT
-   		 && !needs_eo(mst)
+		 && !needs_eo(mst)
 #endif
 	)
 		return (0);
@@ -2921,6 +2896,10 @@ restart:
 		set_mbuf_eo_nsegs(m0, nsegs);
 		set_mbuf_eo_len16(m0,
 		    txpkt_eo_len16(nsegs, immhdrs, needs_tso(m0)));
+		rc = ethofld_transmit(mst->ifp, m0);
+		if (rc != 0)
+			goto fail;
+		return (EINPROGRESS);
 	}
 #endif
 #endif
@@ -3147,10 +3126,10 @@ static u_int
 eth_tx(struct mp_ring *r, u_int cidx, u_int pidx, bool *coalescing)
 {
 	struct sge_txq *txq = r->cookie;
-	struct ifnet *ifp = txq->ifp;
+	if_t ifp = txq->ifp;
 	struct sge_eq *eq = &txq->eq;
 	struct txpkts *txp = &txq->txp;
-	struct vi_info *vi = ifp->if_softc;
+	struct vi_info *vi = if_getsoftc(ifp);
 	struct adapter *sc = vi->adapter;
 	u_int total, remaining;		/* # of packets */
 	u_int n, avail, dbdiff;		/* # of hardware descriptors */
@@ -3279,8 +3258,7 @@ skip_coalescing:
 #ifdef KERN_TLS
 		} else if (mbuf_cflags(m0) & MC_TLS) {
 			ETHER_BPF_MTAP(ifp, m0);
-			n = t6_ktls_write_wr(txq, wr, m0, mbuf_nsegs(m0),
-			    avail);
+			n = t6_ktls_write_wr(txq, wr, m0, avail);
 #endif
 		} else {
 			ETHER_BPF_MTAP(ifp, m0);
@@ -3357,7 +3335,7 @@ send_txpkts:
 
 static inline void
 init_iq(struct sge_iq *iq, struct adapter *sc, int tmr_idx, int pktc_idx,
-    int qsize, int intr_idx, int cong)
+    int qsize, int intr_idx, int cong, int qtype)
 {
 
 	KASSERT(tmr_idx >= 0 && tmr_idx < SGE_NTIMERS,
@@ -3366,10 +3344,13 @@ init_iq(struct sge_iq *iq, struct adapter *sc, int tmr_idx, int pktc_idx,
 	    ("%s: bad pktc_idx %d", __func__, pktc_idx));
 	KASSERT(intr_idx >= -1 && intr_idx < sc->intr_count,
 	    ("%s: bad intr_idx %d", __func__, intr_idx));
+	KASSERT(qtype == FW_IQ_IQTYPE_OTHER || qtype == FW_IQ_IQTYPE_NIC ||
+	    qtype == FW_IQ_IQTYPE_OFLD, ("%s: bad qtype %d", __func__, qtype));
 
 	iq->flags = 0;
 	iq->state = IQS_DISABLED;
 	iq->adapter = sc;
+	iq->qtype = qtype;
 	iq->intr_params = V_QINTR_TIMER_IDX(tmr_idx);
 	iq->intr_pktc_idx = SGE_NCOUNTERS - 1;
 	if (pktc_idx >= 0) {
@@ -3379,7 +3360,7 @@ init_iq(struct sge_iq *iq, struct adapter *sc, int tmr_idx, int pktc_idx,
 	iq->qsize = roundup2(qsize, 16);	/* See FW_IQ_CMD/iqsize */
 	iq->sidx = iq->qsize - sc->params.sge.spg_len / IQ_ESIZE;
 	iq->intr_idx = intr_idx;
-	iq->cong = cong;
+	iq->cong_drop = cong;
 }
 
 static inline void
@@ -3410,13 +3391,14 @@ init_fl(struct adapter *sc, struct sge_fl *fl, int qsize, int maxp, char *name)
 
 static inline void
 init_eq(struct adapter *sc, struct sge_eq *eq, int eqtype, int qsize,
-    uint8_t tx_chan, struct sge_iq *iq, char *name)
+    uint8_t port_id, struct sge_iq *iq, char *name)
 {
 	KASSERT(eqtype >= EQ_CTRL && eqtype <= EQ_OFLD,
 	    ("%s: bad qtype %d", __func__, eqtype));
 
 	eq->type = eqtype;
-	eq->tx_chan = tx_chan;
+	eq->port_id = port_id;
+	eq->tx_chan = sc->port[port_id]->tx_chan;
 	eq->iq = iq;
 	eq->sidx = qsize - sc->params.sge.spg_len / EQ_ESIZE;
 	strlcpy(eq->lockname, name, sizeof(eq->lockname));
@@ -3545,9 +3527,10 @@ free_iq_fl(struct adapter *sc, struct sge_iq *iq, struct sge_fl *fl)
 static int
 alloc_iq_fl_hwq(struct vi_info *vi, struct sge_iq *iq, struct sge_fl *fl)
 {
-	int rc, i, cntxt_id;
+	int rc, cntxt_id, cong_map;
 	struct fw_iq_cmd c;
 	struct adapter *sc = vi->adapter;
+	struct port_info *pi = vi->pi;
 	__be32 v = 0;
 
 	MPASS (!(iq->flags & IQ_HW_ALLOCATED));
@@ -3579,14 +3562,17 @@ alloc_iq_fl_hwq(struct vi_info *vi, struct sge_iq *iq, struct sge_fl *fl)
 	    V_FW_IQ_CMD_TYPE(FW_IQ_TYPE_FL_INT_CAP) |
 	    V_FW_IQ_CMD_VIID(vi->viid) |
 	    V_FW_IQ_CMD_IQANUD(X_UPDATEDELIVERY_INTERRUPT));
-	c.iqdroprss_to_iqesize = htobe16(V_FW_IQ_CMD_IQPCIECH(vi->pi->tx_chan) |
+	c.iqdroprss_to_iqesize = htobe16(V_FW_IQ_CMD_IQPCIECH(pi->tx_chan) |
 	    F_FW_IQ_CMD_IQGTSMODE |
 	    V_FW_IQ_CMD_IQINTCNTTHRESH(iq->intr_pktc_idx) |
 	    V_FW_IQ_CMD_IQESIZE(ilog2(IQ_ESIZE) - 4));
 	c.iqsize = htobe16(iq->qsize);
 	c.iqaddr = htobe64(iq->ba);
-	if (iq->cong >= 0)
-		c.iqns_to_fl0congen = htobe32(F_FW_IQ_CMD_IQFLINTCONGEN);
+	c.iqns_to_fl0congen = htobe32(V_FW_IQ_CMD_IQTYPE(iq->qtype));
+	if (iq->cong_drop != -1) {
+		cong_map = iq->qtype == IQ_ETH ? pi->rx_e_chan_map : 0;
+		c.iqns_to_fl0congen |= htobe32(F_FW_IQ_CMD_IQFLINTCONGEN);
+	}
 
 	if (fl) {
 		bzero(fl->desc, fl->sidx * EQ_ESIZE + sc->params.sge.spg_len);
@@ -3596,9 +3582,9 @@ alloc_iq_fl_hwq(struct vi_info *vi, struct sge_iq *iq, struct sge_fl *fl)
 			(fl_pad ? F_FW_IQ_CMD_FL0PADEN : 0) |
 			(fl->flags & FL_BUF_PACKING ? F_FW_IQ_CMD_FL0PACKEN :
 			    0));
-		if (iq->cong >= 0) {
+		if (iq->cong_drop != -1) {
 			c.iqns_to_fl0congen |=
-				htobe32(V_FW_IQ_CMD_FL0CNGCHMAP(iq->cong) |
+				htobe32(V_FW_IQ_CMD_FL0CNGCHMAP(cong_map) |
 				    F_FW_IQ_CMD_FL0CONGCIF |
 				    F_FW_IQ_CMD_FL0CONGEN);
 		}
@@ -3632,6 +3618,8 @@ alloc_iq_fl_hwq(struct vi_info *vi, struct sge_iq *iq, struct sge_fl *fl)
 	if (fl) {
 		u_int qid;
 #ifdef INVARIANTS
+		int i;
+
 		MPASS(!(fl->flags & FL_BUF_RESUME));
 		for (i = 0; i < fl->sidx * 8; i++)
 			MPASS(fl->sdesc[i].cl == NULL);
@@ -3671,28 +3659,10 @@ alloc_iq_fl_hwq(struct vi_info *vi, struct sge_iq *iq, struct sge_fl *fl)
 		FL_UNLOCK(fl);
 	}
 
-	if (chip_id(sc) >= CHELSIO_T5 && !(sc->flags & IS_VF) && iq->cong >= 0) {
-		uint32_t param, val;
-
-		param = V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DMAQ) |
-		    V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DMAQ_CONM_CTXT) |
-		    V_FW_PARAMS_PARAM_YZ(iq->cntxt_id);
-		if (iq->cong == 0)
-			val = 1 << 19;
-		else {
-			val = 2 << 19;
-			for (i = 0; i < 4; i++) {
-				if (iq->cong & (1 << i))
-					val |= 1 << (i << 2);
-			}
-		}
-
-		rc = -t4_set_params(sc, sc->mbox, sc->pf, 0, 1, &param, &val);
-		if (rc != 0) {
-			/* report error but carry on */
-			CH_ERR(sc, "failed to set congestion manager context "
-			    "for ingress queue %d: %d\n", iq->cntxt_id, rc);
-		}
+	if (chip_id(sc) >= CHELSIO_T5 && !(sc->flags & IS_VF) &&
+	    iq->cong_drop != -1) {
+		t4_sge_set_conm_context(sc, iq->cntxt_id, iq->cong_drop,
+		    cong_map);
 	}
 
 	/* Enable IQ interrupts */
@@ -3802,7 +3772,7 @@ alloc_fwq(struct adapter *sc)
 			intr_idx = 0;
 		else
 			intr_idx = sc->intr_count > 1 ? 1 : 0;
-		init_iq(fwq, sc, 0, 0, FW_IQ_QSIZE, intr_idx, -1);
+		init_iq(fwq, sc, 0, 0, FW_IQ_QSIZE, intr_idx, -1, IQ_OTHER);
 		rc = alloc_iq_fl(vi, fwq, NULL, &sc->ctx, sc->fwq_oid);
 		if (rc != 0) {
 			CH_ERR(sc, "failed to allocate fwq: %d\n", rc);
@@ -3869,8 +3839,8 @@ alloc_ctrlq(struct adapter *sc, int idx)
 
 		snprintf(name, sizeof(name), "%s ctrlq%d",
 		    device_get_nameunit(sc->dev), idx);
-		init_eq(sc, &ctrlq->eq, EQ_CTRL, CTRL_EQ_QSIZE,
-		    sc->port[idx]->tx_chan, &sc->sge.fwq, name);
+		init_eq(sc, &ctrlq->eq, EQ_CTRL, CTRL_EQ_QSIZE, idx,
+		    &sc->sge.fwq, name);
 		rc = alloc_wrq(sc, NULL, ctrlq, &sc->ctx, oid);
 		if (rc != 0) {
 			CH_ERR(sc, "failed to allocate ctrlq%d: %d\n", idx, rc);
@@ -3916,15 +3886,57 @@ free_ctrlq(struct adapter *sc, int idx)
 }
 
 int
-tnl_cong(struct port_info *pi, int drop)
+t4_sge_set_conm_context(struct adapter *sc, int cntxt_id, int cong_drop,
+    int cong_map)
 {
+	const int cng_ch_bits_log = sc->chip_params->cng_ch_bits_log;
+	uint32_t param, val;
+	uint16_t ch_map;
+	int cong_mode, rc, i;
 
-	if (drop == -1)
-		return (-1);
-	else if (drop == 1)
-		return (0);
-	else
-		return (pi->rx_e_chan_map);
+	if (chip_id(sc) < CHELSIO_T5)
+		return (ENOTSUP);
+
+	/* Convert the driver knob to the mode understood by the firmware. */
+	switch (cong_drop) {
+	case -1:
+		cong_mode = X_CONMCTXT_CNGTPMODE_DISABLE;
+		break;
+	case 0:
+		cong_mode = X_CONMCTXT_CNGTPMODE_CHANNEL;
+		break;
+	case 1:
+		cong_mode = X_CONMCTXT_CNGTPMODE_QUEUE;
+		break;
+	case 2:
+		cong_mode = X_CONMCTXT_CNGTPMODE_BOTH;
+		break;
+	default:
+		MPASS(0);
+		CH_ERR(sc, "cong_drop = %d is invalid (ingress queue %d).\n",
+		    cong_drop, cntxt_id);
+		return (EINVAL);
+	}
+
+	param = V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DMAQ) |
+	    V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DMAQ_CONM_CTXT) |
+	    V_FW_PARAMS_PARAM_YZ(cntxt_id);
+	val = V_CONMCTXT_CNGTPMODE(cong_mode);
+	if (cong_mode == X_CONMCTXT_CNGTPMODE_CHANNEL ||
+	    cong_mode == X_CONMCTXT_CNGTPMODE_BOTH) {
+		for (i = 0, ch_map = 0; i < 4; i++) {
+			if (cong_map & (1 << i))
+				ch_map |= 1 << (i << cng_ch_bits_log);
+		}
+		val |= V_CONMCTXT_CNGCHMAP(ch_map);
+	}
+	rc = -t4_set_params(sc, sc->mbox, sc->pf, 0, 1, &param, &val);
+	if (rc != 0) {
+		CH_ERR(sc, "failed to set congestion manager context "
+		    "for ingress queue %d: %d\n", cntxt_id, rc);
+	}
+
+	return (rc);
 }
 
 /*
@@ -3936,7 +3948,7 @@ alloc_rxq(struct vi_info *vi, struct sge_rxq *rxq, int idx, int intr_idx,
 {
 	int rc;
 	struct adapter *sc = vi->adapter;
-	struct ifnet *ifp = vi->ifp;
+	if_t ifp = vi->ifp;
 	struct sysctl_oid *oid;
 	char name[16];
 
@@ -3956,12 +3968,12 @@ alloc_rxq(struct vi_info *vi, struct sge_rxq *rxq, int idx, int intr_idx,
 		    "rx queue");
 
 		init_iq(&rxq->iq, sc, vi->tmr_idx, vi->pktc_idx, vi->qsize_rxq,
-		    intr_idx, tnl_cong(vi->pi, cong_drop));
+		    intr_idx, cong_drop, IQ_ETH);
 #if defined(INET) || defined(INET6)
-		if (ifp->if_capenable & IFCAP_LRO)
+		if (if_getcapenable(ifp) & IFCAP_LRO)
 			rxq->iq.flags |= IQ_LRO_ENABLED;
 #endif
-		if (ifp->if_capenable & IFCAP_HWRXTSTMP)
+		if (if_getcapenable(ifp) & IFCAP_HWRXTSTMP)
 			rxq->iq.flags |= IQ_RX_TIMESTAMP;
 		snprintf(name, sizeof(name), "%s rxq%d-fl",
 		    device_get_nameunit(vi->dev), idx);
@@ -4079,7 +4091,7 @@ alloc_ofld_rxq(struct vi_info *vi, struct sge_ofld_rxq *ofld_rxq, int idx,
 		    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "offload rx queue");
 
 		init_iq(&ofld_rxq->iq, sc, vi->ofld_tmr_idx, vi->ofld_pktc_idx,
-		    vi->qsize_rxq, intr_idx, 0);
+		    vi->qsize_rxq, intr_idx, ofld_cong_drop, IQ_OFLD);
 		snprintf(name, sizeof(name), "%s ofld_rxq%d-fl",
 		    device_get_nameunit(vi->dev), idx);
 		init_fl(sc, &ofld_rxq->fl, vi->qsize_rxq / 8, maxp, name);
@@ -4095,6 +4107,9 @@ alloc_ofld_rxq(struct vi_info *vi, struct sge_ofld_rxq *ofld_rxq, int idx,
 		ofld_rxq->rx_iscsi_ddp_setup_ok = counter_u64_alloc(M_WAITOK);
 		ofld_rxq->rx_iscsi_ddp_setup_error =
 		    counter_u64_alloc(M_WAITOK);
+		ofld_rxq->ddp_buffer_alloc = counter_u64_alloc(M_WAITOK);
+		ofld_rxq->ddp_buffer_reuse = counter_u64_alloc(M_WAITOK);
+		ofld_rxq->ddp_buffer_free = counter_u64_alloc(M_WAITOK);
 		add_ofld_rxq_sysctls(&vi->ctx, oid, ofld_rxq);
 	}
 
@@ -4129,6 +4144,9 @@ free_ofld_rxq(struct vi_info *vi, struct sge_ofld_rxq *ofld_rxq)
 		MPASS(!(ofld_rxq->iq.flags & IQ_SW_ALLOCATED));
 		counter_u64_free(ofld_rxq->rx_iscsi_ddp_setup_ok);
 		counter_u64_free(ofld_rxq->rx_iscsi_ddp_setup_error);
+		counter_u64_free(ofld_rxq->ddp_buffer_alloc);
+		counter_u64_free(ofld_rxq->ddp_buffer_reuse);
+		counter_u64_free(ofld_rxq->ddp_buffer_free);
 		bzero(ofld_rxq, sizeof(*ofld_rxq));
 	}
 }
@@ -4143,12 +4161,30 @@ add_ofld_rxq_sysctls(struct sysctl_ctx_list *ctx, struct sysctl_oid *oid,
 		return;
 
 	children = SYSCTL_CHILDREN(oid);
+	SYSCTL_ADD_U64(ctx, children, OID_AUTO, "rx_aio_ddp_jobs",
+	    CTLFLAG_RD, &ofld_rxq->rx_aio_ddp_jobs, 0,
+	    "# of aio_read(2) jobs completed via DDP");
+	SYSCTL_ADD_U64(ctx, children, OID_AUTO, "rx_aio_ddp_octets",
+	    CTLFLAG_RD, &ofld_rxq->rx_aio_ddp_octets, 0,
+	    "# of octets placed directly for aio_read(2) jobs");
 	SYSCTL_ADD_ULONG(ctx, children, OID_AUTO,
 	    "rx_toe_tls_records", CTLFLAG_RD, &ofld_rxq->rx_toe_tls_records,
 	    "# of TOE TLS records received");
 	SYSCTL_ADD_ULONG(ctx, children, OID_AUTO,
 	    "rx_toe_tls_octets", CTLFLAG_RD, &ofld_rxq->rx_toe_tls_octets,
 	    "# of payload octets in received TOE TLS records");
+	SYSCTL_ADD_ULONG(ctx, children, OID_AUTO,
+	    "rx_toe_ddp_octets", CTLFLAG_RD, &ofld_rxq->rx_toe_ddp_octets,
+	    "# of payload octets received via TCP DDP");
+	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO,
+	    "ddp_buffer_alloc", CTLFLAG_RD, &ofld_rxq->ddp_buffer_alloc,
+	    "# of DDP RCV buffers allocated");
+	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO,
+	    "ddp_buffer_reuse", CTLFLAG_RD, &ofld_rxq->ddp_buffer_reuse,
+	    "# of DDP RCV buffers reused");
+	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO,
+	    "ddp_buffer_free", CTLFLAG_RD, &ofld_rxq->ddp_buffer_free,
+	    "# of DDP RCV buffers freed");
 
 	oid = SYSCTL_ADD_NODE(ctx, children, OID_AUTO, "iscsi",
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "TOE iSCSI statistics");
@@ -4192,9 +4228,7 @@ qsize_to_fthresh(int qsize)
 {
 	u_int fthresh;
 
-	while (!powerof2(qsize))
-		qsize++;
-	fthresh = ilog2(qsize);
+	fthresh = qsize == 0 ? 0 : order_base_2(qsize);
 	if (fthresh > X_CIDXFLUSHTHRESH_128)
 		fthresh = X_CIDXFLUSHTHRESH_128;
 
@@ -4446,7 +4480,7 @@ alloc_eq_hwq(struct adapter *sc, struct vi_info *vi, struct sge_eq *eq)
 		udb += (eq->cntxt_id >> s_qpp) << PAGE_SHIFT;	/* pg offset */
 		eq->udb_qid = eq->cntxt_id & mask;		/* id in page */
 		if (eq->udb_qid >= PAGE_SIZE / UDBS_SEG_SIZE)
-	    		clrbit(&eq->doorbells, DOORBELL_WCWR);
+			clrbit(&eq->doorbells, DOORBELL_WCWR);
 		else {
 			udb += eq->udb_qid << UDBS_SEG_SHIFT;	/* seg offset */
 			eq->udb_qid = 0;
@@ -4568,7 +4602,7 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx)
 		iqidx = vi->first_rxq + (idx % vi->nrxq);
 		snprintf(name, sizeof(name), "%s txq%d",
 		    device_get_nameunit(vi->dev), idx);
-		init_eq(sc, &txq->eq, EQ_ETH, vi->qsize_txq, pi->tx_chan,
+		init_eq(sc, &txq->eq, EQ_ETH, vi->qsize_txq, pi->port_id,
 		    &sc->sge.rxq[iqidx].iq, name);
 
 		rc = mp_ring_alloc(&txq->r, eq->sidx, txq, eth_tx,
@@ -4785,11 +4819,11 @@ alloc_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq, int idx)
 		    device_get_nameunit(vi->dev), idx);
 		if (vi->nofldrxq > 0) {
 			iqidx = vi->first_ofld_rxq + (idx % vi->nofldrxq);
-			init_eq(sc, eq, EQ_OFLD, vi->qsize_txq, pi->tx_chan,
+			init_eq(sc, eq, EQ_OFLD, vi->qsize_txq, pi->port_id,
 			    &sc->sge.ofld_rxq[iqidx].iq, name);
 		} else {
 			iqidx = vi->first_rxq + (idx % vi->nrxq);
-			init_eq(sc, eq, EQ_OFLD, vi->qsize_txq, pi->tx_chan,
+			init_eq(sc, eq, EQ_OFLD, vi->qsize_txq, pi->port_id,
 			    &sc->sge.rxq[iqidx].iq, name);
 		}
 
@@ -4806,6 +4840,8 @@ alloc_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq, int idx)
 		ofld_txq->tx_iscsi_pdus = counter_u64_alloc(M_WAITOK);
 		ofld_txq->tx_iscsi_octets = counter_u64_alloc(M_WAITOK);
 		ofld_txq->tx_iscsi_iso_wrs = counter_u64_alloc(M_WAITOK);
+		ofld_txq->tx_aio_jobs = counter_u64_alloc(M_WAITOK);
+		ofld_txq->tx_aio_octets = counter_u64_alloc(M_WAITOK);
 		ofld_txq->tx_toe_tls_records = counter_u64_alloc(M_WAITOK);
 		ofld_txq->tx_toe_tls_octets = counter_u64_alloc(M_WAITOK);
 		add_ofld_txq_sysctls(&vi->ctx, oid, ofld_txq);
@@ -4844,6 +4880,8 @@ free_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq)
 		counter_u64_free(ofld_txq->tx_iscsi_pdus);
 		counter_u64_free(ofld_txq->tx_iscsi_octets);
 		counter_u64_free(ofld_txq->tx_iscsi_iso_wrs);
+		counter_u64_free(ofld_txq->tx_aio_jobs);
+		counter_u64_free(ofld_txq->tx_aio_octets);
 		counter_u64_free(ofld_txq->tx_toe_tls_records);
 		counter_u64_free(ofld_txq->tx_toe_tls_octets);
 		free_wrq(sc, &ofld_txq->wrq);
@@ -4871,6 +4909,12 @@ add_ofld_txq_sysctls(struct sysctl_ctx_list *ctx, struct sysctl_oid *oid,
 	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO, "tx_iscsi_iso_wrs",
 	    CTLFLAG_RD, &ofld_txq->tx_iscsi_iso_wrs,
 	    "# of iSCSI segmentation offload work requests");
+	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO, "tx_aio_jobs",
+	    CTLFLAG_RD, &ofld_txq->tx_aio_jobs,
+	    "# of zero-copy aio_write(2) jobs transmitted");
+	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO, "tx_aio_octets",
+	    CTLFLAG_RD, &ofld_txq->tx_aio_octets,
+	    "# of payload octets in transmitted zero-copy aio_write(2) jobs");
 	SYSCTL_ADD_COUNTER_U64(ctx, children, OID_AUTO, "tx_toe_tls_records",
 	    CTLFLAG_RD, &ofld_txq->tx_toe_tls_records,
 	    "# of TOE TLS records transmitted");
@@ -5440,7 +5484,8 @@ write_txpkt_vm_wr(struct adapter *sc, struct sge_txq *txq, struct mbuf *m0)
 		ctrl1 |= F_TXPKT_VLAN_VLD |
 		    V_TXPKT_VLAN(m0->m_pkthdr.ether_vtag);
 		txq->vlan_insertion++;
-	}
+	} else if (sc->vlan_id)
+		ctrl1 |= F_TXPKT_VLAN_VLD | V_TXPKT_VLAN(sc->vlan_id);
 
 	/* CPL header */
 	cpl->ctrl0 = txq->cpl_ctrl0;
@@ -5941,7 +5986,8 @@ write_txpkts_vm_wr(struct adapter *sc, struct sge_txq *txq)
 			ctrl1 |= F_TXPKT_VLAN_VLD |
 			    V_TXPKT_VLAN(m->m_pkthdr.ether_vtag);
 			txq->vlan_insertion++;
-		}
+		} else if (sc->vlan_id)
+			ctrl1 |= F_TXPKT_VLAN_VLD | V_TXPKT_VLAN(sc->vlan_id);
 
 		/* CPL header */
 		cpl->ctrl0 = txq->cpl_ctrl0;
@@ -6292,7 +6338,7 @@ handle_wrq_egr_update(struct adapter *sc, struct sge_eq *eq)
 	struct sge_wrq *wrq = (void *)eq;
 
 	atomic_readandclear_int(&eq->equiq);
-	taskqueue_enqueue(sc->tq[eq->tx_chan], &wrq->wrq_tx_task);
+	taskqueue_enqueue(sc->tq[eq->port_id], &wrq->wrq_tx_task);
 }
 
 static void
@@ -6304,7 +6350,7 @@ handle_eth_egr_update(struct adapter *sc, struct sge_eq *eq)
 
 	atomic_readandclear_int(&eq->equiq);
 	if (mp_ring_is_idle(txq->r))
-		taskqueue_enqueue(sc->tq[eq->tx_chan], &txq->tx_reclaim_task);
+		taskqueue_enqueue(sc->tq[eq->port_id], &txq->tx_reclaim_task);
 	else
 		mp_ring_check_drainage(txq->r, 64);
 }
@@ -6492,6 +6538,7 @@ done:
     ETID_FLOWC_NPARAMS * sizeof(struct fw_flowc_mnemval)), 16))
 #define ETID_FLOWC_LEN16 (howmany(ETID_FLOWC_LEN, 16))
 
+#if defined(INET) || defined(INET6)
 static int
 send_etid_flowc_wr(struct cxgbe_rate_tag *cst, struct port_info *pi,
     struct vi_info *vi)
@@ -6535,6 +6582,7 @@ send_etid_flowc_wr(struct cxgbe_rate_tag *cst, struct port_info *pi,
 
 	return (0);
 }
+#endif
 
 #define ETID_FLUSH_LEN16 (howmany(sizeof (struct fw_flowc_wr), 16))
 
@@ -6775,8 +6823,9 @@ ethofld_tx(struct cxgbe_rate_tag *cst)
 	}
 }
 
-int
-ethofld_transmit(struct ifnet *ifp, struct mbuf *m0)
+#if defined(INET) || defined(INET6)
+static int
+ethofld_transmit(if_t ifp, struct mbuf *m0)
 {
 	struct cxgbe_rate_tag *cst;
 	int rc;
@@ -6790,7 +6839,7 @@ ethofld_transmit(struct ifnet *ifp, struct mbuf *m0)
 	MPASS(cst->flags & EO_SND_TAG_REF);
 
 	if (__predict_false(cst->flags & EO_FLOWC_PENDING)) {
-		struct vi_info *vi = ifp->if_softc;
+		struct vi_info *vi = if_getsoftc(ifp);
 		struct port_info *pi = vi->pi;
 		struct adapter *sc = pi->adapter;
 		const uint32_t rss_mask = vi->rss_size - 1;
@@ -6831,10 +6880,9 @@ ethofld_transmit(struct ifnet *ifp, struct mbuf *m0)
 
 done:
 	mtx_unlock(&cst->lock);
-	if (__predict_false(rc != 0))
-		m_freem(m0);
 	return (rc);
 }
+#endif
 
 static int
 ethofld_fw4_ack(struct sge_iq *iq, const struct rss_header *rss, struct mbuf *m0)

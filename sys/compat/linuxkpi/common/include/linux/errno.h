@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_ERRNO_H_
 #define	_LINUXKPI_LINUX_ERRNO_H_
@@ -34,6 +32,8 @@
 #include <sys/errno.h>
 
 #define	EBADRQC		56	/* Bad request code */
+#define	EBADSLT		57	/* Invalid slot */
+#define	ENOKEY		126	/* Required key not available */
 
 #define	ECHRNG		EDOM
 #define	ETIME		ETIMEDOUT

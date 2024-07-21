@@ -32,9 +32,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifndef _NETINET_SCTP_PCB_H_
 #define _NETINET_SCTP_PCB_H_
 
@@ -133,7 +130,7 @@ struct sctp_block_entry {
 };
 
 struct sctp_timewait {
-	uint32_t tv_sec_at_expire;	/* the seconds from boot to expire */
+	time_t tv_sec_at_expire;	/* the seconds from boot to expire */
 	uint32_t v_tag;		/* the vtag that can not be reused */
 	uint16_t lport;		/* the local port used in vtag */
 	uint16_t rport;		/* the remote port used in vtag */
@@ -266,8 +263,8 @@ struct sctp_base_info {
  * access /dev/random.
  */
 struct sctp_pcb {
-	unsigned int time_of_secret_change;	/* number of seconds from
-						 * timeval.tv_sec */
+	time_t time_of_secret_change;	/* number of seconds from
+					 * timeval.tv_sec */
 	uint32_t secret_key[SCTP_HOW_MANY_SECRETS][SCTP_NUMBER_OF_SECRETS];
 	unsigned int size_of_a_cookie;
 
@@ -409,6 +406,7 @@ struct sctp_inpcb {
 	uint8_t reconfig_supported;
 	uint8_t nrsack_supported;
 	uint8_t pktdrop_supported;
+	uint8_t rcv_edmid;
 	struct sctp_nonpad_sndrcvinfo def_send;
 	/*-
 	 * These three are here for the sosend_dgram

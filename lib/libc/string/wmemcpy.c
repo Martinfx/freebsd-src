@@ -34,13 +34,13 @@
 __RCSID("$NetBSD: wmemcpy.c,v 1.1 2000/12/23 23:14:37 itojun Exp $");
 #endif /* LIBC_SCCS and not lint */
 #endif
-__FBSDID("$FreeBSD$");
-
 #include <string.h>
 #include <wchar.h>
+#include <ssp/ssp.h>
 
 wchar_t *
-wmemcpy(wchar_t * __restrict d, const wchar_t * __restrict s, size_t n)
+__ssp_real(wmemcpy)(wchar_t * __restrict d, const wchar_t * __restrict s,
+    size_t n)
 {
 	return (wchar_t *)memcpy(d, s, n * sizeof(wchar_t));
 }

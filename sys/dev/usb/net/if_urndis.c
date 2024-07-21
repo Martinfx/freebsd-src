@@ -21,8 +21,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/stdint.h>
 #include <sys/stddef.h>
 #include <sys/param.h>
@@ -216,15 +214,15 @@ urndis_attach_post(struct usb_ether *ue)
 static int
 urndis_attach(device_t dev)
 {
-	static struct {
-		union {
+	union {
+		struct {
 			struct rndis_query_req query;
+			uint8_t addr[ETHER_ADDR_LEN];
+		} eaddr;
+		struct {
 			struct rndis_set_req set;
-		} hdr;
-		union {
-			uint8_t eaddr[ETHER_ADDR_LEN];
 			uint32_t filter;
-		} ibuf;
+		} filter;
 	} msg;
 	struct urndis_softc *sc = device_get_softc(dev);
 	struct usb_ether *ue = &sc->sc_ue;
@@ -280,10 +278,10 @@ urndis_attach(device_t dev)
 	}
 
 	/* Determine MAC address */
-	memset(msg.ibuf.eaddr, 0, sizeof(msg.ibuf.eaddr));
+	memset(msg.eaddr.addr, 0, sizeof(msg.eaddr.addr));
 	URNDIS_LOCK(sc);
 	error = urndis_ctrl_query(sc, OID_802_3_PERMANENT_ADDRESS,
-	    &msg.hdr.query, sizeof(msg.hdr.query) + sizeof(msg.ibuf.eaddr),
+	    (struct rndis_query_req *)&msg.eaddr, sizeof(msg.eaddr),
 	    &buf, &bufsz);
 	URNDIS_UNLOCK(sc);
 	if (error != (int)RNDIS_STATUS_SUCCESS) {
@@ -299,10 +297,10 @@ urndis_attach(device_t dev)
 	/* Initialize packet filter */
 	sc->sc_filter = NDIS_PACKET_TYPE_BROADCAST |
 	    NDIS_PACKET_TYPE_ALL_MULTICAST;
-	msg.ibuf.filter = htole32(sc->sc_filter);
+	msg.filter.filter = htole32(sc->sc_filter);
 	URNDIS_LOCK(sc);
 	error = urndis_ctrl_set(sc, OID_GEN_CURRENT_PACKET_FILTER,
-	    &msg.hdr.set, sizeof(msg.hdr.set) + sizeof(msg.ibuf.filter));
+	    (struct rndis_set_req *)&msg.filter, sizeof(msg.filter));
 	URNDIS_UNLOCK(sc);
 	if (error != (int)RNDIS_STATUS_SUCCESS) {
 		device_printf(dev, "Unable to set data filters\n");
@@ -369,11 +367,11 @@ static void
 urndis_init(struct usb_ether *ue)
 {
 	struct urndis_softc *sc = uether_getsc(ue);
-	struct ifnet *ifp = uether_getifp(ue);
+	if_t ifp = uether_getifp(ue);
 
 	URNDIS_LOCK_ASSERT(sc, MA_OWNED);
 
-	ifp->if_drv_flags |= IFF_DRV_RUNNING;
+	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
 
 	/* stall data write direction, which depends on USB mode */
 	usbd_xfer_set_stall(sc->sc_xfer[URNDIS_BULK_TX]);
@@ -386,11 +384,11 @@ static void
 urndis_stop(struct usb_ether *ue)
 {
 	struct urndis_softc *sc = uether_getsc(ue);
-	struct ifnet *ifp = uether_getifp(ue);
+	if_t ifp = uether_getifp(ue);
 
 	URNDIS_LOCK_ASSERT(sc, MA_OWNED);
 
-	ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
+	if_setdrvflagbits(ifp, 0, IFF_DRV_RUNNING);
 
 	/*
 	 * stop all the transfers, if not already stopped:
@@ -643,7 +641,7 @@ urndis_ctrl_handle_reset(struct urndis_softc *sc,
 		msg_filter.filter = htole32(sc->sc_filter);
 
 		rval = urndis_ctrl_set(sc, OID_GEN_CURRENT_PACKET_FILTER,
-		    &msg_filter.hdr, sizeof(msg_filter));
+		    (struct rndis_set_req *)&msg_filter, sizeof(msg_filter));
 
 		if (rval != RNDIS_STATUS_SUCCESS) {
 			DPRINTF("unable to reset data filters\n");
@@ -818,7 +816,7 @@ urndis_bulk_read_callback(struct usb_xfer *xfer, usb_error_t error)
 {
 	struct urndis_softc *sc = usbd_xfer_softc(xfer);
 	struct usb_page_cache *pc = usbd_xfer_get_frame(xfer, 0);
-	struct ifnet *ifp = uether_getifp(&sc->sc_ue);
+	if_t ifp = uether_getifp(&sc->sc_ue);
 	struct rndis_packet_msg msg;
 	struct mbuf *m;
 	int actlen;
@@ -947,7 +945,7 @@ urndis_bulk_write_callback(struct usb_xfer *xfer, usb_error_t error)
 {
 	struct rndis_packet_msg msg;
 	struct urndis_softc *sc = usbd_xfer_softc(xfer);
-	struct ifnet *ifp = uether_getifp(&sc->sc_ue);
+	if_t ifp = uether_getifp(&sc->sc_ue);
 	struct mbuf *m;
 	unsigned x;
 	int actlen;
@@ -974,7 +972,7 @@ tr_setup:
 			usbd_xfer_set_frame_offset(xfer, x * RNDIS_TX_MAXLEN, x);
 
 next_pkt:
-			IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
+			m = if_dequeue(ifp);
 
 			if (m == NULL)
 				break;

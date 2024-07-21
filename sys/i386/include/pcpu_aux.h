@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_PCPU_AUX_H_
@@ -51,8 +49,8 @@ __curthread(void)
 {
 	struct thread *td;
 
-	__asm("movl %%fs:%1,%0" : "=r" (td)
-	    : "m" (*(char *)offsetof(struct pcpu, pc_curthread)));
+	__asm("movl %%fs:%c1,%0" : "=r" (td)
+	    : "i" (offsetof(struct pcpu, pc_curthread)));
 	return (td);
 }
 #define	curthread		(__curthread())
@@ -62,8 +60,8 @@ __curpcb(void)
 {
 	struct pcb *pcb;
 
-	__asm("movl %%fs:%1,%0" : "=r" (pcb)
-	    : "m" (*(char *)offsetof(struct pcpu, pc_curpcb)));
+	__asm("movl %%fs:%c1,%0" : "=r" (pcb)
+	    : "i" (offsetof(struct pcpu, pc_curpcb)));
 	return (pcb);
 }
 #define	curpcb		(__curpcb())

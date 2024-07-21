@@ -42,14 +42,18 @@
  */
 
 #include <sendmail.h>
-#if DNSMAP || DANE
-# if NAMED_BIND
-#  if NETINET
-#   include <netinet/in_systm.h>
-#   include <netinet/ip.h>
-#  endif
+#include <sm/sendmail.h>
+
+#if NAMED_BIND
+# if NETINET
+#  include <netinet/in_systm.h>
+#  include <netinet/ip.h>
+# endif
+# if DNSSEC_TEST || _FFR_NAMESERVER
 #  define _DEFINE_SMR_GLOBALS 1
-#  include "sm_resolve.h"
+# endif
+# include "sm_resolve.h"
+# if DNSMAP || DANE
 
 #include <arpa/inet.h>
 
@@ -111,7 +115,7 @@ dns_string_to_type(name)
 	struct stot *p = stot;
 
 	for (p = stot; p->st_name != NULL; p++)
-		if (sm_strcasecmp(name, p->st_name) == 0)
+		if (SM_STRCASEEQ(name, p->st_name))
 			return p->st_type;
 	return -1;
 }
@@ -461,13 +465,16 @@ parse_dns_reply(data, len, flags)
 
 #  if DNSSEC_TEST
 
-#include <arpa/nameser.h>
+#   include <arpa/nameser.h>
+#   if _FFR_8BITENVADDR
+#    include <sm/sendmail.h>
+#   endif
 
 static int gen_dns_reply __P((unsigned char *, int, unsigned char *,
 		const char *, int, const char *, int, int, int, int,
 		const char *, int, int, int));
 static int dnscrtrr __P((const char *, const char *, int, char *, int,
-	unsigned int, int *, int *, unsigned char *, int,  unsigned char *));
+	unsigned int, int *, int *, unsigned char *, int, unsigned char *));
 
 /*
 **  HERRNO2TXT -- return error text for h_errno
@@ -548,6 +555,16 @@ gen_dns_reply(buf, buflen, bufpos, query, qtype, domain, class, type, ttl, size,
 	int n;
 	static unsigned char *dnptrs[20], **dpp, **lastdnptr;
 
+#define DN_COMP_CHK	do	\
+	{	\
+		if (n < 0)	\
+		{	\
+			if (tTd(8, 91))	\
+				sm_dprintf("gen_dns_reply: dn_comp=%d\n", n); \
+			return n;	\
+		}	\
+	} while (0)
+
 	SM_REQUIRE(NULL != buf);
 	SM_REQUIRE(buflen >= HFIXEDSZ);
 	SM_REQUIRE(query != NULL);
@@ -579,8 +596,7 @@ gen_dns_reply(buf, buflen, bufpos, query, qtype, domain, class, type, ttl, size,
 		hp->ancount = 0;
 
 		n = dn_comp(query, cp, ep - cp - QFIXEDSZ, dnptrs, lastdnptr);
-		if (n < 0)
-			return n;
+		DN_COMP_CHK;
 		cp += n;
 		PUTSHORT(qtype, cp);
 		PUTSHORT(class, cp);
@@ -588,10 +604,14 @@ gen_dns_reply(buf, buflen, bufpos, query, qtype, domain, class, type, ttl, size,
 	hp->ad = ad;
 
 	if (ep - cp < QFIXEDSZ)
+	{
+		if (tTd(8, 91))
+			sm_dprintf("gen_dns_reply: ep-cp=%ld\n",
+				(long) (ep - cp));
 		return (-1);
+	}
 	n = dn_comp(domain, cp, ep - cp - QFIXEDSZ, dnptrs, lastdnptr);
-	if (n < 0)
-		return n;
+	DN_COMP_CHK;
 	cp += n;
 	PUTSHORT(type, cp);
 	PUTSHORT(class, cp);
@@ -605,8 +625,7 @@ gen_dns_reply(buf, buflen, bufpos, query, qtype, domain, class, type, ttl, size,
 	{
 	  case T_MX:
 		n = dn_comp(data, cp + 4, ep - cp - QFIXEDSZ, dnptrs, lastdnptr);
-		if (n < 0)
-			return n;
+		DN_COMP_CHK;
 		PUTSHORT(n + 2, cp);
 		PUTSHORT(pref, cp);
 		cp += n;
@@ -622,8 +641,7 @@ gen_dns_reply(buf, buflen, bufpos, query, qtype, domain, class, type, ttl, size,
 
 	  case T_CNAME:
 		n = dn_comp(data, cp + 2, ep - cp - QFIXEDSZ, dnptrs, lastdnptr);
-		if (n < 0)
-			return n;
+		DN_COMP_CHK;
 		PUTSHORT(n, cp);
 		cp += n;
 		break;
@@ -672,7 +690,7 @@ setherrnofromstring(str, prc)
 	int *prc;
 {
 	SM_SET_H_ERRNO(0);
-	if (str == NULL || *str == '\0')
+	if (SM_IS_EMPTY(str))
 		return 0;
 	if (strstr(str, "herrno:") == NULL)
 		return 0;
@@ -710,7 +728,7 @@ int
 getttlfromstring(str)
 	const char *str;
 {
-	if (str == NULL || *str == '\0')
+	if (SM_IS_EMPTY(str))
 		return 0;
 #define TTL_PRE "ttl="
 	if (strstr(str, TTL_PRE) == NULL)
@@ -718,90 +736,6 @@ getttlfromstring(str)
 	return strtoul(str + strlen(TTL_PRE), NULL, 10);
 }
 
-/*
-**  NSPORTIP -- parse port@IPv4 and set NS accordingly
-**
-**	Parameters:
-**		p -- port@Ipv4
-**
-**	Returns:
-**		<0: error
-**		>0: ok
-**
-**	Side Effects:
-**		sets NS for DNS lookups
-*/
-
-/*
-**  There should be a generic function for this...
-**  milter_open(), socket_map_open(), others?
-*/
-
-int
-nsportip(p)
-	char *p;
-{
-	char *h;
-	int r;
-	unsigned short port;
-	struct in_addr nsip;
-
-	if (p == NULL || *p == '\0')
-		return -1;
-
-	port = 0;
-	while (SM_ISSPACE(*p))
-		p++;
-	if (*p == '\0')
-		return -1;
-	h = strchr(p, '@');
-	if (h != NULL)
-	{
-		*h = '\0';
-		if (isascii(*p) && isdigit(*p))
-			port = atoi(p);
-		*h = '@';
-		p = h + 1;
-	}
-	h = strchr(p, ' ');
-	if (h != NULL)
-		*h = '\0';
-	r = inet_pton(AF_INET, p, &nsip);
-	if (r > 0)
-	{
-		if ((_res.options & RES_INIT) == 0)
-			(void) res_init();
-		dns_setns(&nsip, port);
-	}
-	if (h != NULL)
-		*h = ' ';
-	return r > 0 ? 0 : -1;
-}
-
-/*
-**  DNS_SETNS -- set one NS in resolver context
-**
-**	Parameters:
-**		ns -- (IPv4 address of) nameserver
-**		port -- nameserver port
-**
-**	Returns:
-**		None.
-*/
-
-void
-dns_setns(ns, port)
-	struct in_addr *ns;
-	unsigned int port;
-{
-	_res.nsaddr_list[0].sin_family = AF_INET;
-	_res.nsaddr_list[0].sin_addr = *ns;
-	if (port != 0)
-		_res.nsaddr_list[0].sin_port = htons(port);
-	_res.nscount = 1;
-	if (tTd(8, 61))
-		sm_dprintf("dns_setns(%s,%u)\n", inet_ntoa(*ns), port);
-}
 
 #   if defined(T_TLSA)
 /*
@@ -914,7 +848,7 @@ dnscrtrr(domain, query, qtype, value, rr_type, flags, herr, adp, answer, anslen,
 	char rhs[MAXLINE];
 
 	rlen = -1;
-	if (NULL == value || '\0' == *value)
+	if (SM_IS_EMPTY(value))
 		return rlen;
 	SM_REQUIRE(adp != NULL);
 	(void) sm_strlcpy(rhs, value, sizeof(rhs));
@@ -997,8 +931,8 @@ dnscrtrr(domain, query, qtype, value, rr_type, flags, herr, adp, answer, anslen,
 				query, qtype, domain, C_IN, rr_type, ttl,
 				strlen(token) + 1, token, 0, pref, ad);
 			if (tTd(8, 50))
-				sm_dprintf("dnscrtrr: mx=%s, pref=%d\n",
-					token, pref);
+				sm_dprintf("dnscrtrr: mx=%s, pref=%d, rlen=%d\n",
+					token, pref, rlen);
 		}
 
 #   ifdef T_TLSA
@@ -1059,7 +993,13 @@ tstdns_search(domain, class, type, answer, anslen)
 	const char *tag;
 	char *av[2];
 	STAB *map;
-	char key[MAXNAME + 16];
+#   if _FFR_8BITENVADDR
+	char qbuf[MAXNAME_I];
+	char *qdomain;
+#   else
+#    define qdomain domain
+#   endif
+	char key[MAXNAME_I + 16];
 	char rhs[MAXLINE];
 	unsigned char *anspos;
 
@@ -1067,7 +1007,7 @@ tstdns_search(domain, class, type, answer, anslen)
 	herr = 0;
 	if (class != C_IN)
 		goto error;
-	if (NULL == domain || '\0' == *domain)
+	if (SM_IS_EMPTY(domain))
 		goto error;
 	tag = rr_type2tag(type);
 	if (tag == NULL)
@@ -1075,7 +1015,17 @@ tstdns_search(domain, class, type, answer, anslen)
 	maprcode = EX_OK;
 	ad = -1;
 	flags = 0;
+#   if _FFR_8BITENVADDR
+	if (tTd(8, 62))
+		sm_dprintf("domain=%s\n", domain);
+	(void) dequote_internal_chars((char *)domain, qbuf, sizeof(qbuf));
+	query = qbuf;
+	qdomain = qbuf;
+	if (tTd(8, 63))
+		sm_dprintf("qdomain=%s\n", qdomain);
+#   else
 	query = domain;
+#   endif /* _FFR_8BITENVADDR */
 	anspos = NULL;
 
 	map = stab("access", ST_MAP, ST_FIND);
@@ -1100,17 +1050,17 @@ tstdns_search(domain, class, type, answer, anslen)
 	do {	\
 		int len;	\
 				\
-		len = strlen(domain);	\
+		len = strlen(qdomain);	\
 		av[0] = key;	\
 		av[1] = NULL;	\
-		snprintf(key, sizeof(key), "%s:%s", tag, domain); \
+		snprintf(key, sizeof(key), "%s:%s", tag, qdomain); \
 		p = (*map->s_map.map_class->map_lookup)(&map->s_map, key, av, \
 			&maprcode);	\
 		if (p != NULL)	\
 			break;	\
-		if (!tTd(8, 112) || (len > 0 && '.' == domain[len - 1])) \
+		if (!tTd(8, 112) || (len > 0 && '.' == qdomain[len - 1])) \
 			break;	\
-		snprintf(key, sizeof(key), "%s:%s.", tag, domain); \
+		snprintf(key, sizeof(key), "%s:%s.", tag, qdomain); \
 		p = (*map->s_map.map_class->map_lookup)(&map->s_map, key, av, \
 			&maprcode);	\
 	} while (0)
@@ -1138,7 +1088,7 @@ tstdns_search(domain, class, type, answer, anslen)
 			{
 				sm_dprintf("cname lookup key=%s, value=%s, ad=%d\n",
 					key, p, ad);
-				rlen = dnscrtrr(domain, query, type, p, T_CNAME,
+				rlen = dnscrtrr(qdomain, query, type, p, T_CNAME,
 						flags, &herr, &ad, answer,
 						anslen, anspos);
 				if (rlen < 0)
@@ -1156,9 +1106,9 @@ tstdns_search(domain, class, type, answer, anslen)
 
 		/* skip (leading) ad/ttl: look for last ' ' */
 		if ((last = strrchr(p, ' ')) != NULL && last[1] != '\0')
-			domain = last + 1;
+			qdomain = last + 1;
 		else
-			domain = p;
+			qdomain = p;
 		++cnt;
 	}
 	if (NULL == p)
@@ -1179,7 +1129,7 @@ tstdns_search(domain, class, type, answer, anslen)
 			if (p != NULL)
 			{
 				sm_dprintf("access map lookup failed key=%s:%s, but found key=%s\n",
-					tag, domain, key);
+					tag, qdomain, key);
 				herr = NO_DATA;
 				goto error;
 			}
@@ -1190,7 +1140,7 @@ tstdns_search(domain, class, type, answer, anslen)
 	}
 	if (found_cname && (flags & RR_ONLY_CNAME) != 0)
 		return rlen;
-	rlen = dnscrtrr(domain,  query, type, p, type, flags, &herr, &ad,
+	rlen = dnscrtrr(qdomain, query, type, p, type, flags, &herr, &ad,
 			answer, anslen, anspos);
 	if (rlen < 0)
 		goto error;
@@ -1229,12 +1179,12 @@ tstdns_querydomain(name, domain, class, type, answer, anslen)
 	unsigned char *answer;
 	int anslen;
 {
-	char query[MAXNAME];
+	char query[MAXNAME_I];
 	int len;
 
 	if (NULL == name)
 		goto error;
-	if (NULL == domain || '\0' == *domain)
+	if (SM_IS_EMPTY(domain))
 		return tstdns_search(name, class, type, answer, anslen);
 
 	len = snprintf(query, sizeof(query), "%s.%s", name, domain);
@@ -1253,7 +1203,7 @@ tstdns_querydomain(name, domain, class, type, answer, anslen)
 **  DNS_LOOKUP_INT -- perform DNS lookup
 **
 **	Parameters:
-**		domain -- name to lookup
+**		domain -- name to look up
 **		rr_class -- resource record class
 **		rr_type -- resource record type
 **		retrans -- retransmission timeout
@@ -1402,7 +1352,7 @@ dns_lookup_int(domain, rr_class, rr_type, retrans, retry, options, flags, err, h
 **  DNS_LOOKUP_MAP -- perform DNS map lookup
 **
 **	Parameters:
-**		domain -- name to lookup
+**		domain -- name to look up
 **		rr_class -- resource record class
 **		rr_type -- resource record type
 **		retrans -- retransmission timeout
@@ -1458,10 +1408,9 @@ dns2he(dr, family)
 #    define IN_ADDRSZ INADDRSZ
 #   endif
 	static char he_addrs[SM_MAX_ADDRS * IN_ADDRSZ];
-	static char he_name[MAXNAME];
+	static char he_name[MAXNAME_I];
 	static bool he_init = false;
 	struct hostent *h;
-	struct in_addr ia;
 	int i;
 	size_t sz;
 #   if NETINET6 && DNSSEC_TEST
@@ -1573,6 +1522,8 @@ dns2he(dr, family)
 #   if DNSSEC_TEST
 	if (tTd(8, 16))
 	{
+		struct in_addr ia;
+
 		for (i = 0; h->h_addr_list[i] != NULL && i < SM_MAX_ADDRS; i++)
 		{
 			char *addr;
@@ -1599,5 +1550,100 @@ dns2he(dr, family)
 	return h;
 }
 #  endif /* DANE */
-# endif /* NAMED_BIND */
-#endif /* DNSMAP || DANE */
+# endif /* DNSMAP || DANE */
+
+# if DNSSEC_TEST || _FFR_NAMESERVER
+/*
+**  DNS_ADDNS -- add one NS in resolver context
+**
+**	Parameters:
+**		ns -- (IPv4 address of) nameserver
+**		port -- nameserver port (host order)
+**
+**	Returns:
+**		None.
+*/
+
+static void dns_addns __P((struct in_addr *, unsigned int));
+static int nsidx = 0;
+#ifndef MAXNS
+# define MAXNS	3
+#endif
+static void
+dns_addns(ns, port)
+	struct in_addr *ns;
+	unsigned int port;
+{
+	if (nsidx >= MAXNS)
+		syserr("too many NameServers defined (%d max)", MAXNS);
+	_res.nsaddr_list[nsidx].sin_family = AF_INET;
+	_res.nsaddr_list[nsidx].sin_addr = *ns;
+	if (port != 0)
+		_res.nsaddr_list[nsidx].sin_port = htons(port);
+	_res.nscount = ++nsidx;
+	if (tTd(8, 61))
+		sm_dprintf("dns_addns: nsidx=%d, ns=%s:%u\n",
+			   nsidx - 1, inet_ntoa(*ns), port);
+}
+
+/*
+**  NSPORTIP -- parse port@IPv4 and set NS accordingly
+**
+**	Parameters:
+**		p -- port@IPv4
+**
+**	Returns:
+**		<0: error
+**		>=0: ok
+**
+**	Side Effects:
+**		sets NS for DNS lookups
+*/
+
+/*
+**  There should be a generic function for this...
+**  milter_open(), socket_map_open(), others?
+*/
+
+int
+nsportip(p)
+	char *p;
+{
+	char *h;
+	int r;
+	unsigned short port;
+	struct in_addr nsip;
+
+	if (SM_IS_EMPTY(p))
+		return -1;
+
+	port = 0;
+	while (SM_ISSPACE(*p))
+		p++;
+	if (*p == '\0')
+		return -1;
+	h = strchr(p, '@');
+	if (h != NULL)
+	{
+		*h = '\0';
+		if (isascii(*p) && isdigit(*p))
+			port = atoi(p);
+		*h = '@';
+		p = h + 1;
+	}
+	h = strchr(p, ' ');
+	if (h != NULL)
+		*h = '\0';
+	r = inet_pton(AF_INET, p, &nsip);
+	if (r > 0)
+	{
+		if ((_res.options & RES_INIT) == 0)
+			(void) res_init();
+		dns_addns(&nsip, port);
+	}
+	if (h != NULL)
+		*h = ' ';
+	return r > 0 ? 0 : -1;
+}
+# endif /* DNSSEC_TEST || _FFR_NAMESERVER */
+#endif /* NAMED_BIND */

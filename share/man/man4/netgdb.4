@@ -22,20 +22,21 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd October 17, 2019
+.Dd November 10, 2022
 .Dt NETGDB 4
 .Os
 .Sh NAME
 .Nm netgdb
 .Nd protocol for debugging the kernel with GDB over the network
 .Sh SYNOPSIS
-NetGDB support is compiled by default, if DDB, GDB, and INET are enabled.
-To build a kernel without it, add the following line to your kernel
-configuration file:
+To compile NetGDB support into the kernel, place the following lines in your
+kernel configuration file:
 .Bd -ragged -offset indent
-.Cd "nooptions NETGDB"
+.Cd "options DDB"
+.Cd "options GDB"
+.Cd "options INET"
+.Cd "options DEBUGNET"
+.Cd "options NETGDB"
 .Ed
 .Sh DESCRIPTION
 .Nm
@@ -65,7 +66,7 @@ At this point, the server proxies traffic back and forth between
 and the ordinary GDB client, speaking the ordinary GDB remote protocol.
 The
 .Nm
-session is identical to any other kernel GDB sesssion from the perspective
+session is identical to any other kernel GDB session from the perspective
 of the GDB debugger.
 .Sh IMPLEMENTATION NOTES
 The UDP protocol is based on the same packet structure and a subset of the

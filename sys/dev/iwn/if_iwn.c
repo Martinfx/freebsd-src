@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_wlan.h"
 #include "opt_iwn.h"
 
@@ -3021,7 +3019,6 @@ static void
 iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
     struct iwn_rx_data *data)
 {
-	struct epoch_tracker et;
 	struct iwn_ops *ops = &sc->ops;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct iwn_rx_ring *ring = &sc->rxq;
@@ -3181,7 +3178,6 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
 	}
 
 	IWN_UNLOCK(sc);
-	NET_EPOCH_ENTER(et);
 
 	/* Send the frame to the 802.11 layer. */
 	if (ni != NULL) {
@@ -3193,7 +3189,6 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
 	} else
 		(void)ieee80211_input_all(ic, m, rssi - nf, nf);
 
-	NET_EPOCH_EXIT(et);
 	IWN_LOCK(sc);
 
 	DPRINTF(sc, IWN_DEBUG_TRACE, "->%s: end\n",__func__);
@@ -7152,9 +7147,9 @@ iwn_scan(struct iwn_softc *sc, struct ieee80211vap *vap,
 	wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_MGT |
 	    IEEE80211_FC0_SUBTYPE_PROBE_REQ;
 	wh->i_fc[1] = IEEE80211_FC1_DIR_NODS;
-	IEEE80211_ADDR_COPY(wh->i_addr1, vap->iv_ifp->if_broadcastaddr);
-	IEEE80211_ADDR_COPY(wh->i_addr2, IF_LLADDR(vap->iv_ifp));
-	IEEE80211_ADDR_COPY(wh->i_addr3, vap->iv_ifp->if_broadcastaddr);
+	IEEE80211_ADDR_COPY(wh->i_addr1, if_getbroadcastaddr(vap->iv_ifp));
+	IEEE80211_ADDR_COPY(wh->i_addr2, if_getlladdr(vap->iv_ifp));
+	IEEE80211_ADDR_COPY(wh->i_addr3, if_getbroadcastaddr(vap->iv_ifp));
 	*(uint16_t *)&wh->i_dur[0] = 0;	/* filled by HW */
 	*(uint16_t *)&wh->i_seq[0] = 0;	/* filled by HW */
 
@@ -7537,7 +7532,7 @@ iwn_addba_request(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap,
 			break;
 	}
 	if (qid == sc->ntxqs) {
-		DPRINTF(sc, IWN_DEBUG_XMIT, "%s: not free aggregation queue\n",
+		DPRINTF(sc, IWN_DEBUG_XMIT, "%s: no free aggregation queue\n",
 		    __func__);
 		return 0;
 	}
@@ -9123,7 +9118,7 @@ iwn_set_channel(struct ieee80211com *ic)
 		error = iwn_config(sc);
 		if (error != 0)
 		device_printf(sc->sc_dev,
-		    "%s: error %d settting channel\n", __func__, error);
+		    "%s: error %d setting channel\n", __func__, error);
 	}
 	IWN_UNLOCK(sc);
 }

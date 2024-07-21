@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	arphold
 MAN=
 CFLAGS+=	-Wall

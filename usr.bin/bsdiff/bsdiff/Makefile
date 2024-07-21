@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=		bsdiff
 
 # libdivsufsort configured with:

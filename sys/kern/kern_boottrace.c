@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008-2022 NetApp, Inc.
  *
@@ -157,6 +157,10 @@ static int shutdown_trace_threshold;
 SYSCTL_INT(_kern_boottrace, OID_AUTO, shutdown_trace_threshold, CTLFLAG_RWTUN,
    &shutdown_trace_threshold, 0,
    "Tracing threshold (ms) below which tracing is ignored");
+
+SYSCTL_UINT(_kern_boottrace, OID_AUTO, table_size,
+    CTLFLAG_RDTUN | CTLFLAG_NOFETCH, &bt.size, 0,
+    "Boot-time tracing table size");
 
 /*
  * Dump a trace to buffer or if buffer is NULL to console.
@@ -609,4 +613,4 @@ boottrace_init(void)
 	st.table = malloc(st.size * sizeof(struct bt_event), M_BOOTTRACE,
 	    M_WAITOK | M_ZERO);
 }
-SYSINIT(boottrace, SI_SUB_CPU, SI_ORDER_ANY, boottrace_init, 0);
+SYSINIT(boottrace, SI_SUB_CPU, SI_ORDER_ANY, boottrace_init, NULL);

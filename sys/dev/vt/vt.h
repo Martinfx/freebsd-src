@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009, 2013 The FreeBSD Foundation
  *
@@ -29,8 +29,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_VT_VT_H_
@@ -48,6 +46,7 @@
 #include <sys/terminal.h>
 #include <sys/sysctl.h>
 #include <sys/font.h>
+#include <sys/taskqueue.h>
 
 #include "opt_syscons.h"
 #include "opt_splash.h"
@@ -90,8 +89,8 @@ SYSCTL_INT(_kern_vt, OID_AUTO, _name, CTLFLAG_RWTUN, &vt_##_name, 0, _descr)
 
 struct vt_driver;
 
-void vt_allocate(const struct vt_driver *, void *);
-void vt_deallocate(const struct vt_driver *, void *);
+int vt_allocate(const struct vt_driver *, void *);
+int vt_deallocate(const struct vt_driver *, void *);
 
 typedef unsigned int	vt_axis_t;
 
@@ -166,6 +165,9 @@ struct vt_device {
 	term_char_t		*vd_drawn;	/* (?) Most recent char drawn. */
 	term_color_t		*vd_drawnfg;	/* (?) Most recent fg color drawn. */
 	term_color_t		*vd_drawnbg;	/* (?) Most recent bg color drawn. */
+
+	struct mtx		 vd_flush_lock;	/* (?) vt_flush() lock. */
+	bool			*vd_pos_to_flush;/* (?) Positions to flush. */
 };
 
 #define	VD_PASTEBUF(vd)	((vd)->vd_pastebuf.vpb_buf)
@@ -175,6 +177,14 @@ struct vt_device {
 #define	VT_LOCK(vd)	mtx_lock(&(vd)->vd_lock)
 #define	VT_UNLOCK(vd)	mtx_unlock(&(vd)->vd_lock)
 #define	VT_LOCK_ASSERT(vd, what)	mtx_assert(&(vd)->vd_lock, what)
+
+#define	VT_FLUSH_LOCK(vd)	\
+    if ((vd)->vd_driver->vd_bitblt_after_vtbuf_unlock) \
+	    mtx_lock(&(vd)->vd_flush_lock)
+
+#define	VT_FLUSH_UNLOCK(vd)	\
+    if ((vd)->vd_driver->vd_bitblt_after_vtbuf_unlock) \
+	    mtx_unlock(&(vd)->vd_flush_lock)
 
 void vt_resume(struct vt_device *vd);
 void vt_resume_flush_timer(struct vt_window *vw, int ms);
@@ -238,7 +248,7 @@ void vtbuf_cursor_visibility(struct vt_buf *, int);
 #ifndef SC_NO_CUTPASTE
 int vtbuf_set_mark(struct vt_buf *vb, int type, int col, int row);
 int vtbuf_get_marked_len(struct vt_buf *vb);
-void vtbuf_extract_marked(struct vt_buf *vb, term_char_t *buf, int sz);
+void vtbuf_extract_marked(struct vt_buf *vb, term_char_t *buf, int sz, int mark);
 #endif
 
 #define	VTB_MARK_NONE		0
@@ -306,7 +316,7 @@ struct vt_window {
 	pid_t			 vw_pid;	/* Terminal holding process */
 	struct proc		*vw_proc;
 	struct vt_mode		 vw_smode;	/* switch mode */
-	struct callout		 vw_proc_dead_timer;
+	struct timeout_task	 vw_timeout_task_dead;
 	struct vt_window	*vw_switch_to;
 	int			 vw_bell_pitch;	/* (?) Bell pitch */
 	sbintime_t		 vw_bell_duration; /* (?) Bell duration */
@@ -335,6 +345,10 @@ typedef void vd_bitblt_bmp_t(struct vt_device *vd, const struct vt_window *vw,
     const uint8_t *pattern, const uint8_t *mask,
     unsigned int width, unsigned int height,
     unsigned int x, unsigned int y, term_color_t fg, term_color_t bg);
+typedef int vd_bitblt_argb_t(struct vt_device *vd, const struct vt_window *vw,
+    const uint8_t *argb,
+    unsigned int width, unsigned int height,
+    unsigned int x, unsigned int y);
 typedef int vd_fb_ioctl_t(struct vt_device *, u_long, caddr_t, struct thread *);
 typedef int vd_fb_mmap_t(struct vt_device *, vm_ooffset_t, vm_paddr_t *, int,
     vm_memattr_t *);
@@ -358,6 +372,7 @@ struct vt_driver {
 	vd_bitblt_text_t *vd_bitblt_text;
 	vd_invalidate_text_t *vd_invalidate_text;
 	vd_bitblt_bmp_t	*vd_bitblt_bmp;
+	vd_bitblt_argb_t *vd_bitblt_argb;
 
 	/* Framebuffer ioctls, if present. */
 	vd_fb_ioctl_t	*vd_fb_ioctl;
@@ -377,6 +392,14 @@ struct vt_driver {
 #define	VD_PRIORITY_DUMB	10
 #define	VD_PRIORITY_GENERIC	100
 #define	VD_PRIORITY_SPECIFIC	1000
+
+	/*
+	 * Should vd_bitblt_text() be called after unlocking vtbuf? If true,
+	 * characters are copied before vd_bitblt_bmp() is called.
+	 *
+	 * This is only valid when the default bitblt_text callback is used.
+	 */
+	bool		vd_bitblt_after_vtbuf_unlock;
 };
 
 /*

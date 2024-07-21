@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR =
 SUBDIR += sound
 SUBDIR += driver

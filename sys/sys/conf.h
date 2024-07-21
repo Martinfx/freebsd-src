@@ -34,9 +34,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)conf.h	8.5 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_CONF_H_
@@ -322,6 +319,8 @@ typedef void d_priv_dtor_t(void *data);
 int	devfs_get_cdevpriv(void **datap);
 int	devfs_set_cdevpriv(void *priv, d_priv_dtor_t *dtr);
 void	devfs_clear_cdevpriv(void);
+int	devfs_foreach_cdevpriv(struct cdev *dev,
+	    int (*cb)(void *data, void *arg), void *arg);
 
 ino_t	devfs_alloc_cdp_inode(void);
 void	devfs_free_cdp_inode(ino_t ino);
@@ -359,8 +358,23 @@ struct dumperinfo {
 };
 
 extern int dumping;		/* system is dumping */
+extern bool dumped_core;	/* system successfully dumped kernel core */
 
-void dump_savectx(void);
+/*
+ * Save registers for later extraction from a kernel dump.
+ *
+ * This must be inlined into the caller, which in turn must be the function that
+ * calls (mini)dumpsys().  Otherwise, the saved frame pointer will reference a
+ * stack frame that may be clobbered by subsequent function calls.
+ */
+#define	dump_savectx() do {		\
+	extern struct pcb dumppcb;	\
+	extern lwpid_t dumptid;		\
+					\
+	savectx(&dumppcb);		\
+	dumptid = curthread->td_tid;	\
+} while (0)
+
 int doadump(boolean_t);
 struct diocskerneldump_arg;
 int dumper_create(const struct dumperinfo *di_template, const char *devname,

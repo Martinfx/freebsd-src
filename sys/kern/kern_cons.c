@@ -35,13 +35,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)cons.c	7.2 (Berkeley) 5/9/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_syscons.h"
 
@@ -64,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/reboot.h>
 #include <sys/sysctl.h>
 #include <sys/sbuf.h>
+#include <sys/tslog.h>
 #include <sys/tty.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
@@ -74,6 +71,18 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/cpu.h>
 #include <machine/clock.h>
+
+/*
+ * Check for 'options EARLY_PRINTF' that may have been used in old kernel
+ * config files. If you are hitting this error you should update your
+ * config to use 'options EARLY_PRINTF=<device name>', e.g. with the
+ * Arm pl011 use:
+ *
+ * options EARLY_PRINTF=pl011
+ */
+#if CHECK_EARLY_PRINTF(1)
+#error Update your config to use 'options EARLY_PRINTF=<device name>'
+#endif
 
 static MALLOC_DEFINE(M_TTYCONS, "tty console", "tty console handling");
 
@@ -94,7 +103,7 @@ int	cons_avail_mask = 0;	/* Bit mask. Each registered low level console
 				 * this bit cleared.
 				 */
 
-static int cn_mute;
+int cn_mute;
 SYSCTL_INT(_kern, OID_AUTO, consmute, CTLFLAG_RW, &cn_mute, 0,
     "State of the console muting");
 
@@ -129,11 +138,24 @@ kbdinit(void)
 
 }
 
+static void
+mute_console(void *data __unused)
+{
+
+	if ((boothowto & (RB_MUTEMSGS | RB_VERBOSE)) == RB_MUTEMSGS) {
+		printf("-- Muting boot messages --\n");
+		cn_mute = 1;
+	}
+}
+
+SYSINIT(mute_console, SI_SUB_COPYRIGHT, SI_ORDER_ANY, mute_console, NULL);
+
 void
 cninit(void)
 {
 	struct consdev *best_cn, *cn, **list;
 
+	TSENTER();
 	/*
 	 * Check if we should mute the console (for security reasons perhaps)
 	 * It can be changes dynamically using sysctl kern.consmute
@@ -195,6 +217,7 @@ cninit(void)
 	 */
 	early_putc = NULL;
 #endif
+	TSEXIT();
 }
 
 void
@@ -332,7 +355,7 @@ sysctl_kern_console(SYSCTL_HANDLER_ARGS)
 	sbuf_clear(sb);
 	STAILQ_FOREACH(cnd, &cn_devlist, cnd_next)
 		sbuf_printf(sb, "%s,", cnd->cnd_cn->cn_name);
-	sbuf_printf(sb, "/");
+	sbuf_putc(sb, '/');
 	SET_FOREACH(list, cons_set) {
 		cp = *list;
 		if (cp->cn_name[0] != '\0')
@@ -714,7 +737,6 @@ sysbeep(int pitch __unused, sbintime_t duration __unused)
 /*
  * Temporary support for sc(4) to vt(4) transition.
  */
-static unsigned vty_prefer;
 static char vty_name[16];
 SYSCTL_STRING(_kern, OID_AUTO, vty, CTLFLAG_RDTUN | CTLFLAG_NOFETCH, vty_name,
     0, "Console vty driver");
@@ -739,10 +761,6 @@ vty_enabled(unsigned vty)
 				break;
 			}
 #endif
-			if (vty_prefer != 0) {
-				vty_selected = vty_prefer;
-				break;
-			}
 #if defined(DEV_VT)
 			vty_selected = VTY_VT;
 #elif defined(DEV_SC)
@@ -756,17 +774,4 @@ vty_enabled(unsigned vty)
 			strcpy(vty_name, "sc");
 	}
 	return ((vty_selected & vty) != 0);
-}
-
-void
-vty_set_preferred(unsigned vty)
-{
-
-	vty_prefer = vty;
-#if !defined(DEV_SC)
-	vty_prefer &= ~VTY_SC;
-#endif
-#if !defined(DEV_VT)
-	vty_prefer &= ~VTY_VT;
-#endif
 }

@@ -36,9 +36,10 @@ We only pay attention to a subset of the information in the
 """
 
 """
+SPDX-License-Identifier: BSD-2-Clause
+
 RCSid:
-	$FreeBSD$
-	$Id: meta2deps.py,v 1.40 2021/12/13 19:32:46 sjg Exp $
+	$Id: meta2deps.py,v 1.47 2024/02/17 17:26:57 sjg Exp $
 
 	Copyright (c) 2011-2020, Simon J. Gerraty
 	Copyright (c) 2011-2017, Juniper Networks, Inc.
@@ -67,13 +68,18 @@ RCSid:
 
 """
 
-import os, re, sys
+import os
+import re
+import sys
+import stat
 
 def resolve(path, cwd, last_dir=None, debug=0, debug_out=sys.stderr):
     """
     Return an absolute path, resolving via cwd or last_dir if needed.
+
+    Cleanup any leading ``./`` and trailing ``/.``
     """
-    if path.endswith('/.'):
+    while path.endswith('/.'):
         path = path[0:-2]
     if len(path) > 0 and path[0] == '/':
         if os.path.exists(path):
@@ -84,7 +90,9 @@ def resolve(path, cwd, last_dir=None, debug=0, debug_out=sys.stderr):
     if path == '.':
         return cwd
     if path.startswith('./'):
-        return cwd + path[1:]
+        while path.startswith('./'):
+            path = path[1:]
+        return cwd + path
     if last_dir == cwd:
         last_dir = None
     for d in [last_dir, cwd]:
@@ -142,6 +150,7 @@ def abspath(path, cwd, last_dir=None, debug=0, debug_out=sys.stderr):
         return None
     if (path.find('/') < 0 or
         path.find('./') > 0 or
+        path.find('/../') > 0 or
         path.endswith('/..')):
         path = cleanpath(path)
     return path
@@ -245,6 +254,7 @@ class MetaFile:
         self.curdir = conf.get('CURDIR')
         self.reldir = conf.get('RELDIR')
         self.dpdeps = conf.get('DPDEPS')
+        self.pids = {}
         self.line = 0
 
         if not self.conf:
@@ -445,12 +455,13 @@ class MetaFile:
         pid_cwd = {}
         pid_last_dir = {}
         last_pid = 0
+        eof_token = False
 
         self.line = 0
         if self.curdir:
             self.seenit(self.curdir)    # we ignore this
 
-        interesting = 'CEFLRV'
+        interesting = '#CEFLRVX'
         for line in f:
             self.line += 1
             # ignore anything we don't care about
@@ -475,6 +486,12 @@ class MetaFile:
                     self.seenit(cwd)    # ignore this
                     if self.debug:
                         print("%s: CWD=%s" % (self.name, cwd), file=self.debug_out)
+                continue
+
+            if w[0] == '#':
+                # check the file has not been truncated
+                if line.find('Bye') > 0:
+                    eof_token = True
                 continue
 
             pid = int(w[1])
@@ -506,6 +523,13 @@ class MetaFile:
                     print("cwd=", cwd, file=self.debug_out)
                 continue
 
+            if w[0] == 'X':
+                try:
+                    del self.pids[pid]
+                except KeyError:
+                    pass
+                continue
+
             if w[2] in self.seen:
                 if self.debug > 2:
                     print("seen:", w[2], file=self.debug_out)
@@ -519,11 +543,34 @@ class MetaFile:
                 continue
             elif w[0] in 'ERWS':
                 path = w[2]
-                if path == '.':
+                if w[0] == 'E':
+                    self.pids[pid] = path
+                elif path == '.':
                     continue
                 self.parse_path(path, cwd, w[0], w)
 
-        assert(version > 0)
+        if version == 0:
+            raise AssertionError('missing filemon data')
+        if not eof_token:
+            raise AssertionError('truncated filemon data')
+
+        setid_pids = []
+        # self.pids should be empty!
+        for pid,path in self.pids.items():
+            try:
+                # no guarantee that path is still valid
+                if os.stat(path).st_mode & (stat.S_ISUID|stat.S_ISGID):
+                    # we do not expect anything after Exec
+                    setid_pids.append(pid)
+                    continue
+            except:
+                # we do not care why the above fails,
+                # we do not want to miss the ERROR below.
+                pass
+            print("ERROR: missing eXit for {} pid {}".format(path, pid))
+        for pid in setid_pids:
+            del self.pids[pid]
+        assert(len(self.pids) == 0)
         if not file:
             f.close()
 

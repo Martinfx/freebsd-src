@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=	firewire \
 	fwe \
 	fwip \

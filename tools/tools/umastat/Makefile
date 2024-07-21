@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	umastat
 MAN=
 WARNS?=	3

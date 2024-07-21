@@ -34,8 +34,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -478,8 +476,7 @@ icl_cxgbei_tx_main(void *arg)
 		INP_WLOCK(inp);
 
 		ICL_CONN_UNLOCK(ic);
-		if (__predict_false(inp->inp_flags & (INP_DROPPED |
-		    INP_TIMEWAIT)) ||
+		if (__predict_false(inp->inp_flags & INP_DROPPED) ||
 		    __predict_false((toep->flags & TPF_ATTACHED) == 0)) {
 			mbufq_drain(&mq);
 		} else {
@@ -626,7 +623,7 @@ icl_cxgbei_conn_pdu_append_bio(struct icl_conn *ic, struct icl_pdu *ip,
 	struct mbuf *m, *m_tail;
 	vm_offset_t vaddr;
 	size_t page_offset, todo, mtodo;
-	boolean_t mapped;
+	bool mapped;
 	int i;
 
 	MPASS(icp->icp_signature == CXGBEI_PDU_SIGNATURE);
@@ -713,7 +710,7 @@ icl_cxgbei_conn_pdu_append_bio(struct icl_conn *ic, struct icl_pdu *ip,
 		todo = MIN(len, PAGE_SIZE - page_offset);
 
 		mapped = pmap_map_io_transient(bp->bio_ma + i, &vaddr, 1,
-		    FALSE);
+		    false);
 
 		do {
 			mtodo = min(todo, M_SIZE(m) - m->m_len);
@@ -728,7 +725,7 @@ icl_cxgbei_conn_pdu_append_bio(struct icl_conn *ic, struct icl_pdu *ip,
 
 		if (__predict_false(mapped))
 			pmap_unmap_io_transient(bp->bio_ma + 1, &vaddr, 1,
-			    FALSE);
+			    false);
 
 		page_offset = 0;
 		len -= todo;
@@ -814,7 +811,7 @@ icl_cxgbei_conn_pdu_get_bio(struct icl_conn *ic, struct icl_pdu *ip,
 	struct icl_cxgbei_pdu *icp = ip_to_icp(ip);
 	vm_offset_t vaddr;
 	size_t page_offset, todo;
-	boolean_t mapped;
+	bool mapped;
 	int i;
 
 	if (icp->icp_flags & ICPF_RX_DDP)
@@ -835,12 +832,12 @@ icl_cxgbei_conn_pdu_get_bio(struct icl_conn *ic, struct icl_pdu *ip,
 		todo = MIN(len, PAGE_SIZE - page_offset);
 
 		mapped = pmap_map_io_transient(bp->bio_ma + i, &vaddr, 1,
-		    FALSE);
+		    false);
 		m_copydata(ip->ip_data_mbuf, pdu_off, todo, (char *)vaddr +
 		    page_offset);
 		if (__predict_false(mapped))
 			pmap_unmap_io_transient(bp->bio_ma + 1, &vaddr, 1,
-			    FALSE);
+			    false);
 
 		page_offset = 0;
 		pdu_off += todo;
@@ -1007,7 +1004,7 @@ find_offload_adapter(struct adapter *sc, void *arg)
 
 	inp = sotoinpcb(so);
 	INP_WLOCK(inp);
-	if ((inp->inp_flags & (INP_DROPPED | INP_TIMEWAIT)) == 0) {
+	if ((inp->inp_flags & INP_DROPPED) == 0) {
 		tp = intotcpcb(inp);
 		if (tp->t_flags & TF_TOE && tp->tod == &td->tod)
 			fa->sc = sc;	/* Found. */
@@ -1164,7 +1161,7 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 	inp = sotoinpcb(so);
 	INP_WLOCK(inp);
 	tp = intotcpcb(inp);
-	if (inp->inp_flags & (INP_DROPPED | INP_TIMEWAIT)) {
+	if (inp->inp_flags & INP_DROPPED) {
 		INP_WUNLOCK(inp);
 		error = ENOTCONN;
 		goto out;
@@ -1506,7 +1503,7 @@ no_ddp:
 	 */
 	inp = sotoinpcb(ic->ic_socket);
 	INP_WLOCK(inp);
-	if ((inp->inp_flags & (INP_DROPPED | INP_TIMEWAIT)) != 0) {
+	if ((inp->inp_flags & INP_DROPPED) != 0) {
 		INP_WUNLOCK(inp);
 		mbufq_drain(&mq);
 		t4_free_page_pods(prsv);
@@ -1683,7 +1680,7 @@ no_ddp:
 		inp = sotoinpcb(ic->ic_socket);
 		INP_WLOCK(inp);
 		ICL_CONN_UNLOCK(ic);
-		if ((inp->inp_flags & (INP_DROPPED | INP_TIMEWAIT)) != 0) {
+		if ((inp->inp_flags & INP_DROPPED) != 0) {
 			INP_WUNLOCK(inp);
 			mbufq_drain(&mq);
 			t4_free_page_pods(prsv);

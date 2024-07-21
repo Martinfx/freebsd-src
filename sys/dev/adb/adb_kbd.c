@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2008 Nathan Whitehorn
  * All rights reserved.
@@ -23,11 +23,8 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/lock.h>
@@ -688,18 +685,10 @@ akbd_check_char(keyboard_t *kbd)
 static int
 set_typematic(keyboard_t *kbd, int code)
 {
-	/* These numbers are in microseconds, so convert to ticks */
-
-	static int delays[] = { 250, 500, 750, 1000 };
-	static int rates[] = {  34,  38,  42,  46,  50,  55,  59,  63,
-				68,  76,  84,  92, 100, 110, 118, 126,
-				136, 152, 168, 184, 200, 220, 236, 252,
-				272, 304, 336, 368, 400, 440, 472, 504 };
-		
 	if (code & ~0x7f)
 		return EINVAL;
-	kbd->kb_delay1 = delays[(code >> 5) & 3];
-	kbd->kb_delay2 = rates[code & 0x1f];
+	kbd->kb_delay1 = kbdelays[(code >> 5) & 3];
+	kbd->kb_delay2 = kbrates[code & 0x1f];
 	return 0;
 }
 
@@ -795,9 +784,12 @@ static int akbd_ioctl(keyboard_t *kbd, u_long cmd, caddr_t data)
 		break;
 
 	case PIO_KEYMAP:
-	case OPIO_KEYMAP:
 	case PIO_KEYMAPENT:
 	case PIO_DEADKEYMAP:
+#ifdef COMPAT_FREEBSD13
+	case OPIO_KEYMAP:
+	case OPIO_DEADKEYMAP:
+#endif /* COMPAT_FREEBSD13 */
 	default:
 		return (genkbd_commonioctl(kbd, cmd, data));
 	}

@@ -60,7 +60,7 @@ param_set_deadman_ziotime(const char *val, zfs_kernel_param_t *kp)
 {
 	int error;
 
-	error = param_set_ulong(val, kp);
+	error = spl_param_set_u64(val, kp);
 	if (error < 0)
 		return (SET_ERROR(error));
 
@@ -74,7 +74,7 @@ param_set_deadman_synctime(const char *val, zfs_kernel_param_t *kp)
 {
 	int error;
 
-	error = param_set_ulong(val, kp);
+	error = spl_param_set_u64(val, kp);
 	if (error < 0)
 		return (SET_ERROR(error));
 
@@ -101,6 +101,18 @@ param_set_slop_shift(const char *buf, zfs_kernel_param_t *kp)
 		return (SET_ERROR(error));
 
 	return (0);
+}
+
+int
+param_set_active_allocator(const char *val, zfs_kernel_param_t *kp)
+{
+	int error;
+
+	error = -param_set_active_allocator_common(val);
+	if (error == 0)
+		error = param_set_charp(val, kp);
+
+	return (error);
 }
 
 const char *

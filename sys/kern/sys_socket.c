@@ -27,12 +27,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)sys_socket.c	8.1 (Berkeley) 6/10/93
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -114,6 +109,7 @@ struct fileops	socketops = {
 	.fo_sendfile = invfo_sendfile,
 	.fo_fill_kinfo = soo_fill_kinfo,
 	.fo_aio_queue = soo_aio_queue,
+	.fo_cmp = file_kcmp_generic,
 	.fo_flags = DFLAG_PASSABLE
 };
 
@@ -145,12 +141,7 @@ soo_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (error)
 		return (error);
 #endif
-	error = sosend(so, 0, uio, 0, 0, 0, uio->uio_td);
-	if (error == EPIPE && (so->so_options & SO_NOSIGPIPE) == 0) {
-		PROC_LOCK(uio->uio_td->td_proc);
-		tdsignal(uio->uio_td, SIGPIPE);
-		PROC_UNLOCK(uio->uio_td->td_proc);
-	}
+	error = sousrsend(so, NULL, uio, NULL, 0, NULL);
 	return (error);
 }
 
@@ -303,7 +294,7 @@ static int
 soo_stat(struct file *fp, struct stat *ub, struct ucred *active_cred)
 {
 	struct socket *so = fp->f_data;
-	int error;
+	int error = 0;
 
 	bzero((caddr_t)ub, sizeof (*ub));
 	ub->st_mode = S_IFSOCK;
@@ -335,7 +326,8 @@ soo_stat(struct file *fp, struct stat *ub, struct ucred *active_cred)
 	}
 	ub->st_uid = so->so_cred->cr_uid;
 	ub->st_gid = so->so_cred->cr_gid;
-	error = so->so_proto->pr_sense(so, ub);
+	if (so->so_proto->pr_sense)
+		error = so->so_proto->pr_sense(so, ub);
 	SOCK_UNLOCK(so);
 	return (error);
 }
@@ -364,8 +356,7 @@ soo_close(struct file *fp, struct thread *td)
 static int
 soo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 {
-	struct sockaddr *sa;
-	struct inpcb *inpcb;
+	struct sockaddr_storage ss = { .ss_len = sizeof(ss) };
 	struct unpcb *unpcb;
 	struct socket *so;
 	int error;
@@ -381,11 +372,8 @@ soo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 	switch (kif->kf_un.kf_sock.kf_sock_domain0) {
 	case AF_INET:
 	case AF_INET6:
-		if (so->so_pcb != NULL) {
-			inpcb = (struct inpcb *)(so->so_pcb);
-			kif->kf_un.kf_sock.kf_sock_inpcb =
-			    (uintptr_t)inpcb->inp_ppcb;
-		}
+		/* XXX: kf_sock_inpcb is obsolete.  It may be removed. */
+		kif->kf_un.kf_sock.kf_sock_inpcb = (uintptr_t)so->so_pcb;
 		kif->kf_un.kf_sock.kf_sock_rcv_sb_state =
 		    so->so_rcv.sb_state;
 		kif->kf_un.kf_sock.kf_sock_snd_sb_state =
@@ -413,17 +401,16 @@ soo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 		}
 		break;
 	}
-	error = so->so_proto->pr_sockaddr(so, &sa);
+	error = sosockaddr(so, (struct sockaddr *)&ss);
 	if (error == 0 &&
-	    sa->sa_len <= sizeof(kif->kf_un.kf_sock.kf_sa_local)) {
-		bcopy(sa, &kif->kf_un.kf_sock.kf_sa_local, sa->sa_len);
-		free(sa, M_SONAME);
+	    ss.ss_len <= sizeof(kif->kf_un.kf_sock.kf_sa_local)) {
+		bcopy(&ss, &kif->kf_un.kf_sock.kf_sa_local, ss.ss_len);
 	}
-	error = so->so_proto->pr_peeraddr(so, &sa);
+	ss.ss_len = sizeof(ss);
+	error = sopeeraddr(so, (struct sockaddr *)&ss);
 	if (error == 0 &&
-	    sa->sa_len <= sizeof(kif->kf_un.kf_sock.kf_sa_peer)) {
-		bcopy(sa, &kif->kf_un.kf_sock.kf_sa_peer, sa->sa_len);
-		free(sa, M_SONAME);
+	    ss.ss_len <= sizeof(kif->kf_un.kf_sock.kf_sa_peer)) {
+		bcopy(&ss, &kif->kf_un.kf_sock.kf_sa_peer, ss.ss_len);
 	}
 	strncpy(kif->kf_path, so->so_proto->pr_domain->dom_name,
 	    sizeof(kif->kf_path));
@@ -645,15 +632,10 @@ retry:
 		error = mac_socket_check_send(fp->f_cred, so);
 		if (error == 0)
 #endif
-			error = sosend(so, NULL, job->uiop, NULL, NULL, flags,
-			    td);
+			error = sousrsend(so, NULL, job->uiop, NULL, flags,
+			    job->userproc);
 		if (td->td_ru.ru_msgsnd != ru_before)
 			job->msgsnd = 1;
-		if (error == EPIPE && (so->so_options & SO_NOSIGPIPE) == 0) {
-			PROC_LOCK(job->userproc);
-			kern_psignal(job->userproc, SIGPIPE);
-			PROC_UNLOCK(job->userproc);
-		}
 	}
 
 	done += cnt - job->uiop->uio_resid;

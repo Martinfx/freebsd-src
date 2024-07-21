@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=		ctlstat
 MAN=		ctlstat.8
 SDIR=		${SRCTOP}/sys

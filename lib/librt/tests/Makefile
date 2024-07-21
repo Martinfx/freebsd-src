@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LIBADD=	rt
 
 NETBSD_ATF_TESTS_C=	sched_test

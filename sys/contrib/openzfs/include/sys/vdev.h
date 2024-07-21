@@ -132,15 +132,19 @@ extern void vdev_space_update(vdev_t *vd,
 
 extern int64_t vdev_deflated_space(vdev_t *vd, int64_t space);
 
+extern uint64_t vdev_psize_to_asize_txg(vdev_t *vd, uint64_t psize,
+    uint64_t txg);
 extern uint64_t vdev_psize_to_asize(vdev_t *vd, uint64_t psize);
 
 /*
- * Return the amount of space allocated for a gang block header.
+ * Return the amount of space allocated for a gang block header.  Note that
+ * since the physical birth txg is not provided, this must be constant for
+ * a given vdev.  (e.g. raidz expansion can't change this)
  */
 static inline uint64_t
 vdev_gang_header_asize(vdev_t *vd)
 {
-	return (vdev_psize_to_asize(vd, SPA_GANGBLOCKSIZE));
+	return (vdev_psize_to_asize_txg(vd, SPA_GANGBLOCKSIZE, 0));
 }
 
 extern int vdev_fault(spa_t *spa, uint64_t guid, vdev_aux_t aux);
@@ -148,6 +152,7 @@ extern int vdev_degrade(spa_t *spa, uint64_t guid, vdev_aux_t aux);
 extern int vdev_online(spa_t *spa, uint64_t guid, uint64_t flags,
     vdev_state_t *);
 extern int vdev_offline(spa_t *spa, uint64_t guid, uint64_t flags);
+extern int vdev_remove_wanted(spa_t *spa, uint64_t guid);
 extern void vdev_clear(spa_t *spa, vdev_t *vd);
 
 extern boolean_t vdev_is_dead(vdev_t *vd);
@@ -157,20 +162,15 @@ extern boolean_t vdev_allocatable(vdev_t *vd);
 extern boolean_t vdev_accessible(vdev_t *vd, zio_t *zio);
 extern boolean_t vdev_is_spacemap_addressable(vdev_t *vd);
 
-extern void vdev_cache_init(vdev_t *vd);
-extern void vdev_cache_fini(vdev_t *vd);
-extern boolean_t vdev_cache_read(zio_t *zio);
-extern void vdev_cache_write(zio_t *zio);
-extern void vdev_cache_purge(vdev_t *vd);
-
 extern void vdev_queue_init(vdev_t *vd);
 extern void vdev_queue_fini(vdev_t *vd);
 extern zio_t *vdev_queue_io(zio_t *zio);
 extern void vdev_queue_io_done(zio_t *zio);
 extern void vdev_queue_change_io_priority(zio_t *zio, zio_priority_t priority);
 
-extern int vdev_queue_length(vdev_t *vd);
+extern uint32_t vdev_queue_length(vdev_t *vd);
 extern uint64_t vdev_queue_last_offset(vdev_t *vd);
+extern uint64_t vdev_queue_class_length(vdev_t *vq, zio_priority_t p);
 
 extern void vdev_config_dirty(vdev_t *vd);
 extern void vdev_config_clean(vdev_t *vd);
@@ -185,11 +185,12 @@ extern boolean_t vdev_clear_resilver_deferred(vdev_t *vd, dmu_tx_t *tx);
 typedef enum vdev_config_flag {
 	VDEV_CONFIG_SPARE = 1 << 0,
 	VDEV_CONFIG_L2CACHE = 1 << 1,
-	VDEV_CONFIG_REMOVING = 1 << 2,
-	VDEV_CONFIG_MOS = 1 << 3,
-	VDEV_CONFIG_MISSING = 1 << 4
+	VDEV_CONFIG_MOS = 1 << 2,
+	VDEV_CONFIG_MISSING = 1 << 3
 } vdev_config_flag_t;
 
+extern void vdev_post_kobj_evt(vdev_t *vd);
+extern void vdev_clear_kobj_evt(vdev_t *vd);
 extern void vdev_top_config_generate(spa_t *spa, nvlist_t *config);
 extern nvlist_t *vdev_config_generate(spa_t *spa, vdev_t *vd,
     boolean_t getstats, vdev_config_flag_t flags);
@@ -207,6 +208,8 @@ extern void vdev_label_write(zio_t *zio, vdev_t *vd, int l, abd_t *buf, uint64_t
     offset, uint64_t size, zio_done_func_t *done, void *priv, int flags);
 extern int vdev_label_read_bootenv(vdev_t *, nvlist_t *);
 extern int vdev_label_write_bootenv(vdev_t *, nvlist_t *);
+extern int vdev_uberblock_sync_list(vdev_t **, int, struct uberblock *, int);
+extern int vdev_check_boot_reserve(spa_t *, vdev_t *);
 
 typedef enum {
 	VDEV_LABEL_CREATE,	/* create/add a new device */

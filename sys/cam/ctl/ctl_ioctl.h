@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * Copyright (c) 2011 Spectra Logic Corporation
@@ -32,7 +32,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_ioctl.h#4 $
- * $FreeBSD$
  */
 /*
  * CAM Target Layer ioctl interface.
@@ -49,6 +48,8 @@
 
 #include <sys/ioccom.h>
 #include <sys/nv.h>
+#include <dev/nvmf/nvmf.h>
+#include <dev/nvmf/nvmf_proto.h>
 
 #define	CTL_DEFAULT_DEV		"/dev/cam/ctl"
 /*
@@ -256,7 +257,8 @@ struct ctl_ooa_entry {
 	ctl_ooa_cmd_flags	cmd_flags;
 	uint8_t			cdb[CTL_MAX_CDBLEN];
 	uint8_t			cdb_len;
-	uint32_t		tag_num;
+	uint64_t		tag_num;
+	ctl_tag_type		tag_type;
 	uint32_t		lun_num;
 	struct bintime		start_bt;
 };
@@ -460,6 +462,7 @@ struct ctl_lun_req {
 	union ctl_lunreq_data	reqdata;
 	void *			args;
 	nvlist_t *		args_nvl;
+#define	CTL_MAX_ARGS_LEN	(1024 * 1024)
 	size_t			args_len;
 	void *			result;
 	nvlist_t *		result_nvl;
@@ -760,6 +763,65 @@ struct ctl_lun_map {
 	uint32_t		lun;
 };
 
+/*
+ * NVMe over Fabrics status
+ *
+ * OK:			Request completed successfully.
+ *
+ * ERROR:		An error occurred, look at the error string for a
+ *			description of the error.
+ */
+typedef enum {
+	CTL_NVMF_OK,
+	CTL_NVMF_ERROR,
+	CTL_NVMF_LIST_NEED_MORE_SPACE,
+	CTL_NVMF_ASSOCIATION_NOT_FOUND
+} ctl_nvmf_status;
+
+typedef enum {
+	CTL_NVMF_HANDOFF,
+	CTL_NVMF_LIST,
+	CTL_NVMF_TERMINATE
+} ctl_nvmf_type;
+
+struct ctl_nvmf_list_params {
+	uint32_t		alloc_len;	/* passed to kernel */
+	char                   *conn_xml;	/* filled in kernel */
+	uint32_t		fill_len;	/* passed to userland */
+	int			spare[4];
+};
+
+struct ctl_nvmf_terminate_params {
+	int			cntlid;		/* passed to kernel */
+	char			hostnqn[NVME_NQN_FIELD_SIZE];
+						/* passed to kernel */
+	int			all;		/* passed to kernel */
+	int			spare[4];
+};
+
+union ctl_nvmf_data {
+	struct nvmf_handoff_controller_qpair	handoff;
+	struct ctl_nvmf_list_params		list;
+	struct ctl_nvmf_terminate_params	terminate;
+};
+
+/*
+ * NVMe over Fabrics interface
+ *
+ * status:		The status of the request.  See above for the
+ *			description of the values of this field.
+ *
+ * error_str:		If the status indicates an error, this string will
+ *			be filled in to describe the error.
+ */
+struct ctl_nvmf {
+	ctl_nvmf_type		type;		/* passed to kernel */
+	union ctl_nvmf_data	data;		/* passed to kernel */
+	ctl_nvmf_status		status;		/* passed to userland */
+	char			error_str[CTL_ERROR_STR_LEN];
+						/* passed to userland */
+};
+
 #define	CTL_IO			_IOWR(CTL_MINOR, 0x00, union ctl_io)
 #define	CTL_ENABLE_PORT		_IOW(CTL_MINOR, 0x04, struct ctl_port_entry)
 #define	CTL_DISABLE_PORT	_IOW(CTL_MINOR, 0x05, struct ctl_port_entry)
@@ -777,6 +839,7 @@ struct ctl_lun_map {
 #define	CTL_LUN_MAP		_IOW(CTL_MINOR, 0x28, struct ctl_lun_map)
 #define	CTL_GET_LUN_STATS	_IOWR(CTL_MINOR, 0x29, struct ctl_get_io_stats)
 #define	CTL_GET_PORT_STATS	_IOWR(CTL_MINOR, 0x2a, struct ctl_get_io_stats)
+#define	CTL_NVMF		_IOWR(CTL_MINOR, 0x2b, struct ctl_nvmf)
 
 #endif /* _CTL_IOCTL_H_ */
 

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=	beyond4.3 \
 	bufbio \
 	contents \

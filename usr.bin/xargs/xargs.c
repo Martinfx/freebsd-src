@@ -34,20 +34,6 @@
  * $xMach: xargs.c,v 1.6 2002/02/23 05:27:47 tim Exp $
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1990, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)xargs.c	8.1 (Berkeley) 6/6/93";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -91,6 +77,7 @@ static char echo[] = _PATH_ECHO;
 static char **av, **bxp, **ep, **endxp, **xp;
 static char *argp, *bbp, *ebp, *inpline, *p, *replstr;
 static const char *eofstr;
+static long eoflen;
 static int count, insingle, indouble, oflag, pflag, tflag, Rflag, rval, zflag;
 static int cnt, Iflag, jfound, Lflag, Sflag, wasquoted, xflag;
 static int curprocs, maxprocs;
@@ -123,12 +110,12 @@ main(int argc, char *argv[])
 	int ch, Jflag, nargs, nflag, nline;
 	size_t linelen;
 	struct rlimit rl;
-	char *endptr;
 	const char *errstr;
 
 	inpline = replstr = NULL;
 	ep = environ;
 	eofstr = "";
+	eoflen = 0;
 	Jflag = nflag = 0;
 
 	(void)setlocale(LC_ALL, "");
@@ -159,6 +146,7 @@ main(int argc, char *argv[])
 		switch (ch) {
 		case 'E':
 			eofstr = optarg;
+			eoflen = strlen(eofstr);
 			break;
 		case 'I':
 			Jflag = 0;
@@ -172,23 +160,23 @@ main(int argc, char *argv[])
 			replstr = optarg;
 			break;
 		case 'L':
-			Lflag = strtonum(optarg, 0, INT_MAX, &errstr);
+			Lflag = (int)strtonum(optarg, 1, INT_MAX, &errstr);
 			if (errstr)
-				errx(1, "-L %s: %s", optarg, errstr);
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
 			break;
 		case 'n':
 			nflag = 1;
-			nargs = strtonum(optarg, 1, INT_MAX, &errstr);
+			nargs = (int)strtonum(optarg, 1, INT_MAX, &errstr);
 			if (errstr)
-				errx(1, "-n %s: %s", optarg, errstr);
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
 			break;
 		case 'o':
 			oflag = 1;
 			break;
 		case 'P':
-			maxprocs = strtonum(optarg, 0, INT_MAX, &errstr);
+			maxprocs = (int)strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr)
-				errx(1, "-P %s: %s", optarg, errstr);
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
 			if (getrlimit(RLIMIT_NPROC, &rl) != 0)
 				errx(1, "getrlimit failed");
 			if (maxprocs == 0 || maxprocs > rl.rlim_cur)
@@ -198,22 +186,24 @@ main(int argc, char *argv[])
 			pflag = 1;
 			break;
 		case 'R':
-			Rflag = strtol(optarg, &endptr, 10);
-			if (*endptr != '\0')
-				errx(1, "replacements must be a number");
+			Rflag = (int)strtonum(optarg, INT_MIN, INT_MAX, &errstr);
+			if (errstr)
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
+			if (!Rflag)
+				errx(1, "-%c %s: %s", ch, optarg, "must be non-zero");
 			break;
 		case 'r':
 			/* GNU compatibility */
 			break;
 		case 'S':
-			Sflag = strtoul(optarg, &endptr, 10);
-			if (*endptr != '\0')
-				errx(1, "replsize must be a number");
+			Sflag = (int)strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr)
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
 			break;
 		case 's':
-			nline = strtonum(optarg, 0, INT_MAX, &errstr);
+			nline = (int)strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr)
-				errx(1, "-s %s: %s", optarg, errstr);
+				errx(1, "-%c %s: %s", ch, optarg, errstr);
 			break;
 		case 't':
 			tflag = 1;
@@ -253,7 +243,7 @@ main(int argc, char *argv[])
 	 * the maximum arguments to be read from stdin and the trailing
 	 * NULL.
 	 */
-	linelen = 1 + argc + nargs + 1;
+	linelen = 1 + argc + (size_t)nargs + 1;
 	if ((av = bxp = malloc(linelen * sizeof(char *))) == NULL)
 		errx(1, "malloc failed");
 
@@ -315,8 +305,10 @@ parse_input(int argc, char *argv[])
 	switch (ch = getchar()) {
 	case EOF:
 		/* No arguments since last exec. */
-		if (p == bbp)
-			xexit(*av, rval);
+		if (p == bbp) {
+			waitchildren(*av, 1);
+			exit(rval);
+		}
 		goto arg1;
 	case ' ':
 	case '\t':
@@ -346,8 +338,8 @@ arg1:		if (insingle || indouble) {
 			xexit(*av, 1);
 		}
 arg2:
-		foundeof = *eofstr != '\0' &&
-		    strncmp(argp, eofstr, p - argp) == 0;
+		foundeof = eoflen != 0 && p - argp == eoflen &&
+		    strncmp(argp, eofstr, eoflen) == 0;
 
 		/* Do not make empty args unless they are quoted */
 		if ((argp != p || wasquoted) && !foundeof) {
@@ -406,8 +398,10 @@ arg2:
 					*xp++ = *avj;
 			}
 			prerun(argc, av);
-			if (ch == EOF || foundeof)
-				xexit(*av, rval);
+			if (ch == EOF || foundeof) {
+				waitchildren(*av, 1);
+				exit(rval);
+			}
 			p = bbp;
 			xp = bxp;
 			count = 0;
@@ -519,7 +513,7 @@ prerun(int argc, char *argv[])
 		*tmp = *avj++;
 		if (repls && strstr(*tmp, replstr) != NULL) {
 			if (strnsubst(tmp++, replstr, inpline, (size_t)Sflag)) {
-				warnx("comamnd line cannot be assembled, too long");
+				warnx("command line cannot be assembled, too long");
 				xexit(*argv, 1);
 			}
 			if (repls > 0)
@@ -776,22 +770,22 @@ static int
 prompt(void)
 {
 	regex_t cre;
-	size_t rsize;
+	size_t rsize = 0;
 	int match;
-	char *response;
+	char *response = NULL;
 	FILE *ttyfp;
 
 	if ((ttyfp = fopen(_PATH_TTY, "r")) == NULL)
 		return (2);	/* Indicate that the TTY failed to open. */
 	(void)fprintf(stderr, "?...");
 	(void)fflush(stderr);
-	if ((response = fgetln(ttyfp, &rsize)) == NULL ||
+	if (getline(&response, &rsize, ttyfp) < 0 ||
 	    regcomp(&cre, nl_langinfo(YESEXPR), REG_EXTENDED) != 0) {
 		(void)fclose(ttyfp);
 		return (0);
 	}
-	response[rsize - 1] = '\0';
 	match = regexec(&cre, response, 0, NULL, 0);
+	free(response);
 	(void)fclose(ttyfp);
 	regfree(&cre);
 	return (match == 0);

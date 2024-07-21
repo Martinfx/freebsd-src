@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SYSDIR?=	${SRCTOP}/sys
 
 .PATH:		${SYSDIR}/cddl/dev/dtrace

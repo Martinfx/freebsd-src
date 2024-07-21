@@ -1,11 +1,9 @@
 #!/bin/sh
 
-# $FreeBSD$
-
 #
 # Full list of all arches we don't build.
 #
-#	powerpc/powerpcspe riscv/riscv64sf arm/armv6
+#	powerpc/powerpcspe
 #
 # This script is expected to be run in stand (though you could run it anywhere
 # in the tree). It does a full clean build. For stand you can do all the archs in
@@ -97,11 +95,11 @@ for i in \
     dobuild $ta _.boot.${ta}.no_zfs.log "MK_LOADER_ZFS=no"
 done
 
-# Build with firewire
+# Build w/ LOADER_BIOS_TEXTONLY
 for i in \
 	amd64/amd64 \
 	i386/i386 \
 	; do
     ta=${i##*/}
-    dobuild $ta _.boot.${ta}.firewire.log "MK_LOADER_FIREWIRE=yes"
+    dobuild $ta _.boot.${ta}.no_zfs.log "MK_LOADER_BIOS_TEXTONLY=yes"
 done

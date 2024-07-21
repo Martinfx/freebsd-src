@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2021 Dmitry Chagin <dchagin@FreeBSD.org>
  * Copyright (c) 2008 Roman Divacky
@@ -26,20 +26,17 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include "opt_compat.h"
-
 #include <sys/param.h>
-#include <sys/systm.h>
 #include <sys/imgact.h>
 #include <sys/imgact_elf.h>
 #include <sys/ktr.h>
+#include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/sched.h>
+#include <sys/sysent.h>
+#include <sys/vnode.h>
 #include <sys/umtxvar.h>
 
 #ifdef COMPAT_LINUX32
@@ -52,7 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_futex.h>
 #include <compat/linux/linux_misc.h>
-#include <compat/linux/linux_timer.h>
+#include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
 
 #define	FUTEX_SHARED	0x8     /* shared futex */
@@ -786,6 +783,8 @@ linux_futex_wait(struct thread *td, struct linux_futex_args *args)
 	}
 	umtxq_unlock(&uq->uq_key);
 	umtx_key_release(&uq->uq_key);
+	if (error == ERESTART)
+		error = EINTR;
 	return (error);
 }
 
@@ -931,7 +930,7 @@ linux_get_robust_list(struct thread *td, struct linux_get_robust_list_args *args
 	if (error != 0)
 		return (EFAULT);
 
-	return (copyout(&head, args->head, sizeof(head)));
+	return (copyout(&head, args->head, sizeof(l_uintptr_t)));
 }
 
 static int

@@ -1,6 +1,5 @@
-# $FreeBSD$
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Rubicon Communications, LLC (Netgate)
 #
@@ -29,6 +28,20 @@
 
 common_dir=$(atf_get_srcdir)/../common
 
+find_state()
+{
+	jail=${1:-alcatraz}
+	ip=${2:-192.0.2.2}
+
+	jexec ${jail} pfctl -ss | grep icmp | grep ${ip}
+}
+
+find_state_v6()
+{
+	jexec alcatraz pfctl -ss | grep icmp | grep 2001:db8::2
+}
+
+
 atf_test_case "v4" "cleanup"
 v4_head()
 {
@@ -49,11 +62,10 @@ v4_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp"
+		"pass in proto icmp" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.2 \
@@ -61,39 +73,31 @@ v4_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing with the wrong IP doesn't affect our state
 	jexec alcatraz pfctl -k 192.0.2.3
-
-	# So we can still ping
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing with the wrong IP removed our state."
+	fi
 
 	# Killing with one correct address and one incorrect doesn't kill the state
 	jexec alcatraz pfctl -k 192.0.2.1 -k 192.0.2.3
-
-	# So we can still ping
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing with one wrong IP removed our state."
+	fi
 
 	# Killing with correct address does remove the state
 	jexec alcatraz pfctl -k 192.0.2.1
-
-	# Now the ping fails
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing with the correct IP did not remove our state."
+	fi
 }
 
 v4_cleanup()
@@ -125,51 +129,42 @@ v6_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp6"
+		"pass in proto icmp6" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--ip6 \
 		--sendif ${epair}a \
 		--to 2001:db8::2 \
 		--replyif ${epair}a
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--ip6 \
-		--sendif ${epair}a \
-		--to 2001:db8::2 \
-		--replyif ${epair}a
+	if ! find_state_v6;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing with the wrong IP doesn't affect our state
 	jexec alcatraz pfctl -k 2001:db8::3
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--ip6 \
-		--sendif ${epair}a \
-		--to 2001:db8::2 \
-		--replyif ${epair}a
+	if ! find_state_v6;
+	then
+		atf_fail "Killing with the wrong IP removed our state."
+	fi
 
 	# Killing with one correct address and one incorrect doesn't kill the state
 	jexec alcatraz pfctl -k 2001:db8::1 -k 2001:db8::3
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--ip6 \
-		--sendif ${epair}a \
-		--to 2001:db8::2 \
-		--replyif ${epair}a
+	if ! find_state_v6;
+	then
+		atf_fail "Killing with one wrong IP removed our state."
+	fi
 
 	# Killing with correct address does remove the state
 	jexec alcatraz pfctl -k 2001:db8::1
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--ip6 \
-		--sendif ${epair}a \
-		--to 2001:db8::2 \
-		--replyif ${epair}a
-
+	if find_state_v6;
+	then
+		atf_fail "Killing with the correct IP did not remove our state."
+	fi
 }
 
 v6_cleanup()
@@ -198,11 +193,10 @@ label_body()
 
 	pft_set_rules alcatraz "block all" \
 		"pass in proto tcp label bar" \
-		"pass in proto icmp label foo"
+		"pass in proto icmp label foo" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.2 \
@@ -210,33 +204,31 @@ label_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing a label on a different rules keeps the state
 	jexec alcatraz pfctl -k label -k bar
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing a different label removed the state."
+	fi
 
 	# Killing a non-existing label keeps the state
 	jexec alcatraz pfctl -k label -k baz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing a non-existing label removed the state."
+	fi
 
 	# Killing the correct label kills the state
 	jexec alcatraz pfctl -k label -k foo
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing the state did not remove it."
+	fi
 }
 
 label_cleanup()
@@ -264,11 +256,10 @@ multilabel_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp label foo label bar"
+		"pass in proto icmp label foo label bar" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.2 \
@@ -276,29 +267,28 @@ multilabel_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing a label on a different rules keeps the state
 	jexec alcatraz pfctl -k label -k baz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing a different label removed the state."
+	fi
 
 	# Killing the state with the last label works
 	jexec alcatraz pfctl -k label -k bar
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing with the last label did not remove the state."
+	fi
 
 	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp label foo label bar"
+		"pass in proto icmp label foo label bar" \
+		"set skip on lo"
 
 	# Reestablish state
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
@@ -308,13 +298,17 @@ multilabel_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing with the first label works too
 	jexec alcatraz pfctl -k label -k foo
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing with the first label did not remove the state."
+	fi
 }
 
 multilabel_cleanup()
@@ -342,7 +336,8 @@ gateway_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in reply-to (${epair}b 192.0.2.1) proto icmp"
+		"pass in reply-to (${epair}b 192.0.2.1) proto icmp" \
+		"set skip on lo"
 
 	# Sanity check & establish state
 	# Note: use pft_ping so we always use the same ID, so pf considers all
@@ -354,26 +349,24 @@ gateway_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Killing with a different gateway does not affect our state
 	jexec alcatraz pfctl -k gateway -k 192.0.2.2
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing with a different gateway removed the state."
+	fi
 
 	# Killing states with the relevant gateway does terminate our state
 	jexec alcatraz pfctl -k gateway -k 192.0.2.1
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing with the gateway did not remove the state."
+	fi
 }
 
 gateway_cleanup()
@@ -484,11 +477,10 @@ interface_body()
 	jexec alcatraz pfctl -e
 
 	pft_set_rules alcatraz "block all" \
-		"pass in proto icmp"
+		"pass in proto icmp" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.2 \
@@ -496,26 +488,24 @@ interface_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Flushing states on a different interface doesn't affect our state
 	jexec alcatraz pfctl -i ${epair}a -Fs
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Flushing on a different interface removed the state."
+	fi
 
 	# Flushing on the correct interface does (even with floating states)
 	jexec alcatraz pfctl -i ${epair}b -Fs
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Flushing on a the interface did not remove the state."
+	fi
 }
 
 interface_cleanup()
@@ -544,11 +534,10 @@ id_body()
 
 	pft_set_rules alcatraz "block all" \
 		"pass in proto tcp" \
-		"pass in proto icmp"
+		"pass in proto icmp" \
+		"set skip on lo"
 
 	# Sanity check & establish state
-	# Note: use pft_ping so we always use the same ID, so pf considers all
-	# echo requests part of the same flow.
 	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
 		--sendif ${epair}a \
 		--to 192.0.2.2 \
@@ -556,12 +545,10 @@ id_body()
 
 	# Change rules to now deny the ICMP traffic
 	pft_set_rules noflush alcatraz "block all"
-
-	# Established state means we can still ping alcatraz
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Setting new rules removed the state."
+	fi
 
 	# Get the state ID
 	id=$(jexec alcatraz pfctl -ss -vvv | grep -A 3 icmp |
@@ -569,20 +556,89 @@ id_body()
 
 	# Kill the wrong ID
 	jexec alcatraz pfctl -k id -k 1
-	atf_check -s exit:0 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if ! find_state;
+	then
+		atf_fail "Killing a different ID removed the state."
+	fi
 
 	# Kill the correct ID
 	jexec alcatraz pfctl -k id -k ${id}
-	atf_check -s exit:1 -o ignore ${common_dir}/pft_ping.py \
-		--sendif ${epair}a \
-		--to 192.0.2.2 \
-		--replyif ${epair}a
+	if find_state;
+	then
+		atf_fail "Killing the state did not remove it."
+	fi
 }
 
 id_cleanup()
+{
+	pft_cleanup
+}
+
+atf_test_case "nat" "cleanup"
+nat_head()
+{
+	atf_set descr 'Test killing states by their NAT-ed IP address'
+	atf_set require.user root
+	atf_set require.progs scapy
+}
+
+nat_body()
+{
+	pft_init
+	j="killstate:nat"
+
+	epair_c=$(vnet_mkepair)
+	epair_srv=$(vnet_mkepair)
+
+	vnet_mkjail ${j}c ${epair_c}a
+	ifconfig -j ${j}c ${epair_c}a inet 192.0.2.2/24 up
+	jexec ${j}c route add default 192.0.2.1
+
+	vnet_mkjail ${j}srv ${epair_srv}a
+	ifconfig -j ${j}srv ${epair_srv}a inet 198.51.100.2/24 up
+
+	vnet_mkjail ${j}r ${epair_c}b ${epair_srv}b
+	ifconfig -j ${j}r ${epair_c}b inet 192.0.2.1/24 up
+	ifconfig -j ${j}r ${epair_srv}b inet 198.51.100.1/24 up
+	jexec ${j}r sysctl net.inet.ip.forwarding=1
+
+	jexec ${j}r pfctl -e
+	pft_set_rules ${j}r \
+		"nat on ${epair_srv}b inet from 192.0.2.0/24 to any -> (${epair_srv}b)"
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore \
+	    jexec ${j}c ping -c 1 192.0.2.1
+	atf_check -s exit:0 -o ignore \
+	    jexec ${j}srv ping -c 1 198.51.100.1
+	atf_check -s exit:0 -o ignore \
+	    jexec ${j}c ping -c 1 198.51.100.2
+
+	# Establish state
+	# Note: use pft_ping so we always use the same ID, so pf considers all
+	# echo requests part of the same flow.
+	atf_check -s exit:0 -o ignore jexec ${j}c ${common_dir}/pft_ping.py \
+		--sendif ${epair_c}a \
+		--to 198.51.100.1 \
+		--replyif ${epair_c}a
+
+	# There's NAT here, so the source IP will be 198.51.100.1
+	if ! find_state ${j}r 198.51.100.1;
+	then
+		atf_fail "Expected state not found"
+	fi
+
+	# By NAT-ed address?
+	jexec ${j}r pfctl -k nat -k 192.0.2.2
+
+	if find_state ${j}r 198.51.100.1;
+	then
+		jexec ${j}r pfctl -ss -v
+		atf_fail "Failed to remove state"
+	fi
+}
+
+nat_cleanup()
 {
 	pft_cleanup
 }
@@ -597,4 +653,5 @@ atf_init_test_cases()
 	atf_add_test_case "match"
 	atf_add_test_case "interface"
 	atf_add_test_case "id"
+	atf_add_test_case "nat"
 }

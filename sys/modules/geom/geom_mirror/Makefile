@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/geom/mirror
 
 KMOD=	geom_mirror

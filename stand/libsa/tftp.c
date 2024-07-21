@@ -31,9 +31,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Simple TFTP implementation for libsa.
  * Assumes:
@@ -106,8 +103,8 @@ static int	is_open = 0;
 struct tftp_handle {
 	struct iodesc  *iodesc;
 	int		currblock;	/* contents of lastdata */
-	int		islastblock:1;	/* flag */
-	int		tries:4;	/* number of read attempts */
+	unsigned int	islastblock:1;	/* flag */
+	unsigned int	tries:4;	/* number of read attempts */
 	int		validsize;
 	int		off;
 	char		*path;	/* saved for re-requests */

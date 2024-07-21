@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004-2005 HighPoint Technologies, Inc.
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
- 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -2157,7 +2154,6 @@ hpt_shutdown(device_t dev)
 	
 		pAdapter = device_get_softc(dev);
 
-		EVENTHANDLER_DEREGISTER(shutdown_final, pAdapter->eh);
 		mtx_lock(&pAdapter->lock);
 		FlushAdapter(pAdapter);
 		mtx_unlock(&pAdapter->lock);

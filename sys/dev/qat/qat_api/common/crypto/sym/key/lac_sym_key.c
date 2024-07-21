@@ -798,8 +798,9 @@ LacSymKey_MgfCommon(const CpaInstanceHandle instanceHandle,
 		    ICP_QAT_FW_SLICE_DRAM_WR,
 		    ICP_QAT_HW_AUTH_MODE0, /* just a plain hash */
 		    CPA_FALSE, /* Not using sym Constants Table in Shared SRAM
-				  */
+				*/
 		    CPA_FALSE, /* not using the optimised Content Desc */
+		    CPA_FALSE, /* Not using the stateful SHA3 Content Desc */
 		    NULL,
 		    &hashBlkSizeInBytes);
 
@@ -1550,9 +1551,11 @@ LacSymKey_KeyGenSslTls_GenCommon(CpaInstanceHandle instanceHandle,
 		    LAC_SYM_KEY_NO_HASH_BLK_OFFSET_QW,
 		    ICP_QAT_FW_SLICE_DRAM_WR,
 		    qatHashMode,
-		    CPA_FALSE, /* Not using sym Constants Table in SRAM */
-		    CPA_FALSE, /* Not using the optimised content Desc */
-		    NULL,      /* Precompute data */
+		    CPA_FALSE, /* Not using sym Constants Table in Shared SRAM
+				*/
+		    CPA_FALSE, /* not using the optimised content Desc */
+		    CPA_FALSE, /* Not using the stateful SHA3 Content Desc */
+		    NULL,      /* precompute data */
 		    &hashBlkSizeInBytes);
 
 		/* SSL3 */
@@ -2446,20 +2449,12 @@ LacSymKey_KeyGenSslTls(const CpaInstanceHandle instanceHandle_in,
 {
 	CpaStatus status = CPA_STATUS_FAIL;
 	CpaInstanceHandle instanceHandle = LacKey_GetHandle(instanceHandle_in);
-	CpaCyCapabilitiesInfo cyCapInfo;
 
 	LAC_CHECK_INSTANCE_HANDLE(instanceHandle);
 	SAL_CHECK_INSTANCE_TYPE(instanceHandle,
 				(SAL_SERVICE_TYPE_CRYPTO |
 				 SAL_SERVICE_TYPE_CRYPTO_SYM));
-
 	SAL_RUNNING_CHECK(instanceHandle);
-	SalCtrl_CyQueryCapabilities(instanceHandle, &cyCapInfo);
-
-	if (IS_HKDF_UNSUPPORTED(cmdId, cyCapInfo.hkdfSupported)) {
-		LAC_LOG_ERROR("The device does not support HKDF");
-		return CPA_STATUS_UNSUPPORTED;
-	}
 
 	status = LacSymKey_CheckParamSslTls(pKeyGenOpData,
 					    hashAlgorithm,

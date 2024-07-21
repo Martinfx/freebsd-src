@@ -1,7 +1,7 @@
 /* $NetBSD: fpgetmask.c,v 1.4 2008/04/28 20:23:00 martin Exp $ */
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1997 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -31,9 +31,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "namespace.h"
 
 #include <ieeefp.h>
@@ -43,13 +40,8 @@ __FBSDID("$FreeBSD$");
 #include "milieu.h"
 #include "softfloat.h"
 
-#ifdef __weak_alias
-__weak_alias(fpgetmask,_fpgetmask)
-#endif
-
 fp_except
 fpgetmask(void)
 {
-
 	return float_exception_mask;
 }

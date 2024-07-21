@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 BINDIR?=	/usr/local/bin/
 PROG=	vis_map
 SRC=	vis_map.c

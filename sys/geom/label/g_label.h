@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004-2005 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_G_LABEL_H_
@@ -75,12 +73,12 @@ extern struct g_label_desc g_label_ufs_volume;
 extern struct g_label_desc g_label_iso9660;
 extern struct g_label_desc g_label_msdosfs;
 extern struct g_label_desc g_label_ext2fs;
-extern struct g_label_desc g_label_reiserfs;
 extern struct g_label_desc g_label_ntfs;
 extern struct g_label_desc g_label_gpt;
 extern struct g_label_desc g_label_gpt_uuid;
 extern struct g_label_desc g_label_disk_ident;
 extern struct g_label_desc g_label_flashmap;
+extern struct g_label_desc g_label_swaplinux;
 
 extern void g_label_rtrim(char *label, size_t size);
 #endif	/* _KERNEL */

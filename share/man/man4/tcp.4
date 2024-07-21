@@ -31,10 +31,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"     From: @(#)tcp.4	8.1 (Berkeley) 6/5/93
-.\" $FreeBSD$
-.\"
-.Dd August 1, 2022
+.Dd November 30, 2023
 .Dt TCP 4
 .Os
 .Sh NAME
@@ -175,7 +172,7 @@ socket option set.
 .Pp
 In addition to the facilities defined in RFC7413, this implementation supports a
 pre-shared key (PSK) mode of operation in which the TFO server requires the
-client to be in posession of a shared secret in order for the client to be able
+client to be in possession of a shared secret in order for the client to be able
 to successfully open TFO connections with the server.
 This is useful, for example, in environments where TFO servers are exposed to
 both internal and external clients and only wish to allow TFO connections from
@@ -282,6 +279,7 @@ this packetization may cause significant delays.
 The boolean option
 .Dv TCP_NODELAY
 defeats this algorithm.
+
 .It Dv TCP_MAXSEG
 By default, a sender- and
 .No receiver- Ns Tn TCP
@@ -291,6 +289,17 @@ The
 .Dv TCP_MAXSEG
 option allows the user to determine the result of this negotiation,
 and to reduce it if desired.
+.It Dv TCP_MAXUNACKTIME
+This
+.Xr setsockopt 2
+option accepts an argument of
+.Vt "u_int"
+to set the per-socket interval, in seconds, in which the connection must
+make progress. Progress is defined by at least 1 byte being acknowledged within
+the set time period. If a connection fails to make progress, then the
+.Tn TCP
+stack will terminate the connection with a reset. Note that the default
+value for this is zero which indicates no progress checks should be made.
 .It Dv TCP_NOOPT
 .Tn TCP
 usually sends a number of options in each packet, corresponding to
@@ -371,7 +380,7 @@ Changes NUMA affinity filtering for an established TCP listen
 socket.
 This option takes a single integer argument which specifies
 the NUMA domain to filter on for this listen socket.
-The argument can also have the follwing special values:
+The argument can also have the following special values:
 .Bl -tag -width "Dv TCP_REUSPORT_LB_NUMA"
 .It Dv TCP_REUSPORT_LB_NUMA_NODOM
 Remove NUMA filtering for this listen socket.
@@ -455,13 +464,6 @@ See
 Maximum amount of time, in milliseconds, before a delayed ACK is sent.
 .It Va delayed_ack
 Delay ACK to try and piggyback it onto a data packet or another ACK.
-.It Va do_lrd
-Enable Lost Retransmission Detection for SACK-enabled sessions, disabled by
-default.
-Under severe congestion, a retransmission can be lost which then leads to a
-mandatory Retransmission Timeout (RTO), followed by slow-start.
-LRD will try to resend the repeatedly lost packet, preventing the time-consuming
-RTO and performance reducing slow-start.
 .It Va do_prr
 Perform SACK loss recovery using the Proportional Rate Reduction (PRR) algorithm
 described in RFC6937.
@@ -469,12 +471,6 @@ This improves the effectiveness of retransmissions particular in environments
 with ACK thinning or burst loss events, as chances to run out of the ACK clock
 are reduced, preventing lengthy and performance reducing RTO based loss recovery
 (default is true).
-.It Va do_prr_conservative
-While doing Proportional Rate Reduction, remain strictly in a packet conserving
-mode, sending only one new packet for each ACK received.
-Helpful when a misconfigured token bucket traffic policer causes persistent
-high losses leading to RTO, but reduces PRR effectiveness in more common settings
-(default is false).
 .It Va do_tcpdrain
 Flush packets in the
 .Tn TCP
@@ -495,6 +491,13 @@ Outgoing connections will request ECN.
 Allow incoming connections to request ECN.
 Outgoing connections will not request ECN.
 (default)
+.It 3
+Negotiate on incoming connection for Accurate ECN, ECN, or no ECN.
+Outgoing connections will request Accurate ECN and fall back to
+ECN depending on the capabilities of the server.
+.It 4
+Negotiate on incoming connection for Accurate ECN, ECN, or no ECN.
+Outgoing connections will not request ECN.
 .El
 .It Va ecn.maxretries
 Number of retries (SYN or SYN/ACK retransmits) before disabling ECN on a
@@ -659,7 +662,7 @@ cache.
 Time in seconds between pruning expired host cache entries.
 Defaults to 300 (5 minutes).
 .It Va hostcache.purge
-Expire all entires on next pruning of host cache entries.
+Expire all entries on next pruning of host cache entries.
 Any non-zero setting will be reset to zero, once the purge
 is running.
 .Bl -tag -compact
@@ -734,23 +737,6 @@ A value of 2 results in any
 packets to closed ports being logged.
 Any value not listed above disables the logging
 (default is 0, i.e., the logging is disabled).
-.It Va maxtcptw
-When a TCP connection enters the
-.Dv TIME_WAIT
-state, its associated socket structure is freed, since it is of
-negligible size and use, and a new structure is allocated to contain a
-minimal amount of information necessary for sustaining a connection in
-this state, called the compressed TCP
-.Dv TIME_WAIT
-state.
-Since this structure is smaller than a socket structure, it can save
-a significant amount of system memory.
-The
-.Va net.inet.tcp.maxtcptw
-MIB variable controls the maximum number of these structures allocated.
-By default, it is initialized to
-.Va kern.ipc.maxsockets
-/ 5.
 .It Va minmss
 Minimum TCP Maximum Segment Size; used to prevent a denial of service attack
 from an unreasonably low MSS.
@@ -767,14 +753,14 @@ application limited and the network bandwidth is not utilized completely.
 That prevents self-inflicted packet losses once the application starts to
 transmit data at a higher speed.
 .It Va nolocaltimewait
-Suppress creation of compressed TCP
+Suppress creation of TCP
 .Dv TIME_WAIT
 states for connections in
 which both endpoints are local.
 .It Va path_mtu_discovery
 Enable Path MTU Discovery.
 .It Va pcbcount
-Number of active process control blocks
+Number of active protocol control blocks
 (read-only).
 .It Va perconn_stats_enable
 Controls the default collection of statistics for all connections using the
@@ -841,10 +827,9 @@ Maximum size of automatic receive buffer.
 Initial
 .Tn TCP
 receive window (buffer size).
-.It Va require_unique_port
-Require unique ephemeral port for outgoing connections;
-otherwise, the 4-tuple of local and remote ports and addresses must be unique.
-Requiring a unique port limits the number of outgoing connections.
+.It Va retries
+Maximum number of consecutive timer based retransmits sent after a data
+segment is lost (default and maximum is 12).
 .It Va rexmit_drop_options
 Drop TCP options from third and later retransmitted SYN segments
 of a connection.
@@ -873,7 +858,18 @@ minimum, which gives us an effective minimum of 200ms (similar to
 The initial value is used before an RTT measurement has been performed.
 .It Va rfc1323
 Implement the window scaling and timestamp options of RFC 1323/RFC 7323
-(default is true).
+(default is 1).
+Settings:
+.Bl -tag -compact
+.It 0
+Disable window scaling and timestamp option.
+.It 1
+Enable window scaling and timestamp option.
+.It 2
+Enable only window scaling.
+.It 3
+Enable only timestamp option.
+.El
 .It Va rfc3042
 Enable the Limited Transmit algorithm as described in RFC 3042.
 It helps avoid timeouts on lossy links and also when the congestion window
@@ -898,6 +894,13 @@ Global number of TCP SACK holes currently allocated.
 .It Va sack.globalmaxholes
 Maximum number of SACK holes per system, across all connections.
 Defaults to 65536.
+.It Va sack.lrd
+Enable Lost Retransmission Detection for SACK-enabled sessions, enabled by
+default.
+Under severe congestion, a retransmission can be lost which then leads to a
+mandatory Retransmission Timeout (RTO), followed by slow-start.
+LRD will try to resend the repeatedly lost packet, preventing the time-consuming
+RTO and performance reducing slow-start or purge of the SACK scoreboard.
 .It Va sack.maxholes
 Maximum number of SACK holes per connection.
 Defaults to 128.
@@ -1041,6 +1044,7 @@ when trying to use a TCP function block that is not available;
 .Xr siftr 4 ,
 .Xr syncache 4 ,
 .Xr tcp_bbr 4 ,
+.Xr tcp_rack 4 ,
 .Xr setkey 8 ,
 .Xr sysctl 8 ,
 .Xr tcp_functions 9

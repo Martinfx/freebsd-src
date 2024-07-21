@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/arm/broadcom/bcm2835/
 
 KMOD=	rpi_ft5406

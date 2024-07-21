@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.init.mk>
 
 LIB=		clang_rt.ubsan_standalone_cxx-${CRTARCH}

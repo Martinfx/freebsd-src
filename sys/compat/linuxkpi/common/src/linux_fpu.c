@@ -1,7 +1,7 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  * 
- * Copyright (c) 2020 Greg V <greg@unrelenting.technology>
+ * Copyright (c) 2020 Val Packett <val@packett.cool>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,11 +30,13 @@
 #include <sys/proc.h>
 #include <sys/kernel.h>
 
+#include <linux/compat.h>
 #include <linux/sched.h>
 
 #include <asm/fpu/api.h>
 
-#if defined(__aarch64__) || defined(__amd64__) || defined(__i386__)
+#if defined(__aarch64__) || defined(__arm__) || defined(__amd64__) ||	\
+    defined(__i386__) || defined(__powerpc64__)
 
 #include <machine/fpu.h>
 
@@ -58,6 +60,24 @@ lkpi_kernel_fpu_end(void)
 		fpu_kern_leave(curthread, NULL);
 }
 
+void
+lkpi_fpu_safe_exec(fpu_safe_exec_cb_t func, void *ctx)
+{
+	unsigned int save_fpu_level;
+
+	save_fpu_level =
+	    __current_unallocated(curthread) ? 0 : current->fpu_ctx_level;
+	if (__predict_false(save_fpu_level != 0)) {
+		current->fpu_ctx_level = 1;
+		kernel_fpu_end();
+	}
+	func(ctx);
+	if (__predict_false(save_fpu_level != 0)) {
+		kernel_fpu_begin();
+		current->fpu_ctx_level = save_fpu_level;
+	}
+}
+
 #else
 
 void
@@ -68,6 +88,12 @@ lkpi_kernel_fpu_begin(void)
 void
 lkpi_kernel_fpu_end(void)
 {
+}
+
+void
+lkpi_fpu_safe_exec(fpu_safe_exec_cb_t func, void *ctx)
+{
+	func(ctx);
 }
 
 #endif

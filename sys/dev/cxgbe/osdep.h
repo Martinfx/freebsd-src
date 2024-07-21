@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 Chelsio Communications, Inc.
  * All rights reserved.
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  *
  */
 
@@ -131,14 +129,6 @@ typedef boolean_t bool;
 #define PCI_EXP_LNKSTA_CLS	PCIEM_LINK_STA_SPEED
 #define PCI_EXP_LNKSTA_NLW	PCIEM_LINK_STA_WIDTH
 #define PCI_EXP_DEVCTL2		PCIER_DEVICE_CTL2
-
-static inline int
-ilog2(long x)
-{
-	KASSERT(x > 0 && powerof2(x), ("%s: invalid arg %ld", __func__, x));
-
-	return (flsl(x) - 1);
-}
 
 static inline char *
 strstrip(char *s)

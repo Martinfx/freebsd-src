@@ -30,13 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char *sccsid2 = "@(#)svc.c 1.44 88/02/08 Copyr 1984 Sun Micro";
-static char *sccsid = "@(#)svc.c	2.4 88/08/11 4.0 RPCSRC";
-#endif
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * svc.c, Server-side remote procedure call interface.
  *
@@ -48,6 +42,7 @@ __FBSDID("$FreeBSD$");
  */
 
 #include <sys/param.h>
+#include <sys/jail.h>
 #include <sys/lock.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -55,12 +50,15 @@ __FBSDID("$FreeBSD$");
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/protosw.h>
 #include <sys/queue.h>
 #include <sys/socketvar.h>
 #include <sys/systm.h>
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/ucred.h>
+
+#include <netinet/tcp.h>
 
 #include <rpc/rpc.h>
 #include <rpc/rpcb_clnt.h>
@@ -126,7 +124,7 @@ svcpool_create(const char *name, struct sysctl_oid_list *sysctl_base)
 	pool->sp_space_low = (pool->sp_space_high / 3) * 2;
 
 	sysctl_ctx_init(&pool->sp_sysctl);
-	if (sysctl_base) {
+	if (IS_DEFAULT_VNET(curvnet) && sysctl_base) {
 		SYSCTL_ADD_PROC(&pool->sp_sysctl, sysctl_base, OID_AUTO,
 		    "minthreads", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 		    pool, 0, svcpool_minthread_sysctl, "I",
@@ -990,6 +988,24 @@ svc_getreq(SVCXPRT *xprt, struct svc_req **rqstp_ret)
 		if (!SVCAUTH_UNWRAP(&r->rq_auth, &r->rq_args)) {
 			svcerr_decode(r);
 			goto call_done;
+		}
+
+		/*
+		 * Defer enabling DDP until the first non-NULLPROC RPC
+		 * is received to allow STARTTLS authentication to
+		 * enable TLS offload first.
+		 */
+		if (xprt->xp_doneddp == 0 && r->rq_proc != NULLPROC &&
+		    xprt->xp_socket != NULL &&
+		    atomic_cmpset_int(&xprt->xp_doneddp, 0, 1)) {
+			if (xprt->xp_socket->so_proto->pr_protocol ==
+			    IPPROTO_TCP) {
+				int optval = 1;
+
+				(void)so_setsockopt(xprt->xp_socket,
+				    IPPROTO_TCP, TCP_USE_DDP, &optval,
+				    sizeof(optval));
+			}
 		}
 
 		/*

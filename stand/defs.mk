@@ -1,7 +1,8 @@
-# $FreeBSD$
 
 .if !defined(__BOOT_DEFS_MK__)
 __BOOT_DEFS_MK__=${MFILE}
+
+FORTIFY_SOURCE=	0
 
 # We need to define all the MK_ options before including src.opts.mk
 # because it includes bsd.own.mk which needs the right MK_ values,
@@ -63,6 +64,7 @@ BINDIR?=	/boot
 # LUAPATH is where we search for and install lua scripts.
 LUAPATH?=	/boot/lua
 FLUASRC?=	${SRCTOP}/libexec/flua
+FLUALIB?=	${SRCTOP}/lib/flua
 
 LIBSA=		${BOOTOBJ}/libsa/libsa.a
 .if ${MACHINE} == "i386"

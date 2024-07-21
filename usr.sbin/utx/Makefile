@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	acct
 
 PROG=	utx

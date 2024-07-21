@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)extern.h	8.1 (Berkeley) 6/4/93
- * $FreeBSD$
  */
 
 struct delayval;
@@ -48,7 +45,7 @@ const char *autobaud(void);
 int	 delaybits(void);
 void	 edithost(const char *);
 void	 gendefaults(void);
-void	 gettable(const char *, char *);
+void	 gettable(const char *);
 void	 makeenv(char *[]);
 const char *portselector(void);
 void	 set_ttydefaults(int);

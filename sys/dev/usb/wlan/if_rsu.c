@@ -16,8 +16,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Driver for Realtek RTL8188SU/RTL8191SU/RTL8192SU.
  *
@@ -163,9 +161,10 @@ static usb_callback_t   rsu_bulk_rx_callback;
 static usb_error_t	rsu_do_request(struct rsu_softc *,
 			    struct usb_device_request *, void *);
 static struct ieee80211vap *
-		rsu_vap_create(struct ieee80211com *, const char name[],
-		    int, enum ieee80211_opmode, int, const uint8_t bssid[],
-		    const uint8_t mac[]);
+		rsu_vap_create(struct ieee80211com *, const char name[IFNAMSIZ],
+		    int, enum ieee80211_opmode, int,
+		    const uint8_t bssid[IEEE80211_ADDR_LEN],
+		    const uint8_t mac[IEEE80211_ADDR_LEN]);
 static void	rsu_vap_delete(struct ieee80211vap *);
 static void	rsu_scan_start(struct ieee80211com *);
 static void	rsu_scan_end(struct ieee80211com *);
@@ -683,7 +682,7 @@ rsu_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ], int unit,
 	struct rsu_softc *sc = ic->ic_softc;
 	struct rsu_vap *uvp;
 	struct ieee80211vap *vap;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	if (!TAILQ_EMPTY(&ic->ic_vaps))         /* only one at a time */
 		return (NULL);
@@ -699,10 +698,10 @@ rsu_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ], int unit,
 	}
 
 	ifp = vap->iv_ifp;
-	ifp->if_capabilities = IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6;
+	if_setcapabilities(ifp, IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6);
 	RSU_LOCK(sc);
 	if (sc->sc_rx_checksum_enable)
-		ifp->if_capenable |= IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6;
+		if_setcapenablebit(ifp, IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6, 0);
 	RSU_UNLOCK(sc);
 
 	/* override state transition machine */
@@ -1527,10 +1526,10 @@ rsu_key_alloc(struct ieee80211vap *vap, struct ieee80211_key *k,
 	struct rsu_softc *sc = vap->iv_ic->ic_softc;
 	int is_checked = 0;
 
-	if (&vap->iv_nw_keys[0] <= k &&
-	    k < &vap->iv_nw_keys[IEEE80211_WEP_NKID]) {
+	if (ieee80211_is_key_global(vap, k)) {
 		*keyix = ieee80211_crypto_get_key_wepidx(vap, k);
 	} else {
+		/* Note: assumes this is a pairwise key */
 		if (vap->iv_opmode != IEEE80211_M_STA) {
 			*keyix = 0;
 			/* TODO: obtain keyix from node id */
@@ -1571,8 +1570,7 @@ rsu_process_key(struct ieee80211vap *vap, const struct ieee80211_key *k,
 	}
 
 	/* Handle group keys. */
-	if (&vap->iv_nw_keys[0] <= k &&
-	    k < &vap->iv_nw_keys[IEEE80211_WEP_NKID]) {
+	if (ieee80211_is_key_global(vap, k)) {
 		KASSERT(k->wk_keyix < nitems(sc->group_keys),
 		    ("keyix %u > %zu\n", k->wk_keyix, nitems(sc->group_keys)));
 
@@ -2554,7 +2552,6 @@ rsu_rxeof(struct usb_xfer *xfer, struct rsu_data *data)
 static void
 rsu_bulk_rx_callback(struct usb_xfer *xfer, usb_error_t error)
 {
-	struct epoch_tracker et;
 	struct rsu_softc *sc = usbd_xfer_softc(xfer);
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni;
@@ -2589,7 +2586,6 @@ tr_setup:
 		 * ieee80211_input() because here is at the end of a USB
 		 * callback and safe to unlock.
 		 */
-		NET_EPOCH_ENTER(et);
 		while (m != NULL) {
 			next = m->m_next;
 			m->m_next = NULL;
@@ -2608,7 +2604,6 @@ tr_setup:
 			RSU_LOCK(sc);
 			m = next;
 		}
-		NET_EPOCH_EXIT(et);
 		break;
 	default:
 		/* needs it to the inactive queue due to a error. */
@@ -3035,11 +3030,11 @@ rsu_ioctl_net(struct ieee80211com *ic, u_long cmd, void *data)
 
 		IEEE80211_LOCK(ic);	/* XXX */
 		TAILQ_FOREACH(vap, &ic->ic_vaps, iv_next) {
-			struct ifnet *ifp = vap->iv_ifp;
+			if_t ifp = vap->iv_ifp;
 
-			ifp->if_capenable &=
-			    ~(IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6);
-			ifp->if_capenable |= rxmask;
+			if_setcapenablebit(ifp, 0,
+			    IFCAP_RXCSUM | IFCAP_RXCSUM_IPV6);
+			if_setcapenablebit(ifp, rxmask, 0);
 		}
 		IEEE80211_UNLOCK(ic);
 		break;

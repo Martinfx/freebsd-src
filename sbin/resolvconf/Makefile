@@ -1,6 +1,4 @@
-# $FreeBSD$
-
-PACKAGE=runtime
+PACKAGE=resolvconf
 DIST=		${SRCTOP}/contrib/openresolv
 .PATH:		${DIST}
 

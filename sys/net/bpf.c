@@ -33,13 +33,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *      @(#)bpf.c	8.4 (Berkeley) 1/9/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_bpf.h"
 #include "opt_ddb.h"
 #include "opt_netgraph.h"
@@ -78,6 +74,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_vlan_var.h>
 #include <net/if_dl.h>
 #include <net/bpf.h>
@@ -101,7 +98,7 @@ __FBSDID("$FreeBSD$");
 
 MALLOC_DEFINE(M_BPF, "BPF", "BPF data");
 
-static struct bpf_if_ext dead_bpf_if = {
+static const struct bpf_if_ext dead_bpf_if = {
 	.bif_dlist = CK_LIST_HEAD_INITIALIZER()
 };
 
@@ -973,7 +970,7 @@ bpfopen(struct cdev *dev, int flags, int fmt, struct thread *td)
 	d->bd_bufmode = BPF_BUFMODE_BUFFER;
 	d->bd_sig = SIGIO;
 	d->bd_direction = BPF_D_INOUT;
-	d->bd_refcnt = 1;
+	refcount_init(&d->bd_refcnt, 1);
 	BPF_PID_REFRESH(d, td);
 #ifdef MAC
 	mac_bpfdesc_init(d);
@@ -1645,7 +1642,7 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 #endif
 		{
 			struct timeval *tv = (struct timeval *)addr;
-#if defined(COMPAT_FREEBSD32) && !defined(__mips__)
+#if defined(COMPAT_FREEBSD32)
 			struct timeval32 *tv32;
 			struct timeval tv64;
 
@@ -2265,6 +2262,7 @@ bpf_ts_quality(int tstype)
 static int
 bpf_gettime(struct bintime *bt, int tstype, struct mbuf *m)
 {
+	struct timespec ts;
 	struct m_tag *tag;
 	int quality;
 
@@ -2273,6 +2271,11 @@ bpf_gettime(struct bintime *bt, int tstype, struct mbuf *m)
 		return (quality);
 
 	if (m != NULL) {
+		if ((m->m_flags & (M_PKTHDR | M_TSTMP)) == (M_PKTHDR | M_TSTMP)) {
+			mbuf_tstmp2timespec(m, &ts);
+			timespec2bintime(&ts, bt);
+			return (BPF_TSTAMP_EXTERN);
+		}
 		tag = m_tag_locate(m, MTAG_BPF, MTAG_BPF_TIMESTAMP, NULL);
 		if (tag != NULL) {
 			*bt = *(struct bintime *)(tag + 1);
@@ -2342,6 +2345,13 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	NET_EPOCH_EXIT(et);
 }
 
+void
+bpf_tap_if(if_t ifp, u_char *pkt, u_int pktlen)
+{
+	if (bpf_peers_present(ifp->if_bpf))
+		bpf_tap(ifp->if_bpf, pkt, pktlen);
+}
+
 #define	BPF_CHECK_DIRECTION(d, r, i)				\
 	    (((d)->bd_direction == BPF_D_IN && (r) != (i)) ||	\
 	    ((d)->bd_direction == BPF_D_OUT && (r) == (i)))
@@ -2402,6 +2412,15 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 	NET_EPOCH_EXIT(et);
 }
 
+void
+bpf_mtap_if(if_t ifp, struct mbuf *m)
+{
+	if (bpf_peers_present(ifp->if_bpf)) {
+		M_ASSERTVALID(m);
+		bpf_mtap(ifp->if_bpf, m);
+	}
+}
+
 /*
  * Incoming linkage from device drivers, when packet is in
  * an mbuf chain and to be prepended by a contiguous header.
@@ -2457,6 +2476,15 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 		}
 	}
 	NET_EPOCH_EXIT(et);
+}
+
+void
+bpf_mtap2_if(if_t ifp, void *data, u_int dlen, struct mbuf *m)
+{
+	if (bpf_peers_present(ifp->if_bpf)) {
+		M_ASSERTVALID(m);
+		bpf_mtap2(ifp->if_bpf, data, dlen, m);
+	}
 }
 
 #undef	BPF_CHECK_DIRECTION
@@ -2770,7 +2798,7 @@ bpfattach2(struct ifnet *ifp, u_int dlt, u_int hdrlen,
 	bp->bif_dlt = dlt;
 	bp->bif_hdrlen = hdrlen;
 	bp->bif_bpf = driverp;
-	bp->bif_refcnt = 1;
+	refcount_init(&bp->bif_refcnt, 1);
 	*driverp = bp;
 	/*
 	 * Reference ifnet pointer, so it won't freed until
@@ -2829,7 +2857,7 @@ bpfdetach(struct ifnet *ifp)
 			continue;
 
 		CK_LIST_REMOVE(bp, bif_next);
-		*bp->bif_bpf = (struct bpf_if *)&dead_bpf_if;
+		*bp->bif_bpf = __DECONST(struct bpf_if *, &dead_bpf_if);
 
 		CTR4(KTR_NET,
 		    "%s: sheduling free for encap %d (%p) for if %p",
@@ -2847,6 +2875,12 @@ bpfdetach(struct ifnet *ifp)
 		bpfif_rele(bp);
 	}
 	BPF_UNLOCK();
+}
+
+bool
+bpf_peers_present_if(struct ifnet *ifp)
+{
+	return (bpf_peers_present(ifp->if_bpf));
 }
 
 /*
@@ -3089,12 +3123,27 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 }
 
 void
+bpf_tap_if(if_t ifp, u_char *pkt, u_int pktlen)
+{
+}
+
+void
 bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 {
 }
 
 void
+bpf_mtap_if(if_t ifp, struct mbuf *m)
+{
+}
+
+void
 bpf_mtap2(struct bpf_if *bp, void *d, u_int l, struct mbuf *m)
+{
+}
+
+void
+bpf_mtap2_if(if_t ifp, void *data, u_int dlen, struct mbuf *m)
 {
 }
 
@@ -3109,12 +3158,18 @@ void
 bpfattach2(struct ifnet *ifp, u_int dlt, u_int hdrlen, struct bpf_if **driverp)
 {
 
-	*driverp = (struct bpf_if *)&dead_bpf_if;
+	*driverp = __DECONST(struct bpf_if *, &dead_bpf_if);
 }
 
 void
 bpfdetach(struct ifnet *ifp)
 {
+}
+
+bool
+bpf_peers_present_if(struct ifnet *ifp)
+{
+	return (false);
 }
 
 u_int
@@ -3140,6 +3195,7 @@ bpf_show_bpf_if(struct bpf_if *bpf_if)
 		return;
 	db_printf("%p:\n", bpf_if);
 #define	BPF_DB_PRINTF(f, e)	db_printf("   %s = " f "\n", #e, bpf_if->e);
+#define	BPF_DB_PRINTF_RAW(f, e)	db_printf("   %s = " f "\n", #e, e);
 	/* bif_ext.bif_next */
 	/* bif_ext.bif_dlist */
 	BPF_DB_PRINTF("%#x", bif_dlt);
@@ -3147,7 +3203,7 @@ bpf_show_bpf_if(struct bpf_if *bpf_if)
 	/* bif_wlist */
 	BPF_DB_PRINTF("%p", bif_ifp);
 	BPF_DB_PRINTF("%p", bif_bpf);
-	BPF_DB_PRINTF("%u", bif_refcnt);
+	BPF_DB_PRINTF_RAW("%u", refcount_load(&bpf_if->bif_refcnt));
 }
 
 DB_SHOW_COMMAND(bpf_if, db_show_bpf_if)

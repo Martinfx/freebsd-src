@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Doug Rabson
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	$FreeBSD$
  */
 
 /*
@@ -34,7 +32,6 @@
  * runtime from ld-elf.so.1.
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <stdlib.h>
 #include <string.h>
@@ -400,8 +397,6 @@ __libc_free_tls(void *tcb __unused, size_t tcbsize __unused,
 }
 
 #endif /* PIC */
-
-extern char **environ;
 
 void
 _init_tls(void)

@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ucred.h	8.4 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_UCRED_H_
@@ -61,8 +58,9 @@ struct loginclass;
 #if defined(_KERNEL) || defined(_WANT_UCRED)
 struct ucred {
 	struct mtx cr_mtx;
-	u_int	cr_ref;			/* (c) reference count */
+	long	cr_ref;			/* (c) reference count */
 	u_int	cr_users;		/* (c) proc + thread using this cred */
+	u_int	cr_flags;		/* credential flags */
 	struct auditinfo_addr	cr_audit;	/* Audit properties. */
 #define	cr_startcopy cr_uid
 	uid_t	cr_uid;			/* effective user id */
@@ -75,7 +73,6 @@ struct ucred {
 	struct uidinfo	*cr_ruidinfo;	/* per ruid resource consumption */
 	struct prison	*cr_prison;	/* jail(2) */
 	struct loginclass	*cr_loginclass; /* login class */
-	u_int		cr_flags;	/* credential flags */
 	void 		*cr_pspare2[2];	/* general use 2 */
 #define	cr_endcopy	cr_label
 	struct label	*cr_label;	/* MAC label */
@@ -147,7 +144,6 @@ void	crcopy(struct ucred *dest, struct ucred *src);
 struct ucred	*crcopysafe(struct proc *p, struct ucred *cr);
 struct ucred	*crdup(struct ucred *cr);
 void	crextend(struct ucred *cr, int n);
-void	proc_set_cred_init(struct proc *p, struct ucred *cr);
 void	proc_set_cred(struct proc *p, struct ucred *cr);
 void	proc_unset_cred(struct proc *p);
 void	crfree(struct ucred *cr);
@@ -159,7 +155,8 @@ void	crcowfree(struct thread *td);
 void	cru2x(struct ucred *cr, struct xucred *xcr);
 void	cru2xt(struct thread *td, struct xucred *xcr);
 void	crsetgroups(struct ucred *cr, int n, gid_t *groups);
-int	groupmember(gid_t gid, struct ucred *cred);
+bool	groupmember(gid_t gid, struct ucred *cred);
+bool	realgroupmember(gid_t gid, struct ucred *cred);
 #endif /* _KERNEL */
 
 #endif /* !_SYS_UCRED_H_ */

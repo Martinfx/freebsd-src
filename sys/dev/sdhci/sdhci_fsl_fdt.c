@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 - 2021 Alstom Group.
  * Copyright (c) 2020 - 2021 Semihalf.
@@ -28,9 +28,6 @@
 
 /* eSDHC controller driver for NXP QorIQ Layerscape SoCs. */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/endian.h>
 #include <sys/kernel.h>
@@ -42,8 +39,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 #include <machine/resource.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/syscon/syscon.h>
+#include <dev/clk/clk.h>
+#include <dev/syscon/syscon.h>
 #include <dev/mmc/bridge.h>
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
@@ -821,6 +818,7 @@ sdhci_fsl_fdt_of_parse(device_t dev)
 	/* Call mmc_fdt_parse in order to get mmc related properties. */
 	mmc_fdt_parse(dev, node, &sc->fdt_helper, &sc->slot.host);
 
+	sc->slot.quirks |= SDHCI_QUIRK_MISSING_CAPS;
 	sc->slot.caps = sdhci_fsl_fdt_read_4(dev, &sc->slot,
 	    SDHCI_CAPABILITIES) & ~(SDHCI_CAN_DO_SUSPEND);
 	sc->slot.caps2 = sdhci_fsl_fdt_read_4(dev, &sc->slot,
@@ -840,7 +838,6 @@ sdhci_fsl_fdt_of_parse(device_t dev)
 	    (vdd_mask != (sc->slot.caps & SDHCI_FSL_CAN_VDD_MASK))) {
 		sc->slot.caps &= ~(SDHCI_FSL_CAN_VDD_MASK);
 		sc->slot.caps |= vdd_mask;
-		sc->slot.quirks |= SDHCI_QUIRK_MISSING_CAPS;
 	}
 }
 
@@ -1199,22 +1196,10 @@ sdhci_fsl_fdt_tune(device_t bus, device_t child, bool hs400)
 
 	sc = device_get_softc(bus);
 	slot = device_get_ivars(child);
-	error = 0;
-	clk_divider = sc->baseclk_hz / slot->clock;
 
-	switch (sc->slot.host.ios.timing) {
-	case bus_timing_mmc_hs400:
-		return (EINVAL);
-	case bus_timing_mmc_hs200:
-	case bus_timing_uhs_ddr50:
-	case bus_timing_uhs_sdr104:
-		break;
-	case bus_timing_uhs_sdr50:
-		if (slot->opt & SDHCI_SDR50_NEEDS_TUNING)
-			break;
-	default:
+	if (sc->slot.host.ios.timing == bus_timing_uhs_sdr50 &&
+	    !(slot->opt & SDHCI_SDR50_NEEDS_TUNING))
 		return (0);
-	}
 
 	/*
 	 * For tuning mode SD clock divider must be within 3 to 16.
@@ -1222,6 +1207,7 @@ sdhci_fsl_fdt_tune(device_t bus, device_t child, bool hs400)
 	 * For that reason we're just bailing if the dividers don't match
 	 * that requirement.
 	 */
+	clk_divider = sc->baseclk_hz / slot->clock;
 	if (clk_divider < 3 || clk_divider > 16)
 		return (ENXIO);
 

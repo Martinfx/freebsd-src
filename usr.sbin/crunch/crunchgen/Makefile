@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	crunchgen
 SRCS=	crunchgen.c crunched_skel.c
 CLEANFILES+= crunched_skel.c

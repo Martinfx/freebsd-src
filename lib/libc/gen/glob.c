@@ -37,10 +37,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__SCCSID("@(#)glob.c	8.3 (Berkeley) 10/13/93");
-__FBSDID("$FreeBSD$");
-
 /*
  * glob(3) -- a superset of the one defined in POSIX 1003.2.
  *
@@ -453,8 +449,7 @@ globtilde(const Char *pattern, Char *patbuf, size_t patbuf_len, glob_t *pglob)
 		 * we're not running setuid or setgid) and then trying
 		 * the password file
 		 */
-		if (issetugid() != 0 ||
-		    (h = getenv("HOME")) == NULL) {
+		if ((h = secure_getenv("HOME")) == NULL) {
 			if (((h = getlogin()) != NULL &&
 			     (pwd = getpwnam(h)) != NULL) ||
 			    (pwd = getpwuid(getuid())) != NULL)

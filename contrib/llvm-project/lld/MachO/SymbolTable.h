@@ -16,8 +16,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Object/Archive.h"
 
-namespace lld {
-namespace macho {
+namespace lld::macho {
 
 class ArchiveFile;
 class DylibFile;
@@ -39,9 +38,11 @@ class SymbolTable {
 public:
   Defined *addDefined(StringRef name, InputFile *, InputSection *,
                       uint64_t value, uint64_t size, bool isWeakDef,
-                      bool isPrivateExtern, bool isThumb,
-                      bool isReferencedDynamically, bool noDeadStrip,
-                      bool isWeakDefCanBeHidden);
+                      bool isPrivateExtern, bool isReferencedDynamically,
+                      bool noDeadStrip, bool isWeakDefCanBeHidden);
+
+  Defined *aliasDefined(Defined *src, StringRef target, InputFile *newFile,
+                        bool makePrivateExtern = false);
 
   Symbol *addUndefined(StringRef name, InputFile *, bool isWeakRef);
 
@@ -69,11 +70,16 @@ private:
   std::vector<Symbol *> symVector;
 };
 
-void treatUndefinedSymbol(const Undefined &, StringRef source = "");
+void reportPendingUndefinedSymbols();
+void reportPendingDuplicateSymbols();
+
+// Call reportPendingUndefinedSymbols() to emit diagnostics.
+void treatUndefinedSymbol(const Undefined &, StringRef source);
+void treatUndefinedSymbol(const Undefined &, const InputSection *,
+                          uint64_t offset);
 
 extern std::unique_ptr<SymbolTable> symtab;
 
-} // namespace macho
-} // namespace lld
+} // namespace lld::macho
 
 #endif

@@ -189,19 +189,19 @@ range_check(const char *name,
 {
     if (r->min == r->max + 2 || r->min < r->max)
 	fprintf (codefile,
-		 "if ((%s)->%s > %d) {\n"
+		 "if ((%s)->%s > %" PRId64 ") {\n"
 		 "e = ASN1_MAX_CONSTRAINT; %s;\n"
 		 "}\n",
 		 name, length, r->max, forwstr);
     if (r->min - 1 == r->max || r->min < r->max)
 	fprintf (codefile,
-		 "if ((%s)->%s < %d) {\n"
+		 "if ((%s)->%s < %" PRId64 ") {\n"
 		 "e = ASN1_MIN_CONSTRAINT; %s;\n"
 		 "}\n",
 		 name, length, r->min, forwstr);
     if (r->max == r->min)
 	fprintf (codefile,
-		 "if ((%s)->%s != %d) {\n"
+		 "if ((%s)->%s != %" PRId64 ") {\n"
 		 "e = ASN1_EXACT_CONSTRAINT; %s;\n"
 		 "}\n",
 		 name, length, r->min, forwstr);
@@ -252,14 +252,16 @@ decode_type (const char *name, const Type *t, int optional,
 		    name);
 	} else if (t->range == NULL) {
 	    decode_primitive ("heim_integer", name, forwstr);
-	} else if (t->range->min == INT_MIN && t->range->max == INT_MAX) {
+	} else if (t->range->min < INT_MIN && t->range->max <= INT64_MAX) {
+	    decode_primitive ("integer64", name, forwstr);
+	} else if (t->range->min >= 0 && t->range->max > UINT_MAX) {
+	    decode_primitive ("unsigned64", name, forwstr);
+	} else if (t->range->min >= INT_MIN && t->range->max <= INT_MAX) {
 	    decode_primitive ("integer", name, forwstr);
-	} else if (t->range->min == 0 && t->range->max == UINT_MAX) {
-	    decode_primitive ("unsigned", name, forwstr);
-	} else if (t->range->min == 0 && t->range->max == INT_MAX) {
+	} else if (t->range->min >= 0 && t->range->max <= UINT_MAX) {
 	    decode_primitive ("unsigned", name, forwstr);
 	} else
-	    errx(1, "%s: unsupported range %d -> %d",
+	    errx(1, "%s: unsupported range %" PRId64 " -> %" PRId64,
 		 name, t->range->min, t->range->max);
 	break;
     case TBoolean:
@@ -584,14 +586,14 @@ decode_type (const char *name, const Type *t, int optional,
 		    classname(cl),
 		    ty ? "CONS" : "PRIM",
 		    valuename(cl, tag));
+	    fprintf(codefile,
+		    "(%s)->element = %s;\n",
+		    name, m->label);
 	    if (asprintf (&s, "%s(%s)->u.%s", m->optional ? "" : "&",
 			  name, m->gen_name) < 0 || s == NULL)
 		errx(1, "malloc");
 	    decode_type (s, m->type, m->optional, forwstr, m->gen_name, NULL,
 		depth + 1);
-	    fprintf(codefile,
-		    "(%s)->element = %s;\n",
-		    name, m->label);
 	    free(s);
 	    fprintf(codefile,
 		    "}\n");
@@ -600,23 +602,23 @@ decode_type (const char *name, const Type *t, int optional,
 	if (have_ellipsis) {
 	    fprintf(codefile,
 		    "else {\n"
+		    "(%s)->element = %s;\n"
 		    "(%s)->u.%s.data = calloc(1, len);\n"
 		    "if ((%s)->u.%s.data == NULL) {\n"
 		    "e = ENOMEM; %s;\n"
 		    "}\n"
 		    "(%s)->u.%s.length = len;\n"
 		    "memcpy((%s)->u.%s.data, p, len);\n"
-		    "(%s)->element = %s;\n"
 		    "p += len;\n"
 		    "ret += len;\n"
 		    "len = 0;\n"
 		    "}\n",
+		    name, have_ellipsis->label,
 		    name, have_ellipsis->gen_name,
 		    name, have_ellipsis->gen_name,
 		    forwstr,
 		    name, have_ellipsis->gen_name,
-		    name, have_ellipsis->gen_name,
-		    name, have_ellipsis->label);
+		    name, have_ellipsis->gen_name);
 	} else {
 	    fprintf(codefile,
 		    "else {\n"

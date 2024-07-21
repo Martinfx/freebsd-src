@@ -35,13 +35,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)mroute.c	8.2 (Berkeley) 4/28/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Print multicast routing structures and statistics.
  *
@@ -236,7 +232,7 @@ print_mfc(struct mfc *m, int maxvif, int *banner_printed)
 }
 
 void
-mroutepr()
+mroutepr(void)
 {
 	struct sockaddr_in sin;
 	struct sockaddr *sa = (struct sockaddr *)&sin;
@@ -411,7 +407,7 @@ mroutepr()
 }
 
 void
-mrt_stats()
+mrt_stats(void)
 {
 	struct mrtstat mrtstat;
 	u_long mstaddr;

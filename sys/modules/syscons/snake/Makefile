@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/syscons/snake
 
 KMOD=	snake_saver

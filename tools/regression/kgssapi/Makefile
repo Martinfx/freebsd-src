@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	gsstest
 MAN=
 WARNS?=	2

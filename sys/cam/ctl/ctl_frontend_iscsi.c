@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 The FreeBSD Foundation
  *
@@ -26,16 +26,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
  * CTL frontend for the iSCSI protocol.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -1726,7 +1721,7 @@ cfiscsi_ioctl_list(struct ctl_iscsi *ci)
 		return;
 	}
 
-	sbuf_printf(sb, "<ctlislist>\n");
+	sbuf_cat(sb, "<ctlislist>\n");
 	mtx_lock(&softc->lock);
 	TAILQ_FOREACH(cs, &softc->sessions, cs_next) {
 		if (cs->cs_target == NULL)
@@ -1765,7 +1760,7 @@ cfiscsi_ioctl_list(struct ctl_iscsi *ci)
 			break;
 	}
 	mtx_unlock(&softc->lock);
-	error = sbuf_printf(sb, "</ctlislist>\n");
+	error = sbuf_cat(sb, "</ctlislist>\n");
 	if (error != 0) {
 		sbuf_delete(sb);
 		ci->status = CTL_ISCSI_LIST_NEED_MORE_SPACE;
@@ -2154,16 +2149,23 @@ cfiscsi_ioctl_port_create(struct ctl_req *req)
 	uint16_t tag;
 
 	target = dnvlist_get_string(req->args_nvl, "cfiscsi_target", NULL);
-	alias = dnvlist_get_string(req->args_nvl, "cfiscsi_target_alias", NULL);
-	val = dnvlist_get_string(req->args_nvl, "cfiscsi_portal_group_tag",
-	    NULL);
-
-	if (target == NULL || val == NULL) {
+	if (target == NULL) {
 		req->status = CTL_LUN_ERROR;
 		snprintf(req->error_str, sizeof(req->error_str),
-		    "Missing required argument");
+		    "Missing required argument: cfiscsi_target");
 		return;
 	}
+
+	val = dnvlist_get_string(req->args_nvl, "cfiscsi_portal_group_tag",
+	    NULL);
+	if (val == NULL) {
+		req->status = CTL_LUN_ERROR;
+		snprintf(req->error_str, sizeof(req->error_str),
+		    "Missing required argument: cfiscsi_portal_group_tag");
+		return;
+	}
+
+	alias = dnvlist_get_string(req->args_nvl, "cfiscsi_target_alias", NULL);
 
 	tag = strtoul(val, NULL, 0);
 	ct = cfiscsi_target_find_or_create(&cfiscsi_softc, target, alias, tag);
@@ -2255,13 +2257,19 @@ cfiscsi_ioctl_port_remove(struct ctl_req *req)
 	uint16_t tag;
 
 	target = dnvlist_get_string(req->args_nvl, "cfiscsi_target", NULL);
-	val = dnvlist_get_string(req->args_nvl, "cfiscsi_portal_group_tag",
-	    NULL);
-
-	if (target == NULL || val == NULL) {
+	if (target == NULL) {
 		req->status = CTL_LUN_ERROR;
 		snprintf(req->error_str, sizeof(req->error_str),
-		    "Missing required argument");
+		    "Missing required argument: cfiscsi_target");
+		return;
+	}
+
+	val = dnvlist_get_string(req->args_nvl, "cfiscsi_portal_group_tag",
+	    NULL);
+	if (val == NULL) {
+		req->status = CTL_LUN_ERROR;
+		snprintf(req->error_str, sizeof(req->error_str),
+		    "Missing required argument: cfiscsi_portal_group_tag");
 		return;
 	}
 

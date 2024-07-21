@@ -1,4 +1,3 @@
-# $FreeBSD$
 #
 # Makefile for building releases and release media.
 #
@@ -15,6 +14,7 @@
 #  install: Invokes the release-install and vm-install targets
 #  release-install: Copies all release installation media into ${DESTDIR}
 #  vm-install: Copies all virtual machine images into ${DESTDIR}
+#  cloud-install: Copies non-uploaded cloud images into ${DESTDIR}
 #
 # Variables affecting the build process:
 #  WORLDDIR: location of src tree -- must have built world and default kernel
@@ -36,6 +36,8 @@
 
 WORLDDIR?=	${.CURDIR}/..
 PORTSDIR?=	/usr/ports
+
+.include "${WORLDDIR}/share/mk/bsd.compat.pre.mk"
 
 .if !defined(TARGET) || empty(TARGET)
 TARGET=		${MACHINE}
@@ -74,12 +76,12 @@ VOLUME_LABEL=	FreeBSD_Install
 NOPORTS= true
 .endif
 
-EXTRA_PACKAGES=
+DISTRIBUTIONS= base.txz kernel.txz
 .if !defined(NOPORTS)
-EXTRA_PACKAGES+= ports.txz
+DISTRIBUTIONS+= ports.txz
 .endif
 .if !defined(NOSRC)
-EXTRA_PACKAGES+= src.txz
+DISTRIBUTIONS+= src.txz
 .endif
 
 RELEASE_TARGETS= ftp
@@ -108,7 +110,7 @@ CLEANFILES+=	${I}.xz
 .if defined(WITH_DVD) && !empty(WITH_DVD)
 CLEANFILES+=	pkg-stage
 .endif
-CLEANDIRS=	dist ftp disc1 bootonly dvd
+CLEANDIRS=	dist ftp disc1 disc1-disc1 disc1-memstick bootonly bootonly-bootonly bootonly-memstick dvd
 beforeclean:
 	chflags -R noschg .
 .include <bsd.obj.mk>
@@ -116,14 +118,8 @@ clean: beforeclean
 
 base.txz:
 	mkdir -p ${DISTDIR}
-	cd ${WORLDDIR} && ${IMAKE} distributeworld DISTDIR=${.OBJDIR}/${DISTDIR}
-# TODO: Add NO_ROOT mode to mm-tree.sh
-.if !defined(NO_ROOT)
-# Set up mergemaster root database
-	sh ${.CURDIR}/scripts/mm-mtree.sh -m ${WORLDDIR} -F \
-	    "TARGET_ARCH=${TARGET_ARCH} TARGET=${TARGET} ${.MAKE.JOBS:D-j${.MAKE.JOBS}}" \
-	    -D "${.OBJDIR}/${DISTDIR}/base"
-.endif
+	( cd ${WORLDDIR} && ${IMAKE} distributeworld DISTDIR=${.OBJDIR}/${DISTDIR} )
+	# Bootstrap etcupdate(8) database.
 	sh ${WORLDDIR}/usr.sbin/etcupdate/etcupdate.sh extract -B \
 	    -m "${MAKE}" -M "TARGET_ARCH=${TARGET_ARCH} TARGET=${TARGET}" \
 	    -s ${WORLDDIR} -d "${.OBJDIR}/${DISTDIR}/base/var/db/etcupdate" \
@@ -135,48 +131,50 @@ base.txz:
 	rm ${.OBJDIR}/${DISTDIR}/base/var/db/etcupdate/current/METALOG
 .endif
 # Package all components
-	cd ${WORLDDIR} && ${IMAKE} packageworld DISTDIR=${.OBJDIR}/${DISTDIR}
+	( cd ${WORLDDIR} && ${IMAKE} packageworld DISTDIR=${.OBJDIR}/${DISTDIR} )
 	mv ${DISTDIR}/*.txz .
 
 kernel.txz:
 	mkdir -p ${DISTDIR}
-	cd ${WORLDDIR} && ${IMAKE} distributekernel packagekernel DISTDIR=${.OBJDIR}/${DISTDIR}
+	( cd ${WORLDDIR} && ${IMAKE} distributekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
+	( cd ${WORLDDIR} && ${IMAKE} packagekernel DISTDIR=${.OBJDIR}/${DISTDIR} )
 	mv ${DISTDIR}/kernel*.txz .
 
 src.txz:
 	mkdir -p ${DISTDIR}/usr
 	ln -fs ${WORLDDIR} ${DISTDIR}/usr/src
-	cd ${DISTDIR} && ${TAR_CMD} cLvf - --exclude .svn --exclude .zfs \
+	( cd ${DISTDIR} && ${TAR_CMD} cLvf - --exclude .svn --exclude .zfs \
 	    --exclude .git --exclude @ --exclude usr/src/release/dist usr/src | \
-	    ${XZ_CMD} > ${.OBJDIR}/src.txz
+	    ${XZ_CMD} > ${.OBJDIR}/src.txz )
 
 ports.txz:
 	mkdir -p ${DISTDIR}/usr
 	ln -fs ${PORTSDIR} ${DISTDIR}/usr/ports
-	cd ${DISTDIR} && ${TAR_CMD} cLvf - \
+	( cd ${DISTDIR} && ${TAR_CMD} cLvf - \
 	    --exclude .git --exclude .svn \
 	    --exclude usr/ports/distfiles --exclude usr/ports/packages \
 	    --exclude 'usr/ports/INDEX*' --exclude work usr/ports | \
-	    ${XZ_CMD} > ${.OBJDIR}/ports.txz
+	    ${XZ_CMD} > ${.OBJDIR}/ports.txz )
 
 disc1: packagesystem
 # Install system
 	mkdir -p ${.TARGET}
-	cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
+	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 	    DESTDIR=${.OBJDIR}/${.TARGET} MK_AT=no \
-	    MK_INSTALLLIB=no MK_LIB32=no MK_MAIL=no \
+	    MK_INSTALLLIB=no MK_MAIL=no \
+	    ${_ALL_LIBCOMPATS:@v@MK_LIB$v=no@} \
 	    MK_TOOLCHAIN=no MK_PROFILE=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no \
-	    -DDB_FROM_SRC
+	    -DDB_FROM_SRC )
 # Copy distfiles
 	mkdir -p ${.TARGET}/usr/freebsd-dist
-	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(base|lib32)-dbg'); \
+	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(${base ${_ALL_libcompats}:L:ts|})-dbg'); \
 	    do cp $${dist} ${.TARGET}/usr/freebsd-dist; \
 	done
 .if defined(NO_ROOT)
 	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
-	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(base|lib32)-dbg'); \
+	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(${base ${_ALL_libcompats}:L:ts|})-dbg'); \
 	    do echo "./usr/freebsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
 	done
 .endif
@@ -187,6 +185,7 @@ disc1: packagesystem
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 .if defined(NO_ROOT)
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -200,14 +199,15 @@ disc1: packagesystem
 bootonly: packagesystem
 # Install system
 	mkdir -p ${.TARGET}
-	cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
+	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 	    DESTDIR=${.OBJDIR}/${.TARGET} MK_AT=no \
 	    MK_GAMES=no \
-	    MK_INSTALLLIB=no MK_LIB32=no MK_MAIL=no \
+	    MK_INSTALLLIB=no MK_MAIL=no \
+	    ${_ALL_LIBCOMPATS:@v@MK_LIB$v=no@} \
 	    MK_TOOLCHAIN=no MK_PROFILE=no \
 	    MK_RESCUE=no MK_DICT=no \
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no \
-	    -DDB_FROM_SRC
+	    -DDB_FROM_SRC )
 # Copy manifest only (no distfiles) to get checksums
 	mkdir -p ${.TARGET}/usr/freebsd-dist
 	cp MANIFEST ${.TARGET}/usr/freebsd-dist
@@ -222,6 +222,7 @@ bootonly: packagesystem
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 .if defined(NO_ROOT)
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -234,18 +235,18 @@ bootonly: packagesystem
 dvd: packagesystem
 # Install system
 	mkdir -p ${.TARGET}
-	cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
+	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
 		DESTDIR=${.OBJDIR}/${.TARGET} MK_RESCUE=no MK_KERNEL_SYMBOLS=no \
 		MK_TESTS=no MK_DEBUG_FILES=no \
-		-DDB_FROM_SRC
+		-DDB_FROM_SRC )
 # Copy distfiles
 	mkdir -p ${.TARGET}/usr/freebsd-dist
-	for dist in MANIFEST $$(ls *.txz | grep -v -- '(base|lib32)-dbg'); \
+	for dist in MANIFEST $$(ls *.txz | grep -v -- '(${base ${_ALL_libcompats}:L:ts|})-dbg'); \
 	    do cp $${dist} ${.TARGET}/usr/freebsd-dist; \
 	done
 .if defined(NO_ROOT)
 	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
-	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(base|lib32)-dbg'); \
+	for dist in MANIFEST $$(ls *.txz | grep -vE -- '(${base ${_ALL_libcompats}:L:ts|})-dbg'); \
 	    do echo "./usr/freebsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
 	done
 .endif
@@ -256,6 +257,7 @@ dvd: packagesystem
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo kernels_autodetect=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo loader_menu_multi_user_prompt=\"Installer\" >> ${.TARGET}/boot/loader.conf
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 .if defined(NO_ROOT)
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
@@ -266,29 +268,37 @@ dvd: packagesystem
 .endif
 	touch ${.TARGET}
 
+disc1-disc1 disc1-memstick: disc1
+	mkdir ${.TARGET}
+	tar -cf- -C disc1 . | tar -xf- -C ${.TARGET}
+
+bootonly-bootonly bootonly-memstick: bootonly
+	mkdir ${.TARGET}
+	tar -cf- -C bootonly . | tar -xf- -C ${.TARGET}
+
 release.iso: disc1.iso
-disc1.iso: disc1
-	cd disc1 && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_CD ../${.TARGET} .${NO_ROOT:D/METALOG} ${XTRADIR}
+disc1.iso: disc1-disc1
+	cd disc1-disc1 && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_CD ../${.TARGET} .${NO_ROOT:D/METALOG} ${XTRADIR}
 
 dvd1.iso: dvd pkg-stage
 	cd dvd && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_DVD ../${.TARGET} .${NO_ROOT:D/METALOG} ${XTRADIR}
 
-bootonly.iso: bootonly
-	cd bootonly && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_BO ../${.TARGET} .${NO_ROOT:D/METALOG} ${XTRADIR}
+bootonly.iso: bootonly-bootonly
+	cd bootonly-bootonly && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_BO ../${.TARGET} .${NO_ROOT:D/METALOG} ${XTRADIR}
 
 memstick: memstick.img
-memstick.img: disc1
-	cd disc1 && sh ${.CURDIR}/${TARGET}/make-memstick.sh .${NO_ROOT:D/METALOG} ../${.TARGET}
+memstick.img: disc1-memstick
+	cd disc1-memstick && sh ${.CURDIR}/${TARGET}/make-memstick.sh .${NO_ROOT:D/METALOG} ../${.TARGET}
 
 mini-memstick: mini-memstick.img
-mini-memstick.img: bootonly
-	cd bootonly && sh ${.CURDIR}/${TARGET}/make-memstick.sh .${NO_ROOT:D/METALOG} ../${.TARGET}
+mini-memstick.img: bootonly-memstick
+	cd bootonly-memstick && sh ${.CURDIR}/${TARGET}/make-memstick.sh .${NO_ROOT:D/METALOG} ../${.TARGET}
 
-packagesystem: base.txz kernel.txz ${EXTRA_PACKAGES}
+packagesystem: ${DISTRIBUTIONS}
 	sh ${.CURDIR}/scripts/make-manifest.sh *.txz > MANIFEST
 	touch ${.TARGET}
 
-pkg-stage:
+pkg-stage: dvd
 # TODO: Support for -DNO_ROOT
 .if !defined(NOPKG) || empty(NOPKG)
 	env PORTSDIR=${PORTSDIR} REPOS_DIR=${.CURDIR}/pkg_repos/ \
@@ -317,7 +327,7 @@ real-release:
 	${MAKE} -C ${.CURDIR} ${.MAKEFLAGS} obj
 	${MAKE} -C ${.CURDIR} ${.MAKEFLAGS} ${RELEASE_TARGETS}
 
-install:	release-install vm-install
+install:	release-install vm-install .WAIT cloud-install
 
 release-install:
 .if defined(DESTDIR) && !empty(DESTDIR)
@@ -331,8 +341,8 @@ release-install:
 	${XZ_CMD} -k ${DESTDIR}/${OSRELEASE}-${I}
 . endif
 .endfor
-	cd ${DESTDIR} && sha512 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA512
-	cd ${DESTDIR} && sha256 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA256
+	( cd ${DESTDIR} && sha512 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA512 )
+	( cd ${DESTDIR} && sha256 ${OSRELEASE}* > ${DESTDIR}/CHECKSUM.SHA256 )
 .endif
 
 .include "${.CURDIR}/Makefile.inc1"

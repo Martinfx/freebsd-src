@@ -28,12 +28,24 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _X86_LINUX_SIGFRAME_H_
 #define	_X86_LINUX_SIGFRAME_H_
+
+#define	LINUX_UC_FP_XSTATE		0x1
+
+#define	LINUX_FP_XSTATE_MAGIC1		0x46505853U
+#define	LINUX_FP_XSTATE_MAGIC2		0x46505845U
+#define	LINUX_FP_XSTATE_MAGIC2_SIZE	sizeof(uint32_t)
+
+struct l_fpx_sw_bytes {
+	uint32_t	magic1;
+	uint32_t	extended_size;
+	uint64_t	xfeatures;
+	uint32_t	xstate_size;
+	uint32_t	padding[7];
+};
 
 #if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
 
@@ -138,10 +150,14 @@ struct l_fpstate {
 	u_int64_t rdp;
 	u_int32_t mxcsr;
 	u_int32_t mxcsr_mask;
-	u_int32_t st_space[32];
-	u_int32_t xmm_space[64];
-	u_int32_t reserved2[24];
-};
+	u_int8_t st[8][16];
+	u_int8_t xmm[16][16];
+	u_int32_t reserved2[12];
+	union {
+		u_int32_t		reserved3[12];
+		struct l_fpx_sw_bytes	sw_reserved;
+	};
+} __aligned(16);
 
 struct l_sigcontext {
 	l_ulong		sc_r8;
@@ -170,7 +186,13 @@ struct l_sigcontext {
 	l_ulong		sc_trapno;
 	l_sigset_t	sc_mask;
 	l_ulong		sc_cr2;
-	struct l_fpstate *sc_fpstate;
+	/*
+	 * On Linux sc_fpstate is (struct l_fpstate *) or (struct l_xstate *)
+	 * depending on the FP_XSTATE_MAGIC1 encoded in the sw_reserved
+	 * bytes of (struct l_fpstate) and FP_XSTATE_MAGIC2 present at the end
+	 * of extended memory layout.
+	 */
+	l_uintptr_t	sc_fpstate;
 	l_ulong		sc_reserved1[8];
 };
 

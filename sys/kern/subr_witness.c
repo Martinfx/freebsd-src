@@ -87,8 +87,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_stack.h"
@@ -740,6 +738,12 @@ static struct witness_blessed blessed_list[] = {
 	 * parent directory vnode is locked.
 	 */
 	{ "ufs",	"bufwait" },
+
+	/*
+	 * The tarfs decompression stream vnode may be locked while a
+	 * buffer belonging to a tarfs data vnode is locked.
+	 */
+	{ "tarfs",	"bufwait" },
 };
 
 /*
@@ -2358,6 +2362,10 @@ witness_save(struct lock_object *lock, const char **filep, int *linep)
 	struct lock_instance *instance;
 	struct lock_class *class;
 
+	/* Initialize for KMSAN's benefit. */
+	*filep = NULL;
+	*linep = 0;
+
 	/*
 	 * This function is used independently in locking code to deal with
 	 * Giant, SCHEDULER_STOPPED() check can be removed here after Giant
@@ -2423,6 +2431,32 @@ witness_restore(struct lock_object *lock, const char *file, int line)
 	instance->li_line = line;
 }
 
+static bool
+witness_find_instance(const struct lock_object *lock,
+    struct lock_instance **instance)
+{
+#ifdef INVARIANT_SUPPORT
+	struct lock_class *class;
+
+	if (lock->lo_witness == NULL || witness_watch < 1 || KERNEL_PANICKED())
+		return (false);
+	class = LOCK_CLASS(lock);
+	if ((class->lc_flags & LC_SLEEPLOCK) != 0) {
+		*instance = find_instance(curthread->td_sleeplocks, lock);
+		return (true);
+	} else if ((class->lc_flags & LC_SPINLOCK) != 0) {
+		*instance = find_instance(PCPU_GET(spinlocks), lock);
+		return (true);
+	} else {
+		kassert_panic("Lock (%s) %s is not sleep or spin!",
+		    class->lc_name, lock->lo_name);
+		return (false);
+	}
+#else
+	return (false);
+#endif
+}
+
 void
 witness_assert(const struct lock_object *lock, int flags, const char *file,
     int line)
@@ -2431,18 +2465,9 @@ witness_assert(const struct lock_object *lock, int flags, const char *file,
 	struct lock_instance *instance;
 	struct lock_class *class;
 
-	if (lock->lo_witness == NULL || witness_watch < 1 || KERNEL_PANICKED())
+	if (!witness_find_instance(lock, &instance))
 		return;
 	class = LOCK_CLASS(lock);
-	if ((class->lc_flags & LC_SLEEPLOCK) != 0)
-		instance = find_instance(curthread->td_sleeplocks, lock);
-	else if ((class->lc_flags & LC_SPINLOCK) != 0)
-		instance = find_instance(PCPU_GET(spinlocks), lock);
-	else {
-		kassert_panic("Lock (%s) %s is not sleep or spin!",
-		    class->lc_name, lock->lo_name);
-		return;
-	}
 	switch (flags) {
 	case LA_UNLOCKED:
 		if (instance != NULL)
@@ -2493,6 +2518,27 @@ witness_assert(const struct lock_object *lock, int flags, const char *file,
 		    fixup_filename(file), line);
 	}
 #endif	/* INVARIANT_SUPPORT */
+}
+
+/*
+ * Checks the ownership of the lock by curthread, consulting the witness list.
+ * Returns:
+ *   0  if witness is disabled or did not work
+ *   -1 if not owned
+ *   1  if owned
+ */
+int
+witness_is_owned(const struct lock_object *lock)
+{
+#ifdef INVARIANT_SUPPORT
+	struct lock_instance *instance;
+
+	if (!witness_find_instance(lock, &instance))
+		return (0);
+	return (instance == NULL ? -1 : 1);
+#else
+	return (0);
+#endif
 }
 
 static void
@@ -2604,7 +2650,7 @@ DB_SHOW_ALL_COMMAND(locks, db_witness_list_all)
 		}
 	}
 }
-DB_SHOW_ALIAS_FLAGS(alllocks, db_witness_list_all, DB_CMD_MEMSAFE)
+DB_SHOW_ALIAS_FLAGS(alllocks, db_witness_list_all, DB_CMD_MEMSAFE);
 
 DB_SHOW_COMMAND_FLAGS(witness, db_witness_display, DB_CMD_MEMSAFE)
 {
@@ -2713,7 +2759,7 @@ restart:
 				    tmp_w1->w_name, tmp_w1->w_class->lc_name, 
 				    tmp_w2->w_name, tmp_w2->w_class->lc_name);
 				stack_sbuf_print(sb, &tmp_data1->wlod_stack);
-				sbuf_printf(sb, "\n");
+				sbuf_putc(sb, '\n');
 			}
 			if (data2 && data2 != data1) {
 				sbuf_printf(sb,
@@ -2721,7 +2767,7 @@ restart:
 				    tmp_w2->w_name, tmp_w2->w_class->lc_name, 
 				    tmp_w1->w_name, tmp_w1->w_class->lc_name);
 				stack_sbuf_print(sb, &tmp_data2->wlod_stack);
-				sbuf_printf(sb, "\n");
+				sbuf_putc(sb, '\n');
 			}
 		}
 	}
@@ -2859,7 +2905,7 @@ sysctl_debug_witness_fullgraph(SYSCTL_HANDLER_ARGS)
 	sb = sbuf_new_for_sysctl(NULL, NULL, FULLGRAPH_SBUF_SIZE, req);
 	if (sb == NULL)
 		return (ENOMEM);
-	sbuf_printf(sb, "\n");
+	sbuf_putc(sb, '\n');
 
 	mtx_lock_spin(&w_mtx);
 	STAILQ_FOREACH(w, &w_all, w_list)

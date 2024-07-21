@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	dpv
 
 PROG=		dpv

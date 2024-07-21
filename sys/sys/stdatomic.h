@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Ed Schouten <ed@FreeBSD.org>
  *                    David Chisnall <theraven@FreeBSD.org>
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _STDATOMIC_H_
@@ -35,7 +33,8 @@
 #include <sys/cdefs.h>
 #include <sys/_types.h>
 
-#if __has_extension(c_atomic) || __has_extension(cxx_atomic)
+#if (__has_extension(c_atomic) || __has_extension(cxx_atomic)) && \
+    defined(__clang__)
 #define	__CLANG_ATOMICS
 #elif __GNUC_PREREQ__(4, 7)
 #define	__GNUC_ATOMICS

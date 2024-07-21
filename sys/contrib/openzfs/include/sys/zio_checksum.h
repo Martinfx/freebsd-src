@@ -94,15 +94,13 @@ typedef const struct zio_checksum_info {
 } zio_checksum_info_t;
 
 typedef struct zio_bad_cksum {
-	zio_cksum_t		zbc_expected;
-	zio_cksum_t		zbc_actual;
 	const char		*zbc_checksum_name;
 	uint8_t			zbc_byteswapped;
 	uint8_t			zbc_injected;
 	uint8_t			zbc_has_cksum;	/* expected/actual valid */
 } zio_bad_cksum_t;
 
-_SYS_ZIO_CHECKSUM_H const zio_checksum_info_t
+_SYS_ZIO_CHECKSUM_H zio_checksum_info_t
     zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS];
 
 /*
@@ -110,9 +108,9 @@ _SYS_ZIO_CHECKSUM_H const zio_checksum_info_t
  */
 
 /* SHA2 */
-extern zio_checksum_t abd_checksum_SHA256;
-extern zio_checksum_t abd_checksum_SHA512_native;
-extern zio_checksum_t abd_checksum_SHA512_byteswap;
+extern zio_checksum_t abd_checksum_sha256;
+extern zio_checksum_t abd_checksum_sha512_native;
+extern zio_checksum_t abd_checksum_sha512_byteswap;
 
 /* Skein */
 extern zio_checksum_t abd_checksum_skein_native;

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /**
  ***************************************************************************
  * @file lac_sync.h
@@ -61,7 +60,7 @@ typedef struct lac_sync_op_data_s {
  * Timeout for wait for init messages response in msecs
 */
 
-#define DC_SYNC_CALLBACK_TIMEOUT (1000)
+#define DC_SYNC_CALLBACK_TIMEOUT (2000)
 /**< @ingroup LacSyn
  * Timeout for wait for compression response in msecs */
 

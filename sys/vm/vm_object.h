@@ -31,8 +31,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	from: @(#)vm_object.h	8.3 (Berkeley) 1/12/94
- *
  *
  * Copyright (c) 1987, 1990 Carnegie-Mellon University.
  * All rights reserved.
@@ -58,8 +56,6 @@
  *
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
- *
- * $FreeBSD$
  */
 
 /*
@@ -156,20 +152,13 @@ struct vm_object {
 		/*
 		 * Swap pager
 		 *
-		 *	swp_tmpfs - back-pointer to the tmpfs vnode,
-		 *		     if any, which uses the vm object
-		 *		     as backing store.  The handle
-		 *		     cannot be reused for linking,
-		 *		     because the vnode can be
-		 *		     reclaimed and recreated, making
-		 *		     the handle changed and hash-chain
-		 *		     invalid.
-		 *
-		 *	swp_blks -   pc-trie of the allocated swap blocks.
+		 *	swp_priv - pager-private.
+		 *	swp_blks - pc-trie of the allocated swap blocks.
+		 *	writemappings - count of bytes mapped for write
 		 *
 		 */
 		struct {
-			void *swp_tmpfs;
+			void *swp_priv;
 			struct pctrie swp_blks;
 			vm_ooffset_t writemappings;
 		} swp;
@@ -274,6 +263,8 @@ extern struct vm_object kernel_object_store;
 	rw_wowned(&(object)->lock)
 #define	VM_OBJECT_WUNLOCK(object)					\
 	rw_wunlock(&(object)->lock)
+#define	VM_OBJECT_UNLOCK(object)					\
+	rw_unlock(&(object)->lock)
 #define	VM_OBJECT_DROP(object)						\
 	lock_class_rw.lc_unlock(&(object)->lock.lock_object)
 #define	VM_OBJECT_PICKUP(object, state)					\

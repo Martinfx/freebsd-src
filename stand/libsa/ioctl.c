@@ -31,8 +31,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ioctl.c	8.1 (Berkeley) 6/11/93
- *
  *
  * Copyright (c) 1989, 1990, 1991 Carnegie Mellon University
  * All Rights Reserved.
@@ -60,13 +58,10 @@
  * rights to redistribute these changes.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "stand.h"
 
 int
-ioctl(int fd, u_long cmd, char *arg)
+ioctl(int fd, u_long cmd, void *arg)
 {
 	struct open_file *f;
 

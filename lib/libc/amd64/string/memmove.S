@@ -27,8 +27,6 @@
  */
 
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Note: this routine was written with kernel use in mind (read: no simd),
  * it is only present in userspace as a temporary measure until something
@@ -306,3 +304,5 @@ ENTRY(memcpy)
 	MEMMOVE erms=0 overlap=1 begin=MEMMOVE_BEGIN end=MEMMOVE_END
 END(memcpy)
 #endif
+
+	.section .note.GNU-stack,"",%progbits

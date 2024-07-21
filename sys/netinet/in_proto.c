@@ -27,13 +27,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)in_proto.c	8.2 (Berkeley) 2/9/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_mrouting.h"
 #include "opt_ipsec.h"
 #include "opt_inet.h"
@@ -51,6 +47,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/sysctl.h>
 
+#include <net/if.h>
+#include <net/if_var.h>
+#include <netinet/in.h>
+#include <netinet/in_var.h>
+
 /*
  * While this file provides the domain and protocol switch tables for IPv4, it
  * also provides the sysctl node declarations for net.inet.* often shared with
@@ -58,47 +59,14 @@ __FBSDID("$FreeBSD$");
  * support compile out everything but these sysctl nodes.
  */
 #ifdef INET
-#include <net/if.h>
-#include <net/if_var.h>
-#include <net/route.h>
-#include <net/vnet.h>
-#endif /* INET */
-
-#if defined(INET) || defined(INET6)
-#include <netinet/in.h>
-#endif
-
-#ifdef INET
-#include <netinet/in_systm.h>
-#include <netinet/in_var.h>
-#include <netinet/ip.h>
-#include <netinet/ip_var.h>
-#include <netinet/ip_icmp.h>
-#include <netinet/igmp_var.h>
-#include <netinet/tcp.h>
-#include <netinet/tcp_timer.h>
-#include <netinet/tcp_var.h>
-#include <netinet/udp.h>
-#include <netinet/udp_var.h>
-#include <netinet/ip_encap.h>
-
-/*
- * TCP/IP protocol family: IP, ICMP, UDP, TCP.
- */
-
-#ifdef SCTP
-#include <netinet/in_pcb.h>
-#include <netinet/sctp_pcb.h>
-#include <netinet/sctp.h>
-#include <netinet/sctp_var.h>
-#endif
-
 /* netinet/raw_ip.c */
-extern struct protosw rip_protosw, rsvp_protosw, rawipv4_protosw,
-    rawipv6_protosw, mobile_protosw, etherip_protosw, icmp_protosw,
-    igmp_protosw, gre_protosw, pim_protosw, ripwild_protosw;
+extern struct protosw rip_protosw;
 /* netinet/udp_usrreq.c */
 extern struct protosw udp_protosw, udplite_protosw;
+/* netinet/tcp_usrreq.c */
+extern struct protosw tcp_protosw;
+/* netinet/sctp_usrreq.c */
+extern struct protosw sctp_seqpacket_protosw, sctp_stream_protosw;
 
 FEATURE(inet, "Internet Protocol version 4");
 
@@ -111,7 +79,7 @@ struct domain inetdomain = {
 #endif
 	.dom_ifattach =		in_domifattach,
 	.dom_ifdetach =		in_domifdetach,
-	.dom_nprotosw =		24,
+	.dom_nprotosw =		14,
 	.dom_protosw = {
 		&tcp_protosw,
 		&udp_protosw,
@@ -123,28 +91,8 @@ struct domain inetdomain = {
 #endif
 		&udplite_protosw,
 		&rip_protosw,
-		/*
-		 * XXXGL: it is entirely possible that all below raw-based
-		 * protosw definitions are not needed.  They could have existed
-		 * just to define pr_input, pr_drain, pr_*timo or PR_LASTHDR
-		 * flag, and were never supposed to create a special socket.
-		 */
-		&icmp_protosw,
-		&igmp_protosw,
-		&rsvp_protosw,
-		&rawipv4_protosw,
-		&mobile_protosw,
-		&etherip_protosw,
-		&gre_protosw,
-#ifdef INET6
-		&rawipv6_protosw,
-#else
-		NULL,
-#endif
-		&pim_protosw,
 		/* Spacer 8 times for loadable protocols. XXXGL: why 8? */
 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-		&ripwild_protosw,
 	},
 };
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004-2006 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * All rights reserved.
@@ -26,27 +26,27 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/bio.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
-#include <sys/module.h>
+#include <sys/kthread.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
-#include <sys/mutex.h>
-#include <sys/bio.h>
-#include <sys/sbuf.h>
-#include <sys/sysctl.h>
 #include <sys/malloc.h>
-#include <sys/eventhandler.h>
+#include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/proc.h>
+#include <sys/reboot.h>
+#include <sys/sbuf.h>
+#include <sys/sched.h>
+#include <sys/sysctl.h>
+
 #include <vm/uma.h>
+
 #include <geom/geom.h>
 #include <geom/geom_dbg.h>
-#include <sys/proc.h>
-#include <sys/kthread.h>
-#include <sys/sched.h>
 #include <geom/raid3/g_raid3.h>
 
 FEATURE(geom_raid3, "GEOM RAID-3 functionality");
@@ -106,6 +106,7 @@ static int g_raid3_destroy_geom(struct gctl_req *req, struct g_class *mp,
 static g_taste_t g_raid3_taste;
 static void g_raid3_init(struct g_class *mp);
 static void g_raid3_fini(struct g_class *mp);
+static void g_raid3_providergone(struct g_provider *pp);
 
 struct g_class g_raid3_class = {
 	.name = G_RAID3_CLASS_NAME,
@@ -114,7 +115,8 @@ struct g_class g_raid3_class = {
 	.taste = g_raid3_taste,
 	.destroy_geom = g_raid3_destroy_geom,
 	.init = g_raid3_init,
-	.fini = g_raid3_fini
+	.fini = g_raid3_fini,
+	.providergone = g_raid3_providergone,
 };
 
 static void g_raid3_destroy_provider(struct g_raid3_softc *sc);
@@ -125,6 +127,7 @@ static void g_raid3_dumpconf(struct sbuf *sb, const char *indent,
 static void g_raid3_sync_stop(struct g_raid3_softc *sc, int type);
 static int g_raid3_register_request(struct bio *pbp);
 static void g_raid3_sync_release(struct g_raid3_softc *sc);
+static void g_raid3_timeout_drain(struct g_raid3_softc *sc);
 
 static const char *
 g_raid3_disk_state2str(int state)
@@ -285,15 +288,14 @@ g_raid3_event_free(struct g_raid3_event *ep)
 	free(ep, M_RAID3);
 }
 
-int
-g_raid3_event_send(void *arg, int state, int flags)
+static int
+g_raid3_event_dispatch(struct g_raid3_event *ep, void *arg, int state,
+    int flags)
 {
 	struct g_raid3_softc *sc;
 	struct g_raid3_disk *disk;
-	struct g_raid3_event *ep;
 	int error;
 
-	ep = malloc(sizeof(*ep), M_RAID3, M_WAITOK);
 	G_RAID3_DEBUG(4, "%s: Sending event %p.", __func__, ep);
 	if ((flags & G_RAID3_EVENT_DEVICE) != 0) {
 		disk = NULL;
@@ -328,6 +330,15 @@ g_raid3_event_send(void *arg, int state, int flags)
 	g_raid3_event_free(ep);
 	sx_xlock(&sc->sc_lock);
 	return (error);
+}
+
+int
+g_raid3_event_send(void *arg, int state, int flags)
+{
+	struct g_raid3_event *ep;
+
+	ep = malloc(sizeof(*ep), M_RAID3, M_WAITOK);
+	return (g_raid3_event_dispatch(ep, arg, state, flags));
 }
 
 static struct g_raid3_event *
@@ -599,6 +610,34 @@ g_raid3_destroy_disk(struct g_raid3_disk *disk)
 }
 
 static void
+g_raid3_free_device(struct g_raid3_softc *sc)
+{
+	KASSERT(sc->sc_refcnt == 0,
+	    ("%s: non-zero refcount %u", __func__, sc->sc_refcnt));
+
+	if (!g_raid3_use_malloc) {
+		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_64K].sz_zone);
+		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_16K].sz_zone);
+		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_4K].sz_zone);
+	}
+	mtx_destroy(&sc->sc_queue_mtx);
+	mtx_destroy(&sc->sc_events_mtx);
+	sx_xunlock(&sc->sc_lock);
+	sx_destroy(&sc->sc_lock);
+	free(sc->sc_disks, M_RAID3);
+	free(sc, M_RAID3);
+}
+
+static void
+g_raid3_providergone(struct g_provider *pp)
+{
+	struct g_raid3_softc *sc = pp->private;
+
+	if (--sc->sc_refcnt == 0)
+		g_raid3_free_device(sc);
+}
+
+static void
 g_raid3_destroy_device(struct g_raid3_softc *sc)
 {
 	struct g_raid3_event *ep;
@@ -634,7 +673,7 @@ g_raid3_destroy_device(struct g_raid3_softc *sc)
 			mtx_unlock(&sc->sc_events_mtx);
 		}
 	}
-	callout_drain(&sc->sc_callout);
+	g_raid3_timeout_drain(sc);
 	cp = LIST_FIRST(&sc->sc_sync.ds_geom->consumer);
 	g_topology_lock();
 	if (cp != NULL)
@@ -642,16 +681,9 @@ g_raid3_destroy_device(struct g_raid3_softc *sc)
 	g_wither_geom(sc->sc_sync.ds_geom, ENXIO);
 	G_RAID3_DEBUG(0, "Device %s destroyed.", gp->name);
 	g_wither_geom(gp, ENXIO);
+	if (--sc->sc_refcnt == 0)
+		g_raid3_free_device(sc);
 	g_topology_unlock();
-	if (!g_raid3_use_malloc) {
-		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_64K].sz_zone);
-		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_16K].sz_zone);
-		uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_4K].sz_zone);
-	}
-	mtx_destroy(&sc->sc_queue_mtx);
-	mtx_destroy(&sc->sc_events_mtx);
-	sx_xunlock(&sc->sc_lock);
-	sx_destroy(&sc->sc_lock);
 }
 
 static void
@@ -1042,7 +1074,7 @@ g_raid3_scatter(struct bio *pbp)
 	off_t atom, cadd, padd, left;
 	int first;
 
-	sc = pbp->bio_to->geom->softc;
+	sc = pbp->bio_to->private;
 	bp = NULL;
 	if ((pbp->bio_pflags & G_RAID3_BIO_PFLAG_NOPARITY) == 0) {
 		/*
@@ -1111,7 +1143,7 @@ g_raid3_gather(struct bio *pbp)
 	struct bio *xbp, *fbp, *cbp;
 	off_t atom, cadd, padd, left;
 
-	sc = pbp->bio_to->geom->softc;
+	sc = pbp->bio_to->private;
 	/*
 	 * Find bio for which we have to calculate data.
 	 * While going through this path, check if all requests
@@ -1277,7 +1309,7 @@ g_raid3_regular_request(struct bio *cbp)
 	g_topology_assert_not();
 
 	pbp = cbp->bio_parent;
-	sc = pbp->bio_to->geom->softc;
+	sc = pbp->bio_to->private;
 	cbp->bio_from->index--;
 	if (cbp->bio_cmd == BIO_WRITE)
 		sc->sc_writes--;
@@ -1424,7 +1456,7 @@ g_raid3_start(struct bio *bp)
 {
 	struct g_raid3_softc *sc;
 
-	sc = bp->bio_to->geom->softc;
+	sc = bp->bio_to->private;
 	/*
 	 * If sc == NULL or there are no valid disks, provider's error
 	 * should be set and g_raid3_start() should not be called at all.
@@ -1773,7 +1805,7 @@ g_raid3_register_request(struct bio *pbp)
 	int round_robin, verify;
 
 	ndisks = 0;
-	sc = pbp->bio_to->geom->softc;
+	sc = pbp->bio_to->private;
 	if ((pbp->bio_cflags & G_RAID3_BIO_CFLAG_REGSYNC) != 0 &&
 	    sc->sc_syncdisk == NULL) {
 		g_io_deliver(pbp, EIO);
@@ -2002,8 +2034,6 @@ g_raid3_try_destroy(struct g_raid3_softc *sc)
 	} else {
 		g_topology_unlock();
 		g_raid3_destroy_device(sc);
-		free(sc->sc_disks, M_RAID3);
-		free(sc, M_RAID3);
 	}
 	return (1);
 }
@@ -2337,6 +2367,8 @@ g_raid3_launch_provider(struct g_raid3_softc *sc)
 	}
 	pp->stripesize *= sc->sc_ndisks - 1;
 	pp->stripeoffset *= sc->sc_ndisks - 1;
+	pp->private = sc;
+	sc->sc_refcnt++;
 	sc->sc_provider = pp;
 	g_error_provider(pp, 0);
 	g_topology_unlock();
@@ -2377,11 +2409,24 @@ static void
 g_raid3_go(void *arg)
 {
 	struct g_raid3_softc *sc;
+	struct g_raid3_event *ep;
 
 	sc = arg;
 	G_RAID3_DEBUG(0, "Force device %s start due to timeout.", sc->sc_name);
-	g_raid3_event_send(sc, 0,
+	ep = sc->sc_timeout_event;
+	sc->sc_timeout_event = NULL;
+	g_raid3_event_dispatch(ep, sc, 0,
 	    G_RAID3_EVENT_DONTWAIT | G_RAID3_EVENT_DEVICE);
+}
+
+static void
+g_raid3_timeout_drain(struct g_raid3_softc *sc)
+{
+	sx_assert(&sc->sc_lock, SX_XLOCKED);
+
+	callout_drain(&sc->sc_callout);
+	g_raid3_event_free(sc->sc_timeout_event);
+	sc->sc_timeout_event = NULL;
 }
 
 static u_int
@@ -2473,7 +2518,7 @@ g_raid3_update_device(struct g_raid3_softc *sc, boolean_t force)
 		 */
 		if (g_raid3_ndisks(sc, -1) + force == sc->sc_ndisks) {
 			if (!force)
-				callout_drain(&sc->sc_callout);
+				g_raid3_timeout_drain(sc);
 		} else {
 			if (force) {
 				/*
@@ -3069,9 +3114,7 @@ g_raid3_access(struct g_provider *pp, int acr, int acw, int ace)
 	G_RAID3_DEBUG(2, "Access request for %s: r%dw%de%d.", pp->name, acr,
 	    acw, ace);
 
-	sc = pp->geom->softc;
-	if (sc == NULL && acr <= 0 && acw <= 0 && ace <= 0)
-		return (0);
+	sc = pp->private;
 	KASSERT(sc != NULL, ("NULL softc (provider=%s).", pp->name));
 
 	dcr = pp->acr + acr;
@@ -3140,6 +3183,7 @@ g_raid3_create(struct g_class *mp, const struct g_raid3_metadata *md)
 	sc->sc_idle = 1;
 	sc->sc_last_write = time_uptime;
 	sc->sc_writes = 0;
+	sc->sc_refcnt = 1;
 	for (n = 0; n < sc->sc_ndisks; n++) {
 		sc->sc_disks[n].d_softc = sc;
 		sc->sc_disks[n].d_no = n;
@@ -3195,18 +3239,8 @@ g_raid3_create(struct g_class *mp, const struct g_raid3_metadata *md)
 	if (error != 0) {
 		G_RAID3_DEBUG(1, "Cannot create kernel thread for %s.",
 		    sc->sc_name);
-		if (!g_raid3_use_malloc) {
-			uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_64K].sz_zone);
-			uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_16K].sz_zone);
-			uma_zdestroy(sc->sc_zones[G_RAID3_ZONE_4K].sz_zone);
-		}
-		g_destroy_geom(sc->sc_sync.ds_geom);
-		mtx_destroy(&sc->sc_events_mtx);
-		mtx_destroy(&sc->sc_queue_mtx);
-		sx_destroy(&sc->sc_lock);
 		g_destroy_geom(sc->sc_geom);
-		free(sc->sc_disks, M_RAID3);
-		free(sc, M_RAID3);
+		g_raid3_free_device(sc);
 		return (NULL);
 	}
 
@@ -3217,9 +3251,11 @@ g_raid3_create(struct g_class *mp, const struct g_raid3_metadata *md)
 	G_RAID3_DEBUG(1, "root_mount_hold %p", sc->sc_rootmount);
 
 	/*
-	 * Run timeout.
+	 * Schedule startup timeout.
 	 */
 	timeout = atomic_load_acq_int(&g_raid3_timeout);
+	sc->sc_timeout_event = malloc(sizeof(struct g_raid3_event), M_RAID3,
+	    M_WAITOK);
 	callout_reset(&sc->sc_callout, timeout * hz, g_raid3_go, sc);
 	return (sc->sc_geom);
 }
@@ -3230,8 +3266,6 @@ g_raid3_destroy(struct g_raid3_softc *sc, int how)
 	struct g_provider *pp;
 
 	g_topology_assert_not();
-	if (sc == NULL)
-		return (ENXIO);
 	sx_assert(&sc->sc_lock, SX_XLOCKED);
 
 	pp = sc->sc_provider;
@@ -3280,8 +3314,6 @@ g_raid3_destroy(struct g_raid3_softc *sc, int how)
 	G_RAID3_DEBUG(4, "%s: Woken up %p.", __func__, &sc->sc_worker);
 	sx_xlock(&sc->sc_lock);
 	g_raid3_destroy_device(sc);
-	free(sc->sc_disks, M_RAID3);
-	free(sc, M_RAID3);
 	return (0);
 }
 
@@ -3541,6 +3573,9 @@ g_raid3_shutdown_post_sync(void *arg, int howto)
 	struct g_geom *gp, *gp2;
 	struct g_raid3_softc *sc;
 	int error;
+
+	if ((howto & RB_NOSYNC) != 0)
+		return;
 
 	mp = arg;
 	g_topology_lock();

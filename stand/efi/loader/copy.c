@@ -25,9 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 
 #include <stand.h>
@@ -39,9 +36,9 @@ __FBSDID("$FreeBSD$");
 #include "loader_efi.h"
 
 #define	M(x)	((x) * 1024 * 1024)
-#define	G(x)	(1UL * (x) * 1024 * 1024 * 1024)
+#define	G(x)	(1ULL * (x) * 1024 * 1024 * 1024)
 
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 #include <machine/cpufunc.h>
 #include <machine/specialreg.h>
 #include <machine/vmparam.h>
@@ -173,7 +170,7 @@ efi_verify_staging_size(unsigned long *nr_pages)
 out:
 	free(map);
 }
-#endif /* __i386__ || __amd64__ */
+#endif /* __amd64__ */
 
 #if defined(__arm__)
 #define	DEFAULT_EFI_STAGING_SIZE	32
@@ -284,9 +281,9 @@ command_staging_slop(int argc, char *argv[])
 COMMAND_SET(staging_slop, "staging_slop", "set staging slop",
     command_staging_slop);
 
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 /*
- * The staging area must reside in the the first 1GB or 4GB physical
+ * The staging area must reside in the first 1GB or 4GB physical
  * memory: see elf64_exec() in
  * boot/efi/loader/arch/amd64/elf64_freebsd.c.
  */
@@ -295,11 +292,7 @@ get_staging_max(void)
 {
 	EFI_PHYSICAL_ADDRESS res;
 
-#if defined(__i386__)
-	res = G(1);
-#elif defined(__amd64__)
 	res = copy_staging == COPY_STAGING_ENABLE ? G(1) : G(4);
-#endif
 	return (res);
 }
 #define	EFI_ALLOC_METHOD	AllocateMaxAddress
@@ -319,7 +312,7 @@ efi_copy_init(void)
 		ess = DEFAULT_EFI_STAGING_SIZE;
 	nr_pages = EFI_SIZE_TO_PAGES(M(1) * ess);
 
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 	/*
 	 * We'll decrease nr_pages, if it's too big. Currently we only
 	 * apply this to FreeBSD VM running on Hyper-V. Why? Please see
@@ -330,7 +323,7 @@ efi_copy_init(void)
 
 	staging = get_staging_max();
 #endif
-	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderData,
+	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderCode,
 	    nr_pages, &staging);
 	if (EFI_ERROR(status)) {
 		printf("failed to allocate staging area: %lu\n",
@@ -387,9 +380,8 @@ efi_check_space(vm_offset_t end)
 	end += staging_slop;
 
 	nr_pages = EFI_SIZE_TO_PAGES(end - staging_end);
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 	/*
-	 * i386 needs all memory to be allocated under the 1G boundary.
 	 * amd64 needs all memory to be allocated under the 1G or 4G boundary.
 	 */
 	if (end > get_staging_max())
@@ -398,7 +390,7 @@ efi_check_space(vm_offset_t end)
 
 	/* Try to allocate more space after the previous allocation */
 	addr = staging_end;
-	status = BS->AllocatePages(AllocateAddress, EfiLoaderData, nr_pages,
+	status = BS->AllocatePages(AllocateAddress, EfiLoaderCode, nr_pages,
 	    &addr);
 	if (!EFI_ERROR(status)) {
 		staging_end = staging_end + nr_pages * EFI_PAGE_SIZE;
@@ -415,7 +407,7 @@ before_staging:
 	addr = rounddown2(addr, M(2));
 #endif
 	nr_pages = EFI_SIZE_TO_PAGES(staging_base - addr);
-	status = BS->AllocatePages(AllocateAddress, EfiLoaderData, nr_pages,
+	status = BS->AllocatePages(AllocateAddress, EfiLoaderCode, nr_pages,
 	    &addr);
 	if (!EFI_ERROR(status)) {
 		/*
@@ -435,10 +427,10 @@ expand:
 #if EFI_STAGING_2M_ALIGN
 	nr_pages += M(2) / EFI_PAGE_SIZE;
 #endif
-#if defined(__i386__) || defined(__amd64__)
+#if defined(__amd64__)
 	new_base = get_staging_max();
 #endif
-	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderData,
+	status = BS->AllocatePages(EFI_ALLOC_METHOD, EfiLoaderCode,
 	    nr_pages, &new_base);
 	if (!EFI_ERROR(status)) {
 #if EFI_STAGING_2M_ALIGN

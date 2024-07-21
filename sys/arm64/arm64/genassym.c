@@ -26,8 +26,6 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/assym.h>
 #include <sys/pcpu.h>
@@ -41,12 +39,10 @@ __FBSDID("$FreeBSD$");
 ASSYM(BOOTPARAMS_SIZE, roundup2(sizeof(struct arm64_bootparams),
     STACKALIGNBYTES + 1));
 ASSYM(BP_MODULEP, offsetof(struct arm64_bootparams, modulep));
-ASSYM(BP_KERN_L1PT, offsetof(struct arm64_bootparams, kern_l1pt));
-ASSYM(BP_KERN_DELTA, offsetof(struct arm64_bootparams, kern_delta));
 ASSYM(BP_KERN_STACK, offsetof(struct arm64_bootparams, kern_stack));
-ASSYM(BP_KERN_L0PT, offsetof(struct arm64_bootparams, kern_l0pt));
 ASSYM(BP_KERN_TTBR0, offsetof(struct arm64_bootparams, kern_ttbr0));
 ASSYM(BP_BOOT_EL, offsetof(struct arm64_bootparams, boot_el));
+ASSYM(BP_HCR_EL2, offsetof(struct arm64_bootparams, hcr_el2));
 
 ASSYM(PCPU_SIZE, sizeof(struct pcpu));
 ASSYM(PC_CURPCB, offsetof(struct pcpu, pc_curpcb));
@@ -57,7 +53,7 @@ ASSYM(PC_SSBD, offsetof(struct pcpu, pc_ssbd));
 ASSYM(PCB_SIZE, roundup2(sizeof(struct pcb), STACKALIGNBYTES + 1));
 ASSYM(PCB_SINGLE_STEP_SHIFT, PCB_SINGLE_STEP_SHIFT);
 ASSYM(PCB_REGS, offsetof(struct pcb, pcb_x));
-ASSYM(PCB_LR, offsetof(struct pcb, pcb_lr));
+ASSYM(PCB_X19, PCB_X19);
 ASSYM(PCB_SP, offsetof(struct pcb, pcb_sp));
 ASSYM(PCB_TPIDRRO, offsetof(struct pcb, pcb_tpidrro_el0));
 ASSYM(PCB_ONFAULT, offsetof(struct pcb, pcb_onfault));
@@ -75,6 +71,8 @@ ASSYM(TD_MD_CANARY, offsetof(struct thread, td_md.md_canary));
 
 ASSYM(TF_SIZE, sizeof(struct trapframe));
 ASSYM(TF_SP, offsetof(struct trapframe, tf_sp));
+ASSYM(TF_LR, offsetof(struct trapframe, tf_lr));
 ASSYM(TF_ELR, offsetof(struct trapframe, tf_elr));
 ASSYM(TF_SPSR, offsetof(struct trapframe, tf_spsr));
+ASSYM(TF_ESR, offsetof(struct trapframe, tf_esr));
 ASSYM(TF_X, offsetof(struct trapframe, tf_x));

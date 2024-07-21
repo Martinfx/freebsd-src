@@ -1,7 +1,5 @@
-#$FreeBSD$
-#	@(#)Makefile	8.1 (Berkeley) 6/2/93
-
 .include <src.opts.mk>
+.include <bsd.linker.mk>
 
 PACKAGE=rescue
 MAN=
@@ -13,15 +11,14 @@ MK_PIE=	no
 NO_SHARED=	yes
 CRUNCH_BUILDOPTS+=	MK_PIE=no NO_SHARED=yes
 
+# lld >= 16 became more strict about multiply defined symbols. Since there are
+# many of those in crunchgen'd programs, turn off the check.
+.if ${LINKER_TYPE} == "lld" && ${LINKER_VERSION} >= 160000
+LDFLAGS+=	-Wl,--allow-multiple-definition
+.endif
+
 PROG=	rescue
 BINDIR?=/rescue
-
-# Shell scripts need #! line to be edited from /bin/sh to /rescue/sh
-SCRIPTS= nextboot_FIXED
-SCRIPTSNAME_nextboot_FIXED= nextboot
-nextboot_FIXED: ../../sbin/reboot/nextboot.sh
-	sed '1s/\/bin\//\/rescue\//' ${.ALLSRC} > ${.TARGET}
-CLEANFILES+= nextboot_FIXED
 
 SCRIPTS+= dhclient_FIXED
 SCRIPTSNAME_dhclient_FIXED= dhclient-script
@@ -94,7 +91,7 @@ CRUNCH_SRCDIRS+= sbin
 CRUNCH_PROGS_sbin= 						\
 	camcontrol clri devfs dmesg dump			\
 	dumpfs dumpon fsck fsck_ffs fsck_msdosfs fsdb		\
-	fsirand gbde geom ifconfig init 			\
+	fsirand geom ifconfig init 				\
 	kldconfig kldload kldstat kldunload ldconfig 		\
 	md5 mdconfig mdmfs mknod mount mount_cd9660		\
 	mount_msdosfs mount_nfs mount_nullfs			\
@@ -121,6 +118,15 @@ CRUNCH_PROGS_sbin+= ipf
 CRUNCH_LIBS_ipf+=	${LIBIPF}
 .endif
 
+.if ${MK_IPFW} != "no"
+CRUNCH_PROGS_sbin+= ipfw
+.endif
+
+.if ${MK_PF} != "no"
+CRUNCH_PROGS_sbin+= pfctl
+CRUNCH_LIBS_pfctl+= ${LIBPFCTL} ${LIBNV}
+.endif
+
 .if ${MK_ROUTED} != "no"
 CRUNCH_PROGS_sbin+= routed rtquery
 .endif
@@ -128,6 +134,7 @@ CRUNCH_PROGS_sbin+= routed rtquery
 .if ${MK_ZFS} != "no"
 CRUNCH_PROGS_sbin+= bectl
 CRUNCH_PROGS_sbin+= zfs
+CRUNCH_PROGS_sbin+= zfsbootcfg
 CRUNCH_PROGS_sbin+= zpool
 CRUNCH_PROGS_usr.sbin+= zdb
 .endif
@@ -136,19 +143,27 @@ CRUNCH_PROGS_usr.sbin+= zdb
 # CRUNCH_PROGS+= devd
 
 CRUNCH_LIBS+= -l80211 -lalias -lcam -lncursesw -ldevstat -lipsec -llzma
+CRUNCH_LIBS_camcontrol+= ${LIBNVMF}
 .if ${MK_ZFS} != "no"
-CRUNCH_LIBS+= -lavl -lpthread -luutil -lumem -ltpool -lspl
+CRUNCH_LIBS+= -lavl -lpthread -luutil -lumem -ltpool -lspl -lrt
 CRUNCH_LIBS_zfs+=	${LIBBE} \
 			${LIBZPOOL} \
-			${LIBZUTIL} \
 			${LIBZFS} \
+			${LIBZUTIL} \
 			${LIBZFS_CORE} \
 			${LIBZFSBOOTENV} \
 			${LIBICP_RESCUE} \
 			${LIBNVPAIR}
 CRUNCH_LIBS_bectl+=	${CRUNCH_LIBS_zfs}
 CRUNCH_LIBS_zpool+=	${CRUNCH_LIBS_zfs}
-CRUNCH_LIBS_zdb+=	${CRUNCH_LIBS_zfs}
+CRUNCH_LIBS_zdb+=	${CRUNCH_LIBS_zfs} ${LIBZDB}
+CRUNCH_LIBS_zfsbootcfg+=${LIBZFSBOOTENV} \
+			${LIBZPOOL} \
+			${LIBZFS} \
+			${LIBZUTIL} \
+			${LIBZFS_CORE} \
+			${LIBICP_RESCUE} \
+			${LIBNVPAIR}
 .else
 # liblzma needs pthread
 CRUNCH_LIBS+= -lpthread
@@ -160,7 +175,7 @@ CRUNCH_LIBS+= -lmd
 CRUNCH_LIBS+= -lmt -lsbuf -lufs -lz
 
 .if ${MACHINE_CPUARCH} == "i386"
-CRUNCH_PROGS_sbin+= bsdlabel sconfig fdisk
+CRUNCH_PROGS_sbin+= bsdlabel fdisk
 CRUNCH_ALIAS_bsdlabel= disklabel
 #CRUNCH_PROGS+= mount_smbfs
 #CRUNCH_LIBS+= -lsmb
@@ -178,7 +193,7 @@ CRUNCH_SRCDIR_zfs= ${SRCTOP}/cddl/sbin/zfs
 CRUNCH_SRCDIR_zpool= ${SRCTOP}/cddl/sbin/zpool
 CRUNCH_SRCDIR_zdb= ${SRCTOP}/cddl/usr.sbin/zdb
 .endif
-CRUNCH_ALIAS_reboot= fastboot halt fasthalt
+CRUNCH_ALIAS_reboot= fastboot halt fasthalt nextboot
 CRUNCH_ALIAS_restore= rrestore
 CRUNCH_ALIAS_dump= rdump
 CRUNCH_ALIAS_fsck_ffs= fsck_4.2bsd fsck_ufs
@@ -210,12 +225,15 @@ CRUNCH_ALIAS_xz= unxz lzma unlzma xzcat lzcat
 
 CRUNCH_PROGS_usr.bin+= zstd
 CRUNCH_ALIAS_zstd= unzstd zstdcat zstdmt
-CRUNCH_LIBS+=	${LDADD_zstd}
+CRUNCH_LIBS+=	-lprivatezstd
+
+CRUNCH_PROGS_usr.bin+=	fetch
+CRUNCH_LIBS+=	-lfetch
 
 CRUNCH_PROGS_usr.bin+= tar
 CRUNCH_LIBS+= -larchive
 .if ${MK_OPENSSL} != "no"
-CRUNCH_LIBS+= -lcrypto
+CRUNCH_LIBS+= -lssl -lcrypto
 .endif
 CRUNCH_LIBS+= -lmd
 

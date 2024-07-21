@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Gleb Popov
  * All rights reserved.
@@ -28,9 +28,6 @@
 /*
  * acl_cmp_np: Compare two ACL's.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/acl.h>
 #include <sys/errno.h>

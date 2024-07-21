@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	cfi
 BINDIR=	/usr/local/bin
 MAN=

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 1998, 2000 Marshall Kirk McKusick.
  * Copyright 2009, 2010 Jeffrey W. Roberson <jeff@FreeBSD.org>
@@ -37,13 +37,9 @@
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
  * TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
  * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *	from: @(#)ffs_softdep.c	9.59 (McKusick) 6/21/00
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ffs.h"
 #include "opt_quota.h"
 #include "opt_ddb.h"
@@ -300,7 +296,8 @@ softdep_setup_blkfree(struct mount *mp,
 	struct buf *bp,
 	ufs2_daddr_t blkno,
 	int frags,
-	struct workhead *wkhd)
+	struct workhead *wkhd,
+	bool doingrecovery)
 {
 
 	panic("%s called", __FUNCTION__);
@@ -310,7 +307,8 @@ void
 softdep_setup_inofree(struct mount *mp,
 	struct buf *bp,
 	ino_t ino,
-	struct workhead *wkhd)
+	struct workhead *wkhd,
+	bool doingrecovery)
 {
 
 	panic("%s called", __FUNCTION__);
@@ -831,7 +829,7 @@ static	void cancel_allocdirect(struct allocdirectlst *,
 	    struct allocdirect *, struct freeblks *);
 static	int check_inode_unwritten(struct inodedep *);
 static	int free_inodedep(struct inodedep *);
-static	void freework_freeblock(struct freework *, u_long);
+static	void freework_freeblock(struct freework *, uint64_t);
 static	void freework_enqueue(struct freework *);
 static	int handle_workitem_freeblocks(struct freeblks *, int);
 static	int handle_complete_freeblocks(struct freeblks *, int);
@@ -846,7 +844,7 @@ static	struct allocindir *newallocindir(struct inode *, int, ufs2_daddr_t,
 	    ufs2_daddr_t, ufs_lbn_t);
 static	void handle_workitem_freefrag(struct freefrag *);
 static	struct freefrag *newfreefrag(struct inode *, ufs2_daddr_t, long,
-	    ufs_lbn_t, u_long);
+	    ufs_lbn_t, uint64_t);
 static	void allocdirect_merge(struct allocdirectlst *,
 	    struct allocdirect *, struct allocdirect *);
 static	struct freefrag *allocindir_merge(struct allocindir *,
@@ -1568,7 +1566,7 @@ worklist_speedup(struct mount *mp)
 static void
 softdep_send_speedup(struct ufsmount *ump,
 	off_t shortage,
-	u_int flags)
+	uint64_t flags)
 {
 	struct buf *bp;
 
@@ -2586,7 +2584,7 @@ softdep_mount(struct vnode *devvp,
 	struct ufsmount *ump;
 	struct cg *cgp;
 	struct buf *bp;
-	u_int cyl, i;
+	uint64_t cyl, i;
 	int error;
 
 	ump = VFSTOUFS(mp);
@@ -2751,8 +2749,8 @@ softdep_unmount(struct mount *mp)
 #ifdef INVARIANTS
 	for (int i = 0; i <= D_LAST; i++) {
 		KASSERT(ums->sd_curdeps[i] == 0,
-		    ("Unmount %s: Dep type %s != 0 (%ld)", ump->um_fs->fs_fsmnt,
-		    TYPENAME(i), ums->sd_curdeps[i]));
+		    ("Unmount %s: Dep type %s != 0 (%jd)", ump->um_fs->fs_fsmnt,
+		    TYPENAME(i), (intmax_t)ums->sd_curdeps[i]));
 		KASSERT(LIST_EMPTY(&ums->sd_alldeps[i]),
 		    ("Unmount %s: Dep type %s not empty (%p)",
 		    ump->um_fs->fs_fsmnt,
@@ -3323,7 +3321,7 @@ softdep_prelink(struct vnode *dvp,
 	if (vp != NULL) {
 		VOP_UNLOCK(dvp);
 		ffs_syncvnode(vp, MNT_NOWAIT, 0);
-		vn_lock_pair(dvp, false, vp, true);
+		vn_lock_pair(dvp, false, LK_EXCLUSIVE, vp, true, LK_EXCLUSIVE);
 		if (dvp->v_data == NULL)
 			goto out;
 	}
@@ -3335,7 +3333,8 @@ softdep_prelink(struct vnode *dvp,
 		VOP_UNLOCK(dvp);
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		if (vp->v_data == NULL) {
-			vn_lock_pair(dvp, false, vp, true);
+			vn_lock_pair(dvp, false, LK_EXCLUSIVE, vp, true,
+			    LK_EXCLUSIVE);
 			goto out;
 		}
 		ACQUIRE_LOCK(ump);
@@ -3345,7 +3344,8 @@ softdep_prelink(struct vnode *dvp,
 		VOP_UNLOCK(vp);
 		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 		if (dvp->v_data == NULL) {
-			vn_lock_pair(dvp, true, vp, false);
+			vn_lock_pair(dvp, true, LK_EXCLUSIVE, vp, false,
+			    LK_EXCLUSIVE);
 			goto out;
 		}
 	}
@@ -3360,7 +3360,7 @@ softdep_prelink(struct vnode *dvp,
 	journal_check_space(ump);
 	FREE_LOCK(ump);
 
-	vn_lock_pair(dvp, false, vp, false);
+	vn_lock_pair(dvp, false, LK_EXCLUSIVE, vp, false, LK_EXCLUSIVE);
 out:
 	ndp->ni_dvp_seqc = vn_seqc_read_any(dvp);
 	if (vp != NULL)
@@ -5793,7 +5793,7 @@ newfreefrag(struct inode *ip,
 	ufs2_daddr_t blkno,
 	long size,
 	ufs_lbn_t lbn,
-	u_long key)
+	uint64_t key)
 {
 	struct freefrag *freefrag;
 	struct ufsmount *ump;
@@ -7952,7 +7952,7 @@ free_inodedep(struct inodedep *inodedep)
  * in memory immediately.
  */
 static void
-freework_freeblock(struct freework *freework, u_long key)
+freework_freeblock(struct freework *freework, uint64_t key)
 {
 	struct freeblks *freeblks;
 	struct jnewblk *jnewblk;
@@ -8116,7 +8116,7 @@ handle_workitem_freeblocks(struct freeblks *freeblks, int flags)
 	struct allocindir *aip;
 	struct ufsmount *ump;
 	struct worklist *wk;
-	u_long key;
+	uint64_t key;
 
 	KASSERT(LIST_EMPTY(&freeblks->fb_jblkdephd),
 	    ("handle_workitem_freeblocks: Journal entries not written."));
@@ -8304,7 +8304,7 @@ indir_trunc(struct freework *freework,
 	ufs1_daddr_t *bap1;
 	ufs2_daddr_t nb, nnb, *bap2;
 	ufs_lbn_t lbnadd, nlbn;
-	u_long key;
+	uint64_t key;
 	int nblocks, ufs1fmt, freedblocks;
 	int goingaway, freedeps, needj, level, cnt, i, error;
 
@@ -9922,7 +9922,7 @@ clear_unlinked_inodedep( struct inodedep *inodedep)
 		 * that is in the list.
 		 */
 		if (pino == 0) {
-			bcopy((caddr_t)fs, bp->b_data, (u_int)fs->fs_sbsize);
+			bcopy((caddr_t)fs, bp->b_data, (uint64_t)fs->fs_sbsize);
 			bpfs = (struct fs *)bp->b_data;
 			ffs_oldfscompat_write(bpfs, ump);
 			softdep_setup_sbupdate(ump, bpfs, bp);
@@ -9954,7 +9954,7 @@ clear_unlinked_inodedep( struct inodedep *inodedep)
 			FREE_LOCK(ump);
 			bp = getblk(ump->um_devvp, btodb(fs->fs_sblockloc),
 			    (int)fs->fs_sbsize, 0, 0, 0);
-			bcopy((caddr_t)fs, bp->b_data, (u_int)fs->fs_sbsize);
+			bcopy((caddr_t)fs, bp->b_data, (uint64_t)fs->fs_sbsize);
 			bpfs = (struct fs *)bp->b_data;
 			ffs_oldfscompat_write(bpfs, ump);
 			softdep_setup_sbupdate(ump, bpfs, bp);
@@ -10046,7 +10046,7 @@ handle_workitem_remove(struct dirrem *dirrem, int flags)
 		KASSERT(ip->i_nlink >= 0, ("handle_workitem_remove: file ino "
 		    "%ju negative i_nlink %d", (intmax_t)ip->i_number,
 		    ip->i_nlink));
-		DIP_SET(ip, i_nlink, ip->i_nlink);
+		DIP_SET_NLINK(ip, ip->i_nlink);
 		UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 		if (ip->i_nlink < ip->i_effnlink)
 			panic("handle_workitem_remove: bad file delta");
@@ -10069,7 +10069,7 @@ handle_workitem_remove(struct dirrem *dirrem, int flags)
 	ip->i_nlink -= 2;
 	KASSERT(ip->i_nlink >= 0, ("handle_workitem_remove: directory ino "
 	    "%ju negative i_nlink %d", (intmax_t)ip->i_number, ip->i_nlink));
-	DIP_SET(ip, i_nlink, ip->i_nlink);
+	DIP_SET_NLINK(ip, ip->i_nlink);
 	UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 	if (ip->i_nlink < ip->i_effnlink)
 		panic("handle_workitem_remove: bad dir delta");
@@ -10924,30 +10924,26 @@ void
 softdep_setup_inofree(struct mount *mp,
 	struct buf *bp,
 	ino_t ino,
-	struct workhead *wkhd)
+	struct workhead *wkhd,
+	bool doingrecovery)
 {
 	struct worklist *wk, *wkn;
-	struct inodedep *inodedep;
 	struct ufsmount *ump;
-	uint8_t *inosused;
-	struct cg *cgp;
-	struct fs *fs;
+#ifdef INVARIANTS
+	struct inodedep *inodedep;
+#endif
 
 	KASSERT(MOUNTEDSOFTDEP(mp) != 0,
 	    ("softdep_setup_inofree called on non-softdep filesystem"));
 	ump = VFSTOUFS(mp);
 	ACQUIRE_LOCK(ump);
-	if (!ffs_fsfail_cleanup(ump, 0)) {
-		fs = ump->um_fs;
-		cgp = (struct cg *)bp->b_data;
-		inosused = cg_inosused(cgp);
-		if (isset(inosused, ino % fs->fs_ipg))
-			panic("softdep_setup_inofree: inode %ju not freed.",
-			    (uintmax_t)ino);
-	}
-	if (inodedep_lookup(mp, ino, 0, &inodedep))
-		panic("softdep_setup_inofree: ino %ju has existing inodedep %p",
-		    (uintmax_t)ino, inodedep);
+	KASSERT(doingrecovery || ffs_fsfail_cleanup(ump, 0) ||
+	    isclr(cg_inosused((struct cg *)bp->b_data),
+	    ino % ump->um_fs->fs_ipg),
+	    ("softdep_setup_inofree: inode %ju not freed.", (uintmax_t)ino));
+	KASSERT(inodedep_lookup(mp, ino, 0, &inodedep) == 0,
+	    ("softdep_setup_inofree: ino %ju has existing inodedep %p",
+	    (uintmax_t)ino, inodedep));
 	if (wkhd) {
 		LIST_FOREACH_SAFE(wk, wkhd, wk_list, wkn) {
 			if (wk->wk_type != D_JADDREF)
@@ -10978,7 +10974,8 @@ softdep_setup_blkfree(
 	struct buf *bp,
 	ufs2_daddr_t blkno,
 	int frags,
-	struct workhead *wkhd)
+	struct workhead *wkhd,
+	bool doingrecovery)
 {
 	struct bmsafemap *bmsafemap;
 	struct jnewblk *jnewblk;
@@ -11025,18 +11022,22 @@ softdep_setup_blkfree(
 			KASSERT(jnewblk->jn_state & GOINGAWAY,
 			    ("softdep_setup_blkfree: jnewblk not canceled."));
 #ifdef INVARIANTS
-			/*
-			 * Assert that this block is free in the bitmap
-			 * before we discard the jnewblk.
-			 */
-			cgp = (struct cg *)bp->b_data;
-			blksfree = cg_blksfree(cgp);
-			bno = dtogd(fs, jnewblk->jn_blkno);
-			for (i = jnewblk->jn_oldfrags;
-			    i < jnewblk->jn_frags; i++) {
-				if (isset(blksfree, bno + i))
-					continue;
-				panic("softdep_setup_blkfree: not free");
+			if (!doingrecovery && !ffs_fsfail_cleanup(ump, 0)) {
+				/*
+				 * Assert that this block is free in the
+				 * bitmap before we discard the jnewblk.
+				 */
+				cgp = (struct cg *)bp->b_data;
+				blksfree = cg_blksfree(cgp);
+				bno = dtogd(fs, jnewblk->jn_blkno);
+				for (i = jnewblk->jn_oldfrags;
+				    i < jnewblk->jn_frags; i++) {
+					if (isset(blksfree, bno + i))
+						continue;
+					panic("softdep_setup_blkfree: block "
+					    "%ju not freed.",
+					    (uintmax_t)jnewblk->jn_blkno);
+				}
 			}
 #endif
 			/*
@@ -12486,17 +12487,6 @@ softdep_update_inodeblock(
 	    ("softdep_update_inodeblock called on non-softdep filesystem"));
 	fs = ump->um_fs;
 	/*
-	 * Preserve the freelink that is on disk.  clear_unlinked_inodedep()
-	 * does not have access to the in-core ip so must write directly into
-	 * the inode block buffer when setting freelink.
-	 */
-	if (fs->fs_magic == FS_UFS1_MAGIC)
-		DIP_SET(ip, i_freelink, ((struct ufs1_dinode *)bp->b_data +
-		    ino_to_fsbo(fs, ip->i_number))->di_freelink);
-	else
-		DIP_SET(ip, i_freelink, ((struct ufs2_dinode *)bp->b_data +
-		    ino_to_fsbo(fs, ip->i_number))->di_freelink);
-	/*
 	 * If the effective link count is not equal to the actual link
 	 * count, then we must track the difference in an inodedep while
 	 * the inode is (potentially) tossed out of the cache. Otherwise,
@@ -12510,6 +12500,21 @@ again:
 		if (ip->i_effnlink != ip->i_nlink)
 			panic("softdep_update_inodeblock: bad link count");
 		return;
+	}
+	/*
+	 * Preserve the freelink that is on disk.  clear_unlinked_inodedep()
+	 * does not have access to the in-core ip so must write directly into
+	 * the inode block buffer when setting freelink.
+	 */
+	if ((inodedep->id_state & UNLINKED) != 0) {
+		if (fs->fs_magic == FS_UFS1_MAGIC)
+			DIP_SET(ip, i_freelink,
+			    ((struct ufs1_dinode *)bp->b_data +
+			    ino_to_fsbo(fs, ip->i_number))->di_freelink);
+		else
+			DIP_SET(ip, i_freelink,
+			    ((struct ufs2_dinode *)bp->b_data +
+			    ino_to_fsbo(fs, ip->i_number))->di_freelink);
 	}
 	KASSERT(ip->i_nlink >= inodedep->id_nlinkdelta,
 	    ("softdep_update_inodeblock inconsistent ip %p i_nlink %d "
@@ -12758,9 +12763,15 @@ restart:
 					pagedep_new_block = pagedep->pd_state & NEWBLOCK;
 					FREE_LOCK(ump);
 					locked = 0;
-					if (pagedep_new_block && (error =
-					    ffs_syncvnode(pvp, MNT_WAIT, 0))) {
+					if (pagedep_new_block) {
+						VOP_UNLOCK(vp);
+						error = ffs_syncvnode(pvp,
+						    MNT_WAIT, 0);
+						if (error == 0)
+							error = ERELOOKUP;
 						vput(pvp);
+						vn_lock(vp, LK_EXCLUSIVE |
+						    LK_RETRY);
 						return (error);
 					}
 				}
@@ -14767,11 +14778,11 @@ worklist_print(struct worklist *wk, int verbose)
 
 	if (!verbose) {
 		db_printf("%s: %p state 0x%b\n", TYPENAME(wk->wk_type), wk,
-		    (u_int)wk->wk_state, PRINT_SOFTDEP_FLAGS);
+		    wk->wk_state, PRINT_SOFTDEP_FLAGS);
 		return;
 	}
 	db_printf("worklist: %p type %s state 0x%b next %p\n    ", wk,
-	    TYPENAME(wk->wk_type), (u_int)wk->wk_state, PRINT_SOFTDEP_FLAGS,
+	    TYPENAME(wk->wk_type), wk->wk_state, PRINT_SOFTDEP_FLAGS,
 	    LIST_NEXT(wk, wk_list));
 	db_print_ffs(VFSTOUFS(wk->wk_mp));
 }

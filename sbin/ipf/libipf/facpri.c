@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -11,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
-#include <sys/types.h>
+#include <sys/param.h>
 #if !defined(__SVR4) && !defined(__svr4__)
 #include <strings.h>
 #endif
@@ -21,9 +20,6 @@
 #include <syslog.h>
 #include "facpri.h"
 
-#if !defined(lint)
-static const char rcsid[] = "@(#)$Id$";
-#endif
 
 
 typedef	struct	table	{
@@ -80,7 +76,7 @@ fac_toname(int facpri)
 
 	fac = facpri & LOG_FACMASK;
 	j = fac >> 3;
-	if (j < (sizeof(facs)/sizeof(facs[0]))) {
+	if (j < nitems(facs)) {
 		if (facs[j].value == fac)
 			return (facs[j].name);
 	}

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PLAIN_TESTS_SH=
 .for test in	always_test \
 		conflicts_test \

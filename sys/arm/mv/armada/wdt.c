@@ -28,9 +28,6 @@
  * from: FreeBSD: //depot/projects/arm/src/sys/arm/xscale/pxa2x0/pxa2x0_timer.c, rev 1
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -69,6 +66,7 @@ struct mv_wdt_config {
 static void mv_wdt_enable_armv5(void);
 static void mv_wdt_enable_armada_38x(void);
 static void mv_wdt_enable_armada_xp(void);
+static inline void mv_wdt_enable_armada_38x_xp_helper(void);
 
 static void mv_wdt_disable_armv5(void);
 static void mv_wdt_disable_armada_38x(void);
@@ -232,7 +230,7 @@ mv_wdt_enable_armv5(void)
 }
 
 static inline void
-mv_wdt_enable_armada_38x_xp_helper()
+mv_wdt_enable_armada_38x_xp_helper(void)
 {
 	uint32_t val, irq_cause;
 

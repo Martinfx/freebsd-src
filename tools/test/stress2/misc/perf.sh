@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Peter Holm <pho@FreeBSD.org>
 #
@@ -84,6 +84,7 @@ tst() {
 s=0
 for i in "" "-U" "-j"; do
 	newfs $i /dev/md$mdstart > /dev/null 2>&1
+	[ "$i" = "" ] && tunefs -n disable md$mdstart
 	mount /dev/md$mdstart $mntpoint
 
 	t1=`date +%s`

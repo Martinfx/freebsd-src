@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 2020 Michal Meloun <mmel@FreeBSD.org>
  *
@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Clock driver for LX2160A SoC.
  */
@@ -44,7 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/clk/clk_fixed.h>
+#include <dev/clk/clk_fixed.h>
 
 #include <arm64/qoriq/clk/qoriq_clkgen.h>
 

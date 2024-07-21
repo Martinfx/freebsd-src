@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2003 David Xu <davidxu@freebsd.org>
  * Copyright (c) 2001 Daniel Eischen <deischen@freebsd.org>
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -49,11 +47,9 @@ _get_curthread(void)
 {
 	struct pthread *thr;
 
-	__asm __volatile("movq %%fs:%1, %0" : "=r" (thr)
-	    : "m" (*(volatile u_long *)offsetof(struct tcb, tcb_thread)));
+	__asm __volatile("movq %%fs:%c1, %0" : "=r" (thr)
+	    : "i" (offsetof(struct tcb, tcb_thread)));
 	return (thr);
 }
-
-#define	HAS__UMTX_OP_ERR	1
 
 #endif

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008
  *	Swinburne University of Technology, Melbourne, Australia.
@@ -70,7 +70,6 @@
  * - Dynamic control of hash-table size
  */
 
-/* $FreeBSD$ */
 
 #ifdef _KERNEL
 #include <machine/stdarg.h>
@@ -754,8 +753,11 @@ SctpAlias(struct libalias *la, struct ip *pip, int direction)
 	case SN_PARSE_OK:
 		break;
 	case SN_PARSE_ERROR_CHHL:
-		/* Not an error if there is a chunk length parsing error and this is a fragmented packet */
-		if (ntohs(pip->ip_off) & IP_MF) {
+		/*
+		 * Not an error, if there is a chunk length parsing error,
+		 * this is a fragmented packet, and we have a valid assoc.
+		 */
+		if ((assoc != NULL) && (ntohs(pip->ip_off) & IP_MF)) {
 			rtnval = SN_PARSE_OK;
 			break;
 		}
@@ -1067,6 +1069,8 @@ sctp_PktParser(struct libalias *la, int direction, struct ip *pip,
 	 * Also, I am only interested in the content of INIT and ADDIP chunks
 	 */
 
+	sm->msg = SN_SCTP_OTHER;/* Initialise to largest value*/
+	sm->chunk_length = 0; /* only care about length for key chunks */
 	// no mbuf stuff from Paolo yet so ...
 	sm->ip_hdr = pip;
 	/* remove ip header length from the bytes_left */
@@ -1114,8 +1118,6 @@ sctp_PktParser(struct libalias *la, int direction, struct ip *pip,
 
 	chunk_count = 1;
 	/* Real packet parsing occurs below */
-	sm->msg = SN_SCTP_OTHER;/* Initialise to largest value*/
-	sm->chunk_length = 0; /* only care about length for key chunks */
 	while (IS_SCTP_CONTROL(chunk_hdr)) {
 		switch (chunk_hdr->chunk_type) {
 		case SCTP_INITIATION:
@@ -1949,7 +1951,7 @@ UP_process(struct libalias *la, int direction, struct sctp_nat_assoc *assoc, str
 				RmGlobalIPAddresses(sm, assoc, direction);
 				break;
 			}
-		/* fall through to default */
+		/* FALLTHROUGH */
 	default:
 		sctp_ResetTimeOut(la,assoc, SN_U_T(la));
 		return (SN_NAT_PKT);  /* forward packet */

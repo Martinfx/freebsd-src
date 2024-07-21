@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Poul-Henning Kamp
  * Copyright (c) 2010 Alexander Motin <mav@FreeBSD.org>
@@ -25,13 +25,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #include "opt_isa.h"
 
@@ -46,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/proc.h>
 #include <sys/rman.h>
+#include <sys/sysctl.h>
 #include <sys/timeet.h>
 
 #include <isa/rtc.h>
@@ -61,6 +58,11 @@ __FBSDID("$FreeBSD$");
 #include <dev/acpica/acpivar.h>
 #include <machine/md_var.h>
 #endif
+
+/* tunable to detect a power loss of the rtc */
+static bool atrtc_power_lost = false;
+SYSCTL_BOOL(_machdep, OID_AUTO, atrtc_power_lost, CTLFLAG_RD, &atrtc_power_lost,
+    false, "RTC lost power on last power cycle (probably caused by an empty cmos battery)");
 
 /*
  * atrtc_lock protects low-level access to individual hardware registers.
@@ -600,6 +602,7 @@ atrtc_gettime(device_t dev, struct timespec *ts)
 
 	/* Look if we have a RTC present and the time is valid */
 	if (!(rtcin(RTC_STATUSD) & RTCSD_PWR)) {
+		atrtc_power_lost = true;
 		device_printf(dev, "WARNING: Battery failure indication\n");
 		return (EINVAL);
 	}

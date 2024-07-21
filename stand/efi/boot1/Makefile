@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.init.mk>
 
 BOOT1?=		boot1
@@ -13,11 +11,12 @@ CFLAGS+=	-DEFI_BOOT1
 # seems to matter on arm64 where wchar_t defaults to an int instead
 # of a short. There's no good cast to use here so just ignore the
 # warnings for now.
-CWARNFLAGS.proto.c+=	-Wno-format
-CWARNFLAGS.boot1.c+=	-Wno-format
+CWARNFLAGS.proto.c      += -Wno-format
+CWARNFLAGS.boot1.c      += -Wno-format
+CWARNFLAGS.ufs_module.c += -Wno-format
+CWARNFLAGS.zfs_module.c += -Wno-format
 
 # Disable bogus alignment issues
-CWARNFLAGS.ufs_module.c += -Wno-format
 CWARNFLAGS.ufs_module.c += -Wno-cast-align
 
 # Disable warnings that are currently incompatible with the zfs boot code
@@ -30,7 +29,7 @@ CWARNFLAGS.zfs_module.c += -Wno-unused-parameter
 CWARNFLAGS.zfs_module.c += -Wno-unused-function
 
 # architecture-specific loader code
-SRCS+=	boot1.c proto.c self_reloc.c start.S ufs_module.c devpath.c
+SRCS+=	boot1.c proto.c self_reloc.c start.S ufs_module.c
 .if ${MK_LOADER_ZFS} != "no"
 SRCS+=		zfs_module.c
 CFLAGS.zfs_module.c+=	-I${ZFSSRC}
@@ -59,13 +58,12 @@ CFLAGS+=	-DEFI_DEBUG
 .PATH:		${EFISRC}/loader/arch/${MACHINE}
 .PATH:		${EFISRC}/loader
 .PATH:		${LDRSRC}
-.PATH:		${EFISRC}/libefi
 CFLAGS+=	-I${LDRSRC}
 
 FILES=	${BOOT1}.efi
 FILESMODE_${BOOT1}.efi=	${BINMODE}
 
-LDSCRIPT=	${EFISRC}/loader/arch/${MACHINE}/ldscript.${MACHINE}
+LDSCRIPT=	${EFISRC}/loader/arch/${MACHINE}/${MACHINE}.ldscript
 LDFLAGS+=	-Wl,-T${LDSCRIPT},-Bsymbolic,-znotext -pie
 .if ${LINKER_TYPE} == "bfd" && ${LINKER_VERSION} >= 23400
 LDFLAGS+=	-Wl,--no-dynamic-linker
@@ -74,7 +72,7 @@ LDFLAGS+=	-Wl,--no-dynamic-linker
 .if ${MACHINE_CPUARCH} == "aarch64"
 CFLAGS+=	-mgeneral-regs-only
 .endif
-.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
+.if ${MACHINE_CPUARCH} == "amd64"
 CFLAGS+=	-fPIC
 LDFLAGS+=	-Wl,-znocombreloc
 .endif
@@ -82,17 +80,18 @@ LDFLAGS+=	-Wl,-znocombreloc
 LIBEFI=		${BOOTOBJ}/efi/libefi/libefi.a
 
 #
-# Add libsa for the runtime functions used by the compiler - for example
-# __aeabi_* (arm) or __divdi3 (i386).
-# as well as required string and memory functions for all platforms.
+# Add libsa for the runtime functions used by the compiler as well as required
+# string and memory functions for all platforms.
 #
 DPADD+=		${LIBEFI} ${LIBSA}
 LDADD+=		${LIBEFI} ${LIBSA}
 
 DPADD+=		${LDSCRIPT}
 
+CLEANFILES+=	${BOOT1}.efi
+
 ${BOOT1}.efi: ${PROG}
-	if ${NM} ${.ALLSRC} | grep ' U '; then \
+	@if ${NM} ${.ALLSRC} | grep ' U '; then \
 		echo "Undefined symbols in ${.ALLSRC}"; \
 		exit 1; \
 	fi

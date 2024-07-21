@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SHLIBDIR?= /lib
 
 .include <bsd.own.mk>

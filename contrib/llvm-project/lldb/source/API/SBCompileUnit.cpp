@@ -77,6 +77,20 @@ SBLineEntry SBCompileUnit::GetLineEntryAtIndex(uint32_t idx) const {
   return sb_line_entry;
 }
 
+uint32_t SBCompileUnit::FindLineEntryIndex(lldb::SBLineEntry &line_entry,
+                                           bool exact) const {
+  LLDB_INSTRUMENT_VA(this, line_entry, exact);
+
+  if (!m_opaque_ptr || !line_entry.IsValid())
+    return UINT32_MAX;
+
+  LineEntry found_line_entry;
+
+  return m_opaque_ptr->FindLineEntry(0, line_entry.GetLine(),
+                                     line_entry.GetFileSpec().get(), exact,
+                                     &line_entry.ref());
+}
+
 uint32_t SBCompileUnit::FindLineEntryIndex(uint32_t start_idx, uint32_t line,
                                            SBFileSpec *inline_file_spec) const {
   LLDB_INSTRUMENT_VA(this, start_idx, line, inline_file_spec);
@@ -157,7 +171,7 @@ uint32_t SBCompileUnit::FindSupportFileIndex(uint32_t start_idx,
   LLDB_INSTRUMENT_VA(this, start_idx, sb_file, full);
 
   if (m_opaque_ptr) {
-    const FileSpecList &support_files = m_opaque_ptr->GetSupportFiles();
+    const SupportFileList &support_files = m_opaque_ptr->GetSupportFiles();
     return support_files.FindFileIndex(start_idx, sb_file.ref(), full);
   }
   return 0;

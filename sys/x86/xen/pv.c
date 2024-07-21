@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Christian Limpach.
  * Copyright (c) 2004-2006,2008 Kip Macy
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_kstack_pages.h"
 
@@ -49,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/mutex.h>
 #include <sys/smp.h>
 #include <sys/efi.h>
+#include <sys/tslog.h>
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
@@ -76,6 +75,7 @@ __FBSDID("$FreeBSD$");
 #include <xen/xenstore/xenstorevar.h>
 #include <xen/xen_pv.h>
 
+#include <contrib/xen/arch-x86/cpuid.h>
 #include <contrib/xen/arch-x86/hvm/start_info.h>
 #include <contrib/xen/vcpu.h>
 
@@ -94,7 +94,7 @@ uint64_t hammer_time_xen(vm_paddr_t);
 
 /*--------------------------- Forward Declarations ---------------------------*/
 static caddr_t xen_pvh_parse_preload_data(uint64_t);
-static void xen_pvh_parse_memmap(caddr_t, vm_paddr_t *, int *);
+static void pvh_parse_memmap(caddr_t, vm_paddr_t *, int *);
 
 /*---------------------------- Extern Declarations ---------------------------*/
 /*
@@ -108,7 +108,7 @@ struct init_ops xen_pvh_init_ops = {
 	.parse_preload_data		= xen_pvh_parse_preload_data,
 	.early_clock_source_init	= xen_clock_init,
 	.early_delay			= xen_delay,
-	.parse_memmap			= xen_pvh_parse_memmap,
+	.parse_memmap			= pvh_parse_memmap,
 };
 
 static struct bios_smap xen_smap[MAX_E820_ENTRIES];
@@ -117,30 +117,52 @@ static struct hvm_start_info *start_info;
 
 /*-------------------------------- Xen PV init -------------------------------*/
 
+static int
+isxen(void)
+{
+	static int xen = -1;
+	uint32_t base;
+	u_int regs[4];
+
+	if (xen != -1)
+		return (xen);
+
+	/*
+	 * The full code for identifying which hypervisor we're running under
+	 * is in sys/x86/x86/identcpu.c and runs later in the boot process;
+	 * this is sufficient to distinguish Xen PVH booting from non-Xen PVH
+	 * and skip some very early Xen-specific code in the non-Xen case.
+	 */
+	xen = 0;
+	for (base = 0x40000000; base < 0x40010000; base += 0x100) {
+		do_cpuid(base, regs);
+		if (regs[1] == XEN_CPUID_SIGNATURE_EBX &&
+		    regs[2] == XEN_CPUID_SIGNATURE_ECX &&
+		    regs[3] == XEN_CPUID_SIGNATURE_EDX) {
+			xen = 1;
+			break;
+		}
+	}
+	return (xen);
+}
+
+#define CRASH(...) do {					\
+	if (isxen())					\
+		xc_printf(__VA_ARGS__);			\
+	halt();						\
+} while (0)
+
 uint64_t
 hammer_time_xen(vm_paddr_t start_info_paddr)
 {
 	struct hvm_modlist_entry *mod;
-	struct xen_add_to_physmap xatp;
 	uint64_t physfree;
 	char *kenv;
-	int rc;
-
-	xen_domain_type = XEN_HVM_DOMAIN;
-	vm_guest = VM_GUEST_XEN;
-
-	rc = xen_hvm_init_hypercall_stubs(XEN_HVM_INIT_EARLY);
-	if (rc) {
-		xc_printf("ERROR: failed to initialize hypercall page: %d\n",
-		    rc);
-		HYPERVISOR_shutdown(SHUTDOWN_crash);
-	}
 
 	start_info = (struct hvm_start_info *)(start_info_paddr + KERNBASE);
 	if (start_info->magic != XEN_HVM_START_MAGIC_VALUE) {
-		xc_printf("Unknown magic value in start_info struct: %#x\n",
+		CRASH("Unknown magic value in start_info struct: %#x\n",
 		    start_info->magic);
-		HYPERVISOR_shutdown(SHUTDOWN_crash);
 	}
 
 	/*
@@ -164,9 +186,8 @@ hammer_time_xen(vm_paddr_t start_info_paddr)
 		unsigned int i;
 
 		if (start_info->nr_modules == 0) {
-			xc_printf(
+			CRASH(
 			    "ERROR: modlist_paddr != 0 but nr_modules == 0\n");
-			HYPERVISOR_shutdown(SHUTDOWN_crash);
 		}
 		mod = (struct hvm_modlist_entry *)
 		    (start_info->modlist_paddr + KERNBASE);
@@ -174,17 +195,6 @@ hammer_time_xen(vm_paddr_t start_info_paddr)
 			physfree = MAX(roundup2(mod[i].paddr + mod[i].size,
 			    PAGE_SIZE), physfree);
 	}
-
-	xatp.domid = DOMID_SELF;
-	xatp.idx = 0;
-	xatp.space = XENMAPSPACE_shared_info;
-	xatp.gpfn = atop(physfree);
-	if (HYPERVISOR_memory_op(XENMEM_add_to_physmap, &xatp)) {
-		xc_printf("ERROR: failed to setup shared_info page\n");
-		HYPERVISOR_shutdown(SHUTDOWN_crash);
-	}
-	HYPERVISOR_shared_info = (shared_info_t *)(physfree + KERNBASE);
-	physfree += PAGE_SIZE;
 
 	/*
 	 * Init a static kenv using a free page. The contents will be filled
@@ -245,7 +255,7 @@ xen_pvh_set_env(char *env, bool (*filter)(const char *))
 
 		value = option;
 		option = strsep(&value, "=");
-		if (kern_setenv(option, value) != 0)
+		if (kern_setenv(option, value) != 0 && isxen())
 			xc_printf("unable to add kenv %s=%s\n", option, value);
 		option = value + strlen(value) + 1;
 	}
@@ -269,7 +279,8 @@ xen_pvh_parse_symtab(void)
 	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) ||
 	    ehdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
 	    ehdr->e_version > 1) {
-		xc_printf("Unable to load ELF symtab: invalid symbol table\n");
+		if (isxen())
+			xc_printf("Unable to load ELF symtab: invalid symbol table\n");
 		return;
 	}
 
@@ -289,7 +300,7 @@ xen_pvh_parse_symtab(void)
 		break;
 	}
 
-	if (ksymtab == 0 || kstrtab == 0)
+	if ((ksymtab == 0 || kstrtab == 0) && isxen())
 		xc_printf(
     "Unable to load ELF symtab: could not find symtab or strtab\n");
 }
@@ -304,6 +315,7 @@ xen_pvh_parse_preload_data(uint64_t modulep)
 	char *envp;
 	char acpi_rsdp[19];
 
+	TSENTER();
 	if (start_info->modlist_paddr != 0) {
 		struct hvm_modlist_entry *mod;
 		const char *cmdline;
@@ -378,9 +390,9 @@ xen_pvh_parse_preload_data(uint64_t modulep)
 		if (start_info->cmdline_paddr != 0)
 			boot_parse_cmdline_delim(
 			    (char *)(start_info->cmdline_paddr + KERNBASE),
-			    ",");
+			    ", \t\n");
 		kmdp = NULL;
-		strlcpy(bootmethod, "XEN", sizeof(bootmethod));
+		strlcpy(bootmethod, "PVH", sizeof(bootmethod));
 	}
 
 	boothowto |= boot_env_to_howto();
@@ -392,7 +404,38 @@ xen_pvh_parse_preload_data(uint64_t modulep)
 #ifdef DDB
 	xen_pvh_parse_symtab();
 #endif
+	TSEXIT();
 	return (kmdp);
+}
+
+static void
+pvh_parse_memmap_start_info(caddr_t kmdp, vm_paddr_t *physmap,
+    int *physmap_idx)
+{
+	const struct hvm_memmap_table_entry * entries;
+	size_t nentries;
+	size_t i;
+
+	/* Extract from HVM start_info. */
+	entries = (struct hvm_memmap_table_entry *)(start_info->memmap_paddr + KERNBASE);
+	nentries = start_info->memmap_entries;
+
+	/* Convert into E820 format and handle one by one. */
+	for (i = 0; i < nentries; i++) {
+		struct bios_smap entry;
+
+		entry.base = entries[i].addr;
+		entry.length = entries[i].size;
+
+		/*
+		 * Luckily for us, the XEN_HVM_MEMMAP_TYPE_* values exactly
+		 * match the SMAP_TYPE_* values so we don't need to translate
+		 * anything here.
+		 */
+		entry.type = entries[i].type;
+
+		bios_add_smap_entries(&entry, 1, physmap, physmap_idx);
+	}
 }
 
 static void
@@ -401,6 +444,9 @@ xen_pvh_parse_memmap(caddr_t kmdp, vm_paddr_t *physmap, int *physmap_idx)
 	struct xen_memory_map memmap;
 	u_int32_t size;
 	int rc;
+
+	/* We should only reach here if we're running under Xen. */
+	KASSERT(isxen(), ("xen_pvh_parse_memmap reached when !Xen"));
 
 	/* Fetch the E820 map from Xen */
 	memmap.nr_entries = MAX_E820_ENTRIES;
@@ -415,4 +461,19 @@ xen_pvh_parse_memmap(caddr_t kmdp, vm_paddr_t *physmap, int *physmap_idx)
 	size = memmap.nr_entries * sizeof(xen_smap[0]);
 
 	bios_add_smap_entries(xen_smap, size, physmap, physmap_idx);
+}
+
+static void
+pvh_parse_memmap(caddr_t kmdp, vm_paddr_t *physmap, int *physmap_idx)
+{
+
+	/*
+	 * If version >= 1 and memmap_paddr != 0, use the memory map provided
+	 * in the start_info structure; if not, we're running under legacy
+	 * Xen and need to use the Xen hypercall.
+	 */
+	if ((start_info->version >= 1) && (start_info->memmap_paddr != 0))
+		pvh_parse_memmap_start_info(kmdp, physmap, physmap_idx);
+	else
+		xen_pvh_parse_memmap(kmdp, physmap, physmap_idx);
 }

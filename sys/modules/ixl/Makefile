@@ -1,5 +1,3 @@
-#$FreeBSD$
-
 .PATH:  ${SRCTOP}/sys/dev/ixl
 
 KMOD    = if_ixl

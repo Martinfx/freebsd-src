@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Luiz Otavio O Souza.
  * Copyright (c) 2011-2012 Stefan Bethke.
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -75,7 +73,7 @@ struct ukswitch_softc {
 	int		*portphy;
 	char		**ifname;
 	device_t	**miibus;
-	struct ifnet	**ifp;
+	if_t *ifp;
 	struct callout	callout_tick;
 	etherswitch_info_t	info;
 };
@@ -97,8 +95,8 @@ struct ukswitch_softc {
 
 static inline int ukswitch_portforphy(struct ukswitch_softc *, int);
 static void ukswitch_tick(void *);
-static int ukswitch_ifmedia_upd(struct ifnet *);
-static void ukswitch_ifmedia_sts(struct ifnet *, struct ifmediareq *);
+static int ukswitch_ifmedia_upd(if_t);
+static void ukswitch_ifmedia_sts(if_t, struct ifmediareq *);
 
 static int
 ukswitch_probe(device_t dev)
@@ -108,7 +106,7 @@ ukswitch_probe(device_t dev)
 	sc = device_get_softc(dev);
 	bzero(sc, sizeof(*sc));
 
-	device_set_desc_copy(dev, "Generic MDIO switch driver");
+	device_set_desc(dev, "Generic MDIO switch driver");
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -126,15 +124,9 @@ ukswitch_attach_phys(struct ukswitch_softc *sc)
 		sc->ifpport[phy] = port;
 		sc->portphy[port] = phy;
 		sc->ifp[port] = if_alloc(IFT_ETHER);
-		if (sc->ifp[port] == NULL) {
-			device_printf(sc->sc_dev, "couldn't allocate ifnet structure\n");
-			err = ENOMEM;
-			break;
-		}
-
-		sc->ifp[port]->if_softc = sc;
-		sc->ifp[port]->if_flags |= IFF_UP | IFF_BROADCAST |
-		    IFF_DRV_RUNNING | IFF_SIMPLEX;
+		if_setsoftc(sc->ifp[port], sc);
+		if_setflags(sc->ifp[port], IFF_UP | IFF_BROADCAST |
+		    IFF_DRV_RUNNING | IFF_SIMPLEX);
 		sc->ifname[port] = malloc(strlen(name)+1, M_UKSWITCH, M_WAITOK);
 		bcopy(name, sc->ifname[port], strlen(name)+1);
 		if_initname(sc->ifp[port], sc->ifname[port], port);
@@ -145,7 +137,7 @@ ukswitch_attach_phys(struct ukswitch_softc *sc)
 		    BMSR_DEFCAPMASK, phy + sc->phyoffset, MII_OFFSET_ANY, 0);
 		DPRINTF(sc->sc_dev, "%s attached to pseudo interface %s\n",
 		    device_get_nameunit(*sc->miibus[port]),
-		    sc->ifp[port]->if_xname);
+		    if_name(sc->ifp[port]));
 		if (err != 0) {
 			device_printf(sc->sc_dev,
 			    "attaching PHY %d failed\n",
@@ -201,7 +193,7 @@ ukswitch_attach(device_t dev)
 	/* We do not support any vlan groups. */
 	sc->info.es_nvlangroups = 0;
 
-	sc->ifp = malloc(sizeof(struct ifnet *) * sc->numports, M_UKSWITCH,
+	sc->ifp = malloc(sizeof(if_t) * sc->numports, M_UKSWITCH,
 	    M_WAITOK | M_ZERO);
 	sc->ifname = malloc(sizeof(char *) * sc->numports, M_UKSWITCH,
 	    M_WAITOK | M_ZERO);
@@ -280,7 +272,7 @@ ukswitch_miiforport(struct ukswitch_softc *sc, int port)
 	return (device_get_softc(*sc->miibus[port]));
 }
 
-static inline struct ifnet *
+static inline if_t 
 ukswitch_ifpforport(struct ukswitch_softc *sc, int port)
 {
 
@@ -396,7 +388,7 @@ ukswitch_setport(device_t dev, etherswitch_port_t *p)
 	struct ukswitch_softc *sc = device_get_softc(dev);
 	struct ifmedia *ifm;
 	struct mii_data *mii;
-	struct ifnet *ifp;
+	if_t ifp;
 	int err;
 
 	if (p->es_port < 0 || p->es_port >= sc->numports)
@@ -444,10 +436,10 @@ ukswitch_statchg(device_t dev)
 }
 
 static int
-ukswitch_ifmedia_upd(struct ifnet *ifp)
+ukswitch_ifmedia_upd(if_t ifp)
 {
-	struct ukswitch_softc *sc = ifp->if_softc;
-	struct mii_data *mii = ukswitch_miiforport(sc, ifp->if_dunit);
+	struct ukswitch_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = ukswitch_miiforport(sc, if_getdunit(ifp));
 
 	DPRINTF(sc->sc_dev, "%s\n", __func__);
 	if (mii == NULL)
@@ -457,10 +449,10 @@ ukswitch_ifmedia_upd(struct ifnet *ifp)
 }
 
 static void
-ukswitch_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
+ukswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-	struct ukswitch_softc *sc = ifp->if_softc;
-	struct mii_data *mii = ukswitch_miiforport(sc, ifp->if_dunit);
+	struct ukswitch_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = ukswitch_miiforport(sc, if_getdunit(ifp));
 
 	DPRINTF(sc->sc_dev, "%s\n", __func__);
 
@@ -516,7 +508,7 @@ ukswitch_writephy(device_t dev, int phy, int reg, int data)
 static int
 ukswitch_readreg(device_t dev, int addr)
 {
-	struct ukswitch_softc *sc;
+	struct ukswitch_softc *sc __diagused;
 
 	sc = device_get_softc(dev);
 	UKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
@@ -528,7 +520,7 @@ ukswitch_readreg(device_t dev, int addr)
 static int
 ukswitch_writereg(device_t dev, int addr, int value)
 {
-	struct ukswitch_softc *sc;
+	struct ukswitch_softc *sc __diagused;
 
 	sc = device_get_softc(dev);
 	UKSWITCH_LOCK_ASSERT(sc, MA_OWNED);

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	nfs
 
 PROG=	pnfsdscopymr

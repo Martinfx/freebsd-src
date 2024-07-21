@@ -33,10 +33,9 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_ddb.h"
+#include "opt_kstack_pages.h"
 #include "opt_platform.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -81,6 +80,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_pager.h>
 
 #include <machine/cpu.h>
+#include <machine/fpe.h>
 #include <machine/intr.h>
 #include <machine/kdb.h>
 #include <machine/machdep.h>
@@ -92,8 +92,8 @@ __FBSDID("$FreeBSD$");
 #include <machine/trap.h>
 #include <machine/vmparam.h>
 
-#ifdef FPE
-#include <machine/fpe.h>
+#ifdef DDB
+#include <ddb/ddb.h>
 #endif
 
 #ifdef FDT
@@ -131,7 +131,7 @@ cpu_startup(void *dummy)
 {
 
 	sbi_print_version();
-	identify_cpu();
+	printcpuinfo(0);
 
 	printf("real memory  = %ju (%ju MB)\n", ptoa((uintmax_t)realmem),
 	    ptoa((uintmax_t)realmem) / (1024 * 1024));
@@ -321,7 +321,7 @@ try_load_dtb(caddr_t kmdp)
 		return;
 	}
 
-	if (OF_install(OFW_FDT, 0) == FALSE)
+	if (!OF_install(OFW_FDT, 0))
 		panic("Cannot install FDT");
 
 	if (OF_init((void *)dtbp) != 0)
@@ -380,13 +380,16 @@ fake_preload_metadata(struct riscv_bootparams *rvbp)
 	PRELOAD_PUSH_VALUE(uint32_t, sizeof(size_t));
 	PRELOAD_PUSH_VALUE(uint64_t, (size_t)((vm_offset_t)&end - KERNBASE));
 
-	/* Copy the DTB to KVA space. */
+	/*
+	 * Copy the DTB to KVA space. We are able to dereference the physical
+	 * address due to the identity map created in locore.
+	 */
 	lastaddr = roundup(lastaddr, sizeof(int));
 	PRELOAD_PUSH_VALUE(uint32_t, MODINFO_METADATA | MODINFOMD_DTBP);
 	PRELOAD_PUSH_VALUE(uint32_t, sizeof(vm_offset_t));
 	PRELOAD_PUSH_VALUE(vm_offset_t, lastaddr);
-	dtb_size = fdt_totalsize(rvbp->dtbp_virt);
-	memmove((void *)lastaddr, (const void *)rvbp->dtbp_virt, dtb_size);
+	dtb_size = fdt_totalsize(rvbp->dtbp_phys);
+	memmove((void *)lastaddr, (const void *)rvbp->dtbp_phys, dtb_size);
 	lastaddr = roundup(lastaddr + dtb_size, sizeof(int));
 
 	PRELOAD_PUSH_VALUE(uint32_t, MODINFO_METADATA | MODINFOMD_KERNEND);
@@ -460,7 +463,7 @@ parse_metadata(void)
 #ifdef DDB
 	ksym_start = MD_FETCH(kmdp, MODINFOMD_SSYM, uintptr_t);
 	ksym_end = MD_FETCH(kmdp, MODINFOMD_ESYM, uintptr_t);
-	db_fetch_ksymtab(ksym_start, ksym_end);
+	db_fetch_ksymtab(ksym_start, ksym_end, 0);
 #endif
 #ifdef FDT
 	try_load_dtb(kmdp);
@@ -539,14 +542,15 @@ initriscv(struct riscv_bootparams *rvbp)
 	physmem_hardware_regions(mem_regions, mem_regions_sz);
 #endif
 
+	/*
+	 * Identify CPU/ISA features.
+	 */
+	identify_cpu(0);
+
 	/* Do basic tuning, hz etc */
 	init_param1();
 
 	cache_setup();
-
-	/* Bootstrap enough of pmap to enter the kernel proper */
-	kernlen = (lastaddr - KERNBASE);
-	pmap_bootstrap(rvbp->kern_l1pt, rvbp->kern_phys, kernlen);
 
 #ifdef FDT
 	/*
@@ -560,10 +564,15 @@ initriscv(struct riscv_bootparams *rvbp)
 	physmem_exclude_region(mem_regions[0].mr_start, L2_SIZE,
 	    EXFLAG_NODUMP | EXFLAG_NOALLOC);
 #endif
+
+	/* Bootstrap enough of pmap to enter the kernel proper */
+	kernlen = (lastaddr - KERNBASE);
+	pmap_bootstrap(rvbp->kern_phys, kernlen);
+
 	physmem_init_kernel_globals();
 
 	/* Establish static device mappings */
-	devmap_bootstrap(0, NULL);
+	devmap_bootstrap();
 
 	cninit();
 
@@ -594,6 +603,10 @@ initriscv(struct riscv_bootparams *rvbp)
 		physmem_print_tables();
 
 	early_boot = 0;
+
+	if (bootverbose && kstack_pages != KSTACK_PAGES)
+		printf("kern.kstack_pages = %d ignored for thread0\n",
+		    kstack_pages);
 
 	TSEXIT();
 }

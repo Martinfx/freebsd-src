@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Rubicon Communications, LLC (Netgate)
  *
@@ -26,8 +26,6 @@
  *
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -77,7 +75,7 @@ __FBSDID("$FreeBSD$");
 		if (! nvlist_exists_number_array(nvl, name))			\
 			return (EINVAL);					\
 		n = nvlist_get_number_array(nvl, name, &nitems);		\
-		if (nitems != maxelems)						\
+		if (nitems > maxelems)						\
 			return (E2BIG);						\
 		if (nelems != NULL)						\
 			*nelems = nitems;					\
@@ -875,6 +873,9 @@ pf_nvstate_kill_to_kstate_kill(const nvlist_t *nvl,
 	    sizeof(kill->psk_label)));
 	PFNV_CHK(pf_nvbool(nvl, "kill_match", &kill->psk_kill_match));
 
+	if (nvlist_exists_bool(nvl, "nat"))
+		PFNV_CHK(pf_nvbool(nvl, "nat", &kill->psk_nat));
+
 errout:
 	return (error);
 }
@@ -973,7 +974,7 @@ pf_state_to_nvstate(const struct pf_kstate *s)
 	    s->anchor.ptr ? s->anchor.ptr->nr : -1);
 	nvlist_add_number(nvl, "nat_rule",
 	    s->nat_rule.ptr ? s->nat_rule.ptr->nr : -1);
-	nvlist_add_number(nvl, "creation", s->creation);
+	nvlist_add_number(nvl, "creation", s->creation / 1000);
 
 	expire = pf_state_expires(s);
 	if (expire <= time_uptime)
@@ -1051,6 +1052,11 @@ pf_keth_rule_to_nveth_rule(const struct pf_keth_rule *krule)
 	if (nvl == NULL)
 		return (NULL);
 
+	for (int i = 0; i < PF_RULE_MAX_LABEL_COUNT; i++) {
+		nvlist_append_string_array(nvl, "labels", krule->label[i]);
+	}
+	nvlist_add_number(nvl, "ridentifier", krule->ridentifier);
+
 	nvlist_add_number(nvl, "nr", krule->nr);
 	nvlist_add_bool(nvl, "quick", krule->quick);
 	nvlist_add_string(nvl, "ifname", krule->ifname);
@@ -1067,6 +1073,7 @@ pf_keth_rule_to_nveth_rule(const struct pf_keth_rule *krule)
 		return (NULL);
 	}
 	nvlist_add_nvlist(nvl, "src", addr);
+	nvlist_destroy(addr);
 
 	addr = pf_keth_rule_addr_to_nveth_rule_addr(&krule->dst);
 	if (addr == NULL) {
@@ -1074,6 +1081,7 @@ pf_keth_rule_to_nveth_rule(const struct pf_keth_rule *krule)
 		return (NULL);
 	}
 	nvlist_add_nvlist(nvl, "dst", addr);
+	nvlist_destroy(addr);
 
 	addr = pf_rule_addr_to_nvrule_addr(&krule->ipsrc);
 	if (addr == NULL) {
@@ -1112,6 +1120,7 @@ pf_keth_rule_to_nveth_rule(const struct pf_keth_rule *krule)
 	nvlist_add_number(nvl, "anchor_relative", krule->anchor_relative);
 	nvlist_add_number(nvl, "anchor_wildcard", krule->anchor_wildcard);
 
+	nvlist_add_string(nvl, "bridge_to", krule->bridge_to_name);
 	nvlist_add_number(nvl, "action", krule->action);
 
 	return (nvl);
@@ -1123,7 +1132,28 @@ pf_nveth_rule_to_keth_rule(const nvlist_t *nvl,
 {
 	int error = 0;
 
+#define ERROUT(x)	ERROUT_FUNCTION(errout, x)
+
 	bzero(krule, sizeof(*krule));
+
+	if (nvlist_exists_string_array(nvl, "labels")) {
+		const char *const *strs;
+		size_t items;
+		int ret;
+
+		strs = nvlist_get_string_array(nvl, "labels", &items);
+		if (items > PF_RULE_MAX_LABEL_COUNT)
+			ERROUT(E2BIG);
+
+		for (size_t i = 0; i < items; i++) {
+			ret = strlcpy(krule->label[i], strs[i],
+			    sizeof(krule->label[0]));
+			if (ret >= sizeof(krule->label[0]))
+				ERROUT(E2BIG);
+		}
+	}
+
+	PFNV_CHK(pf_nvuint32_opt(nvl, "ridentifier", &krule->ridentifier, 0));
 
 	PFNV_CHK(pf_nvuint32(nvl, "nr", &krule->nr));
 	PFNV_CHK(pf_nvbool(nvl, "quick", &krule->quick));
@@ -1180,6 +1210,8 @@ pf_nveth_rule_to_keth_rule(const nvlist_t *nvl,
 
 	PFNV_CHK(pf_nvuint16_opt(nvl, "dnpipe", &krule->dnpipe, 0));
 	PFNV_CHK(pf_nvuint32_opt(nvl, "dnflags", &krule->dnflags, 0));
+	PFNV_CHK(pf_nvstring(nvl, "bridge_to", krule->bridge_to_name,
+	    sizeof(krule->bridge_to_name)));
 
 	PFNV_CHK(pf_nvuint8(nvl, "action", &krule->action));
 
@@ -1187,6 +1219,7 @@ pf_nveth_rule_to_keth_rule(const nvlist_t *nvl,
 	    krule->action != PF_MATCH)
 		return (EBADMSG);
 
+#undef ERROUT
 errout:
 	return (error);
 }

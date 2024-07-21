@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #include <linux/atomic.h>
 #include <linux/compiler.h>
 #include <adf_accel_devices.h>
 #include <adf_common_drv.h>
-#include <adf_pf2vf_msg.h>
+#include <adf_pfvf_msg.h>
 #include <adf_dev_err.h>
 #include <adf_cfg.h>
 #include <adf_fw_counters.h>
+#include <adf_gen2_hw_data.h>
+#include <adf_gen2_pfvf.h>
 #include "adf_c4xxx_hw_data.h"
 #include "adf_c4xxx_reset.h"
 #include "adf_c4xxx_inline.h"
@@ -607,18 +608,6 @@ adf_enable_mmp_error_correction(struct resource *csr,
 	}
 }
 
-static u32
-get_pf2vf_offset(u32 i)
-{
-	return ADF_C4XXX_PF2VF_OFFSET(i);
-}
-
-static u32
-get_vintmsk_offset(u32 i)
-{
-	return ADF_C4XXX_VINTMSK_OFFSET(i);
-}
-
 static void
 get_arb_info(struct arb_info *arb_csrs_info)
 {
@@ -754,7 +743,6 @@ c4xxx_get_hw_cap(struct adf_accel_dev *accel_dev)
 	    ICP_ACCEL_CAPABILITIES_SM3 | ICP_ACCEL_CAPABILITIES_SM4 |
 	    ICP_ACCEL_CAPABILITIES_CHACHA_POLY |
 	    ICP_ACCEL_CAPABILITIES_AESGCM_SPC |
-	    ICP_ACCEL_CAPABILITIES_CNV_INTEGRITY |
 	    ICP_ACCEL_CAPABILITIES_ECEDMONT;
 
 	if (legfuses & ICP_ACCEL_MASK_CIPHER_SLICE) {
@@ -2128,74 +2116,6 @@ configure_iov_threads(struct adf_accel_dev *accel_dev, bool enable)
 	}
 }
 
-static int
-adf_get_heartbeat_status_c4xxx(struct adf_accel_dev *accel_dev)
-{
-	struct adf_hw_device_data *hw_device = accel_dev->hw_device;
-	struct icp_qat_fw_init_c4xxx_admin_hb_stats *live_s =
-	    (struct icp_qat_fw_init_c4xxx_admin_hb_stats *)
-		accel_dev->admin->virt_hb_addr;
-	const size_t max_aes = hw_device->get_num_aes(hw_device);
-	const size_t stats_size =
-	    max_aes * sizeof(struct icp_qat_fw_init_c4xxx_admin_hb_stats);
-	int ret = 0;
-	size_t ae = 0, thr;
-	unsigned long ae_mask = 0;
-	int num_threads_per_ae = ADF_NUM_THREADS_PER_AE;
-
-	/*
-	 * Memory layout of Heartbeat
-	 *
-	 * +----------------+----------------+---------+
-	 * |   Live value   |   Last value   |  Count  |
-	 * +----------------+----------------+---------+
-	 * \_______________/\_______________/\________/
-	 *         ^                ^            ^
-	 *         |                |            |
-	 *         |                |            max_aes * sizeof(adf_hb_count)
-	 *         |            max_aes *
-	 *                      sizeof(icp_qat_fw_init_c4xxx_admin_hb_stats)
-	 *         max_aes * sizeof(icp_qat_fw_init_c4xxx_admin_hb_stats)
-	 */
-	struct icp_qat_fw_init_c4xxx_admin_hb_stats *curr_s;
-	struct icp_qat_fw_init_c4xxx_admin_hb_stats *last_s = live_s + max_aes;
-	struct adf_hb_count *count = (struct adf_hb_count *)(last_s + max_aes);
-
-	curr_s = malloc(stats_size, M_QAT, M_WAITOK | M_ZERO);
-
-	memcpy(curr_s, live_s, stats_size);
-	ae_mask = hw_device->ae_mask;
-
-	for_each_set_bit(ae, &ae_mask, max_aes)
-	{
-		for (thr = 0; thr < num_threads_per_ae; ++thr) {
-			struct icp_qat_fw_init_admin_hb_cnt *curr =
-			    &curr_s[ae].stats[thr];
-			struct icp_qat_fw_init_admin_hb_cnt *prev =
-			    &last_s[ae].stats[thr];
-			u16 req = curr->req_heartbeat_cnt;
-			u16 resp = curr->resp_heartbeat_cnt;
-			u16 last = prev->resp_heartbeat_cnt;
-
-			if ((thr == ADF_AE_ADMIN_THREAD || req != resp) &&
-			    resp == last) {
-				u16 retry = ++count[ae].ae_thread[thr];
-
-				if (retry >= ADF_CFG_HB_COUNT_THRESHOLD)
-					ret = EIO;
-			} else {
-				count[ae].ae_thread[thr] = 0;
-			}
-		}
-	}
-
-	/* Copy current stats for the next iteration */
-	memcpy(last_s, curr_s, stats_size);
-	free(curr_s, M_QAT);
-
-	return ret;
-}
-
 void
 adf_init_hw_data_c4xxx(struct adf_hw_device_data *hw_data)
 {
@@ -2222,14 +2142,13 @@ adf_init_hw_data_c4xxx(struct adf_hw_device_data *hw_data)
 	hw_data->get_sram_bar_id = get_sram_bar_id;
 	hw_data->get_etr_bar_id = get_etr_bar_id;
 	hw_data->get_misc_bar_id = get_misc_bar_id;
-	hw_data->get_pf2vf_offset = get_pf2vf_offset;
-	hw_data->get_vintmsk_offset = get_vintmsk_offset;
 	hw_data->get_arb_info = get_arb_info;
 	hw_data->get_admin_info = get_admin_info;
 	hw_data->get_errsou_offset = get_errsou_offset;
 	hw_data->get_clock_speed = get_clock_speed;
 	hw_data->get_eth_doorbell_msg = get_eth_doorbell_msg;
 	hw_data->get_sku = get_sku;
+	hw_data->heartbeat_ctr_num = ADF_NUM_THREADS_PER_AE;
 	hw_data->check_prod_sku = c4xxx_check_prod_sku;
 	hw_data->fw_name = ADF_C4XXX_FW;
 	hw_data->fw_mmp_name = ADF_C4XXX_MMP;
@@ -2247,16 +2166,13 @@ adf_init_hw_data_c4xxx(struct adf_hw_device_data *hw_data)
 	hw_data->enable_ints = adf_enable_ints;
 	hw_data->set_ssm_wdtimer = c4xxx_set_ssm_wdtimer;
 	hw_data->check_slice_hang = c4xxx_check_slice_hang;
-	hw_data->enable_vf2pf_comms = adf_pf_enable_vf2pf_comms;
-	hw_data->disable_vf2pf_comms = adf_pf_disable_vf2pf_comms;
 	hw_data->reset_device = adf_reset_flr;
 	hw_data->restore_device = adf_c4xxx_dev_restore;
-	hw_data->min_iov_compat_ver = ADF_PFVF_COMPATIBILITY_VERSION;
 	hw_data->init_accel_units = adf_init_accel_units;
 	hw_data->reset_hw_units = adf_c4xxx_reset_hw_units;
 	hw_data->exit_accel_units = adf_exit_accel_units;
 	hw_data->ring_to_svc_map = ADF_DEFAULT_RING_TO_SRV_MAP;
-	hw_data->get_heartbeat_status = adf_get_heartbeat_status_c4xxx;
+	hw_data->get_heartbeat_status = adf_get_heartbeat_status;
 	hw_data->get_ae_clock = get_ae_clock;
 	hw_data->clock_frequency = ADF_C4XXX_AE_FREQ;
 	hw_data->measure_clock = measure_clock;
@@ -2275,6 +2191,10 @@ adf_init_hw_data_c4xxx(struct adf_hw_device_data *hw_data)
 	hw_data->count_ras_event = adf_fw_count_ras_event;
 	hw_data->config_device = adf_config_device;
 	hw_data->set_asym_rings_mask = adf_cfg_set_asym_rings_mask;
+
+	adf_gen2_init_hw_csr_info(&hw_data->csr_info);
+	adf_gen2_init_pf_pfvf_ops(&hw_data->csr_info.pfvf_ops);
+	hw_data->csr_info.arb_enable_mask = 0xF;
 }
 
 void

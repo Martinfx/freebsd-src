@@ -33,9 +33,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)fs.h	8.7 (Berkeley) 4/19/94
- * $FreeBSD$
  */
 
 #ifndef _FS_EXT2FS_FS_H_
@@ -56,8 +53,10 @@
  * The first boot and super blocks are given in absolute disk addresses.
  * The byte-offset forms are preferred, as they don't imply a sector size.
  */
-#define	SBSIZE		1024
-#define	SBLOCK		2
+#define	SBLOCK		0
+#define	SBLOCKSIZE	1024
+#define	SBLOCKOFFSET	1024
+#define	SBLOCKBLKSIZE	4096
 
 /*
  * The path name on which the file system is mounted is maintained

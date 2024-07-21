@@ -1,10 +1,8 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=	iscsi
 PROG=		ctladm
-SRCS=		ctladm.c util.c ctl_util.c ctl_scsi_all.c
+SRCS=		ctladm.c util.c ctl_util.c ctl_nvme_all.c ctl_scsi_all.c
 .PATH:		${SRCTOP}/sys/cam/ctl
 SDIR=		${SRCTOP}/sys
 CFLAGS+=	-I${SDIR}
@@ -23,5 +21,8 @@ MAN=		ctladm.8
 .if ${MK_ISCSI} != "no"
 CFLAGS+=	-DWANT_ISCSI
 .endif
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2017 Kyle J. Kneitinger <kyle@kneit.in>
  *
@@ -25,10 +25,8 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
+#include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/ucred.h>
@@ -119,6 +117,16 @@ libbe_init(const char *root)
 	lbh = NULL;
 	poolname = pos = NULL;
 
+	/*
+	 * If the zfs kmod's not loaded then the later libzfs_init() will load
+	 * the module for us, but that's not desirable for a couple reasons.  If
+	 * the module's not loaded, there's no pool imported and we're going to
+	 * fail anyways.  We also don't really want libbe consumers to have that
+	 * kind of side-effect (module loading) in the general case.
+	 */
+	if (modfind("zfs") < 0)
+		goto err;
+
 	if ((lbh = calloc(1, sizeof(libbe_handle_t))) == NULL)
 		goto err;
 
@@ -167,6 +175,9 @@ libbe_init(const char *root)
 	    strcmp(altroot, "-") != 0)
 		lbh->altroot_len = strlen(altroot);
 
+	(void) lzbe_get_boot_device(zpool_get_name(lbh->active_phandle),
+	    &lbh->bootonce);
+
 	return (lbh);
 err:
 	if (lbh != NULL) {
@@ -191,6 +202,8 @@ libbe_close(libbe_handle_t *lbh)
 	if (lbh->active_phandle != NULL)
 		zpool_close(lbh->active_phandle);
 	libzfs_fini(lbh->lzh);
+
+	free(lbh->bootonce);
 	free(lbh);
 }
 
@@ -237,7 +250,7 @@ be_dependent_clone_cb(zfs_handle_t *zfs_hdl, void *data)
 {
 	int err;
 	bool found;
-	char *name;
+	const char *name;
 	struct nvlist *nvl;
 	struct nvpair *nvp;
 	struct be_destroy_data *bdd;
@@ -435,6 +448,12 @@ be_destroy_internal(libbe_handle_t *lbh, const char *name, int options,
 				return (set_error(lbh, BE_ERR_DESTROYMNT));
 			}
 		}
+
+		/* Handle destroying bootonce */
+		if (lbh->bootonce != NULL &&
+		    strcmp(path, lbh->bootonce) == 0)
+			(void) lzbe_set_boot_device(
+			    zpool_get_name(lbh->active_phandle), lzbe_add, NULL);
 	} else {
 		/*
 		 * If we're initially destroying a snapshot, origin options do
@@ -745,11 +764,11 @@ be_clone_cb(zfs_handle_t *ds, void *data)
 
 	/* construct the boot environment path from the dataset we're cloning */
 	if (be_get_path(ldc, dspath, be_path, sizeof(be_path)) != BE_ERR_SUCCESS)
-		return (set_error(ldc->lbh, BE_ERR_UNKNOWN));
+		return (BE_ERR_UNKNOWN);
 
 	/* the dataset to be created (i.e. the boot environment) already exists */
 	if (zfs_dataset_exists(ldc->lbh->lzh, be_path, ZFS_TYPE_DATASET))
-		return (set_error(ldc->lbh, BE_ERR_EXISTS));
+		return (BE_ERR_EXISTS);
 
 	/* no snapshot found for this dataset, silently skip it */
 	if (!zfs_dataset_exists(ldc->lbh->lzh, snap_path, ZFS_TYPE_SNAPSHOT))
@@ -757,7 +776,7 @@ be_clone_cb(zfs_handle_t *ds, void *data)
 
 	if ((snap_hdl =
 	    zfs_open(ldc->lbh->lzh, snap_path, ZFS_TYPE_SNAPSHOT)) == NULL)
-		return (set_error(ldc->lbh, BE_ERR_ZFSOPEN));
+		return (BE_ERR_ZFSOPEN);
 
 	nvlist_alloc(&props, NV_UNIQUE_NAME, KM_SLEEP);
 	nvlist_add_string(props, "canmount", "noauto");
@@ -770,7 +789,7 @@ be_clone_cb(zfs_handle_t *ds, void *data)
 		return (-1);
 
 	if ((err = zfs_clone(snap_hdl, be_path, props)) != 0)
-		return (set_error(ldc->lbh, BE_ERR_ZFSCLONE));
+		return (BE_ERR_ZFSCLONE);
 
 	nvlist_free(props);
 	zfs_close(snap_hdl);
@@ -781,7 +800,7 @@ be_clone_cb(zfs_handle_t *ds, void *data)
 		ldc->depth--;
 	}
 
-	return (set_error(ldc->lbh, err));
+	return (err);
 }
 
 /*
@@ -1013,11 +1032,17 @@ be_rename(libbe_handle_t *lbh, const char *old, const char *new)
 		.nounmount = 1,
 	};
 	err = zfs_rename(zfs_hdl, full_new, flags);
-
-	zfs_close(zfs_hdl);
 	if (err != 0)
-		return (set_error(lbh, BE_ERR_UNKNOWN));
-	return (0);
+		goto error;
+
+	/* handle renaming bootonce */
+	if (lbh->bootonce != NULL &&
+	    strcmp(full_old, lbh->bootonce) == 0)
+		err = be_activate(lbh, new, true);
+
+error:
+	zfs_close(zfs_hdl);
+	return (set_error(lbh, err));
 }
 
 
@@ -1142,7 +1167,7 @@ be_create_child_noent(libbe_handle_t *lbh, const char *active,
 static int
 be_create_child_cloned(libbe_handle_t *lbh, const char *active)
 {
-	char buf[BE_MAXPATHLEN], tmp[BE_MAXPATHLEN];;
+	char buf[BE_MAXPATHLEN], tmp[BE_MAXPATHLEN];
 	zfs_handle_t *zfs;
 	int err;
 
@@ -1255,14 +1280,38 @@ be_deactivate(libbe_handle_t *lbh, const char *ds, bool temporary)
 	return (0);
 }
 
+static int
+be_zfs_promote_cb(zfs_handle_t *zhp, void *data)
+{
+	char origin[BE_MAXPATHLEN];
+	bool *found_origin = (bool *)data;
+	int err;
+
+	if (zfs_prop_get(zhp, ZFS_PROP_ORIGIN, origin, sizeof(origin),
+	    NULL, NULL, 0, true) == 0) {
+		*found_origin = true;
+		err = zfs_promote(zhp);
+		if (err)
+			return (err);
+	}
+
+	return (zfs_iter_filesystems(zhp, be_zfs_promote_cb, data));
+}
+
+static int
+be_zfs_promote(zfs_handle_t *zhp, bool *found_origin)
+{
+	*found_origin = false;
+	return (be_zfs_promote_cb(zhp, (void *)found_origin));
+}
+
 int
 be_activate(libbe_handle_t *lbh, const char *bootenv, bool temporary)
 {
 	char be_path[BE_MAXPATHLEN];
-	nvlist_t *dsprops;
-	char *origin;
 	zfs_handle_t *zhp;
 	int err;
+	bool found_origin;
 
 	be_root_concat(lbh, bootenv, be_path);
 
@@ -1283,23 +1332,19 @@ be_activate(libbe_handle_t *lbh, const char *bootenv, bool temporary)
 		if (err)
 			return (-1);
 
-		zhp = zfs_open(lbh->lzh, be_path, ZFS_TYPE_FILESYSTEM);
-		if (zhp == NULL)
-			return (-1);
+		for (;;) {
+			zhp = zfs_open(lbh->lzh, be_path, ZFS_TYPE_FILESYSTEM);
+			if (zhp == NULL)
+				return (-1);
 
-		if (be_prop_list_alloc(&dsprops) != 0)
-			return (-1);
+			err = be_zfs_promote(zhp, &found_origin);
 
-		if (be_get_dataset_props(lbh, be_path, dsprops) != 0) {
-			nvlist_free(dsprops);
-			return (-1);
+			zfs_close(zhp);
+			if (!found_origin)
+				break;
+			if (err)
+				return (err);
 		}
-
-		if (nvlist_lookup_string(dsprops, "origin", &origin) == 0)
-			err = zfs_promote(zhp);
-		nvlist_free(dsprops);
-
-		zfs_close(zhp);
 
 		if (err)
 			return (-1);

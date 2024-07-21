@@ -30,18 +30,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_MACHDEP_H_
 #define	_MACHINE_MACHDEP_H_
 
 struct riscv_bootparams {
-	vm_offset_t	kern_l1pt;	/* Kernel L1 base */
 	vm_offset_t	kern_phys;	/* Kernel base (physical) addr */
 	vm_offset_t	kern_stack;
-	vm_offset_t	dtbp_virt;	/* Device tree blob virtual addr */
 	vm_offset_t	dtbp_phys;	/* Device tree blob physical addr */
 	vm_offset_t	modulep;	/* loader(8) metadata */
 };

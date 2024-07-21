@@ -24,7 +24,6 @@
  * behaviour
  *
  * $OpenBSD: patch.c,v 1.54 2014/12/13 10:31:07 tobias Exp $
- * $FreeBSD$
  *
  */
 
@@ -463,9 +462,13 @@ main(int argc, char *argv[])
 			if (!check_only)
 				say("%d out of %d hunks %s--saving rejects to %s\n",
 				    failed, hunk, skip_rest_of_patch ? "ignored" : "failed", rejname);
-			else
+			else if (filearg[0] != NULL)
 				say("%d out of %d hunks %s while patching %s\n",
 				    failed, hunk, skip_rest_of_patch ? "ignored" : "failed", filearg[0]);
+			else
+				/* File prompt ignored, just note # hunks. */
+				say("%d out of %d hunks %s\n",
+				    failed, hunk, skip_rest_of_patch ? "ignored" : "failed");
 			if (!check_only && move_file(TMPREJNAME, rejname) < 0)
 				trejkeep = true;
 		}
@@ -714,6 +717,8 @@ locate_hunk(LINENUM fuzz)
 		    || diff_type == UNI_DIFF)) {
 			say("Empty context always matches.\n");
 		}
+		if (first_guess == 0)	/* empty file */
+			return 1;
 		return (first_guess);
 	}
 	if (max_neg_offset >= first_guess)	/* do not try lines < 0 */
@@ -1080,7 +1085,7 @@ patch_match(LINENUM base, LINENUM offset, LINENUM fuzz)
 	LINENUM		pat_lines = pch_ptrn_lines() - fuzz;
 	const char	*ilineptr;
 	const char	*plineptr;
-	unsigned short	plinelen;
+	size_t		plinelen;
 
 	/* Patch does not match if we don't have any more context to use */
 	if (pline > pat_lines)

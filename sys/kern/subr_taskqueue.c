@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Doug Rabson
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -366,8 +363,14 @@ taskqueue_enqueue_timeout_sbt(struct taskqueue *queue,
 		if (sbt > 0) {
 			if (queue->tq_spin)
 				flags |= C_DIRECT_EXEC;
-			callout_reset_sbt(&timeout_task->c, sbt, pr,
-			    taskqueue_timeout_func, timeout_task, flags);
+			if (queue->tq_spin && queue->tq_tcount == 1 &&
+			    queue->tq_threads[0] == curthread) {
+				callout_reset_sbt_curcpu(&timeout_task->c, sbt, pr,
+				    taskqueue_timeout_func, timeout_task, flags);
+			} else {
+				callout_reset_sbt(&timeout_task->c, sbt, pr,
+				    taskqueue_timeout_func, timeout_task, flags);
+			}
 		}
 		TQ_UNLOCK(queue);
 	}

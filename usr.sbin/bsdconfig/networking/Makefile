@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR= include share
 
 FILESDIR=	${LIBEXECDIR}/bsdconfig/120.networking

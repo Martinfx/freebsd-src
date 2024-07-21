@@ -36,9 +36,6 @@
  * Originally released as the contribution of Microsoft Research project.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -68,6 +65,8 @@ VNET_DEFINE_STATIC(uint32_t, dctcp_shift_g) = 4;
 #define	V_dctcp_shift_g	    VNET(dctcp_shift_g)
 VNET_DEFINE_STATIC(uint32_t, dctcp_slowstart) = 0;
 #define	V_dctcp_slowstart   VNET(dctcp_slowstart)
+VNET_DEFINE_STATIC(uint32_t, dctcp_ect1) = 0;
+#define	V_dctcp_ect1	    VNET(dctcp_ect1)
 
 struct dctcp {
 	uint32_t bytes_ecn;	  /* # of marked bytes during a RTT */
@@ -80,11 +79,11 @@ struct dctcp {
 	uint32_t num_cong_events; /* # of congestion events */
 };
 
-static void	dctcp_ack_received(struct cc_var *ccv, uint16_t type);
+static void	dctcp_ack_received(struct cc_var *ccv, ccsignal_t type);
 static void	dctcp_after_idle(struct cc_var *ccv);
 static void	dctcp_cb_destroy(struct cc_var *ccv);
 static int	dctcp_cb_init(struct cc_var *ccv, void *ptr);
-static void	dctcp_cong_signal(struct cc_var *ccv, uint32_t type);
+static void	dctcp_cong_signal(struct cc_var *ccv, ccsignal_t type);
 static void	dctcp_conn_init(struct cc_var *ccv);
 static void	dctcp_post_recovery(struct cc_var *ccv);
 static void	dctcp_ecnpkt_handler(struct cc_var *ccv);
@@ -105,7 +104,7 @@ struct cc_algo dctcp_cc_algo = {
 };
 
 static void
-dctcp_ack_received(struct cc_var *ccv, uint16_t type)
+dctcp_ack_received(struct cc_var *ccv, ccsignal_t type)
 {
 	struct dctcp *dctcp_data;
 	int bytes_acked = 0;
@@ -202,7 +201,7 @@ dctcp_cb_init(struct cc_var *ccv, void *ptr)
 {
 	struct dctcp *dctcp_data;
 
-	INP_WLOCK_ASSERT(ccv->ccvc.tcp->t_inpcb);
+	INP_WLOCK_ASSERT(tptoinpcb(ccv->ccvc.tcp));
 	if (ptr == NULL) {
 		dctcp_data = malloc(sizeof(struct dctcp), M_CC_MEM, M_NOWAIT|M_ZERO);
 		if (dctcp_data == NULL)
@@ -238,15 +237,15 @@ dctcp_cb_init(struct cc_var *ccv, void *ptr)
  * Perform any necessary tasks before we enter congestion recovery.
  */
 static void
-dctcp_cong_signal(struct cc_var *ccv, uint32_t type)
+dctcp_cong_signal(struct cc_var *ccv, ccsignal_t type)
 {
 	struct dctcp *dctcp_data;
-	u_int cwin, mss;
+	uint32_t cwin, mss, pipe;
 
 	if (CCV(ccv, t_flags2) & TF2_ECN_PERMIT) {
 		dctcp_data = ccv->cc_data;
 		cwin = CCV(ccv, snd_cwnd);
-		mss = tcp_maxseg(ccv->ccvc.tcp);
+		mss = tcp_fixed_maxseg(ccv->ccvc.tcp);
 
 		switch (type) {
 		case CC_NDUPACK:
@@ -293,13 +292,23 @@ dctcp_cong_signal(struct cc_var *ccv, uint32_t type)
 			dctcp_data->ece_curr = 1;
 			break;
 		case CC_RTO:
-			CCV(ccv, snd_ssthresh) = max(min(CCV(ccv, snd_wnd),
-							 CCV(ccv, snd_cwnd)) / 2 / mss,
-						     2) * mss;
+			if (CCV(ccv, t_rxtshift) == 1) {
+				if (V_tcp_do_newsack) {
+					pipe = tcp_compute_pipe(ccv->ccvc.tcp);
+				} else {
+					pipe = CCV(ccv, snd_max) -
+						CCV(ccv, snd_fack) +
+						CCV(ccv, sackhint.sack_bytes_rexmit);
+				}
+				CCV(ccv, snd_ssthresh) = max(2,
+					min(CCV(ccv, snd_wnd), pipe) / 2 / mss) * mss;
+			}
 			CCV(ccv, snd_cwnd) = mss;
 			dctcp_update_alpha(ccv);
 			dctcp_data->save_sndnxt += CCV(ccv, t_maxseg);
 			dctcp_data->num_cong_events++;
+			break;
+		default:
 			break;
 		}
 	} else
@@ -313,8 +322,11 @@ dctcp_conn_init(struct cc_var *ccv)
 
 	dctcp_data = ccv->cc_data;
 
-	if (CCV(ccv, t_flags2) & TF2_ECN_PERMIT)
+	if (CCV(ccv, t_flags2) & TF2_ECN_PERMIT) {
 		dctcp_data->save_sndnxt = CCV(ccv, snd_nxt);
+		if (V_dctcp_ect1)
+			CCV(ccv, t_flags2) |= TF2_ECN_USE_ECT1;
+	}
 }
 
 /*
@@ -477,6 +489,11 @@ SYSCTL_PROC(_net_inet_tcp_cc_dctcp, OID_AUTO, slowstart,
     CTLFLAG_VNET | CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
     &VNET_NAME(dctcp_slowstart), 0, &dctcp_slowstart_handler, "IU",
     "half CWND reduction after the first slow start");
+
+SYSCTL_UINT(_net_inet_tcp_cc_dctcp, OID_AUTO, ect1,
+    CTLFLAG_VNET | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+    &VNET_NAME(dctcp_ect1), 0,
+    "Send DCTCP segments with ÍP ECT(0) or ECT(1)");
 
 DECLARE_CC_MODULE(dctcp, &dctcp_cc_algo);
 MODULE_VERSION(dctcp, 2);

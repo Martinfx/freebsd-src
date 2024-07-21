@@ -27,10 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)socketvar.h	8.3 (Berkeley) 2/19/95
- *
- * $FreeBSD$
  */
 #ifndef _SYS_SOCKBUF_H_
 #define _SYS_SOCKBUF_H_
@@ -52,7 +48,7 @@
 #define	SB_AUTOSIZE	0x800		/* automatically size socket buffer */
 #define	SB_STOP		0x1000		/* backpressure indicator */
 #define	SB_AIO_RUNNING	0x2000		/* AIO operation running */
-#define	SB_TLS_IFNET	0x4000		/* has used / is using ifnet KTLS */
+#define	SB_UNUSED	0x4000		/* previously used for SB_TLS_IFNET */
 #define	SB_TLS_RX_RESYNC 0x8000		/* KTLS RX lost HW sync */
 
 #define	SBS_CANTSENDMORE	0x0010	/* can't send more data to peer */
@@ -71,6 +67,7 @@ struct ktls_session;
 struct mbuf;
 struct sockaddr;
 struct socket;
+struct sockopt;
 struct thread;
 struct selinfo;
 
@@ -131,7 +128,8 @@ struct sockbuf {
 			struct	mbuf *sb_mtls;	/*  TLS mbuf chain */
 			struct	mbuf *sb_mtlstail; /* last mbuf in TLS chain */
 			uint64_t sb_tls_seqno;	/* TLS seqno */
-			struct	ktls_session *sb_tls_info; /* TLS state */
+			/* TLS state, locked by sockbuf and sock I/O mutexes. */
+			struct	ktls_session *sb_tls_info;
 		};
 		/*
 		 * PF_UNIX/SOCK_DGRAM
@@ -165,6 +163,12 @@ struct sockbuf {
 			u_int uxdg_cc;
 			u_int uxdg_ctl;
 			u_int uxdg_mbcnt;
+		};
+		/*
+		 * Netlink socket.
+		 */
+		struct {
+			TAILQ_HEAD(, nl_buf)	nl_queue;
 		};
 	};
 };
@@ -227,9 +231,11 @@ void	sbflush(struct sockbuf *sb);
 void	sbflush_locked(struct sockbuf *sb);
 void	sbrelease(struct socket *, sb_which);
 void	sbrelease_locked(struct socket *, sb_which);
-int	sbsetopt(struct socket *so, int cmd, u_long cc);
+int	sbsetopt(struct socket *so, struct sockopt *);
 bool	sbreserve_locked(struct socket *so, sb_which which, u_long cc,
 	    struct thread *td);
+bool	sbreserve_locked_limit(struct socket *so, sb_which which, u_long cc,
+	    u_long buf_max, struct thread *td);
 void	sbsndptr_adv(struct sockbuf *sb, struct mbuf *mb, u_int len);
 struct mbuf *
 	sbsndptr_noadv(struct sockbuf *sb, u_int off, u_int *moff);

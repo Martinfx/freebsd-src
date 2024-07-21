@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Alstom Group.
  * Copyright (c) 2021 Semihalf.
@@ -26,9 +26,6 @@
  */
 #ifndef _ENETC_H_
 #define _ENETC_H_
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 

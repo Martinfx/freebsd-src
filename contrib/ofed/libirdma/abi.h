@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
  *
- * Copyright (C) 2019 - 2020 Intel Corporation
+ * Copyright (C) 2019 - 2023 Intel Corporation
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,7 +31,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*$FreeBSD$*/
 
 #ifndef PROVIDER_IRDMA_ABI_H
 #define PROVIDER_IRDMA_ABI_H
@@ -86,6 +85,7 @@ struct irdma_ucreate_qp {
 	struct ibv_create_qp	ibv_cmd;
 	__aligned_u64 user_wqe_bufs;
 	__aligned_u64 user_compl_ctx;
+	__aligned_u64 comp_mask;
 
 };
 struct irdma_ucreate_qp_resp {
@@ -98,6 +98,9 @@ struct irdma_ucreate_qp_resp {
 	__u8 lsmm;
 	__u8 rsvd;
 	__u32 qp_caps;
+	__aligned_u64 comp_mask;
+	__u8 start_wqe_idx;
+	__u8 rsvd2[7];
 
 };
 struct irdma_umodify_qp_resp {
@@ -115,6 +118,7 @@ struct irdma_get_context {
 	__u32 rsvd32;
 	__u8 userspace_ver;
 	__u8 rsvd8[3];
+	__aligned_u64 comp_mask;
 
 };
 struct irdma_get_context_resp {
@@ -136,10 +140,21 @@ struct irdma_get_context_resp {
 	__u16 max_hw_sq_chunk;
 	__u8 hw_rev;
 	__u8 rsvd2;
+	__aligned_u64 comp_mask;
+	__u16 min_hw_wq_size;
+	__u8 rsvd3[6];
 
 };
 struct irdma_ureg_mr {
 	struct ibv_reg_mr	ibv_cmd;
+	__u16 reg_type; /* enum irdma_memreg_type */
+	__u16 cq_pages;
+	__u16 rq_pages;
+	__u16 sq_pages;
+
+};
+struct irdma_urereg_mr {
+	struct ibv_rereg_mr	ibv_cmd;
 	__u16 reg_type; /* enum irdma_memreg_type */
 	__u16 cq_pages;
 	__u16 rq_pages;

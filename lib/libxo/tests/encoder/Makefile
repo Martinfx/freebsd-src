@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 LIBXOSRC=	${SRCTOP}/contrib/libxo

@@ -2,8 +2,9 @@
 
 .PATH:	${.CURDIR}
 
+PACKAGE=tests
 FILES=	__init__.py
-SUBDIR=	net
+SUBDIR=	net netlink netpfil
 
 .include <bsd.own.mk>
 FILESDIR=	${TESTSBASE}/atf_python/sys

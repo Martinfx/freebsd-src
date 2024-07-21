@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003, 2004 Silicon Graphics International Corp.
  * Copyright (c) 1997-2007 Kenneth D. Merry
@@ -36,9 +36,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
@@ -171,7 +168,7 @@ cctl_start_element(void *user_data, const char *name, const char **attr)
 	if ((u_int)devlist->level >= (sizeof(devlist->cur_sb) /
 	    sizeof(devlist->cur_sb[0])))
 		log_errx(1, "%s: too many nesting levels, %zd max", __func__,
-		     sizeof(devlist->cur_sb) / sizeof(devlist->cur_sb[0]));
+		     nitems(devlist->cur_sb));
 
 	devlist->cur_sb[devlist->level] = sbuf_new_auto();
 	if (devlist->cur_sb[devlist->level] == NULL)
@@ -293,7 +290,7 @@ cctl_start_pelement(void *user_data, const char *name, const char **attr)
 	if ((u_int)devlist->level >= (sizeof(devlist->cur_sb) /
 	    sizeof(devlist->cur_sb[0])))
 		log_errx(1, "%s: too many nesting levels, %zd max", __func__,
-		     sizeof(devlist->cur_sb) / sizeof(devlist->cur_sb[0]));
+		     nitems(devlist->cur_sb));
 
 	devlist->cur_sb[devlist->level] = sbuf_new_auto();
 	if (devlist->cur_sb[devlist->level] == NULL)
@@ -617,6 +614,22 @@ retry_port:
 		}
 		cp->p_ctl_port = port->port_id;
 	}
+	while ((port = STAILQ_FIRST(&devlist.port_list))) {
+		struct cctl_lun_nv *nv;
+
+		STAILQ_REMOVE_HEAD(&devlist.port_list, links);
+		free(port->port_frontend);
+		free(port->port_name);
+		free(port->cfiscsi_target);
+		free(port->ctld_portal_group_name);
+		while ((nv = STAILQ_FIRST(&port->attr_list))) {
+			STAILQ_REMOVE_HEAD(&port->attr_list, links);
+			free(nv->value);
+			free(nv->name);
+			free(nv);
+		}
+		free(port);
+	}
 	free(name);
 
 	STAILQ_FOREACH(lun, &devlist.lun_list, links) {
@@ -666,6 +679,18 @@ retry_port:
 				    nv->name, (uintmax_t) lun->lun_id,
 				    cl->l_name);
 		}
+	}
+	while ((lun = STAILQ_FIRST(&devlist.lun_list))) {
+		struct cctl_lun_nv *nv;
+
+		STAILQ_REMOVE_HEAD(&devlist.lun_list, links);
+		while ((nv = STAILQ_FIRST(&lun->attr_list))) {
+			STAILQ_REMOVE_HEAD(&lun->attr_list, links);
+			free(nv->value);
+			free(nv->name);
+			free(nv);
+		}
+		free(lun);
 	}
 
 	return (conf);
@@ -744,12 +769,14 @@ kernel_lun_add(struct lun *lun)
 
 		req.args = nvlist_pack(req.args_nvl, &req.args_len);
 		if (req.args == NULL) {
+			nvlist_destroy(req.args_nvl);
 			log_warn("error packing nvlist");
 			return (1);
 		}
 	}
 
 	error = ioctl(ctl_fd, CTL_LUN_REQ, &req);
+	free(req.args);
 	nvlist_destroy(req.args_nvl);
 
 	if (error != 0) {
@@ -827,12 +854,14 @@ kernel_lun_modify(struct lun *lun)
 
 		req.args = nvlist_pack(req.args_nvl, &req.args_len);
 		if (req.args == NULL) {
+			nvlist_destroy(req.args_nvl);
 			log_warn("error packing nvlist");
 			return (1);
 		}
 	}
 
 	error = ioctl(ctl_fd, CTL_LUN_REQ, &req);
+	free(req.args);
 	nvlist_destroy(req.args_nvl);
 
 	if (error != 0) {
@@ -1055,6 +1084,7 @@ kernel_port_add(struct port *port)
 
 		req.args = nvlist_pack(req.args_nvl, &req.args_len);
 		if (req.args == NULL) {
+			nvlist_destroy(req.args_nvl);
 			log_warn("error packing nvlist");
 			return (1);
 		}
@@ -1062,6 +1092,7 @@ kernel_port_add(struct port *port)
 		req.result = result_buf;
 		req.result_len = sizeof(result_buf);
 		error = ioctl(ctl_fd, CTL_PORT_REQ, &req);
+		free(req.args);
 		nvlist_destroy(req.args_nvl);
 
 		if (error != 0) {
@@ -1205,11 +1236,13 @@ kernel_port_remove(struct port *port)
 
 		req.args = nvlist_pack(req.args_nvl, &req.args_len);
 		if (req.args == NULL) {
+			nvlist_destroy(req.args_nvl);
 			log_warn("error packing nvlist");
 			return (1);
 		}
 
 		error = ioctl(ctl_fd, CTL_PORT_REQ, &req);
+		free(req.args);
 		nvlist_destroy(req.args_nvl);
 
 		if (error != 0) {

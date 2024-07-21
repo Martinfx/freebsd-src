@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007 Olivier Houchard
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <string.h>
@@ -87,22 +84,25 @@ pt_ucontext_to_reg(const ucontext_t *uc, struct reg *r)
 }
 
 void
-pt_fpreg_to_ucontext(const struct fpreg *r __unused, ucontext_t *uc)
+pt_fpreg_to_ucontext(const struct fpreg *r, ucontext_t *uc)
 {
-	mcontext_t *mc = &uc->uc_mcontext;
+	mcontext_vfp_t *mc_vfp;
 
-	/* XXX */
-	mc->mc_vfp_size = 0;
-	mc->mc_vfp_ptr = NULL;
-	memset(mc->mc_spare, 0, sizeof(mc->mc_spare));
+	mc_vfp = uc->uc_mcontext.mc_vfp_ptr;
+
+	if (mc_vfp != NULL)
+		memcpy(mc_vfp, r, sizeof(*r));
 }
 
 void
-pt_ucontext_to_fpreg(const ucontext_t *uc __unused, struct fpreg *r)
+pt_ucontext_to_fpreg(const ucontext_t *uc, struct fpreg *r)
 {
+	mcontext_vfp_t *mc_vfp;
 
-	/* XXX */
-	memset(r, 0, sizeof(*r));
+	mc_vfp = uc->uc_mcontext.mc_vfp_ptr;
+
+	if (mc_vfp != NULL)
+		memcpy(r, &mc_vfp, sizeof(*r));
 }
 
 void

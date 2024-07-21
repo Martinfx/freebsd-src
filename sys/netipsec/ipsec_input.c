@@ -41,8 +41,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
@@ -61,10 +59,12 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_enc.h>
+#include <net/if_private.h>
 #include <net/netisr.h>
 #include <net/vnet.h>
 
 #include <netinet/in.h>
+#include <netinet/in_pcb.h>
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
@@ -85,17 +85,18 @@ __FBSDID("$FreeBSD$");
 #ifdef INET6
 #include <netipsec/ipsec6.h>
 #endif
+#include <netipsec/ipsec_support.h>
 #include <netipsec/ah_var.h>
 #include <netipsec/esp.h>
 #include <netipsec/esp_var.h>
 #include <netipsec/ipcomp_var.h>
+#include <netipsec/ipsec_offload.h>
 
 #include <netipsec/key.h>
 #include <netipsec/keydb.h>
 #include <netipsec/key_debug.h>
 
 #include <netipsec/xform.h>
-#include <netinet6/ip6protosw.h>
 
 #include <machine/in_cksum.h>
 #include <machine/stdarg.h>
@@ -237,6 +238,11 @@ ipsec_common_input(struct mbuf *m, int skip, int protoff, int af, int sproto)
 int
 ipsec4_input(struct mbuf *m, int offset, int proto)
 {
+	int error;
+
+	error = ipsec_accel_input(m, offset, proto);
+	if (error != ENXIO)
+		return (error);
 
 	switch (proto) {
 	case IPPROTO_AH:
@@ -279,23 +285,21 @@ ipsec4_input(struct mbuf *m, int offset, int proto)
 }
 
 int
-ipsec4_ctlinput(int code, struct sockaddr *sa, void *v)
+ipsec4_ctlinput(ipsec_ctlinput_param_t param)
 {
+	struct icmp *icp = param.icmp;
+	struct ip *ip = &icp->icmp_ip;
+	struct sockaddr_in icmpsrc = {
+		.sin_len = sizeof(struct sockaddr_in),
+		.sin_family = AF_INET,
+		.sin_addr = ip->ip_dst,
+	};
 	struct in_conninfo inc;
 	struct secasvar *sav;
-	struct icmp *icp;
-	struct ip *ip = v;
 	uint32_t pmtu, spi;
 	uint32_t max_pmtu;
 	uint8_t proto;
 
-	if (code != PRC_MSGSIZE || ip == NULL)
-		return (EINVAL);
-	if (sa->sa_family != AF_INET ||
-	    sa->sa_len != sizeof(struct sockaddr_in))
-		return (EAFNOSUPPORT);
-
-	icp = __containerof(ip, struct icmp, icmp_ip);
 	pmtu = ntohs(icp->icmp_nextmtu);
 
 	if (pmtu < V_ip4_ipsec_min_pmtu)
@@ -307,14 +311,14 @@ ipsec4_ctlinput(int code, struct sockaddr *sa, void *v)
 		return (EINVAL);
 
 	memcpy(&spi, (caddr_t)ip + (ip->ip_hl << 2), sizeof(spi));
-	sav = key_allocsa((union sockaddr_union *)sa, proto, spi);
+	sav = key_allocsa((union sockaddr_union *)&icmpsrc, proto, spi);
 	if (sav == NULL)
 		return (ENOENT);
 
 	key_freesav(&sav);
 
 	memset(&inc, 0, sizeof(inc));
-	inc.inc_faddr = satosin(sa)->sin_addr;
+	inc.inc_faddr = ip->ip_dst;
 
 	/* Update pmtu only if its smaller than the current one. */
 	max_pmtu = tcp_hc_getmtu(&inc);
@@ -538,7 +542,12 @@ ipsec6_lasthdr(int proto)
 int
 ipsec6_input(struct mbuf *m, int offset, int proto)
 {
+	int error;
 
+	error = ipsec_accel_input(m, offset, proto);
+	if (error != ENXIO)
+		return (error);
+		
 	switch (proto) {
 	case IPPROTO_AH:
 	case IPPROTO_ESP:
@@ -568,7 +577,7 @@ ipsec6_input(struct mbuf *m, int offset, int proto)
 }
 
 int
-ipsec6_ctlinput(int code, struct sockaddr *sa, void *v)
+ipsec6_ctlinput(ipsec_ctlinput_param_t param)
 {
 	return (0);
 }
@@ -629,6 +638,15 @@ ipsec6_common_input_cb(struct mbuf *m, struct secasvar *sav, int skip,
 	/* Save protocol */
 	m_copydata(m, protoff, 1, &nxt8);
 	prot = nxt8;
+
+	/*
+	 * Check that we have NAT-T enabled and apply transport mode
+	 * decapsulation NAT procedure (RFC3948).
+	 * Do this before invoking into the PFIL.
+	 */
+	if (sav->natt != NULL &&
+	    (prot == IPPROTO_UDP || prot == IPPROTO_TCP))
+		udp_ipsec_adjust_cksum(m, sav, prot, skip);
 
 	/* IPv6-in-IP encapsulation */
 	if (prot == IPPROTO_IPV6 &&

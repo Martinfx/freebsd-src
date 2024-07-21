@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include "../Makefile.inc"
 
 CFLAGS+=	-DATF_BUILD_CC='"cc"'

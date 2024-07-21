@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016,2017 SoftIron Inc.
  * Copyright (c) 2020 Advanced Micro Devices, Inc.
@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _XGBE_OSDEP_H_
@@ -232,13 +230,6 @@ __ffsl(long mask)
 {
 
         return (ffsl(mask) - 1);
-}
-
-static inline int
-fls64(uint64_t mask)
-{
-
-	return (flsll(mask));
 }
 
 static inline int

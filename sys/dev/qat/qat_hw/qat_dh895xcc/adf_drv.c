@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #include "qat_freebsd.h"
 #include "adf_cfg.h"
 #include "adf_common_drv.h"
@@ -126,6 +125,7 @@ adf_attach(device_t dev)
 	/* Get Accelerators and Accelerators Engines masks */
 	hw_data->accel_mask = hw_data->get_accel_mask(accel_dev);
 	hw_data->ae_mask = hw_data->get_ae_mask(accel_dev);
+	hw_data->admin_ae_mask = hw_data->ae_mask;
 	accel_pci_dev->sku = hw_data->get_sku(hw_data);
 	/* If the device has no acceleration engines then ignore it. */
 	if (!hw_data->accel_mask || !hw_data->ae_mask ||

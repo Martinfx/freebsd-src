@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Hiroki Sato.  All rights reserved.
  *
@@ -25,11 +25,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$FreeBSD$";
-#endif
-
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -53,31 +48,32 @@ static const char rcsid[] =
 
 #include "ifconfig.h"
 
-#define	GIFBITS	"\020\2IGNORE_SOURCE"
-
-static void	gif_status(int);
+static const char *GIFBITS[] = {
+	[1] = "IGNORE_SOURCE",
+};
 
 static void
-gif_status(int s)
+gif_status(if_ctx *ctx)
 {
 	int opts;
+	struct ifreq ifr = { .ifr_data = (caddr_t)&opts };
 
-	ifr.ifr_data = (caddr_t)&opts;
-	if (ioctl(s, GIFGOPTS, &ifr) == -1)
+	if (ioctl_ctx_ifr(ctx, GIFGOPTS, &ifr) == -1)
 		return;
 	if (opts == 0)
 		return;
-	printb("\toptions", opts, GIFBITS);
+	printf("\toptions=%x", opts);
+	print_bits("options", &opts, 1, GIFBITS, nitems(GIFBITS));
 	putchar('\n');
 }
 
 static void
-setgifopts(const char *val, int d, int s, const struct afswtch *afp)
+setgifopts(if_ctx *ctx, const char *val __unused, int d)
 {
 	int opts;
+	struct ifreq ifr = { .ifr_data = (caddr_t)&opts };
 
-	ifr.ifr_data = (caddr_t)&opts;
-	if (ioctl(s, GIFGOPTS, &ifr) == -1) {
+	if (ioctl_ctx_ifr(ctx, GIFGOPTS, &ifr) == -1) {
 		warn("ioctl(GIFGOPTS)");
 		return;
 	}
@@ -87,7 +83,7 @@ setgifopts(const char *val, int d, int s, const struct afswtch *afp)
 	else
 		opts |= d;
 
-	if (ioctl(s, GIFSOPTS, &ifr) == -1) {
+	if (ioctl_ctx(ctx, GIFSOPTS, &ifr) == -1) {
 		warn("ioctl(GIFSOPTS)");
 		return;
 	}

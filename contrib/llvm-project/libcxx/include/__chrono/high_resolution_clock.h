@@ -15,13 +15,12 @@
 #include <__config>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
-#pragma GCC system_header
+#  pragma GCC system_header
 #endif
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-namespace chrono
-{
+namespace chrono {
 
 #ifndef _LIBCPP_HAS_NO_MONOTONIC_CLOCK
 typedef steady_clock high_resolution_clock;

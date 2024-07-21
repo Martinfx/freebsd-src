@@ -25,9 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd April 29, 2021
+.Dd October 13, 2023
 .Dt KASAN 9
 .Os
 .Sh NAME
@@ -52,7 +50,7 @@ kernel configuration file:
 .Nm
 is a subsystem which leverages compiler instrumentation to detect invalid
 memory accesses in the kernel.
-Currently it is implemented only on the amd64 platform.
+Currently it is implemented on the amd64 and arm64 platforms.
 .Pp
 When
 .Nm
@@ -89,6 +87,12 @@ If not, the runtime prints a warning or panics the kernel, depending on the
 value of the
 .Sy debug.kasan.panic_on_violation
 sysctl/tunable.
+.Pp
+The
+.Nm
+runtime in a KASAN-configured kernel can be disabled by
+setting the loader tunable
+.Sy debug.kasan.disable=1 .
 .Pp
 The
 .Nm
@@ -159,7 +163,7 @@ should be 0.
 was ported from
 .Nx
 and first appeared in
-.Fx 14.0 .
+.Fx 13.1 .
 .Sh BUGS
 Accesses to kernel memory outside of the kernel map are ignored by the
 .Nm
@@ -168,7 +172,7 @@ When
 .Nm
 is configured, the kernel memory allocators are configured to use the kernel
 map, but some uses of the direct map remain.
-For example, on amd64, accesses to page table pages are not tracked.
+For example, on amd64 and arm64, accesses to page table pages are not tracked.
 .Pp
 Some kernel memory allocators explicitly permit accesses after an object has
 been freed.

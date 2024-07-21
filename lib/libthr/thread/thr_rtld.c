@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006, David Xu <davidxu@freebsd.org>
  * All rights reserved.
@@ -26,13 +26,9 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
  /*
   * A lockless rwlock for rtld.
   */
-#include <sys/cdefs.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <link.h>
@@ -158,6 +154,17 @@ _thr_rtld_lock_release(void *lock)
 	l = (struct rtld_lock *)lock;
 	
 	state = l->lock.rw_state;
+	if (__predict_false(_thr_after_fork)) {
+		/*
+		 * After fork, only this thread is running, there is no
+		 * waiters.  Keeping waiters recorded in rwlock breaks
+		 * wake logic.
+		 */
+		atomic_clear_int(&l->lock.rw_state,
+		    URWLOCK_WRITE_WAITERS | URWLOCK_READ_WAITERS);
+		l->lock.rw_blocked_readers = 0;
+		l->lock.rw_blocked_writers = 0;
+	}
 	if (_thr_rwlock_unlock(&l->lock) == 0) {
 		if ((state & URWLOCK_WRITE_OWNER) == 0)
 			curthread->rdlock_count--;
@@ -213,22 +220,23 @@ _thr_rtld_init(void)
 	struct RtldLockInfo	li;
 	struct pthread		*curthread;
 	ucontext_t *uc;
-	long dummy = -1;
 	int uc_len;
+	char dummy[2] = {};
 
 	curthread = _get_curthread();
 
 	/* force to resolve _umtx_op PLT */
-	_umtx_op_err((struct umtx *)&dummy, UMTX_OP_WAKE, 1, 0, 0);
+	_umtx_op_err(&dummy, UMTX_OP_WAKE, 1, 0, 0);
 	
 	/* force to resolve errno() PLT */
 	__error();
 
 	/* force to resolve memcpy PLT */
-	memcpy(&dummy, &dummy, sizeof(dummy));
+	memcpy(&dummy[0], &dummy[1], 1);
 
 	mprotect(NULL, 0, 0);
 	_rtld_get_stack_prot();
+	thr_wake(-1);
 
 	li.rtli_version = RTLI_VERSION;
 	li.lock_create  = _thr_rtld_lock_create;

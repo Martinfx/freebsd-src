@@ -29,9 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/sbuf.h>
@@ -48,9 +45,11 @@ procfs_doosrel(PFS_FILL_ARGS)
 
 	if (uio == NULL)
 		return (EOPNOTSUPP);
-	if (uio->uio_rw == UIO_READ) {
+	switch (uio->uio_rw) {
+	case UIO_READ:
 		sbuf_printf(sb, "%d\n", p->p_osrel);
-	} else {
+		break;
+	case UIO_WRITE:
 		sbuf_trim(sb);
 		sbuf_finish(sb);
 		pp = sbuf_data(sb);
@@ -65,6 +64,7 @@ procfs_doosrel(PFS_FILL_ARGS)
 			osrel = ov;
 		}
 		p->p_osrel = osrel;
+		break;
 	}
 	return (0);
 }

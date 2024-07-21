@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 David O'Brien <obrien@FreeBSD.org>
  * Copyright (c) 2003 Orlando Bassotto <orlando.bassotto@ieo-research.it>
@@ -42,8 +42,6 @@
 
 #include <dev/sound/midi/mpu401.h>
 #include "mpufoi_if.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 /* -------------------------------------------------------------------- */
 
@@ -2128,9 +2126,9 @@ emu_pci_attach(device_t dev)
 		goto bad;
 	}
 
-	snprintf(status, SND_STATUSLEN, "at io 0x%jx irq %jd %s",
+	snprintf(status, SND_STATUSLEN, "port 0x%jx irq %jd on %s",
 	    rman_get_start(sc->reg), rman_get_start(sc->irq),
-	    PCM_KLDSTRING(snd_emu10k1));
+	    device_get_nameunit(device_get_parent(dev)));
 
 	if (pcm_register(dev, sc, sc->nchans, gotmic ? 3 : 2)) goto bad;
 	for (i = 0; i < sc->nchans; i++)

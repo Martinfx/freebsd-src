@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	decioctl
 SRCS=	decioctl.c
 MAN=

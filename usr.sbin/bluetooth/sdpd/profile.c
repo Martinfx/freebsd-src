@@ -3,7 +3,7 @@
  */
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Maksim Yevmenkin <m_evmenkin@yahoo.com>
  * All rights reserved.
@@ -30,9 +30,9 @@
  * SUCH DAMAGE.
  *
  * $Id: profile.c,v 1.6 2004/01/13 19:31:54 max Exp $
- * $FreeBSD$
  */
 
+#include <sys/param.h>
 #include <sys/queue.h>
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
@@ -78,7 +78,7 @@ profile_get_descriptor(uint16_t uuid)
 
 	int32_t			i;
 
-	for (i = 0; i < sizeof(profiles)/sizeof(profiles[0]); i++)
+	for (i = 0; i < nitems(profiles); i++)
 		if (profiles[i]->uuid == uuid)
 			return (profiles[i]);
 
@@ -445,7 +445,7 @@ bnep_profile_create_protocol_descriptor_list(
 	};
 
 	uint16_t	 i, psm, version = 0x0100,
-			 nptypes = sizeof(ptype)/sizeof(ptype[0]),
+			 nptypes = nitems(ptype),
 			 nptypes_size = nptypes * 3;
 
 	if (datalen != 2 || 18 + nptypes_size > 255 ||

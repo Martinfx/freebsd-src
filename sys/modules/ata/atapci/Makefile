@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR += chipsets
 
 .PATH: ${SRCTOP}/sys/dev/ata

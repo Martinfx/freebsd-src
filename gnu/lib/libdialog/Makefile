@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 DIALOG=		${SRCTOP}/contrib/dialog
 
 LIB=		dialog

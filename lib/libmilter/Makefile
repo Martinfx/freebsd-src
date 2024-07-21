@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=sendmail
@@ -13,6 +11,11 @@ CFLAGS+=-DSM_CONF_POLL
 
 .if ${MK_INET6_SUPPORT} != "no"
 CFLAGS+=-DNETINET6
+.endif
+
+.if ${MK_OPENSSL} != "no"
+# STARTTLS support
+CFLAGS+=-DSTARTTLS
 .endif
 
 # User customizations to the sendmail build environment
@@ -35,3 +38,5 @@ sm_os.h: ${SENDMAIL_DIR}/include/sm/os/sm_os_freebsd.h .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 
 .include <bsd.lib.mk>
+
+CWARNFLAGS+= ${NO_WDEPRECATED_NON_PROTOTYPE}

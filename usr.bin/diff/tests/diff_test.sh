@@ -1,4 +1,3 @@
-# $FreeBSD$
 
 atf_test_case simple
 atf_test_case unified
@@ -7,10 +6,12 @@ atf_test_case header_ns
 atf_test_case ifdef
 atf_test_case group_format
 atf_test_case side_by_side
+atf_test_case side_by_side_tabbed
 atf_test_case brief_format
 atf_test_case b230049
 atf_test_case stripcr_o
 atf_test_case b252515
+atf_test_case b278988
 atf_test_case Bflag
 atf_test_case Nflag
 atf_test_case tabsize
@@ -89,6 +90,14 @@ b252515_body()
 		diff -qw b252515_a.in b252515_b.in
 }
 
+b278988_body()
+{
+	printf 'a\nb\nn' > b278988.a.in
+	printf 'a\n\nb\nn' > b278988.b.in
+	atf_check -o empty -s eq:0 \
+		diff -Bw b278988.a.in b278988.b.in
+}
+
 header_body()
 {
 	export TZ=UTC
@@ -143,6 +152,23 @@ side_by_side_body()
 	    diff -y --suppress-common-lines A B
 	atf_check -o match:"$exp_output_suppressed" -s exit:1 \
 	    diff -W 65 -y --suppress-common-lines A B
+}
+
+side_by_side_tabbed_body()
+{
+	file_a=$(atf_get_srcdir)/side_by_side_tabbed_a.in
+	file_b=$(atf_get_srcdir)/side_by_side_tabbed_b.in
+
+	atf_check -o save:diffout -s not-exit:0 \
+	    diff -y ${file_a} ${file_b}
+	atf_check -o save:diffout_expanded -s not-exit:0 \
+	    diff -yt ${file_a} ${file_b}
+
+	atf_check -o not-empty grep -Ee 'file A.+file B' diffout
+	atf_check -o not-empty grep -Ee 'file A.+file B' diffout_expanded
+
+	atf_check -o not-empty grep -Ee 'tabs.+tabs' diffout
+	atf_check -o not-empty grep -Ee 'tabs.+tabs' diffout_expanded
 }
 
 brief_format_body()
@@ -249,6 +275,10 @@ report_identical_body()
 {
 	printf "\tA\n" > A
 	printf "\tB\n" > B
+	atf_check -s exit:0 -o match:"are identical" \
+		  diff -s A A
+	atf_check -s exit:1 -o not-match:"are identical" \
+		  diff -s A B
 	chmod -r B
 	atf_check -s exit:2 -e inline:"diff: B: Permission denied\n" \
 		-o empty diff -s A B
@@ -343,10 +373,12 @@ atf_init_test_cases()
 	atf_add_test_case ifdef
 	atf_add_test_case group_format
 	atf_add_test_case side_by_side
+	atf_add_test_case side_by_side_tabbed
 	atf_add_test_case brief_format
 	atf_add_test_case b230049
 	atf_add_test_case stripcr_o
 	atf_add_test_case b252515
+	atf_add_test_case b278988
 	atf_add_test_case Bflag
 	atf_add_test_case Nflag
 	atf_add_test_case tabsize

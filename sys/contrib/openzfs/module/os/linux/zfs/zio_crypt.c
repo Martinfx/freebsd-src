@@ -223,14 +223,32 @@ int
 zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 {
 	int ret;
-	crypto_mechanism_t mech;
+	crypto_mechanism_t mech = {0};
 	uint_t keydata_len;
 
 	ASSERT(key != NULL);
 	ASSERT3U(crypt, <, ZIO_CRYPT_FUNCTIONS);
 
+/*
+ * Workaround for GCC 12+ with UBSan enabled deficencies.
+ *
+ * GCC 12+ invoked with -fsanitize=undefined incorrectly reports the code
+ * below as violating -Warray-bounds
+ */
+#if defined(__GNUC__) && !defined(__clang__) && \
+	((!defined(_KERNEL) && defined(ZFS_UBSAN_ENABLED)) || \
+	    defined(CONFIG_UBSAN))
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 	keydata_len = zio_crypt_table[crypt].ci_keylen;
+#if defined(__GNUC__) && !defined(__clang__) && \
+	((!defined(_KERNEL) && defined(ZFS_UBSAN_ENABLED)) || \
+	    defined(CONFIG_UBSAN))
+#pragma GCC diagnostic pop
+#endif
 	memset(key, 0, sizeof (zio_crypt_key_t));
+	rw_init(&key->zk_salt_lock, NULL, RW_DEFAULT, NULL);
 
 	/* fill keydata buffers and salt with random data */
 	ret = random_get_bytes((uint8_t *)&key->zk_guid, sizeof (uint64_t));
@@ -282,7 +300,6 @@ zio_crypt_key_init(uint64_t crypt, zio_crypt_key_t *key)
 	key->zk_crypt = crypt;
 	key->zk_version = ZIO_CRYPT_KEY_CURRENT_VERSION;
 	key->zk_salt_count = 0;
-	rw_init(&key->zk_salt_lock, NULL, RW_DEFAULT, NULL);
 
 	return (0);
 
@@ -1388,7 +1405,7 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
     boolean_t *no_crypt)
 {
 	int ret;
-	uint64_t txtype, lr_len;
+	uint64_t txtype, lr_len, nused;
 	uint_t nr_src, nr_dst, crypt_len;
 	uint_t aad_len = 0, nr_iovecs = 0, total_len = 0;
 	iovec_t *src_iovecs = NULL, *dst_iovecs = NULL;
@@ -1415,7 +1432,10 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 	zilc = (zil_chain_t *)src;
 	slrp = src + sizeof (zil_chain_t);
 	aadp = aadbuf;
-	blkend = src + ((byteswap) ? BSWAP_64(zilc->zc_nused) : zilc->zc_nused);
+	nused = ((byteswap) ? BSWAP_64(zilc->zc_nused) : zilc->zc_nused);
+	ASSERT3U(nused, >=, sizeof (zil_chain_t));
+	ASSERT3U(nused, <=, datalen);
+	blkend = src + nused;
 
 	/* calculate the number of encrypted iovecs we will need */
 	for (; slrp < blkend; slrp += lr_len) {
@@ -1428,6 +1448,8 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 			txtype = BSWAP_64(lr->lrc_txtype);
 			lr_len = BSWAP_64(lr->lrc_reclen);
 		}
+		ASSERT3U(lr_len, >=, sizeof (lr_t));
+		ASSERT3U(lr_len, <=, blkend - slrp);
 
 		nr_iovecs++;
 		if (txtype == TX_WRITE && lr_len != sizeof (lr_write_t))
@@ -1496,20 +1518,16 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 		 * authenticate it.
 		 */
 		if (txtype == TX_WRITE) {
-			crypt_len = sizeof (lr_write_t) -
-			    sizeof (lr_t) - sizeof (blkptr_t);
+			const size_t o = offsetof(lr_write_t, lr_blkptr);
+			crypt_len = o - sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_len = crypt_len;
 			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
 			dst_iovecs[nr_iovecs].iov_len = crypt_len;
 
 			/* copy the bp now since it will not be encrypted */
-			memcpy(dlrp + sizeof (lr_write_t) - sizeof (blkptr_t),
-			    slrp + sizeof (lr_write_t) - sizeof (blkptr_t),
-			    sizeof (blkptr_t));
-			memcpy(aadp,
-			    slrp + sizeof (lr_write_t) - sizeof (blkptr_t),
-			    sizeof (blkptr_t));
+			memcpy(dlrp + o, slrp + o, sizeof (blkptr_t));
+			memcpy(aadp, slrp + o, sizeof (blkptr_t));
 			aadp += sizeof (blkptr_t);
 			aad_len += sizeof (blkptr_t);
 			nr_iovecs++;
@@ -1526,6 +1544,21 @@ zio_crypt_init_uios_zil(boolean_t encrypt, uint8_t *plainbuf,
 				nr_iovecs++;
 				total_len += crypt_len;
 			}
+		} else if (txtype == TX_CLONE_RANGE) {
+			const size_t o = offsetof(lr_clone_range_t, lr_nbps);
+			crypt_len = o - sizeof (lr_t);
+			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
+			src_iovecs[nr_iovecs].iov_len = crypt_len;
+			dst_iovecs[nr_iovecs].iov_base = dlrp + sizeof (lr_t);
+			dst_iovecs[nr_iovecs].iov_len = crypt_len;
+
+			/* copy the bps now since they will not be encrypted */
+			memcpy(dlrp + o, slrp + o, lr_len - o);
+			memcpy(aadp, slrp + o, lr_len - o);
+			aadp += lr_len - o;
+			aad_len += lr_len - o;
+			nr_iovecs++;
+			total_len += crypt_len;
 		} else {
 			crypt_len = lr_len - sizeof (lr_t);
 			src_iovecs[nr_iovecs].iov_base = slrp + sizeof (lr_t);
@@ -1891,6 +1924,9 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 	crypto_ctx_template_t tmpl;
 	uint8_t *authbuf = NULL;
 
+	memset(&puio, 0, sizeof (puio));
+	memset(&cuio, 0, sizeof (cuio));
+
 	/*
 	 * If the needed key is the current one, just use it. Otherwise we
 	 * need to generate a temporary one from the given salt + master key.
@@ -1950,9 +1986,6 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 		/* If the hardware implementation fails fall back to software */
 	}
 
-	memset(&puio, 0, sizeof (puio));
-	memset(&cuio, 0, sizeof (cuio));
-
 	/* create uios for encryption */
 	ret = zio_crypt_init_uios(encrypt, key->zk_version, ot, plainbuf,
 	    cipherbuf, datalen, byteswap, mac, &puio, &cuio, &enc_len,
@@ -1968,7 +2001,6 @@ zio_do_crypt_data(boolean_t encrypt, zio_crypt_key_t *key,
 
 	if (locked) {
 		rw_exit(&key->zk_salt_lock);
-		locked = B_FALSE;
 	}
 
 	if (authbuf != NULL)

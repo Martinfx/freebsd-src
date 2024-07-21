@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)socket.h	8.4 (Berkeley) 2/21/94
- * $FreeBSD$
  */
 
 #ifndef _SYS_SOCKET_H_
@@ -268,7 +265,8 @@ struct accept_filter_arg {
 #define	AF_INET_SDP	40		/* OFED Socket Direct Protocol ipv4 */
 #define	AF_INET6_SDP	42		/* OFED Socket Direct Protocol ipv6 */
 #define	AF_HYPERV	43		/* HyperV sockets */
-#define	AF_MAX		43
+#define	AF_DIVERT	44		/* divert(4) */
+#define	AF_MAX		44
 /*
  * When allocating a new AF_ constant, please only allocate
  * even numbered constants for FreeBSD until 134 as odd numbered AF_
@@ -393,6 +391,7 @@ struct sockproto {
 #define	PF_NETLINK	AF_NETLINK
 #define	PF_INET_SDP	AF_INET_SDP
 #define	PF_INET6_SDP	AF_INET6_SDP
+#define	PF_DIVERT	AF_DIVERT
 
 #define	PF_MAX		AF_MAX
 
@@ -628,17 +627,14 @@ struct omsghdr {
 /*
  * howto arguments for shutdown(2), specified by Posix.1g.
  */
-#define	SHUT_RD		0		/* shut down the reading side */
-#define	SHUT_WR		1		/* shut down the writing side */
-#define	SHUT_RDWR	2		/* shut down both sides */
-
-#if __BSD_VISIBLE
-/* for SCTP */
-/* we cheat and use the SHUT_XX defines for these */
-#define PRU_FLUSH_RD     SHUT_RD
-#define PRU_FLUSH_WR     SHUT_WR
-#define PRU_FLUSH_RDWR   SHUT_RDWR
-#endif
+enum shutdown_how {
+	SHUT_RD = 0,		/* shut down the reading side */
+#define	SHUT_RD		SHUT_RD
+	SHUT_WR,		/* shut down the writing side */
+#define	SHUT_WR		SHUT_WR
+	SHUT_RDWR		/* shut down both sides */
+#define	SHUT_RDWR	SHUT_RDWR
+};
 
 #if __BSD_VISIBLE
 /*
@@ -673,6 +669,10 @@ struct mmsghdr {
 	ssize_t		msg_len;		/* message length */
 };
 #endif /* __BSD_VISIBLE */
+
+#if defined(_FORTIFY_SOURCE) && _FORTIFY_SOURCE > 0
+#include <ssp/socket.h>
+#endif
 
 #ifndef	_KERNEL
 
@@ -720,34 +720,10 @@ __END_DECLS
 #ifdef _KERNEL
 struct socket;
 
-struct tcpcb *so_sototcpcb(struct socket *so);
-struct inpcb *so_sotoinpcb(struct socket *so);
-struct sockbuf *so_sockbuf_snd(struct socket *);
-struct sockbuf *so_sockbuf_rcv(struct socket *);
-
-int so_state_get(const struct socket *);
-void so_state_set(struct socket *, int);
-
 int so_options_get(const struct socket *);
 void so_options_set(struct socket *, int);
 
 int so_error_get(const struct socket *);
 void so_error_set(struct socket *, int);
-
-int so_linger_get(const struct socket *);
-void so_linger_set(struct socket *, int);
-
-struct protosw *so_protosw_get(const struct socket *);
-void so_protosw_set(struct socket *, struct protosw *);
-
-void so_sorwakeup_locked(struct socket *so);
-void so_sowwakeup_locked(struct socket *so);
-
-void so_sorwakeup(struct socket *so);
-void so_sowwakeup(struct socket *so);
-
-void so_lock(struct socket *so);
-void so_unlock(struct socket *so);
-
 #endif /* _KERNEL */
 #endif /* !_SYS_SOCKET_H_ */

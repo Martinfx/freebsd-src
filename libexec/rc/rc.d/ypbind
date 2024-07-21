@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ypbind
@@ -13,6 +12,8 @@
 name="ypbind"
 desc="NIS domain binding daemon"
 rcvar="nis_client_enable"
+
+: ${ypbind_svcj_options:="net_basic"}
 
 load_rc_config $name
 

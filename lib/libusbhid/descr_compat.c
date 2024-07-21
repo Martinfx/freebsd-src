@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999 Lennart Augustsson <augustss@netbsd.org>
  * All rights reserved.
@@ -31,9 +31,6 @@
  * USB stack.
  */
 #ifdef HID_COMPAT7
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 

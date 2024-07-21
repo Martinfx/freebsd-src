@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 The FreeBSD Foundation
  *
@@ -28,13 +28,12 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <string.h>
+#include <ssp/ssp.h>
 
 void *
-mempcpy(void *__restrict dst, const void *__restrict src, size_t len)
+(mempcpy)(void *__restrict dst, const void *__restrict src,
+    size_t len)
 {
 	return ((char *)memcpy(dst, src, len) + len);
 }

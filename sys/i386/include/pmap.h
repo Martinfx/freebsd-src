@@ -37,10 +37,6 @@
  * map the page tables using the pagetables themselves. This is done to
  * reduce the impact on kernel virtual memory for lots of sparse address
  * space, and to reduce the cost of memory to each process.
- *
- *	from: hp300: @(#)pmap.h	7.2 (Berkeley) 12/16/90
- *	from: @(#)pmap.h	7.4 (Berkeley) 5/12/91
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_PMAP_H_
@@ -84,7 +80,7 @@
  * 4KB (PTE) page mappings have identical settings for the following fields:
  */
 #define PG_PTE_PROMOTE	(PG_MANAGED | PG_W | PG_G | PG_PTE_PAT | \
-	    PG_M | PG_A | PG_NC_PCD | PG_NC_PWT | PG_U | PG_RW | PG_V)
+	    PG_M | PG_NC_PCD | PG_NC_PWT | PG_U | PG_RW | PG_V)
 
 /*
  * Page Protection Exception bits
@@ -133,6 +129,7 @@
 #include <sys/_cpuset.h>
 #include <sys/_lock.h>
 #include <sys/_mutex.h>
+#include <sys/_pv_entry.h>
 
 #include <vm/_vm_radix.h>
 
@@ -157,9 +154,6 @@
 /*
  * Pmap stuff
  */
-struct	pv_entry;
-struct	pv_chunk;
-
 struct md_page {
 	TAILQ_HEAD(,pv_entry)	pv_list;
 	int			pat_mode;
@@ -194,33 +188,6 @@ extern struct pmap	kernel_pmap_store;
 #define	PMAP_MTX(pmap)		(&(pmap)->pm_mtx)
 #define	PMAP_TRYLOCK(pmap)	mtx_trylock(&(pmap)->pm_mtx)
 #define	PMAP_UNLOCK(pmap)	mtx_unlock(&(pmap)->pm_mtx)
-#endif
-
-/*
- * For each vm_page_t, there is a list of all currently valid virtual
- * mappings of that page.  An entry is a pv_entry_t, the list is pv_list.
- */
-typedef struct pv_entry {
-	vm_offset_t	pv_va;		/* virtual address for mapping */
-	TAILQ_ENTRY(pv_entry)	pv_next;
-} *pv_entry_t;
-
-/*
- * pv_entries are allocated in chunks per-process.  This avoids the
- * need to track per-pmap assignments.
- */
-#define	_NPCPV	336
-#define	_NPCM	howmany(_NPCPV, 32)
-
-struct pv_chunk {
-	pmap_t			pc_pmap;
-	TAILQ_ENTRY(pv_chunk)	pc_list;
-	uint32_t		pc_map[_NPCM];	/* bitmap; 1 = free */
-	TAILQ_ENTRY(pv_chunk)	pc_lru;
-	struct pv_entry		pc_pventry[_NPCPV];
-};
-
-#ifdef	_KERNEL
 
 extern char *ptvmmap;		/* poor name! */
 extern vm_offset_t virtual_avail;
@@ -251,7 +218,7 @@ void	pmap_basemem_setup(u_int basemem);
 void	*pmap_bios16_enter(void);
 void	pmap_bios16_leave(void *handle);
 void	pmap_bootstrap(vm_paddr_t);
-int	pmap_cache_bits(pmap_t, int mode, boolean_t is_pde);
+int	pmap_cache_bits(pmap_t, int mode, bool is_pde);
 int	pmap_change_attr(vm_offset_t, vm_size_t, int);
 caddr_t	pmap_cmap3(vm_paddr_t pa, u_int pte_bits);
 void	pmap_cp_slow0_map(vm_offset_t kaddr, int plen, vm_page_t *ma);
@@ -269,7 +236,7 @@ void	pmap_ksetrw(vm_offset_t va);
 void	*pmap_mapbios(vm_paddr_t, vm_size_t);
 void	*pmap_mapdev(vm_paddr_t, vm_size_t);
 void	*pmap_mapdev_attr(vm_paddr_t, vm_size_t, int);
-boolean_t pmap_page_is_mapped(vm_page_t m);
+bool	pmap_page_is_mapped(vm_page_t m);
 void	pmap_page_set_memattr(vm_page_t m, vm_memattr_t ma);
 vm_paddr_t pmap_pg_frame(vm_paddr_t pa);
 bool	pmap_ps_enabled(pmap_t pmap);
@@ -277,7 +244,7 @@ void	pmap_remap_lower(bool);
 void	pmap_remap_lowptdi(bool);
 void	pmap_set_nx(void);
 void	pmap_sf_buf_map(struct sf_buf *sf);
-void	pmap_unmapdev(vm_offset_t, vm_size_t);
+void	pmap_unmapdev(void *, vm_size_t);
 void	pmap_invalidate_page(pmap_t, vm_offset_t);
 void	pmap_invalidate_range(pmap_t, vm_offset_t, vm_offset_t);
 void	pmap_invalidate_all(pmap_t);
@@ -287,6 +254,7 @@ void	pmap_invalidate_cache_range(vm_offset_t sva, vm_offset_t eva);
 void	pmap_force_invalidate_cache_range(vm_offset_t sva, vm_offset_t eva);
 void	*pmap_trm_alloc(size_t size, int flags);
 void	pmap_trm_free(void *addr, size_t size);
+#define	pmap_map_delete(pmap, sva, eva)	pmap_remove(pmap, sva, eva)
 
 void	invltlb_glob(void);
 

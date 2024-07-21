@@ -31,7 +31,6 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  *	$NetBSD: vmparam.h,v 1.11 2000/02/11 19:25:16 thorpej Exp $
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_VMPARAM_H_
@@ -112,6 +111,8 @@
 
 #define	KERNBASE		0x00100100	/* start of kernel virtual */
 
+#define UMA_MD_SMALL_ALLOC
+
 #ifdef AIM
 #ifndef __powerpc64__
 #define	VM_MIN_KERNEL_ADDRESS	((vm_offset_t)KERNEL_SR << ADDR_SR_SHFT)
@@ -123,13 +124,13 @@
  * Use the direct-mapped BAT registers for UMA small allocs. This
  * takes pressure off the small amount of available KVA.
  */
-#define UMA_MD_SMALL_ALLOC
+#define UMA_USE_DMAP
 
 #else /* Book-E */
 
 /* Use the direct map for UMA small allocs on powerpc64. */
 #ifdef __powerpc64__
-#define UMA_MD_SMALL_ALLOC
+#define UMA_USE_DMAP
 #else
 #define	VM_MIN_KERNEL_ADDRESS		0xc0000000
 #define	VM_MAX_KERNEL_ADDRESS		0xffffefff
@@ -259,14 +260,6 @@ extern	int vm_level_0_order;
 #endif
 
 /*
- * Use a fairly large batch size since we expect ppc64 systems to have lots of
- * memory.
- */
-#ifdef __powerpc64__
-#define	VM_BATCHQUEUE_SIZE	31
-#endif
-
-/*
  * On 32-bit OEA, the only purpose for which sf_buf is used is to implement
  * an opaque pointer required by the machine-independent parts of the kernel.
  * That pointer references the vm_page that is "mapped" by the sf_buf.  The
@@ -315,11 +308,13 @@ extern	int vm_level_0_order;
  * Need a page dump array for minidump.
  */
 #define MINIDUMP_PAGE_TRACKING	1
+#define MINIDUMP_STARTUP_PAGE_TRACKING 1
 #else
 /*
  * No minidump with 32-bit powerpc.
  */
 #define MINIDUMP_PAGE_TRACKING	0
+#define MINIDUMP_STARTUP_PAGE_TRACKING 0
 #endif
 
 #define	PMAP_HAS_DMAP	(hw_direct_map)

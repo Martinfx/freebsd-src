@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 BINDIR=		/usr/share/certs/untrusted
 
 UNTRUSTED_CERTS!=	echo ${.CURDIR}/*.pem 2> /dev/null || true

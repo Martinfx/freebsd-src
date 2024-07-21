@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Networks Associates Technology, Inc.
  * All rights reserved.
@@ -32,9 +32,6 @@
  * SUCH DAMAGE.
  *
  */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "namespace.h"
 #include <sys/param.h>
 #ifdef YP

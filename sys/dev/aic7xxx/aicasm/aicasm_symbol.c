@@ -40,8 +40,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/aic7xxx/aic7xxx/aicasm/aicasm_symbol.c#24 $
- *
- * $FreeBSD$
  */
 
 #include <sys/types.h>
@@ -345,10 +343,13 @@ aic_print_file_prologue(FILE *ofile)
 static void
 aic_print_include(FILE *dfile, char *header_file)
 {
-
 	if (dfile == NULL)
 		return;
-	fprintf(dfile, "\n#include \"%s\"\n\n", header_file);
+
+	if (header_file[0] == '<')
+		fprintf(dfile, "\n#include %s\n\n", header_file);
+	else
+		fprintf(dfile, "\n#include \"%s\"\n\n", header_file);
 }
 
 static void

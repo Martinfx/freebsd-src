@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/ufs/ufs ${SRCTOP}/sys/ufs/ffs
 
 KMOD=	ufs

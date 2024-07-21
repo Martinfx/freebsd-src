@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LIB=		bus
 SHLIB_MAJOR=	0
 SRCS=		lang.c

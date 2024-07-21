@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Paul Saab <ps@FreeBSD.org>
  * All rights reserved.
@@ -25,11 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#ifndef lint
-#endif /* not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <err.h>
 #include <fcntl.h>

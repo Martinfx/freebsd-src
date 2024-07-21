@@ -155,7 +155,8 @@ tests = ['zfs_mount_001_pos', 'zfs_mount_002_pos', 'zfs_mount_003_pos',
     'zfs_mount_004_pos', 'zfs_mount_005_pos', 'zfs_mount_007_pos',
     'zfs_mount_009_neg', 'zfs_mount_010_neg', 'zfs_mount_011_neg',
     'zfs_mount_012_pos', 'zfs_mount_encrypted', 'zfs_mount_remount',
-    'zfs_mount_all_fail', 'zfs_mount_all_mountpoints', 'zfs_mount_test_race']
+    'zfs_mount_all_fail', 'zfs_mount_all_mountpoints',
+    'zfs_mount_test_race', 'zfs_mount_recursive']
 tags = ['functional', 'cli_root', 'zfs_mount']
 
 [tests/functional/cli_root/zfs_program]
@@ -212,7 +213,7 @@ tests = ['cache_001_pos', 'cache_002_neg', 'canmount_001_pos',
     'user_property_001_pos', 'user_property_003_neg', 'readonly_001_pos',
     'user_property_004_pos', 'version_001_neg',
     'zfs_set_003_neg', 'property_alias_001_pos',
-    'zfs_set_keylocation', 'zfs_set_feature_activation']
+    'zfs_set_keylocation', 'zfs_set_feature_activation', 'zfs_set_nomount']
 tags = ['functional', 'cli_root', 'zfs_set']
 
 [tests/functional/cli_root/zfs_snapshot]
@@ -396,7 +397,8 @@ tests = ['zdb_001_neg', 'zfs_001_neg', 'zfs_allow_001_neg',
     'zpool_history_001_neg', 'zpool_offline_001_neg', 'zpool_online_001_neg',
     'zpool_remove_001_neg', 'zpool_scrub_001_neg', 'zpool_set_001_neg',
     'zpool_status_001_neg', 'zpool_upgrade_001_neg', 'arcstat_001_pos',
-    'arc_summary_001_pos', 'arc_summary_002_neg', 'zpool_wait_privilege']
+    'arc_summary_001_pos', 'arc_summary_002_neg', 'zpool_wait_privilege',
+    'zilstat_001_pos']
 user =
 tags = ['functional', 'cli_user', 'misc']
 
@@ -549,6 +551,7 @@ tests = ['recv_dedup', 'recv_dedup_encrypted_zvol', 'rsend_001_pos',
     'rsend_014_pos', 'rsend_016_neg', 'send-c_verify_contents',
     'send-c_volume', 'send-c_zstreamdump', 'send-c_recv_dedup',
     'send-L_toggle', 'send_encrypted_hierarchy', 'send_encrypted_props',
+    'send_encrypted_freeobjects',
     'send_encrypted_truncated_files', 'send_freeobjects', 'send_holds',
     'send_mixed_raw', 'send-wR_encrypted_zvol', 'send_partial_dataset',
     'send_invalid']
@@ -597,6 +600,12 @@ tags = ['functional', 'truncate']
 tests = ['upgrade_userobj_001_pos', 'upgrade_readonly_pool']
 tags = ['functional', 'upgrade']
 
+[tests/functional/vdev_disk:Linux]
+pre =
+post =
+tests = ['page_alignment']
+tags = ['functional', 'vdev_disk']
+
 [tests/functional/vdev_zaps]
 tests = ['vdev_zaps_001_pos', 'vdev_zaps_003_pos', 'vdev_zaps_004_pos',
     'vdev_zaps_005_pos', 'vdev_zaps_006_pos']
@@ -623,3 +632,9 @@ tags = ['functional', 'zvol', 'zvol_swap']
 [tests/functional/zpool_influxdb]
 tests = ['zpool_influxdb']
 tags = ['functional', 'zpool_influxdb']
+
+[tests/functional/pyzfs]
+tests = ['pyzfs_unittest']
+pre =
+post =
+tags = ['functional', 'pyzfs']

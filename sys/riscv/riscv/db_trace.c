@@ -37,9 +37,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kdb.h>
 #include <sys/proc.h>
@@ -86,19 +83,25 @@ db_stack_trace_cmd(struct thread *td, struct unwind_state *frame)
 			struct trapframe *tf;
 
 			tf = (struct trapframe *)(uintptr_t)frame->sp;
-			if (!kstack_contains(td, (vm_offset_t)tf,
+			if (!__is_aligned(tf, _Alignof(struct trapframe)) ||
+			    !kstack_contains(td, (vm_offset_t)tf,
 			    sizeof(*tf))) {
 				db_printf("--- invalid trapframe %p\n", tf);
 				break;
 			}
 
-			if ((tf->tf_scause & SCAUSE_INTR) != 0)
+			if ((tf->tf_scause & SCAUSE_INTR) != 0) {
 				db_printf("--- interrupt %ld\n",
 				    tf->tf_scause & SCAUSE_CODE);
-			else
+			} else if (tf->tf_scause == SCAUSE_ECALL_USER) {
+				db_printf("--- syscall");
+				db_decode_syscall(td, td->td_sa.code);
+				db_printf("\n");
+			} else {
 				db_printf("--- exception %ld, tval = %#lx\n",
 				    tf->tf_scause & SCAUSE_CODE,
 				    tf->tf_stval);
+			}
 			frame->sp = tf->tf_sp;
 			frame->fp = tf->tf_s[0];
 			frame->pc = tf->tf_sepc;

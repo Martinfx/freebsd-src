@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <stand.h>
 #include <string.h>
@@ -238,7 +235,7 @@ cons_check(const char *string)
 		if (*curpos != '\0') {
 			cons = cons_find(curpos);
 			if (cons == -1) {
-				printf("console %s is invalid!\n", curpos);
+				printf("console %s is unavailable\n", curpos);
 				failed++;
 			} else {
 				found++;
@@ -251,7 +248,7 @@ cons_check(const char *string)
 	if (found == 0)
 		printf("no valid consoles!\n");
 
-	if (found == 0 || failed != 0) {
+	if (found == 0 && failed != 0) {
 		printf("Available consoles:\n");
 		for (cons = 0; consoles[cons] != NULL; cons++)
 			printf("    %s\n", consoles[cons]->c_name);

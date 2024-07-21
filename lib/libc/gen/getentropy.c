@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Conrad Meyer <cem@FreeBSD.org>
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/random.h>
 #include <sys/sysctl.h>
@@ -38,6 +35,7 @@ __FBSDID("$FreeBSD$");
 #include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <ssp/ssp.h>
 
 #include "libc_private.h"
 
@@ -108,7 +106,7 @@ getentropy_fallback(void *buf, size_t buflen)
 }
 
 int
-getentropy(void *buf, size_t buflen)
+__ssp_real(getentropy)(void *buf, size_t buflen)
 {
 	ssize_t rd;
 	bool have_getrandom;

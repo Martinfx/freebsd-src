@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Nathan Whitehorn
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -1319,10 +1316,12 @@ smu_shutdown(void *xdev, int howto)
 	struct smu_cmd cmd;
 
 	cmd.cmd = SMU_POWER;
-	if (howto & RB_HALT)
+	if ((howto & RB_POWEROFF) != 0)
 		strcpy(cmd.data, "SHUTDOWN");
-	else
+	else if ((howto & RB_HALT) == 0)
 		strcpy(cmd.data, "RESTART");
+	else
+		return;
 
 	cmd.len = strlen(cmd.data);
 

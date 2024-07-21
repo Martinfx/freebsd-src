@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/security/mac_bsdextended
 
 KMOD=	mac_bsdextended

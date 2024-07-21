@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 2014 Garrett D'Amore <garrett@damore.org>
  * Copyright 2010 Nexenta Systems, Inc.  All rights reserved.
@@ -36,9 +36,6 @@
  * Adapted to xlocale by John Marino <draco@marino.st>
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "namespace.h"
 
 #include <sys/types.h>
@@ -68,6 +65,14 @@ struct xlocale_collate __xlocale_C_collate = {
 	{{0}, "C"}, 1, 0, 0, 0
 };
 
+struct xlocale_collate __xlocale_POSIX_collate = {
+	{{0}, "POSIX"}, 1, 0, 0, 0
+};
+
+struct xlocale_collate __xlocale_CUTF8_collate = {
+	{{0}, "C.UTF-8"}, 1, 0, 0, 0
+};
+
 static int
 __collate_load_tables_l(const char *encoding, struct xlocale_collate *table);
 
@@ -84,10 +89,13 @@ destruct_collate(void *t)
 void *
 __collate_load(const char *encoding, __unused locale_t unused)
 {
-	if (strcmp(encoding, "C") == 0 || strcmp(encoding, "POSIX") == 0 ||
-	    strncmp(encoding, "C.", 2) == 0) {
+	if (strcmp(encoding, "C") == 0)
 		return (&__xlocale_C_collate);
-	}
+	else if (strcmp(encoding, "POSIX") == 0)
+		return (&__xlocale_POSIX_collate);
+	else if (strcmp(encoding, "C.UTF-8") == 0)
+		return (&__xlocale_CUTF8_collate);
+
 	struct xlocale_collate *table = calloc(sizeof(struct xlocale_collate),
 	    1);
 	if (table == NULL)
@@ -148,7 +156,7 @@ __collate_load_tables_l(const char *encoding, struct xlocale_collate *table)
 	}
 	if (sbuf.st_size < (COLLATE_FMT_VERSION_LEN +
 			    XLOCALE_DEF_VERSION_LEN +
-			    sizeof (info))) {
+			    sizeof (*info))) {
 		(void) _close(fd);
 		errno = EINVAL;
 		return (_LDP_ERROR);

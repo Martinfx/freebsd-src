@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG= test2
 MAN=
 NFSSERVER?= herring.nlsystems.com

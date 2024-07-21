@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	aiop
 MAN=
 

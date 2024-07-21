@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 2013 Oleksandr Tymoshenko <gonzo@freebsd.org>
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_syscons.h"
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -50,7 +48,7 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/openfirm.h>
@@ -74,7 +72,7 @@ __FBSDID("$FreeBSD$");
 #include "am335x_pwm.h"
 
 #include "fb_if.h"
-#include "hdmi_if.h"
+#include "crtc_if.h"
 
 #define	LCD_PID			0x00
 #define	LCD_CTRL		0x04
@@ -871,7 +869,7 @@ am335x_lcd_hdmi_event(void *arg, device_t hdmi, int event)
 
 	edid = NULL;
 	edid_len = 0;
-	if (HDMI_GET_EDID(hdmi_dev, &edid, &edid_len) != 0) {
+	if (CRTC_GET_EDID(hdmi_dev, &edid, &edid_len) != 0) {
 		device_printf(sc->sc_dev, "failed to get EDID info from HDMI framer\n");
 		return;
 	}
@@ -925,7 +923,7 @@ am335x_lcd_hdmi_event(void *arg, device_t hdmi, int event)
 	hdmi_mode.hskew = videomode->hsync_end - videomode->hsync_start;
 	hdmi_mode.flags |= VID_HSKEW;
 
-	HDMI_SET_VIDEOMODE(hdmi_dev, &hdmi_mode);
+	CRTC_SET_VIDEOMODE(hdmi_dev, &hdmi_mode);
 }
 
 static int

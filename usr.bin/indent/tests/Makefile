@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 ${PACKAGE}FILES+=	binary.0
@@ -45,6 +43,9 @@ ${PACKAGE}FILES+=	types_from_file.0.list
 ${PACKAGE}FILES+=	types_from_file.0.pro
 ${PACKAGE}FILES+=	wchar.0
 ${PACKAGE}FILES+=	wchar.0.stdout
+${PACKAGE}FILES+=	ps.0
+${PACKAGE}FILES+=	ps.0.stdout
+${PACKAGE}FILES+=	ps.0.pro
 
 ATF_TESTS_SH+=		functional_test
 

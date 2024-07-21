@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright(c) 2007-2022 Intel Corporation
-# $FreeBSD$
 .PATH: ${SRCTOP}/sys/dev/qat/qat_api
 
 KMOD= qat_api
@@ -13,6 +12,9 @@ SRCS+= common/compression/dc_stats.c
 SRCS+= common/compression/dc_buffers.c
 SRCS+= common/compression/dc_dp.c
 SRCS+= common/compression/icp_sal_dc_err.c
+SRCS+= common/compression/dc_chain.c
+SRCS+= common/compression/dc_ns_datapath.c
+SRCS+= common/compression/dc_ns_header_footer.c
 SRCS+= common/utils/lac_buffer_desc.c
 SRCS+= common/utils/lac_mem.c
 SRCS+= common/utils/lac_mem_pools.c
@@ -27,6 +29,7 @@ SRCS+= common/ctrl/sal_compression.c
 SRCS+= common/ctrl/sal_ctrl_services.c
 SRCS+= common/ctrl/sal_create_services.c
 SRCS+= common/ctrl/sal_crypto.c
+SRCS+= common/ctrl/sal_get_instances.c
 SRCS+= common/qat_comms/sal_qat_cmn_msg.c
 SRCS+= common/crypto/sym/lac_sym_api.c
 SRCS+= common/crypto/sym/lac_sym_cb.c
@@ -44,6 +47,7 @@ SRCS+= common/crypto/sym/qat/lac_sym_qat.c
 SRCS+= common/crypto/sym/qat/lac_sym_qat_hash.c
 SRCS+= common/crypto/sym/qat/lac_sym_qat_hash_defs_lookup.c
 SRCS+= common/crypto/sym/qat/lac_sym_qat_cipher.c
+SRCS+= common/crypto/sym/qat/lac_sym_qat_constants_table.c
 SRCS+= common/crypto/sym/qat/lac_sym_qat_key.c
 SRCS+= common/crypto/sym/key/lac_sym_key.c
 SRCS+= common/stubs/lac_stubs.c
@@ -62,14 +66,14 @@ CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/include/lac
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/include/dc
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/qat_direct/include
-CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/qat_kernel/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/qat_utils/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/common/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/common/compression/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/common/crypto/sym/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/qat_api/firmware/include
 CFLAGS+= -I${SRCTOP}/sys/dev/qat/include/common
-CFLAGS+= -I${SYSDIR}/compat/linuxkpi/common/include
+CFLAGS+= ${LINUXKPI_INCLUDES}
 
-CWARNFLAGS += -Wno-pointer-sign
 .include <bsd.kmod.mk>
+
+CWARNFLAGS+= -Wno-cast-qual

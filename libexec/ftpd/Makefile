@@ -1,6 +1,3 @@
-#	@(#)Makefile	8.2 (Berkeley) 4/4/94
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=	ftpd
@@ -16,10 +13,7 @@ YFLAGS=
 WARNS?=	2
 WFORMAT=0
 
-LIBADD=	crypt util
-
-# XXX Kluge! Conversation mechanism needs to be fixed.
-LIBADD+=	opie md
+LIBADD=	crypt md util
 
 .PATH:	${SRCTOP}/bin/ls
 SRCS+=	ls.c cmp.c print.c util.c
@@ -27,7 +21,7 @@ CFLAGS+=-Dmain=ls_main -I${SRCTOP}/bin/ls
 LIBADD+=	m
 
 .if ${MK_BLACKLIST_SUPPORT} != "no"
-CFLAGS+= -DUSE_BLACKLIST -I${SRCTOP}/contrib/blacklist/include
+CFLAGS+= -DUSE_BLACKLIST -I${SRCTOP}/contrib/blocklist/include
 SRCS+= blacklist.c
 LIBADD+= blacklist
 LDFLAGS+=-L${LIBBLACKLISTDIR}

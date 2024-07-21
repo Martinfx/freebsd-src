@@ -43,6 +43,7 @@ nodist_libzpool_la_SOURCES = \
 	module/os/linux/zfs/arc_os.c \
 	module/os/linux/zfs/trace.c \
 	module/os/linux/zfs/vdev_file.c \
+	module/os/linux/zfs/vdev_label_os.c \
 	module/os/linux/zfs/zfs_debug.c \
 	module/os/linux/zfs/zfs_racct.c \
 	module/os/linux/zfs/zfs_znode.c \
@@ -74,9 +75,11 @@ nodist_libzpool_la_SOURCES = \
 	module/zfs/bptree.c \
 	module/zfs/bqueue.c \
 	module/zfs/btree.c \
+	module/zfs/brt.c \
 	module/zfs/dbuf.c \
 	module/zfs/dbuf_stats.c \
 	module/zfs/ddt.c \
+	module/zfs/ddt_stats.c \
 	module/zfs/ddt_zap.c \
 	module/zfs/dmu.c \
 	module/zfs/dmu_diff.c \
@@ -118,10 +121,9 @@ nodist_libzpool_la_SOURCES = \
 	module/zfs/refcount.c \
 	module/zfs/rrwlock.c \
 	module/zfs/sa.c \
-	module/zfs/sha256.c \
+	module/zfs/sha2_zfs.c \
 	module/zfs/skein_zfs.c \
 	module/zfs/spa.c \
-	module/zfs/spa_boot.c \
 	module/zfs/spa_checkpoint.c \
 	module/zfs/spa_config.c \
 	module/zfs/spa_errlog.c \
@@ -135,7 +137,6 @@ nodist_libzpool_la_SOURCES = \
 	module/zfs/uberblock.c \
 	module/zfs/unique.c \
 	module/zfs/vdev.c \
-	module/zfs/vdev_cache.c \
 	module/zfs/vdev_draid.c \
 	module/zfs/vdev_draid_rand.c \
 	module/zfs/vdev_indirect.c \

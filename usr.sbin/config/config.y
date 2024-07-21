@@ -66,9 +66,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)config.y	8.1 (Berkeley) 6/6/93
- * $FreeBSD$
  */
 
 #include <assert.h>
@@ -91,7 +88,7 @@ int	maxusers;
 
 #define ns(s)	strdup(s)
 int include(const char *, int);
-void yyerror(const char *s);
+int yyerror(const char *s);
 int yywrap(void);
 
 static void newdev(char *name);
@@ -188,8 +185,6 @@ Config_spec:
 		|
 	NOMAKEOPTION Save_id { rmopt_schedule(&mkopt, $2); } |
 	IDENT ID { ident = $2; } |
-	System_spec
-		|
 	MAXUSERS NUMBER { maxusers = $2; } |
 	ENV ID { newenvvar($2, true); } |
 	ENVVAR ENVLINE { newenvvar($2, false); } |
@@ -304,7 +299,7 @@ NoDevice:
 
 %%
 
-void
+int
 yyerror(const char *s)
 {
 

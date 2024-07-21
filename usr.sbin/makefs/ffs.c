@@ -63,13 +63,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ffs_alloc.c	8.19 (Berkeley) 7/13/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #if HAVE_NBTOOL_CONFIG_H
 #include "nbtool_config.h"
 #endif
@@ -342,6 +338,9 @@ ffs_validate(const char *dir, fsnode *root, fsinfo_t *fsopts)
 		/* set FFS defaults */
 	if (fsopts->sectorsize == -1)
 		fsopts->sectorsize = DFL_SECSIZE;
+	if (fsopts->sectorsize != DFL_SECSIZE)
+		warnx("sectorsize %d may produce nonfunctional image",
+		    fsopts->sectorsize);
 	if (ffs_opts->fsize == -1)
 		ffs_opts->fsize = MAX(DFL_FRAGSIZE, fsopts->sectorsize);
 	if (ffs_opts->bsize == -1)
@@ -907,7 +906,7 @@ ffs_populate_dir(const char *dir, fsnode *root, fsinfo_t *fsopts)
 static void
 ffs_write_file(union dinode *din, uint32_t ino, void *buf, fsinfo_t *fsopts)
 {
-	int 	isfile, ffd;
+	int	isfile, ffd;
 	char	*fbuf, *p;
 	off_t	bufleft, chunk, offset;
 	ssize_t nread;
@@ -954,7 +953,7 @@ ffs_write_file(union dinode *din, uint32_t ino, void *buf, fsinfo_t *fsopts)
 
 	if (isfile) {
 		fbuf = emalloc(ffs_opts->bsize);
-		if ((ffd = open((char *)buf, O_RDONLY, 0444)) == -1) {
+		if ((ffd = open((char *)buf, O_RDONLY)) == -1) {
 			err(EXIT_FAILURE, "Can't open `%s' for reading", (char *)buf);
 		}
 	} else {
@@ -1002,7 +1001,6 @@ ffs_write_file(union dinode *din, uint32_t ino, void *buf, fsinfo_t *fsopts)
 		errno = bwrite(bp);
 		if (errno != 0)
 			goto bad_ffs_write_file;
-		brelse(bp);
 		if (!isfile)
 			p += chunk;
 	}
@@ -1097,7 +1095,7 @@ ffs_make_dirbuf(dirbuf_t *dbuf, const char *name, fsnode *node, int needswap)
 static void
 ffs_write_inode(union dinode *dp, uint32_t ino, const fsinfo_t *fsopts)
 {
-	char 		*buf;
+	char		*buf;
 	struct ufs1_dinode *dp1;
 	struct ufs2_dinode *dp2, *dip;
 	struct cg	*cgp;

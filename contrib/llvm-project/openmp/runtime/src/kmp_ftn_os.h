@@ -116,6 +116,8 @@
 #define FTN_TARGET_IS_PRESENT omp_target_is_present
 #define FTN_TARGET_MEMCPY omp_target_memcpy
 #define FTN_TARGET_MEMCPY_RECT omp_target_memcpy_rect
+#define FTN_TARGET_MEMSET omp_target_memset
+#define FTN_TARGET_MEMSET_ASYNC omp_target_memset_async
 #define FTN_TARGET_ASSOCIATE_PTR omp_target_associate_ptr
 #define FTN_TARGET_DISASSOCIATE_PTR omp_target_disassociate_ptr
 #endif
@@ -134,6 +136,7 @@
 #define FTN_PAUSE_RESOURCE_ALL omp_pause_resource_all
 #define FTN_GET_SUPPORTED_ACTIVE_LEVELS omp_get_supported_active_levels
 #define FTN_DISPLAY_ENV omp_display_env
+#define FTN_IN_EXPLICIT_TASK omp_in_explicit_task
 #define FTN_FULFILL_EVENT omp_fulfill_event
 #define FTN_SET_NUM_TEAMS omp_set_num_teams
 #define FTN_GET_MAX_TEAMS omp_get_max_teams
@@ -270,6 +273,7 @@
 #define FTN_PAUSE_RESOURCE_ALL omp_pause_resource_all_
 #define FTN_GET_SUPPORTED_ACTIVE_LEVELS omp_get_supported_active_levels_
 #define FTN_DISPLAY_ENV omp_display_env_
+#define FTN_IN_EXPLICIT_TASK omp_in_explicit_task_
 #define FTN_FULFILL_EVENT omp_fulfill_event_
 #define FTN_SET_NUM_TEAMS omp_set_num_teams_
 #define FTN_GET_MAX_TEAMS omp_get_max_teams_
@@ -404,6 +408,7 @@
 #define FTN_PAUSE_RESOURCE_ALL OMP_PAUSE_RESOURCE_ALL
 #define FTN_GET_SUPPORTED_ACTIVE_LEVELS OMP_GET_SUPPORTED_ACTIVE_LEVELS
 #define FTN_DISPLAY_ENV OMP_DISPLAY_ENV
+#define FTN_IN_EXPLICIT_TASK OMP_IN_EXPLICIT_TASK
 #define FTN_FULFILL_EVENT OMP_FULFILL_EVENT
 #define FTN_SET_NUM_TEAMS OMP_SET_NUM_TEAMS
 #define FTN_GET_MAX_TEAMS OMP_GET_MAX_TEAMS
@@ -540,6 +545,7 @@
 #define FTN_PAUSE_RESOURCE_ALL OMP_PAUSE_RESOURCE_ALL_
 #define FTN_GET_SUPPORTED_ACTIVE_LEVELS OMP_GET_SUPPORTED_ACTIVE_LEVELS_
 #define FTN_DISPLAY_ENV OMP_DISPLAY_ENV_
+#define FTN_IN_EXPLICIT_TASK OMP_IN_EXPLICIT_TASK_
 #define FTN_FULFILL_EVENT OMP_FULFILL_EVENT_
 #define FTN_SET_NUM_TEAMS OMP_SET_NUM_TEAMS_
 #define FTN_GET_MAX_TEAMS OMP_GET_MAX_TEAMS_

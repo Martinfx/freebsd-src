@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR= include share
 
 FILESDIR=	${LIBEXECDIR}/bsdconfig/040.password

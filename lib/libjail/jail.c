@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 James Gritton.
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -740,6 +737,12 @@ jailparam_export(struct jailparam *jp)
 	int i, nval, ival;
 	char valbuf[INET6_ADDRSTRLEN];
 
+	if (jp->jp_value == NULL) {
+		snprintf(jail_errmsg, JAIL_ERRMSGLEN,
+		    "parameter %s was not imported", jp->jp_name);
+		errno = EINVAL;
+		return (NULL);
+	}
 	if ((jp->jp_ctltype & CTLTYPE) == CTLTYPE_STRING) {
 		value = strdup(jp->jp_value);
 		if (value == NULL)

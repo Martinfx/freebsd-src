@@ -35,9 +35,6 @@
 #error Must be built with pointer authentication disabled
 #endif
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
@@ -59,6 +56,31 @@ struct thread *ptrauth_switch(struct thread *);
 void ptrauth_exit_el0(struct thread *);
 void ptrauth_enter_el0(struct thread *);
 
+static bool
+ptrauth_disable(void)
+{
+	const char *family, *maker, *product;
+
+	family = kern_getenv("smbios.system.family");
+	maker = kern_getenv("smbios.system.maker");
+	product = kern_getenv("smbios.system.product");
+	if (family == NULL || maker == NULL || product == NULL)
+		return (false);
+
+	/*
+	 * The Dev Kit appears to be configured to trap upon access to PAC
+	 * registers, but the kernel boots at EL1 and so we have no way to
+	 * inspect or change this configuration.  As a workaround, simply
+	 * disable PAC on this platform.
+	 */
+	if (strcmp(maker, "Microsoft Corporation") == 0 &&
+	    strcmp(family, "Surface") == 0 &&
+	    strcmp(product, "Windows Dev Kit 2023") == 0)
+		return (true);
+
+	return (false);
+}
+
 void
 ptrauth_init(void)
 {
@@ -77,7 +99,11 @@ ptrauth_init(void)
 		return;
 	}
 
-	get_kernel_reg(ID_AA64ISAR1_EL1, &isar1);
+	if (!get_kernel_reg(ID_AA64ISAR1_EL1, &isar1))
+		return;
+
+	if (ptrauth_disable())
+		return;
 
 	/*
 	 * This assumes if there is pointer authentication on the boot CPU
@@ -143,13 +169,11 @@ ptrauth_thread_alloc(struct thread *td)
  * Load the userspace keys. We can't use WRITE_SPECIALREG as we need
  * to set the architecture extension.
  */
-#define	LOAD_KEY(space, name)					\
-__asm __volatile(						\
-	".arch_extension pauth			\n"		\
-	"msr	"#name"keylo_el1, %0		\n"		\
-	"msr	"#name"keyhi_el1, %1		\n"		\
-	".arch_extension nopauth		\n"		\
-	:: "r"(td->td_md.md_ptrauth_##space.name.pa_key_lo),	\
+#define	LOAD_KEY(space, name, reg)					\
+__asm __volatile(							\
+	"msr	"__XSTRING(MRS_REG_ALT_NAME(reg ## KeyLo_EL1))", %0	\n"	\
+	"msr	"__XSTRING(MRS_REG_ALT_NAME(reg ## KeyHi_EL1))", %1	\n"	\
+	:: "r"(td->td_md.md_ptrauth_##space.name.pa_key_lo),		\
 	   "r"(td->td_md.md_ptrauth_##space.name.pa_key_hi))
 
 void
@@ -161,7 +185,7 @@ ptrauth_thread0(struct thread *td)
 	/* TODO: Generate a random number here */
 	memset(&td->td_md.md_ptrauth_kern, 0,
 	    sizeof(td->td_md.md_ptrauth_kern));
-	LOAD_KEY(kern, apia);
+	LOAD_KEY(kern, apia, APIA);
 	/*
 	 * No isb as this is called before ptrauth_start so can rely on
 	 * the instruction barrier there.
@@ -214,8 +238,8 @@ ptrauth_mp_start(uint64_t cpu)
 
 	__asm __volatile(
 	    ".arch_extension pauth		\n"
-	    "msr	apiakeylo_el1, %0	\n"
-	    "msr	apiakeyhi_el1, %1	\n"
+	    "msr	"__XSTRING(APIAKeyLo_EL1_REG)", %0	\n"
+	    "msr	"__XSTRING(APIAKeyHi_EL1_REG)", %1	\n"
 	    ".arch_extension nopauth		\n"
 	    :: "r"(start_key.pa_key_lo), "r"(start_key.pa_key_hi));
 
@@ -231,7 +255,7 @@ struct thread *
 ptrauth_switch(struct thread *td)
 {
 	if (enable_ptrauth) {
-		LOAD_KEY(kern, apia);
+		LOAD_KEY(kern, apia, APIA);
 		isb();
 	}
 
@@ -245,7 +269,7 @@ ptrauth_exit_el0(struct thread *td)
 	if (!enable_ptrauth)
 		return;
 
-	LOAD_KEY(kern, apia);
+	LOAD_KEY(kern, apia, APIA);
 	isb();
 }
 
@@ -256,11 +280,11 @@ ptrauth_enter_el0(struct thread *td)
 	if (!enable_ptrauth)
 		return;
 
-	LOAD_KEY(user, apia);
-	LOAD_KEY(user, apib);
-	LOAD_KEY(user, apda);
-	LOAD_KEY(user, apdb);
-	LOAD_KEY(user, apga);
+	LOAD_KEY(user, apia, APIA);
+	LOAD_KEY(user, apib, APIB);
+	LOAD_KEY(user, apda, APDA);
+	LOAD_KEY(user, apdb, APDB);
+	LOAD_KEY(user, apga, APGA);
 	/*
 	 * No isb as this is called from the exception handler so can rely
 	 * on the eret instruction to be the needed context synchronizing event.

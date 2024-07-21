@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 all: regtables
 
 PROG=	mkregtable

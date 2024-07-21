@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)resourcevar.h	8.4 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef	_SYS_RESOURCEVAR_H_
@@ -81,6 +78,28 @@ struct plimit {
 	struct	rlimit pl_rlimit[RLIM_NLIMITS];
 	int	pl_refcnt;		/* number of references */
 };
+
+struct limbatch {
+	struct plimit *limp;
+	int count;
+};
+
+static inline void
+limbatch_prep(struct limbatch *lb)
+{
+        lb->limp = NULL;
+        lb->count = 0;
+}
+
+void    limbatch_add(struct limbatch *lb, struct thread *td);
+
+static inline void
+limbatch_process(struct limbatch *lb __unused)
+{
+
+}
+
+void    limbatch_final(struct limbatch *lb);
 
 struct racct;
 

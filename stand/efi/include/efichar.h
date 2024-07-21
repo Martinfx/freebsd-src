@@ -22,8 +22,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _BOOT_EFI_EFICHAR_H_
@@ -38,5 +36,13 @@ typedef CHAR16 efi_char;
 int ucs2_to_utf8(const efi_char *, char **);
 int utf8_to_ucs2(const char *, efi_char **, size_t *);
 int ucs2len(const efi_char *);
+
+#ifdef _KERNEL
+#define	EFICHAR_MALLOC(sz)	malloc((sz), M_TEMP, M_WAITOK | M_ZERO)
+#define	EFICHAR_FREE(sz)	free((sz), M_TEMP)
+#else
+#define	EFICHAR_MALLOC(sz)	malloc(sz)
+#define	EFICHAR_FREE(sz)	free(sz)
+#endif
 
 #endif /* _BOOT_EFI_EFICHAR_H_ */

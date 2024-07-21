@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Peter Holm <pho@FreeBSD.org>
  * All rights reserved.
@@ -57,7 +57,7 @@ flip(void *ap, size_t len)
 	unsigned char bit, buf, mask, old __unused;
 
 	cp = (unsigned char *)ap;
-	byte = random_long(0, len);
+	byte = random_long(0, len - 1);
 	bit = random_long(0,7);
 	mask = ~(1 << bit);
 	buf = cp[byte];
@@ -70,14 +70,22 @@ flip(void *ap, size_t len)
 #endif
 }
 
+static void
+trash(char *c)
+{
+	if (arc4random() % 2 == 1)
+		*c = 0;
+	else
+		arc4random_buf(c, sizeof(c));
+}
+
 int
 main(int argc, char *argv[])
 {
 	struct stat st;
 	off_t pos;
 	size_t size;
-	int fd, i, times;
-	char c;
+	int c, fd, i, times;
 
 	times = 1;
 	size = 0;
@@ -111,19 +119,26 @@ main(int argc, char *argv[])
 	if (size == 0) {
 		if (fstat(fd, &st) == -1)
 			err(1, "stat %s", argv[0]);
+		if ((st.st_mode & S_IFREG) == 0)
+			errx(1, "%s must be a regular file\n", argv[0]);
 		size = st.st_size;
 	}
 
 	for (i = 0; i < times; i++) {
+		char ch;
+
 		pos = arc4random() % size;
 		if (lseek(fd, pos, SEEK_SET) == -1)
 			err(1, "lseek()");
-		if (read(fd, &c, 1) != 1)
+		if (read(fd, &ch, 1) != 1)
 			err(1, "read()");
-		flip(&c, 1);
+		if (arc4random() % 100 < 98)
+			flip(&ch, 1);
+		else
+			trash(&ch);
 		if (lseek(fd, pos, SEEK_SET) == -1)
 			err(1, "lseek()");
-		if (write(fd, &c, 1) != 1)
+		if (write(fd, &ch, 1) != 1)
 			err(1, "write()");
 	}
 

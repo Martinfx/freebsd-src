@@ -25,9 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -45,6 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,9 +56,16 @@ __FBSDID("$FreeBSD$");
 #define in_range(val, lo, hi) ( val < 0 || (val <= hi && val >= lo))
 #define	max(x, y) ((x) > (y) ? (x) : (y))
 
-static const char *progname, *nexus;
-static int chip_id;	/* 4 for T4, 5 for T5, and so on. */
-static int inst;	/* instance of nexus device */
+static struct {
+	const char *progname, *nexus;
+	int chip_id;	/* 4 for T4, 5 for T5, and so on. */
+	int inst;	/* instance of nexus device */
+	int pf;		/* PF# of the nexus (if not VF). */
+	bool vf;	/* Nexus is a VF. */
+
+	int fd;
+	bool warn_on_ioctl_err;
+} g;
 
 struct reg_info {
 	const char *name;
@@ -90,7 +95,7 @@ struct field_desc {
 static void
 usage(FILE *fp)
 {
-	fprintf(fp, "Usage: %s <nexus> [operation]\n", progname);
+	fprintf(fp, "Usage: %s <nexus> [operation]\n", g.progname);
 	fprintf(fp,
 	    "\tclearstats <port>                   clear port statistics\n"
 	    "\tclip hold|release <ip6>             hold/release an address\n"
@@ -124,7 +129,7 @@ usage(FILE *fp)
 	    "\tsched-queue <port> <queue> <class>  bind NIC queues to TX Scheduling class\n"
 	    "\tstdio                               interactive mode\n"
 	    "\ttcb <tid>                           read TCB\n"
-	    "\ttracer <idx> tx<n>|rx<n>            set and enable a tracer\n"
+	    "\ttracer <idx> tx<n>|rx<n>|lo<n>      set and enable a tracer\n"
 	    "\ttracer <idx> disable|enable         disable or enable a tracer\n"
 	    "\ttracer list                         list all tracers\n"
 	    );
@@ -139,27 +144,12 @@ get_card_vers(unsigned int version)
 static int
 real_doit(unsigned long cmd, void *data, const char *cmdstr)
 {
-	static int fd = -1;
-	int rc = 0;
-
-	if (fd == -1) {
-		char buf[64];
-
-		snprintf(buf, sizeof(buf), "/dev/%s", nexus);
-		if ((fd = open(buf, O_RDWR)) < 0) {
-			warn("open(%s)", nexus);
-			rc = errno;
-			return (rc);
-		}
+	if (ioctl(g.fd, cmd, data) < 0) {
+		if (g.warn_on_ioctl_err)
+			warn("%s", cmdstr);
+		return (errno);
 	}
-
-	rc = ioctl(fd, cmd, data);
-	if (rc < 0) {
-		warn("%s", cmdstr);
-		rc = errno;
-	}
-
-	return (rc);
+	return (0);
 }
 #define doit(x, y) real_doit(x, y, #x)
 
@@ -525,7 +515,7 @@ dump_regs(int argc, const char *argv[])
 			rc = dump_regs_t6(argc, argv, regs.data);
 	} else {
 		warnx("%s (type %d, rev %d) is not a known card.",
-		    nexus, vers, revision);
+		    g.nexus, vers, revision);
 		return (ENOTSUP);
 	}
 
@@ -917,7 +907,7 @@ do_show_one_filter_info(struct t4_filter *t, uint32_t mode)
 				printf("(hash)");
 		}
 	}
-	if (chip_id <= 5 && t->fs.prio)
+	if (g.chip_id <= 5 && t->fs.prio)
 		printf(" Prio");
 	if (t->fs.rpttid)
 		printf(" RptTID");
@@ -936,7 +926,7 @@ show_filters(int hash)
 	if (rc != 0)
 		return (rc);
 
-	if (!hash && chip_id >= 6) {
+	if (!hash && g.chip_id >= 6) {
 		header = 0;
 		bzero(&t, sizeof (t));
 		t.idx = 0;
@@ -1412,7 +1402,7 @@ filter_cmd(int argc, const char *argv[], int hashfilter)
 			/*
 			 * No numeric index means this must be a request to
 			 * create a new hashfilter and we are already at the
-			 * paramter/value list.
+			 * parameter/value list.
 			 */
 			idx = (uint32_t) -1;
 			goto setf;
@@ -1927,10 +1917,10 @@ get_sge_context(int argc, const char *argv[])
 	if (rc != 0)
 		return (rc);
 
-	if (chip_id == 4)
+	if (g.chip_id == 4)
 		show_t4_ctxt(&cntxt);
 	else
-		show_t5t6_ctxt(&cntxt, chip_id);
+		show_t5t6_ctxt(&cntxt, g.chip_id);
 
 	return (0);
 }
@@ -2246,7 +2236,7 @@ show_tcb(uint32_t *buf, uint32_t len)
 		}
 		printf("\n");
 	}
-	set_tcb_info(TIDTYPE_TCB, chip_id);
+	set_tcb_info(TIDTYPE_TCB, g.chip_id);
 	set_print_style(PRNTSTYL_COMP);
 	swizzle_tcb(tcb);
 	parse_n_display_xcb(tcb);
@@ -2450,7 +2440,7 @@ static void
 create_tracing_ifnet()
 {
 	char *cmd[] = {
-		"/sbin/ifconfig", __DECONST(char *, nexus), "create", NULL
+		"/sbin/ifconfig", __DECONST(char *, g.nexus), "create", NULL
 	};
 	char *env[] = {NULL};
 
@@ -2478,17 +2468,24 @@ set_tracer(uint8_t idx, int argc, const char *argv[])
 	t.valid = 1;
 
 	if (argc != 1) {
-		warnx("must specify tx<n> or rx<n>.");
+		warnx("must specify one of tx/rx/lo<n>");
 		return (EINVAL);
 	}
 
 	len = strlen(argv[0]);
 	if (len != 3) {
-		warnx("argument must be 3 characters (tx<n> or rx<n>)");
+		warnx("argument must be 3 characters (tx/rx/lo<n>). eg. tx0");
 		return (EINVAL);
 	}
 
-	if (strncmp(argv[0], "tx", 2) == 0) {
+	if (strncmp(argv[0], "lo", 2) == 0) {
+		port = argv[0][2] - '0';
+		if (port < 0 || port > 3) {
+			warnx("'%c' in %s is invalid", argv[0][2], argv[0]);
+			return (EINVAL);
+		}
+		port += 8;
+	} else if (strncmp(argv[0], "tx", 2) == 0) {
 		port = argv[0][2] - '0';
 		if (port < 0 || port > 3) {
 			warnx("'%c' in %s is invalid", argv[0][2], argv[0]);
@@ -3490,7 +3487,7 @@ display_clip(void)
 		return (errno);
 	}
 
-	snprintf(name, sizeof(name), "dev.t%unex.%u.misc.clip", chip_id, inst);
+	snprintf(name, sizeof(name), "dev.t%unex.%u.misc.clip", g.chip_id, g.inst);
 	rc = sysctlbyname(name, buf, &clip_buf_size, NULL, 0);
 	if (rc != 0) {
 		warn("sysctl %s", name);
@@ -3645,14 +3642,57 @@ run_cmd_loop(void)
 	return (rc);
 }
 
-static void
-parse_nexus_name(const char *s)
-{
-	char junk;
+#define A_PL_WHOAMI 0x19400
+#define A_PL_REV 0x1943c
+#define A_PL_VF_WHOAMI 0x200
+#define A_PL_VF_REV 0x204
 
-	if (sscanf(s, "t%unex%u%c", &chip_id, &inst, &junk) != 2)
-		errx(EINVAL, "invalid nexus \"%s\"", s);
-	nexus = s;
+static void
+open_nexus_device(const char *s)
+{
+	const int len = strlen(s);
+	long long val;
+	const char *num;
+	int rc;
+	u_int chip_id, whoami;
+	char buf[128];
+
+	if (len < 2 || isdigit(s[0]) || !isdigit(s[len - 1]))
+		errx(1, "invalid nexus name \"%s\"", s);
+	for (num = s + len - 1; isdigit(*num); num--)
+		continue;
+	g.inst = strtoll(num, NULL, 0);
+	g.nexus = s;
+	snprintf(buf, sizeof(buf), "/dev/%s", g.nexus);
+	if ((g.fd = open(buf, O_RDWR)) < 0)
+		err(1, "open(%s)", buf);
+
+	g.warn_on_ioctl_err = false;
+	rc = read_reg(A_PL_REV, 4, &val);
+	if (rc == 0) {
+		/* PF */
+		g.vf = false;
+		whoami = A_PL_WHOAMI;
+	} else {
+		rc = read_reg(A_PL_VF_REV, 4, &val);
+		if (rc != 0)
+			errx(1, "%s is not a Terminator device.", s);
+		/* VF */
+		g.vf = true;
+		whoami = A_PL_VF_WHOAMI;
+	}
+	chip_id = (val >> 4) & 0xf;
+	if (chip_id == 0)
+		chip_id = 4;
+	if (chip_id < 4 || chip_id > 7)
+		warnx("%s reports chip_id %d.", s, chip_id);
+	g.chip_id = chip_id;
+
+	rc = read_reg(whoami, 4, &val);
+	if (rc != 0)
+		errx(rc, "failed to read whoami(0x%x): %d", whoami, rc);
+	g.pf = g.chip_id > 5 ? (val >> 9) & 7 : (val >> 8) & 7;
+	g.warn_on_ioctl_err = true;
 }
 
 int
@@ -3660,7 +3700,7 @@ main(int argc, const char *argv[])
 {
 	int rc = -1;
 
-	progname = argv[0];
+	g.progname = argv[0];
 
 	if (argc == 2) {
 		if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
@@ -3674,7 +3714,7 @@ main(int argc, const char *argv[])
 		exit(EINVAL);
 	}
 
-	parse_nexus_name(argv[1]);
+	open_nexus_device(argv[1]);
 
 	/* progname and nexus */
 	argc -= 2;

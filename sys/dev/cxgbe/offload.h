@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 Chelsio Communications, Inc.
  * All rights reserved.
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  *
  */
 
@@ -69,10 +67,10 @@ struct stid_region {
 };
 
 /*
- * Max # of ATIDs.  The absolute HW max is 14b (enough for 16K) but we reserve
- * the upper 3b for use as a cookie to demux the reply.
+ * Max # of ATIDs.  The absolute HW max is larger than this but we reserve a few
+ * of the upper bits for use as a cookie to demux the reply.
  */
-#define MAX_ATIDS 2048U
+#define MAX_ATIDS (M_TID_TID + 1)
 
 union aopen_entry {
 	void *data;
@@ -211,12 +209,9 @@ enum {
 struct adapter;
 struct port_info;
 struct uld_info {
-	SLIST_ENTRY(uld_info) link;
-	int refcount;
-	int uld_id;
-	int (*activate)(struct adapter *);
-	int (*deactivate)(struct adapter *);
-	void (*async_event)(struct adapter *);
+	int (*uld_activate)(struct adapter *);
+	int (*uld_deactivate)(struct adapter *);
+	int (*uld_stop)(struct adapter *);
 };
 
 struct tom_tunables {
@@ -225,9 +220,6 @@ struct tom_tunables {
 	int ddp;
 	int rx_coalesce;
 	int tls;
-	int tls_rx_timeout;
-	int *tls_rx_ports;
-	int num_tls_rx_ports;
 	int tx_align;
 	int tx_zcopy;
 	int cop_managed_offloading;
@@ -247,8 +239,8 @@ struct tls_tunables {
 };
 
 #ifdef TCP_OFFLOAD
-int t4_register_uld(struct uld_info *);
-int t4_unregister_uld(struct uld_info *);
+int t4_register_uld(struct uld_info *, int);
+int t4_unregister_uld(struct uld_info *, int);
 int t4_activate_uld(struct adapter *, int);
 int t4_deactivate_uld(struct adapter *, int);
 int uld_active(struct adapter *, int);

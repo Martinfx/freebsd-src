@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.compiler.mk>
 
 SRCS+=	lex.l yacc.y

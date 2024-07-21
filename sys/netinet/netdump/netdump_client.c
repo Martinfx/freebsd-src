@@ -32,8 +32,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 
 #include <sys/param.h>
@@ -65,6 +63,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/debugnet.h>
 
 #include <netinet/in.h>
@@ -452,6 +451,8 @@ netdump_configure(struct diocskerneldump_arg *conf, struct thread *td)
 		CURVNET_SET(vnet0);
 		ifp = ifunit_ref(conf->kda_iface);
 		CURVNET_RESTORE();
+		if (ifp == NULL)
+			return (ENODEV);
 		if (!DEBUGNET_SUPPORTED_NIC(ifp)) {
 			if_rele(ifp);
 			return (ENODEV);
@@ -609,7 +610,7 @@ netdump_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t addr,
  *	priv, Unused.
  *
  * Returns:
- *	int, An errno value if an error occured, 0 otherwise.
+ *	int, An errno value if an error occurred, 0 otherwise.
  */
 static int
 netdump_modevent(module_t mod __unused, int what, void *priv __unused)

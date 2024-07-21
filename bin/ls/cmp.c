@@ -32,15 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)cmp.c	8.1 (Berkeley) 5/31/93";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -62,6 +53,20 @@ revnamecmp(const FTSENT *a, const FTSENT *b)
 {
 
 	return (strcoll(b->fts_name, a->fts_name));
+}
+
+int
+verscmp(const FTSENT *a, const FTSENT *b)
+{
+
+	return (strverscmp(a->fts_name, b->fts_name));
+}
+
+int
+revverscmp(const FTSENT *a, const FTSENT *b)
+{
+
+	return (strverscmp(b->fts_name, a->fts_name));
 }
 
 int

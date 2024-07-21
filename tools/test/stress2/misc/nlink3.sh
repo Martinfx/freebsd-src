@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2022 Peter Holm <pho@FreeBSD.org>
 #
@@ -52,7 +52,7 @@ main (void) {
 		err(1, "creat(%s)", file);
 	close(fd);
 
-	mx = UFS_LINK_MAX - 1; /* UFS_LINK_MAX = 32767 */
+	mx = UFS_LINK_MAX - 1;
 	for (i = 0; i < mx; i++) {
 		snprintf(file, sizeof(file), "%d", i);
 		if (link("f", file) == -1)

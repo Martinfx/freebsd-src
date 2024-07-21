@@ -29,10 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__SCCSID("@(#)getlogin.c	8.1 (Berkeley) 6/4/93");
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <errno.h>
 #include <pwd.h>
@@ -41,6 +37,7 @@ __FBSDID("$FreeBSD$");
 #include <unistd.h>
 #include "namespace.h"
 #include <pthread.h>
+#include <ssp/ssp.h>
 #include "un-namespace.h"
 
 #include "libc_private.h"
@@ -58,7 +55,7 @@ getlogin(void)
 }
 
 int
-getlogin_r(char *logname, size_t namelen)
+__ssp_real(getlogin_r)(char *logname, size_t namelen)
 {
 	char tmpname[MAXLOGNAME];
 	int	len;

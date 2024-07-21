@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	locales
 FILESGROUPS=	FILES ALWAYS
 ALWAYSPACKAGE=	runtime

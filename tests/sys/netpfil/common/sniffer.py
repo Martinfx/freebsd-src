@@ -1,6 +1,5 @@
-# $FreeBSD$
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2017 Kristof Provost <kp@FreeBSD.org>
 #
@@ -31,30 +30,41 @@ import scapy.all as sp
 import sys
 
 class Sniffer(threading.Thread):
-	def __init__(self, args, check_function, recvif=None, timeout=3):
+	def __init__(self, args, check_function, recvif, timeout=3, defrag=False):
 		threading.Thread.__init__(self)
 
+		self._sem = threading.Semaphore(0)
 		self._args = args
 		self._timeout = timeout
-		if recvif is not None:
-			self._recvif = recvif
-		else:
-			self._recvif = args.recvif[0]
+		self._recvif = recvif
 		self._check_function = check_function
-		self.foundCorrectPacket = False
+		self._defrag = defrag
+		self.correctPackets = 0
 
 		self.start()
+		if not self._sem.acquire(timeout=30):
+			raise Exception("Failed to start sniffer")
 
 	def _checkPacket(self, packet):
 		ret = self._check_function(self._args, packet)
 		if ret:
-			self.foundCorrectPacket = True
+			self.correctPackets += 1
 		return ret
+
+	def _startedCb(self):
+		self._sem.release()
 
 	def run(self):
 		self.packets = []
-		try:
+		if self._defrag:
+			# With fragment reassembly we can't stop the sniffer after catching
+			# the good packets, as those have not been reassembled. We must
+			#  wait for sniffer to finish and check returned packets instead.
+			self.packets = sp.sniff(session=sp.IPSession, iface=self._recvif,
+				timeout=self._timeout, started_callback=self._startedCb)
+			for p in self.packets:
+				self._checkPacket(p)
+		else:
 			self.packets = sp.sniff(iface=self._recvif,
-					stop_filter=self._checkPacket, timeout=self._timeout)
-		except Exception as e:
-			print(e, file=sys.stderr)
+				stop_filter=self._checkPacket, timeout=self._timeout,
+				started_callback=self._startedCb)

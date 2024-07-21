@@ -36,8 +36,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $FreeBSD$
  */
 
 #if !defined(IB_VERBS_H)
@@ -106,7 +104,7 @@ enum ib_gid_type {
 #define ROCE_V2_UDP_DPORT      4791
 struct ib_gid_attr {
 	enum ib_gid_type	gid_type;
-	struct ifnet	*ndev;
+	if_t ndev;
 };
 
 enum rdma_node_type {
@@ -228,6 +226,7 @@ enum ib_device_cap_flags {
 	IB_DEVICE_MEM_WINDOW_TYPE_2A		= (1 << 23),
 	IB_DEVICE_MEM_WINDOW_TYPE_2B		= (1 << 24),
 	IB_DEVICE_RC_IP_CSUM			= (1 << 25),
+	/* Deprecated. Please use IB_RAW_PACKET_CAP_IP_CSUM. */
 	IB_DEVICE_RAW_IP_CSUM			= (1 << 26),
 	/*
 	 * Devices should set IB_DEVICE_CROSS_CHANNEL if they
@@ -241,7 +240,9 @@ enum ib_device_cap_flags {
 	IB_DEVICE_ON_DEMAND_PAGING		= (1ULL << 31),
 	IB_DEVICE_SG_GAPS_REG			= (1ULL << 32),
 	IB_DEVICE_VIRTUAL_FUNCTION		= (1ULL << 33),
+	/* Deprecated. Please use IB_RAW_PACKET_CAP_SCATTER_FCS. */
 	IB_DEVICE_RAW_SCATTER_FCS		= (1ULL << 34),
+	IB_DEVICE_KNOWSEPOCH			= (1ULL << 35),
 };
 
 enum ib_atomic_cap {
@@ -1494,6 +1495,18 @@ struct ib_srq {
 	} ext;
 };
 
+enum ib_raw_packet_caps {
+	/* Strip cvlan from incoming packet and report it in the matching work
+	 * completion is supported.
+	 */
+	IB_RAW_PACKET_CAP_CVLAN_STRIPPING       = (1 << 0),
+	/* Scatter FCS field of an incoming packet to host memory is supported.
+	*/
+	IB_RAW_PACKET_CAP_SCATTER_FCS           = (1 << 1),
+	/* Checksum offloads are supported (for both send and receive). */
+	IB_RAW_PACKET_CAP_IP_CSUM               = (1 << 2),
+};
+
 enum ib_wq_type {
 	IB_WQT_RQ
 };
@@ -2165,7 +2178,7 @@ struct ib_device {
 	 * that this function returns NULL before the net device reaches
 	 * NETDEV_UNREGISTER_FINAL state.
 	 */
-	struct ifnet		  *(*get_netdev)(struct ib_device *device,
+	if_t (*get_netdev)(struct ib_device *device,
 						 u8 port_num);
 	int		           (*query_gid)(struct ib_device *device,
 						u8 port_num, int index,
@@ -2443,7 +2456,7 @@ struct ib_client {
 	 *
 	 * The caller is responsible for calling dev_put on the returned
 	 * netdev. */
-	struct ifnet *(*get_net_dev_by_params)(
+	if_t (*get_net_dev_by_params)(
 			struct ib_device *dev,
 			u8 port,
 			u16 pkey,
@@ -2931,7 +2944,7 @@ int ib_modify_port(struct ib_device *device,
 		   struct ib_port_modify *port_modify);
 
 int ib_find_gid(struct ib_device *device, union ib_gid *gid,
-		enum ib_gid_type gid_type, struct ifnet *ndev,
+		enum ib_gid_type gid_type, if_t ndev,
 		u8 *port_num, u16 *index);
 
 int ib_find_pkey(struct ib_device *device,
@@ -3918,7 +3931,7 @@ static inline bool ib_access_writable(int access_flags)
 int ib_check_mr_status(struct ib_mr *mr, u32 check_mask,
 		       struct ib_mr_status *mr_status);
 
-struct ifnet *ib_get_net_dev_by_params(struct ib_device *dev, u8 port,
+if_t ib_get_net_dev_by_params(struct ib_device *dev, u8 port,
 					    u16 pkey, const union ib_gid *gid,
 					    const struct sockaddr *addr);
 struct ib_wq *ib_create_wq(struct ib_pd *pd,

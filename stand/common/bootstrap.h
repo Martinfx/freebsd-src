@@ -22,8 +22,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _BOOTSTRAP_H_
@@ -52,10 +50,12 @@ extern char	command_errbuf[COMMAND_ERRBUFSZ];
 void	interact(void);
 void	interp_emit_prompt(void);
 int	interp_builtin_cmd(int argc, char *argv[]);
+bool	interp_has_builtin_cmd(const char *cmd);
 
 /* Called by interp.c for interp_*.c embedded interpreters */
 int	interp_include(const char *);	/* Execute commands from filename */
-void	interp_init(void);		/* Initialize interpreater */
+void	interp_preinit(void);		/* Initialize interpreater execution engine */
+void	interp_init(void);		/* Initialize interpreater and run main script */
 int	interp_run(const char *);	/* Run a single command */
 
 /* interp_backslash.c */
@@ -181,6 +181,7 @@ extern int isapnp_readport;
  * Version information
  */
 extern char bootprog_info[];
+extern unsigned bootprog_rev;
 
 /*
  * Interpreter information
@@ -200,6 +201,7 @@ struct file_metadata
 {
 	size_t		md_size;
 	uint16_t	md_type;
+	vm_offset_t	md_addr;	/* Valid after copied to kernel space */
 	struct file_metadata *md_next;
 	char		md_data[1];	/* data are immediately appended */
 };
@@ -280,6 +282,7 @@ int tslog_init(void);
 int tslog_publish(void);
 
 vm_offset_t build_font_module(vm_offset_t);
+vm_offset_t build_splash_module(vm_offset_t);
 
 /* MI module loaders */
 #ifdef __elfN
@@ -370,53 +373,15 @@ struct arch_switch
 
 	/* Return the hypervisor name/type or NULL if not virtualized. */
 	const char *(*arch_hypervisor)(void);
-
-	/* For kexec-type loaders, get ksegment structure */
-	void (*arch_kexec_kseg_get)(int *nseg, void **kseg);
 };
 extern struct arch_switch archsw;
 
 /* This must be provided by the MD code, but should it be in the archsw? */
 void	delay(int delay);
 
-void	dev_cleanup(void);
-
-/*
- * nvstore API.
- */
-typedef int (nvstore_getter_cb_t)(void *, const char *, void **);
-typedef int (nvstore_setter_cb_t)(void *, int, const char *,
-    const void *, size_t);
-typedef int (nvstore_setter_str_cb_t)(void *, const char *, const char *,
-    const char *);
-typedef int (nvstore_unset_cb_t)(void *, const char *);
-typedef int (nvstore_print_cb_t)(void *, void *);
-typedef int (nvstore_iterate_cb_t)(void *, int (*)(void *, void *));
-
-typedef struct nvs_callbacks {
-	nvstore_getter_cb_t	*nvs_getter;
-	nvstore_setter_cb_t	*nvs_setter;
-	nvstore_setter_str_cb_t *nvs_setter_str;
-	nvstore_unset_cb_t	*nvs_unset;
-	nvstore_print_cb_t	*nvs_print;
-	nvstore_iterate_cb_t	*nvs_iterate;
-} nvs_callbacks_t;
-
-int nvstore_init(const char *, nvs_callbacks_t *, void *);
-int nvstore_fini(const char *);
-void *nvstore_get_store(const char *);
-int nvstore_print(void *);
-int nvstore_get_var(void *, const char *, void **);
-int nvstore_set_var(void *, int, const char *, void *, size_t);
-int nvstore_set_var_from_string(void *, const char *, const char *,
-    const char *);
-int nvstore_unset_var(void *, const char *);
-
 /* common code to set currdev variable. */
-extern int mount_currdev(struct env_var *, int, const void *);
-
-#ifndef CTASSERT
-#define	CTASSERT(x)	_Static_assert(x, "compile-time assertion failed")
-#endif
+int gen_setcurrdev(struct env_var *ev, int flags, const void *value);
+int mount_currdev(struct env_var *, int, const void *);
+void set_currdev(const char *devname);
 
 #endif /* !_BOOTSTRAP_H_ */

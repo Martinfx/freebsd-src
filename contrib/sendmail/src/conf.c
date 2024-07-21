@@ -25,16 +25,14 @@ SM_RCSID("@(#)$Id: conf.c,v 8.1192 2014-01-27 18:23:21 ca Exp $")
 #include "map.h"
 #include <ratectrl.h>
 
-#ifdef DEC
-# if NETINET6
+#if defined(DEC) && NETINET6
 /* for the IPv6 device lookup */
-#  define _SOCKADDR_LEN
-#  include <macros.h>
-# endif /* NETINET6 */
-#endif /* DEC */
+# define _SOCKADDR_LEN
+# include <macros.h>
+#endif
 
-# include <sys/ioctl.h>
-# include <sys/param.h>
+#include <sys/ioctl.h>
+#include <sys/param.h>
 
 #include <limits.h>
 #if NETINET || NETINET6
@@ -83,7 +81,6 @@ static struct hostent *sm_getipnodebyaddr __P((const void *, size_t, int, int *)
 **		this file too much, you may be making a mistake!
 */
 
-
 /*
 **  Header info table
 **	Final (null) entry contains the flags used for any other field.
@@ -94,6 +91,12 @@ static struct hostent *sm_getipnodebyaddr __P((const void *, size_t, int, int *)
 **	something with them.
 */
 
+#if _FFR_MTA_MODE
+# define Xflags	H_ASIS
+#else
+# define Xflags 0
+#endif
+
 struct hdrinfo	HdrInfo[] =
 {
 		/* originator fields, most to least significant */
@@ -101,8 +104,8 @@ struct hdrinfo	HdrInfo[] =
 	{ "resent-from",		H_FROM|H_RESENT,	NULL	},
 	{ "resent-reply-to",		H_FROM|H_RESENT,	NULL	},
 	{ "sender",			H_FROM,			NULL	},
-	{ "from",			H_FROM,			NULL	},
-	{ "reply-to",			H_FROM,			NULL	},
+	{ "from",			H_FROM | Xflags,	NULL	},
+	{ "reply-to",			H_FROM | Xflags,	NULL	},
 	{ "errors-to",			H_FROM|H_ERRORSTO,	NULL	},
 	{ "full-name",			H_ACHECK,		NULL	},
 	{ "return-receipt-to",		H_RECEIPTTO,		NULL	},
@@ -110,7 +113,7 @@ struct hdrinfo	HdrInfo[] =
 	{ "disposition-notification-to",	H_FROM,		NULL	},
 
 		/* destination fields */
-	{ "to",				H_RCPT,			NULL	},
+	{ "to",				H_RCPT | Xflags,	NULL	},
 	{ "resent-to",			H_RCPT|H_RESENT,	NULL	},
 	{ "cc",				H_RCPT,			NULL	},
 	{ "resent-cc",			H_RCPT|H_RESENT,	NULL	},
@@ -148,8 +151,6 @@ struct hdrinfo	HdrInfo[] =
 	{ NULL,				0,			NULL	}
 };
 
-
-
 /*
 **  Privacy values
 */
@@ -162,16 +163,19 @@ struct prival PrivacyValues[] =
 	{ "needvrfyhelo",	PRIV_NEEDVRFYHELO	},
 	{ "noexpn",		PRIV_NOEXPN		},
 	{ "novrfy",		PRIV_NOVRFY		},
-	{ "restrictexpand",	PRIV_RESTRICTEXPAND	},
+	{ "authwarnings",	PRIV_AUTHWARNINGS	},
+	{ "noverb",		PRIV_NOVERB		},
 	{ "restrictmailq",	PRIV_RESTRICTMAILQ	},
 	{ "restrictqrun",	PRIV_RESTRICTQRUN	},
+	{ "restrictexpand",	PRIV_RESTRICTEXPAND	},
 	{ "noetrn",		PRIV_NOETRN		},
-	{ "noverb",		PRIV_NOVERB		},
-	{ "authwarnings",	PRIV_AUTHWARNINGS	},
-	{ "noreceipts",		PRIV_NORECEIPTS		},
 	{ "nobodyreturn",	PRIV_NOBODYRETN		},
+	{ "noreceipts",		PRIV_NORECEIPTS		},
 	{ "goaway",		PRIV_GOAWAY		},
 	{ "noactualrecipient",	PRIV_NOACTUALRECIPIENT	},
+#if _FFR_NOREFLECT
+	{ "noreflection",	PRIV_NOREFLECTION	},
+#endif
 	{ NULL,			0			}
 };
 
@@ -191,7 +195,6 @@ struct dbsval DontBlameSendmailValues[] =
 	{ "groupwritablealiasfile",	DBS_GROUPWRITABLEALIASFILE	},
 	{ "worldwritablealiasfile",	DBS_WORLDWRITABLEALIASFILE	},
 	{ "forwardfileinunsafedirpath",	DBS_FORWARDFILEINUNSAFEDIRPATH	},
-	{ "includefileinunsafedirpath",	DBS_INCLUDEFILEINUNSAFEDIRPATH	},
 	{ "mapinunsafedirpath",		DBS_MAPINUNSAFEDIRPATH	},
 	{ "linkedaliasfileinwritabledir",
 					DBS_LINKEDALIASFILEINWRITABLEDIR },
@@ -223,6 +226,7 @@ struct dbsval DontBlameSendmailValues[] =
 					DBS_INCLUDEFILEINUNSAFEDIRPATHSAFE },
 	{ "runprograminunsafedirpath",	DBS_RUNPROGRAMINUNSAFEDIRPATH	},
 	{ "runwritableprogram",		DBS_RUNWRITABLEPROGRAM		},
+	{ "includefileinunsafedirpath",	DBS_INCLUDEFILEINUNSAFEDIRPATH	},
 	{ "nonrootsafeaddr",		DBS_NONROOTSAFEADDR		},
 	{ "truststickybit",		DBS_TRUSTSTICKYBIT		},
 	{ "dontwarnforwardfileinunsafedirpath",
@@ -237,6 +241,7 @@ struct dbsval DontBlameSendmailValues[] =
 	{ "groupreadablekeyfile",	DBS_GROUPREADABLEKEYFILE	},
 	{ "groupreadabledefaultauthinfofile",
 					DBS_GROUPREADABLEAUTHINFOFILE	},
+	{ "certowner",			DBS_CERTOWNER			},
 	{ NULL,				0				}
 };
 
@@ -320,7 +325,7 @@ setdefaults(e)
 	e->e_xfqgrp = NOQGRP;
 	e->e_xfqdir = NOQDIR;
 	e->e_ctime = curtime();
-#if _FFR_EAI
+#if USE_EAI
 	e->e_smtputf8 = false;
 #endif
 	SevenBitInput = false;			/* option 7 */
@@ -405,9 +410,9 @@ setdefaults(e)
 	}
 	else
 		InetMode = AF_INET;
-#if !IPV6_FULL
+# if !IPV6_FULL
 	UseCompressedIPv6Addresses = true;
-#endif
+# endif
 #else /* NETINET6 */
 	InetMode = AF_INET;
 #endif /* NETINET6 */
@@ -1038,9 +1043,9 @@ switch_map_find(service, maptype, mapreturn)
 				p = strpbrk(buf, "#\n");
 				if (p != NULL)
 					*p = '\0';
-#ifndef SM_NSSWITCH_DELIMS
-# define SM_NSSWITCH_DELIMS	" \t"
-#endif
+# ifndef SM_NSSWITCH_DELIMS
+#  define SM_NSSWITCH_DELIMS	" \t"
+# endif
 				p = strpbrk(buf, SM_NSSWITCH_DELIMS);
 				if (p != NULL)
 					*p++ = '\0';
@@ -1185,14 +1190,14 @@ char *
 username()
 {
 	static char *myname = NULL;
-	extern char *getlogin();
+	extern char *getlogin __P((void));
 	register struct passwd *pw;
 
 	/* cache the result */
 	if (myname == NULL)
 	{
 		myname = getlogin();
-		if (myname == NULL || myname[0] == '\0')
+		if (SM_IS_EMPTY(myname))
 		{
 			pw = sm_getpwuid(RealUid);
 			if (pw != NULL)
@@ -1210,7 +1215,7 @@ username()
 					myname = pw->pw_name;
 			}
 		}
-		if (myname == NULL || myname[0] == '\0')
+		if (SM_IS_EMPTY(myname))
 		{
 			syserr("554 5.3.0 Who are you?");
 			myname = "postmaster";
@@ -1251,8 +1256,8 @@ ttypath()
 {
 	struct stat stbuf;
 	register char *pathn;
-	extern char *ttyname();
-	extern char *getlogin();
+	extern char *ttyname __P((int));
+	extern char *getlogin __P((void));
 
 	/* compute the pathname of the controlling tty */
 	if ((pathn = ttyname(2)) == NULL && (pathn = ttyname(1)) == NULL &&
@@ -1404,7 +1409,6 @@ init_md(argc, argv)
 # endif /* _SCO_unix_ */
 #endif /* SECUREWARE || defined(_SCO_unix_) */
 
-
 #ifdef VENDOR_DEFAULT
 	VendorCode = VENDOR_DEFAULT;
 #else
@@ -1543,7 +1547,7 @@ getla()
 #   endif
 #  endif /* LA_TYPE == LA_SHORT */
 # endif /* LA_TYPE == LA_INT */
-	extern off_t lseek();
+	extern off_t lseek __P((int, off_t, int));
 
 	if (kmem < 0)
 	{
@@ -2312,7 +2316,6 @@ refuseconnections(e, dn, active)
 			conncnt[dn] = 0;
 	}
 
-
 #if _FFR_MEMSTAT
 	if (RefuseLowMem > 0 &&
 	    sm_memstat_get(MemoryResource, &memfree) >= 0 &&
@@ -2426,7 +2429,6 @@ refuseconnections(e, dn, active)
 #ifndef SPT_TYPE
 # define SPT_TYPE	SPT_REUSEARGV
 #endif
-
 
 #if SPT_TYPE != SPT_NONE && SPT_TYPE != SPT_BUILTIN
 
@@ -2546,13 +2548,13 @@ initsetproctitle(argc, argv, envp)
 	**  Use all contiguous argv and envp pointers starting at argv[0]
 	*/
 
-# if _FFR_SPT_ALIGN
+#if _FFR_SPT_ALIGN
 	align = -1;
-#  ifdef SPT_ALIGN_SIZE
+# ifdef SPT_ALIGN_SIZE
 	for (i = SPT_ALIGN_SIZE; i > 0; i >>= 1)
 		align++;
-#  endif
-# endif /* _FFR_SPT_ALIGN */
+# endif
+#endif /* _FFR_SPT_ALIGN */
 
 	for (i = 0; i < argc; i++)
 	{
@@ -2760,29 +2762,29 @@ pid_t
 sm_wait(status)
 	int *status;
 {
-# ifdef WAITUNION
+#ifdef WAITUNION
 	union wait st;
-# else
+#else
 	auto int st;
-# endif
+#endif
 	pid_t i;
-# if defined(ISC_UNIX) || defined(_SCO_unix_)
+#if defined(ISC_UNIX) || defined(_SCO_unix_)
 	int savesig;
-# endif
+#endif
 
-# if defined(ISC_UNIX) || defined(_SCO_unix_)
+#if defined(ISC_UNIX) || defined(_SCO_unix_)
 	savesig = sm_releasesignal(SIGCHLD);
-# endif
+#endif
 	i = wait(&st);
-# if defined(ISC_UNIX) || defined(_SCO_unix_)
+#if defined(ISC_UNIX) || defined(_SCO_unix_)
 	if (savesig > 0)
 		sm_blocksignal(SIGCHLD);
-# endif
-# ifdef WAITUNION
+#endif
+#ifdef WAITUNION
 	*status = st.w_status;
-# else
+#else
 	*status = st;
-# endif
+#endif
 	return i;
 }
 /*
@@ -2811,7 +2813,7 @@ reapchild(sig)
 	int save_errno = errno;
 	int st;
 	pid_t pid;
-# if HASWAITPID
+#if HASWAITPID
 	auto int status;
 	int count;
 
@@ -2821,14 +2823,14 @@ reapchild(sig)
 		st = status;
 		if (count++ > 1000)
 			break;
-# else /* HASWAITPID */
-#  ifdef WNOHANG
+#else /* HASWAITPID */
+# ifdef WNOHANG
 	union wait status;
 
 	while ((pid = wait3(&status, WNOHANG, (struct rusage *) NULL)) > 0)
 	{
 		st = status.w_status;
-#  else /* WNOHANG */
+# else /* WNOHANG */
 	auto int status;
 
 	/*
@@ -2841,8 +2843,8 @@ reapchild(sig)
 	if ((pid = wait(&status)) > 0)
 	{
 		st = status;
-#  endif /* WNOHANG */
-# endif /* HASWAITPID */
+# endif /* WNOHANG */
+#endif /* HASWAITPID */
 		/* Drop PID and check if it was a control socket child */
 		proc_list_drop(pid, st, NULL);
 	}
@@ -2872,22 +2874,22 @@ reapchild(sig)
 int
 getdtsize()
 {
-# ifdef RLIMIT_NOFILE
+#ifdef RLIMIT_NOFILE
 	struct rlimit rl;
 
 	if (getrlimit(RLIMIT_NOFILE, &rl) >= 0)
 		return rl.rlim_cur;
-# endif /* RLIMIT_NOFILE */
+#endif /* RLIMIT_NOFILE */
 
-# if HASGETDTABLESIZE
+#if HASGETDTABLESIZE
 	return getdtablesize();
-# else /* HASGETDTABLESIZE */
-#  ifdef _SC_OPEN_MAX
+#else /* HASGETDTABLESIZE */
+# ifdef _SC_OPEN_MAX
 	return sysconf(_SC_OPEN_MAX);
-#  else
+# else
 	return NOFILE;
-#  endif
-# endif /* HASGETDTABLESIZE */
+# endif
+#endif /* HASGETDTABLESIZE */
 }
 /*
 **  UNAME -- get the UUCP name of this system.
@@ -2947,6 +2949,7 @@ uname(name)
 */
 
 #if !HASINITGROUPS
+int
 initgroups(name, basegid)
 	char *name;
 	int basegid;
@@ -2980,7 +2983,7 @@ setgroups(ngroups, grouplist)
 pid_t
 setsid __P ((void))
 {
-#  ifdef TIOCNOTTY
+# ifdef TIOCNOTTY
 	int fd;
 
 	fd = open("/dev/tty", O_RDWR, 0);
@@ -2989,12 +2992,12 @@ setsid __P ((void))
 		(void) ioctl(fd, TIOCNOTTY, (char *) 0);
 		(void) close(fd);
 	}
-#  endif /* TIOCNOTTY */
-#  ifdef SYS5SETPGRP
+# endif /* TIOCNOTTY */
+# ifdef SYS5SETPGRP
 	return setpgrp();
-#  else
+# else
 	return setpgid(0, CurrentPid);
-#  endif
+# endif
 }
 
 #endif /* !HASSETSID */
@@ -3003,7 +3006,7 @@ setsid __P ((void))
 */
 
 #if NEEDFSYNC
-
+int
 fsync(fd)
 	int fd;
 {
@@ -3050,7 +3053,6 @@ dgux_inet_addr(host)
  * All rights reserved.  The Berkeley software License Agreement
  * specifies the terms and conditions for redistribution.
  */
-
 
 /*
 **  this version hacked to add `atend' flag to allow state machine
@@ -3227,9 +3229,9 @@ usershellok(user, shell)
 	char *user;
 	char *shell;
 {
-# if HASGETUSERSHELL
+#if HASGETUSERSHELL
 	register char *p;
-	extern char *getusershell();
+	extern char *getusershell __P((void));
 
 	if (shell == NULL || shell[0] == '\0' || wordinclass(user, 't') ||
 	    ConfigLevel <= 1)
@@ -3241,10 +3243,10 @@ usershellok(user, shell)
 			break;
 	endusershell();
 	return p != NULL;
-# else /* HASGETUSERSHELL */
-#  if USEGETCONFATTR
+#else /* HASGETUSERSHELL */
+# if USEGETCONFATTR
 	auto char *v;
-#  endif
+# endif
 	register SM_FILE_T *shellf;
 	char buf[MAXLINE];
 
@@ -3252,7 +3254,7 @@ usershellok(user, shell)
 	    ConfigLevel <= 1)
 		return true;
 
-#  if USEGETCONFATTR
+# if USEGETCONFATTR
 	/*
 	**  Naturally IBM has a "better" idea.....
 	**
@@ -3276,7 +3278,7 @@ usershellok(user, shell)
 		}
 		return false;
 	}
-#  endif /* USEGETCONFATTR */
+# endif /* USEGETCONFATTR */
 
 	shellf = sm_io_open(SmFtStdio, SM_TIME_DEFAULT, _PATH_SHELLS,
 			    SM_IO_RDONLY, NULL);
@@ -3319,7 +3321,7 @@ usershellok(user, shell)
 	}
 	(void) sm_io_close(shellf, SM_TIME_DEFAULT);
 	return false;
-# endif /* HASGETUSERSHELL */
+#endif /* HASGETUSERSHELL */
 }
 /*
 **  FREEDISKSPACE -- see how much free space is on the queue filesystem
@@ -3340,87 +3342,87 @@ usershellok(user, shell)
 */
 
 /* statfs types */
-# define SFS_NONE	0	/* no statfs implementation */
-# define SFS_USTAT	1	/* use ustat */
-# define SFS_4ARGS	2	/* use four-argument statfs call */
-# define SFS_VFS	3	/* use <sys/vfs.h> implementation */
-# define SFS_MOUNT	4	/* use <sys/mount.h> implementation */
-# define SFS_STATFS	5	/* use <sys/statfs.h> implementation */
-# define SFS_STATVFS	6	/* use <sys/statvfs.h> implementation */
+#define SFS_NONE	0	/* no statfs implementation */
+#define SFS_USTAT	1	/* use ustat */
+#define SFS_4ARGS	2	/* use four-argument statfs call */
+#define SFS_VFS	3	/* use <sys/vfs.h> implementation */
+#define SFS_MOUNT	4	/* use <sys/mount.h> implementation */
+#define SFS_STATFS	5	/* use <sys/statfs.h> implementation */
+#define SFS_STATVFS	6	/* use <sys/statvfs.h> implementation */
 
-# ifndef SFS_TYPE
-#  define SFS_TYPE	SFS_NONE
-# endif
+#ifndef SFS_TYPE
+# define SFS_TYPE	SFS_NONE
+#endif
 
-# if SFS_TYPE == SFS_USTAT
-#  include <ustat.h>
-# endif
-# if SFS_TYPE == SFS_4ARGS || SFS_TYPE == SFS_STATFS
-#  include <sys/statfs.h>
-# endif
-# if SFS_TYPE == SFS_VFS
-#  include <sys/vfs.h>
-# endif
-# if SFS_TYPE == SFS_MOUNT
-#  include <sys/mount.h>
-# endif
-# if SFS_TYPE == SFS_STATVFS
-#  include <sys/statvfs.h>
-# endif
+#if SFS_TYPE == SFS_USTAT
+# include <ustat.h>
+#endif
+#if SFS_TYPE == SFS_4ARGS || SFS_TYPE == SFS_STATFS
+# include <sys/statfs.h>
+#endif
+#if SFS_TYPE == SFS_VFS
+# include <sys/vfs.h>
+#endif
+#if SFS_TYPE == SFS_MOUNT
+# include <sys/mount.h>
+#endif
+#if SFS_TYPE == SFS_STATVFS
+# include <sys/statvfs.h>
+#endif
 
 long
 freediskspace(dir, bsize)
 	const char *dir;
 	long *bsize;
 {
-# if SFS_TYPE == SFS_NONE
+#if SFS_TYPE == SFS_NONE
 	if (bsize != NULL)
 		*bsize = 4096L;
 
 	/* assume free space is plentiful */
 	return (long) LONG_MAX;
-# else /* SFS_TYPE == SFS_NONE */
-#  if SFS_TYPE == SFS_USTAT
+#else /* SFS_TYPE == SFS_NONE */
+# if SFS_TYPE == SFS_USTAT
 	struct ustat fs;
 	struct stat statbuf;
-#   define FSBLOCKSIZE	DEV_BSIZE
-#   define SFS_BAVAIL	f_tfree
-#  else /* SFS_TYPE == SFS_USTAT */
-#   if defined(ultrix)
+#  define FSBLOCKSIZE	DEV_BSIZE
+#  define SFS_BAVAIL	f_tfree
+# else /* SFS_TYPE == SFS_USTAT */
+#  if defined(ultrix)
 	struct fs_data fs;
-#    define SFS_BAVAIL	fd_bfreen
-#    define FSBLOCKSIZE	1024L
-#   else /* defined(ultrix) */
-#    if SFS_TYPE == SFS_STATVFS
+#   define SFS_BAVAIL	fd_bfreen
+#   define FSBLOCKSIZE	1024L
+#  else /* defined(ultrix) */
+#   if SFS_TYPE == SFS_STATVFS
 	struct statvfs fs;
-#     define FSBLOCKSIZE	fs.f_frsize
-#    else /* SFS_TYPE == SFS_STATVFS */
+#    define FSBLOCKSIZE	fs.f_frsize
+#   else /* SFS_TYPE == SFS_STATVFS */
 	struct statfs fs;
-#     define FSBLOCKSIZE	fs.f_bsize
-#    endif /* SFS_TYPE == SFS_STATVFS */
-#   endif /* defined(ultrix) */
-#  endif /* SFS_TYPE == SFS_USTAT */
-#  ifndef SFS_BAVAIL
-#   define SFS_BAVAIL f_bavail
-#  endif
+#    define FSBLOCKSIZE	fs.f_bsize
+#   endif /* SFS_TYPE == SFS_STATVFS */
+#  endif /* defined(ultrix) */
+# endif /* SFS_TYPE == SFS_USTAT */
+# ifndef SFS_BAVAIL
+#  define SFS_BAVAIL f_bavail
+# endif
 
-#  if SFS_TYPE == SFS_USTAT
+# if SFS_TYPE == SFS_USTAT
 	if (stat(dir, &statbuf) == 0 && ustat(statbuf.st_dev, &fs) == 0)
-#  else /* SFS_TYPE == SFS_USTAT */
-#   if SFS_TYPE == SFS_4ARGS
+# else /* SFS_TYPE == SFS_USTAT */
+#  if SFS_TYPE == SFS_4ARGS
 	if (statfs(dir, &fs, sizeof(fs), 0) == 0)
-#   else /* SFS_TYPE == SFS_4ARGS */
-#    if SFS_TYPE == SFS_STATVFS
+#  else /* SFS_TYPE == SFS_4ARGS */
+#   if SFS_TYPE == SFS_STATVFS
 	if (statvfs(dir, &fs) == 0)
-#    else /* SFS_TYPE == SFS_STATVFS */
-#     if defined(ultrix)
+#   else /* SFS_TYPE == SFS_STATVFS */
+#    if defined(ultrix)
 	if (statfs(dir, &fs) > 0)
-#     else /* defined(ultrix) */
+#    else /* defined(ultrix) */
 	if (statfs(dir, &fs) == 0)
-#     endif /* defined(ultrix) */
-#    endif /* SFS_TYPE == SFS_STATVFS */
-#   endif /* SFS_TYPE == SFS_4ARGS */
-#  endif /* SFS_TYPE == SFS_USTAT */
+#    endif /* defined(ultrix) */
+#   endif /* SFS_TYPE == SFS_STATVFS */
+#  endif /* SFS_TYPE == SFS_4ARGS */
+# endif /* SFS_TYPE == SFS_USTAT */
 	{
 		if (bsize != NULL)
 			*bsize = FSBLOCKSIZE;
@@ -3432,7 +3434,7 @@ freediskspace(dir, bsize)
 			return (long) fs.SFS_BAVAIL;
 	}
 	return -1;
-# endif /* SFS_TYPE == SFS_NONE */
+#endif /* SFS_TYPE == SFS_NONE */
 }
 /*
 **  ENOUGHDISKSPACE -- is there enough free space on the queue file systems?
@@ -3610,14 +3612,14 @@ lockfile(fd, filename, ext, type)
 {
 	int i;
 	int save_errno;
-# if !HASFLOCK
+#if !HASFLOCK
 	int action;
 	struct flock lfd;
 
 	if (ext == NULL)
 		ext = "";
 
-	memset(&lfd, '\0', sizeof(lfd));
+	(void) memset(&lfd, '\0', sizeof(lfd));
 	if (bitset(LOCK_UN, type))
 		lfd.l_type = F_UNLCK;
 	else if (bitset(LOCK_EX, type))
@@ -3631,9 +3633,11 @@ lockfile(fd, filename, ext, type)
 		action = F_SETLKW;
 
 	if (tTd(55, 60))
-		sm_dprintf("lockfile(%s%s, action=%d, type=%d): ",
-			filename, ext, action, lfd.l_type);
-
+		sm_dprintf("lockfile(%s%s, fd=%d, action=%s, type=%s): ",
+			filename, ext, fd,
+			bitset(LOCK_NB, type) ? "nb" : "block",
+			bitset(LOCK_UN, type) ? "unlock" :
+				(bitset(LOCK_EX, type) ? "wr" : "rd"));
 	while ((i = fcntl(fd, action, &lfd)) < 0 && errno == EINTR)
 		continue;
 	if (i >= 0)
@@ -3674,12 +3678,14 @@ lockfile(fd, filename, ext, type)
 		       filename, ext, fd, type, omode, (long) euid);
 		dumpfd(fd, true, true);
 	}
-# else /* !HASFLOCK */
+#else /* !HASFLOCK */
 	if (ext == NULL)
 		ext = "";
 
 	if (tTd(55, 60))
-		sm_dprintf("lockfile(%s%s, type=%o): ", filename, ext, type);
+		sm_dprintf("lockfile(%s%s, fd=%d, type=%s): ", filename, ext,
+			fd, bitset(LOCK_UN, type) ? "unlock" :
+				(bitset(LOCK_EX, type) ? "wr" : "rd"));
 
 	while ((i = flock(fd, type)) < 0 && errno == EINTR)
 		continue;
@@ -3704,7 +3710,7 @@ lockfile(fd, filename, ext, type)
 			filename, ext, fd, type, omode, (long) euid);
 		dumpfd(fd, true, true);
 	}
-# endif /* !HASFLOCK */
+#endif /* !HASFLOCK */
 	if (tTd(55, 60))
 		sm_dprintf("FAIL\n");
 	errno = save_errno;
@@ -3772,7 +3778,7 @@ chownsafe(fd, safedir)
 	int fd;
 	bool safedir;
 {
-# if (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && \
+#if (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && \
     (defined(_PC_CHOWN_RESTRICTED) || defined(_GNU_TYPES_H))
 	int rval;
 
@@ -3788,14 +3794,14 @@ chownsafe(fd, safedir)
 
 	errno = 0;
 	rval = fpathconf(fd, _PC_CHOWN_RESTRICTED);
-#  if SAFENFSPATHCONF
+# if SAFENFSPATHCONF
 	return errno == 0 && rval IS_SAFE_CHOWN;
-#  else
+# else
 	return safedir && errno == 0 && rval IS_SAFE_CHOWN;
-#  endif
-# else /* (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && ... */
+# endif
+#else /* (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && ... */
 	return bitnset(DBS_ASSUMESAFECHOWN, DontBlameSendmail);
-# endif /* (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && ... */
+#endif /* (!defined(_POSIX_CHOWN_RESTRICTED) || _POSIX_CHOWN_RESTRICTED != -1) && ... */
 }
 /*
 **  RESETLIMITS -- reset system controlled resource limits
@@ -3858,7 +3864,7 @@ bool
 setvendor(vendor)
 	char *vendor;
 {
-	if (sm_strcasecmp(vendor, "Berkeley") == 0)
+	if (SM_STRCASEEQ(vendor, "Berkeley"))
 	{
 		VendorCode = VENDOR_BERKELEY;
 		return true;
@@ -3867,14 +3873,14 @@ setvendor(vendor)
 	/* add vendor extensions here */
 
 #ifdef SUN_EXTENSIONS
-	if (sm_strcasecmp(vendor, "Sun") == 0)
+	if (SM_STRCASEEQ(vendor, "Sun"))
 	{
 		VendorCode = VENDOR_SUN;
 		return true;
 	}
 #endif /* SUN_EXTENSIONS */
 #ifdef DEC
-	if (sm_strcasecmp(vendor, "Digital") == 0)
+	if (SM_STRCASEEQ(vendor, "Digital"))
 	{
 		VendorCode = VENDOR_DEC;
 		return true;
@@ -3882,7 +3888,7 @@ setvendor(vendor)
 #endif /* DEC */
 
 #if defined(VENDOR_NAME) && defined(VENDOR_CODE)
-	if (sm_strcasecmp(vendor, VENDOR_NAME) == 0)
+	if (SM_STRCASEEQ(vendor, VENDOR_NAME))
 	{
 		VendorCode = VENDOR_CODE;
 		return true;
@@ -3975,7 +3981,6 @@ vendor_pre_defaults(e)
 	sm_setuserenv("SYSTYPE", NULL);
 #endif /* apollo */
 }
-
 
 void
 vendor_post_defaults(e)
@@ -4404,8 +4409,11 @@ sm_gethostbyname(name, family)
 # endif /* NETINET6 */
 	char *maptype[MAXMAPSTACK];
 	short mapreturn[MAXMAPACTIONS];
-	char hbuf[MAXNAME];
-
+	char hbuf[MAXNAME_I];
+# if _FFR_8BITENVADDR
+	(void) dequote_internal_chars(name, hbuf, sizeof(hbuf));
+	name = hbuf;
+# endif
 	if (tTd(61, 10))
 		sm_dprintf("sm_gethostbyname(%s, %d)... ", name, family);
 
@@ -4423,7 +4431,8 @@ sm_gethostbyname(name, family)
 	if (h == NULL)
 	{
 		if (tTd(61, 10))
-			sm_dprintf("failure\n");
+			sm_dprintf("failure: errno=%d, h_errno=%d\n",
+				errno, h_errno);
 
 		nmaps = switch_map_find("hosts", maptype, mapreturn);
 		while (--nmaps >= 0)
@@ -4467,9 +4476,9 @@ sm_gethostbyname(name, family)
 	/* the function is supposed to return only the requested family */
 	if (h != NULL && h->h_addrtype != family)
 	{
-# if NETINET6
+#if NETINET6
 		freehostent(h);
-# endif
+#endif
 		h = NULL;
 		SM_SET_H_ERRNO(NO_DATA);
 	}
@@ -4477,7 +4486,8 @@ sm_gethostbyname(name, family)
 	if (tTd(61, 10))
 	{
 		if (h == NULL)
-			sm_dprintf("failure\n");
+			sm_dprintf("failure: errno=%d, h_errno=%d\n",
+				errno, h_errno);
 		else
 		{
 			sm_dprintf("%s\n", h->h_name);
@@ -4691,7 +4701,7 @@ add_hostnames(sa)
 	char **ha;
 	char hnb[MAXHOSTNAMELEN];
 
-	/* lookup name with IP address */
+	/* look up name with IP address */
 	switch (sa->sa.sa_family)
 	{
 #if NETINET
@@ -4821,24 +4831,24 @@ struct mbuf;
 void
 load_if_names()
 {
-# if NETINET6 && defined(SIOCGLIFCONF)
-#  ifdef __hpux
+#if NETINET6 && defined(SIOCGLIFCONF)
+# ifdef __hpux
 
     /*
     **  Unfortunately, HP has changed all of the structures,
     **  making life difficult for implementors.
     */
 
-#   define lifconf	if_laddrconf
-#   define lifc_len	iflc_len
-#   define lifc_buf	iflc_buf
-#   define lifreq	if_laddrreq
-#   define lifr_addr	iflr_addr
-#   define lifr_name	iflr_name
-#   define lifr_flags	iflr_flags
-#   define ss_family	sa_family
-#   undef SIOCGLIFNUM
-#  endif /* __hpux */
+#  define lifconf	if_laddrconf
+#  define lifc_len	iflc_len
+#  define lifc_buf	iflc_buf
+#  define lifreq	if_laddrreq
+#  define lifr_addr	iflr_addr
+#  define lifr_name	iflr_name
+#  define lifr_flags	iflr_flags
+#  define ss_family	sa_family
+#  undef SIOCGLIFNUM
+# endif /* __hpux */
 
 	int s;
 	int i;
@@ -4846,26 +4856,26 @@ load_if_names()
 	int numifs;
 	char *buf;
 	struct lifconf lifc;
-#  ifdef SIOCGLIFNUM
+# ifdef SIOCGLIFNUM
 	struct lifnum lifn;
-#  endif
+# endif
 
 	s = socket(InetMode, SOCK_DGRAM, 0);
 	if (s == -1)
 		return;
 
 	/* get the list of known IP address from the kernel */
-#  ifdef __hpux
+# ifdef __hpux
 	i = ioctl(s, SIOCGIFNUM, (char *) &numifs);
-#  endif
-#  ifdef SIOCGLIFNUM
+# endif
+# ifdef SIOCGLIFNUM
 	lifn.lifn_family = AF_UNSPEC;
 	lifn.lifn_flags = 0;
 	i = ioctl(s, SIOCGLIFNUM, (char *)&lifn);
 	numifs = lifn.lifn_count;
-#  endif /* SIOCGLIFNUM */
+# endif /* SIOCGLIFNUM */
 
-#  if defined(__hpux) || defined(SIOCGLIFNUM)
+# if defined(__hpux) || defined(SIOCGLIFNUM)
 	if (i < 0)
 	{
 		/* can't get number of interfaces -- fall back */
@@ -4877,7 +4887,7 @@ load_if_names()
 	else if (tTd(0, 42))
 		sm_dprintf("system has %d interfaces\n", numifs);
 	if (numifs < 0)
-#  endif /* defined(__hpux) || defined(SIOCGLIFNUM) */
+# endif /* defined(__hpux) || defined(SIOCGLIFNUM) */
 		numifs = MAXINTERFACES;
 
 	if (numifs <= 0)
@@ -4888,10 +4898,10 @@ load_if_names()
 
 	len = lifc.lifc_len = numifs * sizeof(struct lifreq);
 	buf = lifc.lifc_buf = xalloc(lifc.lifc_len);
-#  ifndef __hpux
+# ifndef __hpux
 	lifc.lifc_family = AF_UNSPEC;
 	lifc.lifc_flags = 0;
-#  endif
+# endif
 	if (ioctl(s, SIOCGLIFCONF, (char *)&lifc) < 0)
 	{
 		if (tTd(0, 4))
@@ -4917,9 +4927,9 @@ load_if_names()
 		char *name;
 		struct in6_addr ia6;
 		struct in_addr ia;
-#  ifdef SIOCGLIFFLAGS
+# ifdef SIOCGLIFFLAGS
 		struct lifreq ifrf;
-#  endif
+# endif
 		char ip_addr[256];
 		char buf6[INET6_ADDRSTRLEN];
 
@@ -4946,18 +4956,21 @@ load_if_names()
 		if ((len - i) < sizeof(*ifr))
 			break;
 
-#  ifdef BSD4_4_SOCKADDR
+# ifdef BSD4_4_SOCKADDR
 		if (sa->sa.sa_len > sizeof(ifr->lifr_addr))
 			i += sizeof(ifr->lifr_name) + sa->sa.sa_len;
 		else
-#  endif /* BSD4_4_SOCKADDR */
-#  ifdef DEC
+# endif /* BSD4_4_SOCKADDR */
+		/* "else" in #if code above */
+		{
+# ifdef DEC
 			/* fix for IPv6  size differences */
 			i += sizeof(ifr->ifr_name) +
 			     max(sizeof(ifr->ifr_addr), ifr->ifr_addr.sa_len);
-#   else /* DEC */
+# else /* DEC */
 			i += sizeof(*ifr);
-#   endif /* DEC */
+# endif /* DEC */
+		}
 
 		if (tTd(0, 20))
 			sm_dprintf("%s\n", anynet_ntoa(sa));
@@ -4965,7 +4978,7 @@ load_if_names()
 		if (af != AF_INET && af != AF_INET6)
 			continue;
 
-#  ifdef SIOCGLIFFLAGS
+# ifdef SIOCGLIFFLAGS
 		memset(&ifrf, '\0', sizeof(struct lifreq));
 		(void) sm_strlcpy(ifrf.lifr_name, ifr->lifr_name,
 				  sizeof(ifrf.lifr_name));
@@ -4985,7 +4998,7 @@ load_if_names()
 
 		if (!bitset(IFF_UP, flags))
 			continue;
-#  endif /* SIOCGLIFFLAGS */
+# endif /* SIOCGLIFFLAGS */
 
 		ip_addr[0] = '\0';
 
@@ -4994,7 +5007,7 @@ load_if_names()
 		{
 		  case AF_INET6:
 			SETV6LOOPBACKADDRFOUND(*sa);
-#  ifdef __KAME__
+# ifdef __KAME__
 			/* convert into proper scoped address */
 			if ((IN6_IS_ADDR_LINKLOCAL(&sa->sin6.sin6_addr) ||
 			     IN6_IS_ADDR_SITELOCAL(&sa->sin6.sin6_addr)) &&
@@ -5007,7 +5020,7 @@ load_if_names()
 							       ((unsigned int)ia6p->s6_addr[2] << 8));
 				ia6p->s6_addr[2] = ia6p->s6_addr[3] = 0;
 			}
-#  endif /* __KAME__ */
+# endif /* __KAME__ */
 			ia6 = sa->sin6.sin6_addr;
 			if (IN6_IS_ADDR_UNSPECIFIED(&ia6))
 			{
@@ -5052,18 +5065,18 @@ load_if_names()
 				sm_dprintf("\ta.k.a.: %s\n", ip_addr);
 		}
 
-#  ifdef SIOCGLIFFLAGS
+# ifdef SIOCGLIFFLAGS
 		/* skip "loopback" interface "lo" */
 		if (DontProbeInterfaces == DPI_SKIPLOOPBACK &&
 		    bitset(IFF_LOOPBACK, flags))
 			continue;
-#  endif /* SIOCGLIFFLAGS */
+# endif /* SIOCGLIFFLAGS */
 		(void) add_hostnames(sa);
 	}
 	sm_free(buf); /* XXX */
 	(void) close(s);
-# else /* NETINET6 && defined(SIOCGLIFCONF) */
-#  if defined(SIOCGIFCONF) && !SIOCGIFCONF_IS_BROKEN
+#else /* NETINET6 && defined(SIOCGLIFCONF) */
+# if defined(SIOCGIFCONF) && !SIOCGIFCONF_IS_BROKEN
 	int s;
 	int i;
 	struct ifconf ifc;
@@ -5074,7 +5087,7 @@ load_if_names()
 		return;
 
 	/* get the list of known IP address from the kernel */
-#   if defined(SIOCGIFNUM) && !SIOCGIFNUM_IS_BROKEN
+#  if defined(SIOCGIFNUM) && !SIOCGIFNUM_IS_BROKEN
 	if (ioctl(s, SIOCGIFNUM, (char *) &numifs) < 0)
 	{
 		/* can't get number of interfaces -- fall back */
@@ -5086,7 +5099,7 @@ load_if_names()
 	else if (tTd(0, 42))
 		sm_dprintf("system has %d interfaces\n", numifs);
 	if (numifs < 0)
-#   endif /* defined(SIOCGIFNUM) && !SIOCGIFNUM_IS_BROKEN */
+#  endif /* defined(SIOCGIFNUM) && !SIOCGIFNUM_IS_BROKEN */
 		numifs = MAXINTERFACES;
 
 	if (numifs <= 0)
@@ -5113,20 +5126,24 @@ load_if_names()
 	for (i = 0; i < ifc.ifc_len && i >= 0; )
 	{
 		int af;
+#  if HAVE_IFC_BUF_VOID
+		struct ifreq *ifr = (struct ifreq *) &((char *)ifc.ifc_buf)[i];
+#  else
 		struct ifreq *ifr = (struct ifreq *) &ifc.ifc_buf[i];
+#  endif
 		SOCKADDR *sa = (SOCKADDR *) &ifr->ifr_addr;
-#   if NETINET6
+#  if NETINET6
 		char *addr;
 		struct in6_addr ia6;
-#   endif
+#  endif
 		struct in_addr ia;
-#   ifdef SIOCGIFFLAGS
+#  ifdef SIOCGIFFLAGS
 		struct ifreq ifrf;
-#   endif
+#  endif
 		char ip_addr[256];
-#   if NETINET6
+#  if NETINET6
 		char buf6[INET6_ADDRSTRLEN];
-#   endif
+#  endif
 
 		/*
 		**  If we don't have a complete ifr structure,
@@ -5136,25 +5153,28 @@ load_if_names()
 		if ((ifc.ifc_len - i) < sizeof(*ifr))
 			break;
 
-#   ifdef BSD4_4_SOCKADDR
+#  ifdef BSD4_4_SOCKADDR
 		if (sa->sa.sa_len > sizeof(ifr->ifr_addr))
 			i += sizeof(ifr->ifr_name) + sa->sa.sa_len;
 		else
-#   endif /* BSD4_4_SOCKADDR */
+#  endif /* BSD4_4_SOCKADDR */
+		/* "else" in #if code above */
+		{
 			i += sizeof(*ifr);
+		}
 
 		if (tTd(0, 20))
 			sm_dprintf("%s\n", anynet_ntoa(sa));
 
 		af = ifr->ifr_addr.sa_family;
 		if (af != AF_INET
-#   if NETINET6
+#  if NETINET6
 		    && af != AF_INET6
-#   endif
+#  endif
 		    )
 			continue;
 
-#   ifdef SIOCGIFFLAGS
+#  ifdef SIOCGIFFLAGS
 		memset(&ifrf, '\0', sizeof(struct ifreq));
 		(void) sm_strlcpy(ifrf.ifr_name, ifr->ifr_name,
 			       sizeof(ifrf.ifr_name));
@@ -5162,10 +5182,10 @@ load_if_names()
 		if (tTd(0, 41))
 			sm_dprintf("\tflags: %lx\n",
 				(unsigned long) ifrf.ifr_flags);
-#    define IFRFREF ifrf
-#   else /* SIOCGIFFLAGS */
-#    define IFRFREF (*ifr)
-#   endif /* SIOCGIFFLAGS */
+#   define IFRFREF ifrf
+#  else /* SIOCGIFFLAGS */
+#   define IFRFREF (*ifr)
+#  endif /* SIOCGIFFLAGS */
 
 		if (!bitset(IFF_UP, IFRFREF.ifr_flags))
 			continue;
@@ -5191,10 +5211,10 @@ load_if_names()
 					inet_ntoa(ia));
 			break;
 
-#   if NETINET6
+#  if NETINET6
 		  case AF_INET6:
 			SETV6LOOPBACKADDRFOUND(*sa);
-#    ifdef __KAME__
+#   ifdef __KAME__
 			/* convert into proper scoped address */
 			if ((IN6_IS_ADDR_LINKLOCAL(&sa->sin6.sin6_addr) ||
 			     IN6_IS_ADDR_SITELOCAL(&sa->sin6.sin6_addr)) &&
@@ -5207,7 +5227,7 @@ load_if_names()
 							       ((unsigned int)ia6p->s6_addr[2] << 8));
 				ia6p->s6_addr[2] = ia6p->s6_addr[3] = 0;
 			}
-#    endif /* __KAME__ */
+#   endif /* __KAME__ */
 			ia6 = sa->sin6.sin6_addr;
 			if (IN6_IS_ADDR_UNSPECIFIED(&ia6))
 			{
@@ -5227,7 +5247,7 @@ load_if_names()
 						   addr);
 			break;
 
-#   endif /* NETINET6 */
+#  endif /* NETINET6 */
 		}
 
 		if (ip_addr[0] == '\0')
@@ -5249,9 +5269,9 @@ load_if_names()
 	}
 	sm_free(ifc.ifc_buf); /* XXX */
 	(void) close(s);
-#   undef IFRFREF
-#  endif /* defined(SIOCGIFCONF) && !SIOCGIFCONF_IS_BROKEN */
-# endif /* NETINET6 && defined(SIOCGLIFCONF) */
+#  undef IFRFREF
+# endif /* defined(SIOCGIFCONF) && !SIOCGIFCONF_IS_BROKEN */
+#endif /* NETINET6 && defined(SIOCGLIFCONF) */
 }
 /*
 **  ISLOOPBACK -- is socket address in the loopback net?
@@ -5270,8 +5290,12 @@ isloopback(sa)
 	SOCKADDR sa;
 {
 	/* XXX how to correctly extract IN_LOOPBACKNET part? */
-#define SM_IS_IPV4_LOOP(a) (((ntohl(a) & IN_CLASSA_NET) \
+#ifdef IN_LOOPBACK
+# define SM_IS_IPV4_LOOP(a) IN_LOOPBACK(ntohl(a))
+#else /* IN_LOOPBACK */
+# define SM_IS_IPV4_LOOP(a) (((ntohl(a) & IN_CLASSA_NET) \
 	     >> IN_CLASSA_NSHIFT) == IN_LOOPBACKNET)
+# endif /* IN_LOOPBACK */
 #if NETINET6
 	if (sa.sa.sa_family == AF_INET6 &&
 	    IN6_IS_ADDR_V4MAPPED(&sa.sin6.sin6_addr) &&
@@ -5503,7 +5527,12 @@ sm_syslog(level, id, fmt, va_alist)
 	}
 
 	/* clean up buf after it has been expanded with args */
+#if _FFR_LOGASIS >= 5
+	/* for testing! maybe make it an -d option (hence runtime)? */
+	newstring = buf;
+#else
 	newstring = str2prt(buf);
+#endif
 	if ((strlen(newstring) + idlen + 1) < SYSLOG_BUFSIZE)
 	{
 #if LOG
@@ -5695,8 +5724,7 @@ local_hostname_length(hostname)
 	len_host = strlen(hostname);
 	len_domain = strlen(_res.defdname);
 	if (len_host > len_domain &&
-	    (sm_strcasecmp(hostname + len_host - len_domain,
-			_res.defdname) == 0) &&
+	    (SM_STRCASEEQ(hostname + len_host - len_domain, _res.defdname)) &&
 	    hostname[len_host - len_domain - 1] == '.')
 		return len_host - len_domain - 1;
 	else
@@ -5820,14 +5848,17 @@ link(source, target)
 char	*CompileOptions[] =
 {
 #if ALLOW_255
+	/* if not enabled (and EightBitAddrOK not set): convert 0xff to 0x7f */
 	"ALLOW_255",
 #endif
 #if DANE
-# if STARTTLS
 	"DANE",
-# else
-#  error "DANE set but STARTTLS not defined"
-# endif
+#endif
+#if HAVE_SSL_CTX_dane_enable
+	"HAVE_SSL_CTX_dane_enable",
+#endif
+#if MAX_TLSA_RR
+	"MAX_TLSA_RR=" SM_XSTR(MAX_TLSA_RR),
 #endif
 #if NAMED_BIND
 # if DNSMAP
@@ -5854,12 +5885,8 @@ char	*CompileOptions[] =
 	"LDAPMAP",
 #endif
 #if LDAP_NETWORK_TIMEOUT
-# if LDAPMAP && defined(LDAP_OPT_NETWORK_TIMEOUT)
 	/* set LDAP_OPT_NETWORK_TIMEOUT if available (-c) */
 	"LDAP_NETWORK_TIMEOUT",
-# else
-#  ERROR: _LDAP_NETWORK_TIMEOUT requires _LDAPMAP
-# endif
 #endif
 #if LDAP_REFERRALS
 	"LDAP_REFERRALS",
@@ -5896,6 +5923,10 @@ char	*CompileOptions[] =
 #endif
 #if NAMED_BIND
 	"NAMED_BIND",
+#else
+# if DANE
+#  error "DANE requires NAMED_BIND"
+# endif
 #endif
 #if NDBM
 	"NDBM",
@@ -5926,6 +5957,24 @@ char	*CompileOptions[] =
 #endif
 #if NEWDB
 # if defined(DB_VERSION_MAJOR) && defined(DB_VERSION_MINOR)
+#  if DB_VERSION_MAJOR >= 5 && !defined(SOLARIS) && !HASFLOCK && !ACCEPT_BROKEN_BDB_LOCKING
+
+/*
+**  NOTE: disabling this check by setting ACCEPT_BROKEN_BDB_LOCKING
+**	means you are taking full responsibility for any problems
+**	which may arise!
+**
+**	Map locking will not work, and making a change to a map
+**	while sendmail is using it can break mail handling.
+**	At least you must stop all sendmail processes when using
+**	makemap or newaliases - but there might be other things
+**	which could break.
+**
+**	You have been warned - use at your own risk!
+*/
+
+#    error "Berkeley DB file locking needs flock() for version 5.x (and greater?)"
+#  endif
 	"NEWDB=" SM_XSTR(DB_VERSION_MAJOR) "." SM_XSTR(DB_VERSION_MINOR),
 # else
 	"NEWDB",
@@ -5987,14 +6036,34 @@ char	*CompileOptions[] =
 	"TLS_NO_RSA",
 #endif
 #if TLS_EC
+# if NO_DH
+#  error "NO_DH disables TLS_EC"
+# else
 	/* elliptic curves */
 	"TLS_EC",
+# endif
 #endif
 #if TLS_VRFY_PER_CTX
 	"TLS_VRFY_PER_CTX",
 #endif
 #if USERDB
 	"USERDB",
+#endif
+#if USE_EAI
+
+	/*
+	**  Initial/Partial/Experimental EAI (SMTPUTF8) support.
+	**  Requires ICU include files and library depending on the OS.
+	**  Initial patch from Arnt Gulbrandsen.
+	*/
+
+# if !ALLOW_255
+#  error "USE_EAI requires ALLOW_255"
+# endif
+# if _FFR_EIGHT_BIT_ADDR_OK
+#  error "Cannot enable both USE_EAI and _FFR_EIGHT_BIT_ADDR_OK"
+# endif
+	"USE_EAI",
 #endif
 #if USE_LDAP_INIT
 	"USE_LDAP_INIT",
@@ -6010,7 +6079,6 @@ char	*CompileOptions[] =
 #endif
 	NULL
 };
-
 
 /*
 **  OS compile options.
@@ -6258,7 +6326,7 @@ char	*OsCompileOptions[] =
 	"USE_OPENSSL_ENGINE=" SM_XSTR(USE_OPENSSL_ENGINE),
 # else
 	"USE_OPENSSL_ENGINE",
-#endif
+# endif
 #endif
 #if USING_NETSCAPE_LDAP
 	"USING_NETSCAPE_LDAP",
@@ -6289,7 +6357,7 @@ char	*FFRCompileOptions[] =
 #endif
 #if _FFR_ALLOW_SASLINFO
 	/* DefaultAuthInfo can be specified by user. */
-	/* DefaultAuthInfo doesn't really work in 8.13 anymore. */
+	/* DefaultAuthInfo doesn't really work in 8.13ff anymore. */
 	"_FFR_ALLOW_SASLINFO",
 #endif
 #if _FFR_BADRCPT_SHUTDOWN
@@ -6317,6 +6385,10 @@ char	*FFRCompileOptions[] =
 	/* Stricter checks about queue directory permissions. */
 	"_FFR_CHK_QUEUE",
 #endif
+#if _FFR_CLASS_RM_ENTRY
+	/* WIP: remove entries from a class: C-{name}entry */
+	"_FFR_CLASS_RM_ENTRY",
+#endif
 #if _FFR_CLIENTCA
 	/*
 	**  Allow to set client specific CA values.
@@ -6339,14 +6411,22 @@ char	*FFRCompileOptions[] =
 	/* Don't try to send mail if its size exceeds SIZE= of server. */
 	"_FFR_CLIENT_SIZE",
 #endif
-#if _FFR_DM_ONE
-	/* deliver first TA in background, then queue */
-	"_FFR_DM_ONE",
-#endif
 #if _FFR_DIGUNIX_SAFECHOWN
 	/* Properly set SAFECHOWN (include/sm/conf.h) for Digital UNIX */
 /* Problem noted by Anne Bennett of Concordia University */
 	"_FFR_DIGUNIX_SAFECHOWN",
+#endif
+#if _FFR_DM_ONE
+	/* deliver first TA in background, then queue */
+	"_FFR_DM_ONE",
+#endif
+#if _FFR_DMTRIGGER
+	/*
+	**  WIP: DeliveryMode=Trigger: queue message and notify
+	**  some kind of queue manager about it.
+	*/
+
+	"_FFR_DMTRIGGER",
 #endif
 #if _FFR_DNSMAP_ALIASABLE
 	/* Allow dns map type to be used for aliases. */
@@ -6389,8 +6469,17 @@ char	*FFRCompileOptions[] =
 
 	"_FFR_DROP_TRUSTUSER_WARNING",
 #endif
+#if _FFR_DYN_CLASS
+	/* dynamic classes based on maps */
+	"_FFR_DYN_CLASS",
+#endif
 #if _FFR_EIGHT_BIT_ADDR_OK
-	/* EightBitAddrOK: allow 8-bit e-mail addresses */
+	/*
+	**  EightBitAddrOK: allow all 8-bit e-mail addresses.
+	**  By default only ((ch & 0340) == 0200) is blocked
+	**  because that range is used for "META" chars.
+	*/
+
 	"_FFR_EIGHT_BIT_ADDR_OK",
 #endif
 #if _FFR_EXPAND_HELONAME
@@ -6471,6 +6560,10 @@ char	*FFRCompileOptions[] =
 	/* Local daemon mode (-bl) which only accepts loopback connections */
 	"_FFR_LOCAL_DAEMON",
 #endif
+#if _FFR_LOG_FAILOVER
+	/* WIP: log reason why trying another host */
+	"_FFR_LOG_FAILOVER",
+#endif
 #if _FFR_LOG_MORE1
 	/* log some TLS/AUTH info in from= too */
 	"_FFR_LOG_MORE1=" SM_XSTR(_FFR_LOG_MORE1),
@@ -6479,14 +6572,17 @@ char	*FFRCompileOptions[] =
 	/* log some TLS info in to= too */
 	"_FFR_LOG_MORE2=" SM_XSTR(_FFR_LOG_MORE2),
 #endif
-#if _FFR_LOG_MORE1 > 1 || _FFR_LOG_MORE2 > 1
-# if _FFR_LOG_MORE1 != _FFR_LOG_MORE2
-   ERROR: FFR_LOG_MORE1 != FFR_LOG_MORE2
-# endif
+#if _FFR_LOG_STAGE
+	/* log protocol stage for delivery problems */
+	"_FFR_LOG_STAGE",
 #endif
 #if _FFR_MAIL_MACRO
 	/* make the "real" sender address available in {mail_from} */
 	"_FFR_MAIL_MACRO",
+#endif
+#if _FFR_MAP_CHK_FILE
+	/* check whether the underlying map file was changed */
+	"_FFR_MAP_CHK_FILE=" SM_XSTR(_FFR_MAP_CHK_FILE),
 #endif
 #if _FFR_MAXDATASIZE
 	/*
@@ -6517,12 +6613,13 @@ char	*FFRCompileOptions[] =
 	"_FFR_MEMSTAT",
 #endif
 #if _FFR_MILTER_CHECK
+	/* for (lib)milter testing */
 	"_FFR_MILTER_CHECK",
 #endif
 #if _FFR_MILTER_CONNECT_REPLYCODE
 	/* milter: propagate replycode returned by connect commands */
 	/* John Gardiner Myers of Proofpoint */
-	"_FFR_MILTER_CONNECT_REPLYCODE ",
+	"_FFR_MILTER_CONNECT_REPLYCODE",
 #endif
 #if _FFR_MILTER_CONVERT_ALL_LF_TO_CRLF
 	/*
@@ -6566,6 +6663,23 @@ char	*FFRCompileOptions[] =
 	/* allow to override "Message accepted for delivery" */
 	"_FFR_MSG_ACCEPT",
 #endif
+#if _FFR_MTA_MODE
+	/* do not modify headers -- does NOT (yet) work */
+	"_FFR_MTA_MODE",
+#endif
+#if _FFR_MTA_STS
+# if !MAP_REGEX
+#  error "_FFR_MTA_STS requires MAP_REGEX"
+# endif
+# if !STARTTLS
+#  error "_FFR_MTA_STS requires STARTTLS"
+# endif
+# if !_FFR_TLS_ALTNAMES
+#  error "_FFR_MTA_STS requires _FFR_TLS_ALTNAMES"
+# endif
+	/* MTA STS support */
+	"_FFR_MTA_STS",
+#endif /* _FFR_MTA_STS */
 #if _FFR_NODELAYDSN_ON_HOLD
 	/* Do not issue a DELAY DSN for mailers that use the hold flag. */
 /* Steven Pitzl */
@@ -6589,7 +6703,7 @@ char	*FFRCompileOptions[] =
 	**  better option) which returns the single dn/multiple
 	**  attributes.
 	**
-	** Jeffrey T. Eaton, Carnegie-Mellon University
+	**  Jeffrey T. Eaton, Carnegie-Mellon University
 	*/
 
 	"_FFR_LDAP_SINGLEDN",
@@ -6603,7 +6717,7 @@ char	*FFRCompileOptions[] =
 	/* outgoing connection control (not yet working) */
 	"_FFR_OCC",
 # else
-#  ERROR: FFR_OCC requires _SM_CONF_SHM
+#  error "_FFR_OCC requires SM_CONF_SHM"
 # endif
 #endif
 #if _FFR_PROXY
@@ -6652,6 +6766,10 @@ char	*FFRCompileOptions[] =
 	/* reject NUL bytes in body */
 	"_FFR_REJECT_NUL_BYTE",
 #endif
+#if _FFR_REPLY_MULTILINE
+	/* try to gather multi-line replies for reply= logging */
+	"_FFR_REPLY_MULTILINE=" SM_XSTR(_FFR_REPLY_MULTILINE),
+#endif
 #if _FFR_RESET_MACRO_GLOBALS
 	/* Allow macro 'j' to be set dynamically via rulesets. */
 	"_FFR_RESET_MACRO_GLOBALS",
@@ -6673,12 +6791,19 @@ char	*FFRCompileOptions[] =
 	"_FFR_SESSID",
 #endif
 #if _FFR_SETANYOPT
+	/*
+	**  if _FFR_SETOPT_MAP is used: allow to set any option
+	**  (which probably does not work as expected for many options).
+	*/
+
 	"_FFR_SETANYOPT",
 #endif
 #if _FFR_SETDEBUG_MAP
+	/* enable setdebug map to set debug levels from rules */
 	"_FFR_SETDEBUG_MAP",
 #endif
 #if _FFR_SETOPT_MAP
+	/* enable setopt map to set options from rules */
 	"_FFR_SETOPT_MAP",
 #endif
 #if _FFR_SHM_STATUS
@@ -6691,14 +6816,14 @@ char	*FFRCompileOptions[] =
 #endif
 #if _FFR_SLEEP_USE_SELECT
 	/* Use select(2) in libsm/clock.c to emulate sleep(2) */
-	"_FFR_SLEEP_USE_SELECT ",
+	"_FFR_SLEEP_USE_SELECT",
 #endif
 #if _FFR_SM_LDAP_DBG
-# if LDAPMAP && defined(LBER_OPT_LOG_PRINT_FN)
+# if defined(LBER_OPT_LOG_PRINT_FN)
 	/* LDAP debugging */
 	"_FFR_SM_LDAP_DBG",
 # else
-#  ERROR: FFR_SM_LDAP_DBG requires _LDAPMAP and LBER_OPT_LOG_PRINT_FN
+#  error "_FFR_SM_LDAP_DBG requires LBER_OPT_LOG_PRINT_FN"
 # endif
 #endif
 #if _FFR_SPT_ALIGN
@@ -6727,19 +6852,11 @@ char	*FFRCompileOptions[] =
 #endif
 #if _FFR_TLS_ALTNAMES
 	/* store subjectAltNames in class {cert_altnames} */
-# if STARTTLS
 	"_FFR_TLS_ALTNAMES",
-# else
-#  error "_FFR_TLS_ALTNAMES set but STARTTLS not defined"
-# endif
 #endif
 #if _FFR_TLSFB2CLEAR
 	/* set default for TLSFallbacktoClear to true */
-# if STARTTLS
 	"_FFR_TLSFB2CLEAR",
-# else
-#  error "_FFR_TLSFB2CLEAR set but STARTTLS not defined"
-# endif
 #endif
 #if _FFR_TLS_USE_CERTIFICATE_CHAIN_FILE
 	/*
@@ -6747,11 +6864,7 @@ char	*FFRCompileOptions[] =
 	**  instead of SSL_CTX_use_certificate_file()
 	*/
 
-# if STARTTLS
 	"_FFR_TLS_USE_CERTIFICATE_CHAIN_FILE",
-# else
-#  error "_FFR_TLS_USE_CERTIFICATE_CHAIN_FILE set but STARTTLS not defined"
-# endif
 #endif
 #if _FFR_TRUSTED_QF
 	/*
@@ -6790,7 +6903,7 @@ char	*FFRCompileOptions[] =
 # if defined(X509_V_FLAG_TRUSTED_FIRST)
 	"_FFR_VRFY_TRUSTED_FIRST",
 # else
-#  error "FFR_VRFY_TRUSTED_FIRST set but X509_V_FLAG_TRUSTED_FIRST not defined"
+#  error "_FFR_VRFY_TRUSTED_FIRST set but X509_V_FLAG_TRUSTED_FIRST not defined"
 # endif
 #endif
 
@@ -6807,24 +6920,61 @@ char	*FFRCompileOptions[] =
 	/* X-Connect support */
 	"_FFR_XCNCT",
 #endif
-#if _FFR_EAI
-
+#if _FFR_HAPROXY
+	/* HAproxy support */
+	"_FFR_HAPROXY",
+#endif
+#if _FFR_LOGASIS
+	/* only convert char <= 31 to something printable for logging etc */
+	"_FFR_LOGASIS=" SM_XSTR(_FFR_LOGASIS),
+#endif
+#if _FFR_NAMESERVER
+	/* Allow to override nameserver set by OS */
+	"_FFR_NAMESERVER",
+#endif
+#if _FFR_NOREFLECT
+	/* Do not include input from a client in a reply of the server */
+	"_FFR_NOREFLECT",
+#endif
+#if _FFR_AUTH_PASSING
+	/* Set the default AUTH= if the sender didn't */
+	"_FFR_AUTH_PASSING",
+#endif
+#if _FFR_HOST_SORT_REVERSE
+	/* Reverse sort for host for recipient sorting pre-envelope-split */
+	"_FFR_HOST_SORT_REVERSE",
+#endif
+#if _FFR_MSP_PARANOIA
 	/*
-	**  Initial/Partial/Experimental EAI (SMTPUTF8) support.
-	**  NOTE: This is currently BROKEN as the handling of
-	**  envelope addresses in sendmail is NOT 8-bit clean
-	**  (in contrast to header addresses/values).
-	**  Requires ICU include files and library depending on the OS.
-	**  Patch from Arnt Gulbrandsen.
+	**  Forbid queue groups, multiple queues, and
+	**  dangerous queue permissions when operating as an MSP
 	*/
 
-# if !ALLOW_255
-#  ERROR FFR_EAI requires _ALLOW_255
-# endif
-# if _FFR_EIGHT_BIT_ADDR_OK
-#  error "Cannot enable both of these FFRs: FFR_EAI FFR_EIGHT_BIT_ADDR_OK"
-# endif
-	"_FFR_EAI",
+	"_FFR_MSP_PARANOIA",
+#endif
+#if _FFR_ANY_FREE_FS
+	/*
+	**  Check whether there is at least one fs with enough space
+	**  (may not work, needs review)
+	*/
+
+	"_FFR_ANY_FREE_FS",
+#endif
+#if _FFR_MIME_CR_OK
+	/*
+	**  Strip trailing CR in MIME boundaries
+	**  (may not work, needs review)
+	*/
+
+	"_FFR_MIME_CR_OK",
+#endif
+#if _FFR_M_ONLY_IPV4
+	/* mailer flag 4: use only IPv4 for delivery attempts */
+	"_FFR_M_ONLY_IPV4",
+#endif
+#if _FFR_SMTPS_CLIENT
+	/* SMTP over TLS client (defaults to port 465/tcp outbound) */
+	"_FFR_SMTPS_CLIENT",
 #endif
 	NULL
 };

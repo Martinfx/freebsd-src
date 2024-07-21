@@ -33,12 +33,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)setlocale.c	8.1 (Berkeley) 7/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -312,9 +306,9 @@ int
 __detect_path_locale(void)
 {
 	if (_PathLocale == NULL) {
-		char *p = getenv("PATH_LOCALE");
+		char *p = secure_getenv("PATH_LOCALE");
 
-		if (p != NULL && !issetugid()) {
+		if (p != NULL) {
 			if (strlen(p) + 1/*"/"*/ + ENCODING_LEN +
 			    1/*"/"*/ + CATEGORY_LEN >= PATH_MAX)
 				return (ENAMETOOLONG);

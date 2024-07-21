@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 
 OPENBSMDIR=${SRCTOP}/contrib/openbsm
@@ -7,6 +6,7 @@ OPENBSMDIR=${SRCTOP}/contrib/openbsm
 
 CFLAGS+=	-I${OPENBSMDIR}
 
+PACKAGE=audit
 PROG=	audit
 MAN=	audit.8
 

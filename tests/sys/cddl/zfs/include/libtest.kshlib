@@ -20,14 +20,9 @@
 # CDDL HEADER END
 #
 
-# $FreeBSD$
-
 #
 # Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
 # Use is subject to license terms.
-#
-# ident	"@(#)libtest.kshlib	1.15	09/08/06 SMI"
-#
 
 . ${STF_SUITE}/include/logapi.kshlib
 
@@ -1856,7 +1851,7 @@ function cleanup_devices #vdevs
 		$ZPOOL labelclear -f $device
 		# Only wipe partition tables for arguments that are disks,
 		# as opposed to slices (which are valid arguments here).
-		if camcontrol inquiry $device >/dev/null 2>&1; then
+		if geom disk list | grep -qx "Geom name: ${device#/dev/}"; then
 			wipe_partition_table $device
 		fi
 	done

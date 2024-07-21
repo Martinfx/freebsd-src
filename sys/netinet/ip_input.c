@@ -27,14 +27,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ip_input.c	8.2 (Berkeley) 1/4/94
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_bootp.h"
+#include "opt_inet.h"
 #include "opt_ipstealth.h"
 #include "opt_ipsec.h"
 #include "opt_route.h"
@@ -62,6 +59,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_types.h>
 #include <net/if_var.h>
 #include <net/if_dl.h>
+#include <net/if_private.h>
 #include <net/pfil.h>
 #include <net/route.h>
 #include <net/route/nhop.h>
@@ -134,7 +132,9 @@ SYSCTL_BOOL(_net_inet_ip, OID_AUTO, source_address_validation,
     CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(ip_sav), true,
     "Drop incoming packets with source address that is a local address");
 
-VNET_DEFINE(pfil_head_t, inet_pfil_head);	/* Packet filter hooks */
+/* Packet filter hooks */
+VNET_DEFINE(pfil_head_t, inet_pfil_head);
+VNET_DEFINE(pfil_head_t, inet_local_pfil_head);
 
 static struct netisr_handler ip_nh = {
 	.nh_name = "ip",
@@ -324,6 +324,10 @@ ip_vnet_init(void *arg __unused)
 	args.pa_type = PFIL_TYPE_IP4;
 	args.pa_headname = PFIL_INET_NAME;
 	V_inet_pfil_head = pfil_head_register(&args);
+
+	args.pa_flags = PFIL_OUT;
+	args.pa_headname = PFIL_INET_LOCAL_NAME;
+	V_inet_local_pfil_head = pfil_head_register(&args);
 
 	if (hhook_head_register(HHOOK_TYPE_IPSEC_IN, AF_INET,
 	    &V_ipsec_hhh_in[HHOOK_IPSEC_INET],
@@ -517,6 +521,11 @@ ip_input(struct mbuf *m)
 			goto bad;
 		}
 	}
+	/* The unspecified address can appear only as a src address - RFC1122 */
+	if (__predict_false(ntohl(ip->ip_dst.s_addr) == INADDR_ANY)) {
+		IPSTAT_INC(ips_badaddr);
+		goto bad;
+	}
 
 	if (m->m_pkthdr.csum_flags & CSUM_IP_CHECKED) {
 		sum = !(m->m_pkthdr.csum_flags & CSUM_IP_VALID);
@@ -531,12 +540,6 @@ ip_input(struct mbuf *m)
 		IPSTAT_INC(ips_badsum);
 		goto bad;
 	}
-
-#ifdef ALTQ
-	if (altq_input != NULL && (*altq_input)(m, AF_INET) == 0)
-		/* packet is dropped by traffic conditioner */
-		return;
-#endif
 
 	ip_len = ntohs(ip->ip_len);
 	if (__predict_false(ip_len < hlen)) {
@@ -615,10 +618,8 @@ tooshort:
 		goto passin;
 
 	odst = ip->ip_dst;
-	if (pfil_run_hooks(V_inet_pfil_head, &m, ifp, PFIL_IN, NULL) !=
+	if (pfil_mbuf_in(V_inet_pfil_head, &m, ifp, NULL) !=
 	    PFIL_PASS)
-		return;
-	if (m == NULL)			/* consumed by filter */
 		return;
 
 	ip = mtod(m, struct ip *);
@@ -816,6 +817,18 @@ ours:
 #endif /* IPSTEALTH */
 
 	/*
+	 * We are going to ship the packet to the local protocol stack. Call the
+	 * filter again for this 'output' action, allowing redirect-like rules
+	 * to adjust the source address.
+	 */
+	if (PFIL_HOOKED_OUT(V_inet_local_pfil_head)) {
+		if (pfil_mbuf_out(V_inet_local_pfil_head, &m, V_loif, NULL) !=
+		    PFIL_PASS)
+			return;
+		ip = mtod(m, struct ip *);
+	}
+
+	/*
 	 * Attempt reassembly; if it succeeds, proceed.
 	 * ip_reass() will return a different mbuf.
 	 */
@@ -878,15 +891,6 @@ ipproto_unregister(uint8_t proto)
 	} else
 		return (ENOENT);
 }
-
-u_char inetctlerrmap[PRC_NCMDS] = {
-	0,		0,		0,		0,
-	0,		EMSGSIZE,	EHOSTDOWN,	EHOSTUNREACH,
-	EHOSTUNREACH,	EHOSTUNREACH,	ECONNREFUSED,	ECONNREFUSED,
-	EMSGSIZE,	EHOSTUNREACH,	0,		0,
-	0,		0,		EHOSTUNREACH,	0,
-	ENOPROTOOPT,	ECONNREFUSED
-};
 
 /*
  * Forward a packet.  If some error occurs return the sender
@@ -1312,10 +1316,6 @@ VNET_DEFINE(struct socket *, ip_rsvpd);
 int
 ip_rsvp_init(struct socket *so)
 {
-
-	if (so->so_type != SOCK_RAW ||
-	    so->so_proto->pr_protocol != IPPROTO_RSVP)
-		return EOPNOTSUPP;
 
 	if (V_ip_rsvpd != NULL)
 		return EADDRINUSE;

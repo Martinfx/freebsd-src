@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 ATF=		${SRCTOP}/contrib/atf
 .PATH:		${ATF}/atf-sh
 

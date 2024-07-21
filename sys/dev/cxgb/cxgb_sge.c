@@ -1,5 +1,5 @@
 /**************************************************************************
-SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+SPDX-License-Identifier: BSD-2-Clause
 
 Copyright (c) 2007-2009, Chelsio Inc.
 All rights reserved.
@@ -29,8 +29,6 @@ POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet6.h"
 #include "opt_inet.h"
 
@@ -268,7 +266,7 @@ check_pkt_coalesce(struct sge_qset *qs)
 	if (cxgb_tx_coalesce_enable_start > COALESCE_START_MAX)
 		cxgb_tx_coalesce_enable_start = COALESCE_START_MAX;
 	if (cxgb_tx_coalesce_enable_stop < COALESCE_STOP_MIN)
-		cxgb_tx_coalesce_enable_start = COALESCE_STOP_MIN;
+		cxgb_tx_coalesce_enable_stop = COALESCE_STOP_MIN;
 	/*
 	 * if the hardware transmit queue is more than 1/8 full
 	 * we mark it as coalescing - we drop back from coalescing
@@ -555,9 +553,7 @@ t3_sge_prep(adapter_t *adap, struct sge_params *p)
 	nqsets *= adap->params.nports;
 
 	fl_q_size = min(nmbclusters/(3*nqsets), FL_Q_SIZE);
-
-	while (!powerof2(fl_q_size))
-		fl_q_size--;
+	fl_q_size = rounddown_pow_of_two(fl_q_size);
 
 	use_16k = cxgb_use_16k_clusters != -1 ? cxgb_use_16k_clusters :
 	    is_offload(adap);
@@ -569,8 +565,7 @@ t3_sge_prep(adapter_t *adap, struct sge_params *p)
 		jumbo_q_size = min(nmbjumbo9/(3*nqsets), JUMBO_Q_SIZE);
 		jumbo_buf_size = MJUM9BYTES;
 	}
-	while (!powerof2(jumbo_q_size))
-		jumbo_q_size--;
+	jumbo_q_size = rounddown_pow_of_two(jumbo_q_size);
 
 	if (fl_q_size < (FL_Q_SIZE / 4) || jumbo_q_size < (JUMBO_Q_SIZE / 2))
 		device_printf(adap->dev,
@@ -1626,7 +1621,7 @@ cxgb_tx_watchdog(void *arg)
 		qs->qs_flags &= ~QS_FLUSHING;
 		TXQ_UNLOCK(qs);
 	}
-	if (qs->port->ifp->if_drv_flags & IFF_DRV_RUNNING)
+	if (if_getdrvflags(qs->port->ifp) & IFF_DRV_RUNNING)
 		callout_reset_on(&txq->txq_watchdog, hz/4, cxgb_tx_watchdog,
 		    qs, txq->txq_watchdog.c_cpu);
 }
@@ -1653,7 +1648,7 @@ cxgb_start_locked(struct sge_qset *qs)
 	struct mbuf *m_head = NULL;
 	struct sge_txq *txq = &qs->txq[TXQ_ETH];
 	struct port_info *pi = qs->port;
-	struct ifnet *ifp = pi->ifp;
+	if_t ifp = pi->ifp;
 
 	if (qs->qs_flags & (QS_FLUSHING|QS_TIMEOUT))
 		reclaim_completed_tx(qs, 0, TXQ_ETH);
@@ -1663,7 +1658,7 @@ cxgb_start_locked(struct sge_qset *qs)
 		return;
 	}
 	TXQ_LOCK_ASSERT(qs);
-	while (!TXQ_RING_EMPTY(qs) && (ifp->if_drv_flags & IFF_DRV_RUNNING) &&
+	while (!TXQ_RING_EMPTY(qs) && (if_getdrvflags(ifp) & IFF_DRV_RUNNING) &&
 	    pi->link_config.link_ok) {
 		reclaim_completed_tx(qs, cxgb_tx_reclaim_threshold, TXQ_ETH);
 
@@ -1694,7 +1689,7 @@ cxgb_start_locked(struct sge_qset *qs)
 }
 
 static int
-cxgb_transmit_locked(struct ifnet *ifp, struct sge_qset *qs, struct mbuf *m)
+cxgb_transmit_locked(if_t ifp, struct sge_qset *qs, struct mbuf *m)
 {
 	struct port_info *pi = qs->port;
 	struct sge_txq *txq = &qs->txq[TXQ_ETH];
@@ -1742,13 +1737,13 @@ cxgb_transmit_locked(struct ifnet *ifp, struct sge_qset *qs, struct mbuf *m)
 }
 
 int
-cxgb_transmit(struct ifnet *ifp, struct mbuf *m)
+cxgb_transmit(if_t ifp, struct mbuf *m)
 {
 	struct sge_qset *qs;
-	struct port_info *pi = ifp->if_softc;
+	struct port_info *pi = if_getsoftc(ifp);
 	int error, qidx = pi->first_qset;
 
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0
+	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0
 	    ||(!pi->link_config.link_ok)) {
 		m_freem(m);
 		return (0);
@@ -1770,7 +1765,7 @@ cxgb_transmit(struct ifnet *ifp, struct mbuf *m)
 }
 
 void
-cxgb_qflush(struct ifnet *ifp)
+cxgb_qflush(if_t ifp)
 {
 	/*
 	 * flush any enqueued mbufs in the buf_rings
@@ -1840,7 +1835,7 @@ check_desc_avail(adapter_t *adap, struct sge_txq *q,
 	 * the control queue is only used for binding qsets which happens
 	 * at init time so we are guaranteed enough descriptors
 	 */
-	if (__predict_false(mbufq_len(&q->sendq))) {
+	if (__predict_false(!mbufq_empty(&q->sendq))) {
 addq_exit:	(void )mbufq_enqueue(&q->sendq, m);
 		return 1;
 	}
@@ -1956,7 +1951,7 @@ again:	reclaim_completed_tx_imm(q);
 		}
 		q->in_use++;
 	}
-	if (mbufq_len(&q->sendq)) {
+	if (!mbufq_empty(&q->sendq)) {
 		setbit(&qs->txq_stopped, TXQ_CTRL);
 
 		if (should_restart_tx(q) &&
@@ -2528,7 +2523,7 @@ t3_sge_alloc_qset(adapter_t *sc, u_int id, int nports, int irq_vec_idx,
 	q->fl[1].buf_size = p->jumbo_buf_size;
 
 	/* Allocate and setup the lro_ctrl structure */
-	q->lro.enabled = !!(pi->ifp->if_capenable & IFCAP_LRO);
+	q->lro.enabled = !!(if_getcapenable(pi->ifp) & IFCAP_LRO);
 #if defined(INET6) || defined(INET)
 	ret = tcp_lro_init(&q->lro.ctrl);
 	if (ret) {
@@ -2621,7 +2616,7 @@ t3_rx_eth(struct adapter *adap, struct mbuf *m, int ethpad)
 {
 	struct cpl_rx_pkt *cpl = (struct cpl_rx_pkt *)(mtod(m, uint8_t *) + ethpad);
 	struct port_info *pi = &adap->port[adap->rxpkt_map[cpl->iff]];
-	struct ifnet *ifp = pi->ifp;
+	if_t ifp = pi->ifp;
 	
 	if (cpl->vlan_valid) {
 		m->m_pkthdr.ether_vtag = ntohs(cpl->vlan);
@@ -2647,12 +2642,12 @@ t3_rx_eth(struct adapter *adap, struct mbuf *m, int ethpad)
 		} else
 			eh_type = eh->ether_type;
 
-		if (ifp->if_capenable & IFCAP_RXCSUM &&
+		if (if_getcapenable(ifp) & IFCAP_RXCSUM &&
 		    eh_type == htons(ETHERTYPE_IP)) {
 			m->m_pkthdr.csum_flags = (CSUM_IP_CHECKED |
 			    CSUM_IP_VALID | CSUM_DATA_VALID | CSUM_PSEUDO_HDR);
 			m->m_pkthdr.csum_data = 0xffff;
-		} else if (ifp->if_capenable & IFCAP_RXCSUM_IPV6 &&
+		} else if (if_getcapenable(ifp) & IFCAP_RXCSUM_IPV6 &&
 		    eh_type == htons(ETHERTYPE_IPV6)) {
 			m->m_pkthdr.csum_flags = (CSUM_DATA_VALID_IPV6 |
 			    CSUM_PSEUDO_HDR);
@@ -2953,8 +2948,8 @@ process_responses(adapter_t *adap, struct sge_qset *qs, int budget)
 				 * or unable to queue.  Pass it up right now in
 				 * either case.
 				 */
-				struct ifnet *ifp = m->m_pkthdr.rcvif;
-				(*ifp->if_input)(ifp, m);
+				if_t ifp = m->m_pkthdr.rcvif;
+				if_input(ifp, m);
 			}
 			mh->mh_head = NULL;
 

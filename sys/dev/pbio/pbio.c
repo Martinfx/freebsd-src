@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  *  Copyright (c) 2000-2004
  *          Diomidis D. Spinellis, Athens, Greece
@@ -29,9 +29,6 @@
  *
  * $Id: pbio.c,v 1.12 2003/10/11 13:05:08 dds Exp dds $
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

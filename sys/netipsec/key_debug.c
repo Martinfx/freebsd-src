@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: key_debug.c,v 1.26 2001/06/27 10:46:50 sakane Exp $	*/
 
 /*-
@@ -156,6 +155,8 @@ kdebug_sadb_exttype(uint16_t type)
 	X_NAME(SA_REPLAY);
 	X_NAME(NEW_ADDRESS_SRC);
 	X_NAME(NEW_ADDRESS_DST);
+	X_NAME(LFT_CUR_SW_OFFL);
+	X_NAME(LFT_CUR_HW_OFFL);
 	default:
 		return ("UNKNOWN");
 	};
@@ -252,6 +253,9 @@ kdebug_sadb(struct sadb_msg *base)
 		case SADB_X_EXT_NAT_T_DPORT:
 			kdebug_sadb_x_natt(ext);
 			break;
+		case SADB_X_EXT_LFT_CUR_SW_OFFL:
+		case SADB_X_EXT_LFT_CUR_HW_OFFL:
+			kdebug_sadb_lifetime(ext);
 		default:
 			printf("%s: invalid ext_type %u\n", __func__,
 			    ext->sadb_ext_type);
@@ -882,9 +886,11 @@ kdebug_secasv(struct secasvar *sav)
 		kdebug_secnatt(sav->natt);
 	if (sav->replay != NULL) {
 		KEYDBG(DUMP,
-		    SECASVAR_LOCK(sav);
+		    SECASVAR_RLOCK_TRACKER;
+
+		    SECASVAR_RLOCK(sav);
 		    kdebug_secreplay(sav->replay);
-		    SECASVAR_UNLOCK(sav));
+		    SECASVAR_RUNLOCK(sav));
 	}
 	printf("}\n");
 }

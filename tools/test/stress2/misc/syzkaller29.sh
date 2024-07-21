@@ -26,7 +26,7 @@
 
 # Fixed by r368116
 
-# May change policy for random threads to to domainset_fixed
+# May change policy for random threads to domainset_fixed
 exit 0
 
 . ../default.cfg
@@ -79,7 +79,7 @@ static void execute_one(void);
 
 static void loop(void)
 {
-  int iter = 0;
+  int iter __unused = 0;
   for (;; iter++) {
     int pid = fork();
     if (pid < 0)

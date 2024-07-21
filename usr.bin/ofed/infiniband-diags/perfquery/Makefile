@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	perfquery
 SRCS=	perfquery.c
 MAN=	perfquery.8

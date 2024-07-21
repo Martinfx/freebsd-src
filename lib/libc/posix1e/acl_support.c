@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999-2001, 2008 Robert N. M. Watson
  * All rights reserved.
@@ -29,9 +29,6 @@
  * Support functionality for the POSIX.1e ACL interface
  * These calls are intended only to be called within the library.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include "namespace.h"

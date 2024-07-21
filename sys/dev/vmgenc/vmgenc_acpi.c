@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Conrad Meyer <cem@FreeBSD.org>.  All rights reserved.
  *
@@ -40,9 +40,6 @@
  * - VMware/ESXi: https://kb.vmware.com/s/article/2032586
  * - Xen: https://github.com/xenserver/xen-4.5/blob/master/tools/firmware/hvmloader/acpi/dsdt.asl#L456
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>

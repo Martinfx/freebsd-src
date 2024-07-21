@@ -26,8 +26,6 @@
  * SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_bus.h"
 #include "opt_ddb.h"
 
@@ -91,6 +89,9 @@ static int sysctl_devctl_queue(SYSCTL_HANDLER_ARGS);
 static int devctl_queue_length = DEVCTL_DEFAULT_QUEUE_LEN;
 SYSCTL_PROC(_hw_bus, OID_AUTO, devctl_queue, CTLTYPE_INT | CTLFLAG_RWTUN |
     CTLFLAG_MPSAFE, NULL, 0, sysctl_devctl_queue, "I", "devctl queue length");
+static bool nomatch_enabled = true;
+SYSCTL_BOOL(_hw_bus, OID_AUTO, devctl_nomatch_enabled, CTLFLAG_RWTUN,
+    &nomatch_enabled, 0, "enable nomatch events");
 
 static void devctl_attach_handler(void *arg __unused, device_t dev);
 static void devctl_detach_handler(void *arg __unused, device_t dev,
@@ -133,6 +134,10 @@ static struct filterops devctl_rfiltops = {
 
 static struct cdev *devctl_dev;
 static void devaddq(const char *type, const char *what, device_t dev);
+
+static struct devctlbridge {
+	send_event_f *send_f;
+} devctl_notify_hook = { .send_f = NULL };
 
 static void
 devctl_init(void)
@@ -206,7 +211,8 @@ devctl_detach_handler(void *arg __unused, device_t dev, enum evhdev_detach state
 static void
 devctl_nomatch_handler(void *arg __unused, device_t dev)
 {
-	devaddq("?", "", dev);
+	if (nomatch_enabled)
+		devaddq("?", "", dev);
 }
 
 static int
@@ -435,6 +441,8 @@ devctl_notify(const char *system, const char *subsystem, const char *type,
 
 	if (system == NULL || subsystem == NULL || type == NULL)
 		return;
+	if (devctl_notify_hook.send_f != NULL)
+		devctl_notify_hook.send_f(system, subsystem, type, data);
 	dei = devctl_alloc_dei_sb(&sb);
 	if (dei == NULL)
 		return;
@@ -478,6 +486,7 @@ devaddq(const char *type, const char *what, device_t dev)
 	struct dev_event_info *dei;
 	const char *parstr;
 	struct sbuf sb;
+	size_t beginlen;
 
 	dei = devctl_alloc_dei_sb(&sb);
 	if (dei == NULL)
@@ -485,6 +494,7 @@ devaddq(const char *type, const char *what, device_t dev)
 	sbuf_cpy(&sb, type);
 	sbuf_cat(&sb, what);
 	sbuf_cat(&sb, " at ");
+	beginlen = sbuf_len(&sb);
 
 	/* Add in the location */
 	bus_child_location(dev, &sb);
@@ -503,6 +513,23 @@ devaddq(const char *type, const char *what, device_t dev)
 	sbuf_putc(&sb, '\n');
 	if (sbuf_finish(&sb) != 0)
 		goto bad;
+	if (devctl_notify_hook.send_f != NULL) {
+		const char *t;
+
+		switch (*type) {
+		case '+':
+			t = "ATTACH";
+			break;
+		case '-':
+			t = "DETACH";
+			break;
+		default:
+			t = "NOMATCH";
+			break;
+		}
+		devctl_notify_hook.send_f("device",
+		    what, t, sbuf_data(&sb) + beginlen);
+	}
 	devctl_queue(dei);
 	return;
 bad:
@@ -569,4 +596,15 @@ devctl_safe_quote_sb(struct sbuf *sb, const char *src)
 	}
 }
 
+void
+devctl_set_notify_hook(send_event_f *hook)
+{
+	devctl_notify_hook.send_f = hook;
+}
+
+void
+devctl_unset_notify_hook(void)
+{
+	devctl_notify_hook.send_f = NULL;
+}
 

@@ -14,9 +14,6 @@
  * These notices must be retained in any copies of any part of this
  * documentation and/or software. */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 
 #include <stdio.h>
@@ -51,6 +48,9 @@ __FBSDID("$FreeBSD$");
 #elif SHA == 512
 #undef SHA_Data
 #define SHA_Data SHA512_Data
+#elif SHA == 512224
+#undef SHA_Data
+#define SHA_Data SHA512_224_Data
 #elif SHA == 512256
 #undef SHA_Data
 #define SHA_Data SHA512_256_Data

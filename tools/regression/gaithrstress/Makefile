@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	gaithrstress
 LIBADD=	pthread
 

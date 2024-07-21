@@ -53,6 +53,7 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <libzutil.h>
 #include <libzfs.h>
 
 #include <list>
@@ -73,9 +74,6 @@
 #include "zfsd.h"
 #include "zfsd_exception.h"
 #include "zpool_list.h"
-
-__FBSDID("$FreeBSD$");
-
 /*============================ Namespace Control =============================*/
 using std::hex;
 using std::ifstream;
@@ -94,7 +92,6 @@ using DevdCtl::ParseException;
 
 CaseFileList  CaseFile::s_activeCases;
 const string  CaseFile::s_caseFilePath = "/var/db/zfsd/cases";
-const timeval CaseFile::s_removeGracePeriod = { 60 /*sec*/, 0 /*usec*/};
 
 //- CaseFile Static Public Methods ---------------------------------------------
 CaseFile *
@@ -114,6 +111,26 @@ CaseFile::Find(Guid poolGUID, Guid vdevGUID)
 		return (*curCase);
 	}
 	return (NULL);
+}
+
+void
+CaseFile::Find(Guid poolGUID, Guid vdevGUID, CaseFileList &cases)
+{
+	for (CaseFileList::iterator curCase = s_activeCases.begin();
+	    curCase != s_activeCases.end(); curCase++) {
+		if (((*curCase)->PoolGUID() != poolGUID &&
+		    Guid::InvalidGuid() != poolGUID) ||
+		    (*curCase)->VdevGUID() != vdevGUID)
+			continue;
+
+		/*
+		 * We can have multiple cases for spare vdevs
+		 */
+		cases.push_back(*curCase);
+		if (!(*curCase)->IsSpare()) {
+			return;
+		}
+	}
 }
 
 CaseFile *
@@ -217,6 +234,12 @@ CaseFile::PurgeAll()
 
 }
 
+int
+CaseFile::IsSpare()
+{
+	return (m_is_spare);
+}
+
 //- CaseFile Public Methods ----------------------------------------------------
 bool
 CaseFile::RefreshVdevState()
@@ -232,6 +255,7 @@ CaseFile::RefreshVdevState()
 
 	m_vdevState    = vd.State();
 	m_vdevPhysPath = vd.PhysicalPath();
+	m_vdevName = vd.Name(casePool, false);
 	return (true);
 }
 
@@ -240,6 +264,7 @@ CaseFile::ReEvaluate(const string &devPath, const string &physPath, Vdev *vdev)
 {
 	ZpoolList zpl(ZpoolList::ZpoolByGUID, &m_poolGUID);
 	zpool_handle_t *pool(zpl.empty() ? NULL : zpl.front());
+	int flags = ZFS_ONLINE_CHECKREMOVE | ZFS_ONLINE_UNSPARE;
 
 	if (pool == NULL || !RefreshVdevState()) {
 		/*
@@ -280,9 +305,10 @@ CaseFile::ReEvaluate(const string &devPath, const string &physPath, Vdev *vdev)
 	   || vdev->PoolGUID() == Guid::InvalidGuid())
 	 && vdev->GUID() == m_vdevGUID) {
 
+		if (IsSpare())
+			flags |= ZFS_ONLINE_SPARE;
 		if (zpool_vdev_online(pool, vdev->GUIDString().c_str(),
-		    ZFS_ONLINE_CHECKREMOVE | ZFS_ONLINE_UNSPARE,
-		    &m_vdevState) != 0) {
+		    flags, &m_vdevState) != 0) {
 			syslog(LOG_ERR,
 			    "Failed to online vdev(%s/%s:%s): %s: %s\n",
 			    zpool_get_name(pool), vdev->GUIDString().c_str(),
@@ -360,7 +386,7 @@ CaseFile::ReEvaluate(const ZfsEvent &event)
 {
 	bool consumed(false);
 
-	if (event.Value("type") == "misc.fs.zfs.vdev_remove") {
+	if (event.Value("type") == "sysevent.fs.zfs.vdev_remove") {
 		/*
 		 * The Vdev we represent has been removed from the
 		 * configuration.  This case is no longer of value.
@@ -368,12 +394,12 @@ CaseFile::ReEvaluate(const ZfsEvent &event)
 		Close();
 
 		return (/*consumed*/true);
-	} else if (event.Value("type") == "misc.fs.zfs.pool_destroy") {
+	} else if (event.Value("type") == "sysevent.fs.zfs.pool_destroy") {
 		/* This Pool has been destroyed.  Discard the case */
 		Close();
 
 		return (/*consumed*/true);
-	} else if (event.Value("type") == "misc.fs.zfs.config_sync") {
+	} else if (event.Value("type") == "sysevent.fs.zfs.config_sync") {
 		RefreshVdevState();
 		if (VdevState() < VDEV_STATE_HEALTHY)
 			consumed = ActivateSpare();
@@ -445,7 +471,8 @@ CaseFile::ReEvaluate(const ZfsEvent &event)
 		consumed = true;
 	}
 	else if (event.Value("class") == "ereport.fs.zfs.io" ||
-	         event.Value("class") == "ereport.fs.zfs.checksum") {
+	         event.Value("class") == "ereport.fs.zfs.checksum" ||
+		 event.Value("class") == "ereport.fs.zfs.delay") {
 
 		m_tentativeEvents.push_front(event.DeepCopy());
 		RegisterCallout(event);
@@ -490,8 +517,7 @@ bool
 CaseFile::ActivateSpare() {
 	nvlist_t	*config, *nvroot, *parent_config;
 	nvlist_t       **spares;
-	char		*devPath, *vdev_type;
-	const char	*poolname;
+	const char	*devPath, *poolname, *vdev_type;
 	u_int		 nspares, i;
 	int		 error;
 
@@ -518,7 +544,7 @@ CaseFile::ActivateSpare() {
 
 	parent_config = find_parent(config, nvroot, m_vdevGUID);
 	if (parent_config != NULL) {
-		char *parent_type;
+		const char *parent_type;
 
 		/* 
 		 * Don't activate spares for members of a "replacing" vdev.
@@ -585,15 +611,55 @@ CaseFile::ActivateSpare() {
 	return (Replace(vdev_type, devPath, /*isspare*/true));
 }
 
+/* Does the argument event refer to a checksum error? */
+static bool
+IsChecksumEvent(const Event* const event)
+{
+	return ("ereport.fs.zfs.checksum" == event->Value("type"));
+}
+
+/* Does the argument event refer to an IO error? */
+static bool
+IsIOEvent(const Event* const event)
+{
+	return ("ereport.fs.zfs.io" == event->Value("type"));
+}
+
+/* Does the argument event refer to an IO delay? */
+static bool
+IsDelayEvent(const Event* const event)
+{
+	return ("ereport.fs.zfs.delay" == event->Value("type"));
+}
+
 void
 CaseFile::RegisterCallout(const Event &event)
 {
 	timeval now, countdown, elapsed, timestamp, zero, remaining;
+	/**
+	 * The time ZFSD waits before promoting a tentative event
+	 * into a permanent event.
+	 */
+	int sec = -1;
+	if (IsChecksumEvent(&event))
+		sec = CaseFile::GetVdevProp(VDEV_PROP_CHECKSUM_T);
+	else if (IsIOEvent(&event))
+		sec = CaseFile::GetVdevProp(VDEV_PROP_IO_T);
+	else if (IsDelayEvent(&event))
+		sec = CaseFile::GetVdevProp(VDEV_PROP_SLOW_IO_T);
+
+	if (sec == -1)
+		sec = 60; /* default */
+
+	timeval removeGracePeriod = {
+	    sec, /*sec*/
+	    0 /*usec*/
+	};
 
 	gettimeofday(&now, 0);
 	timestamp = event.GetTimestamp();
 	timersub(&now, &timestamp, &elapsed);
-	timersub(&s_removeGracePeriod, &elapsed, &countdown);
+	timersub(&removeGracePeriod, &elapsed, &countdown);
 	/*
 	 * If countdown is <= zero, Reset the timer to the
 	 * smallest positive time value instead
@@ -791,7 +857,8 @@ CaseFile::CaseFile(const Vdev &vdev)
  : m_poolGUID(vdev.PoolGUID()),
    m_vdevGUID(vdev.GUID()),
    m_vdevState(vdev.State()),
-   m_vdevPhysPath(vdev.PhysicalPath())
+   m_vdevPhysPath(vdev.PhysicalPath()),
+   m_is_spare(vdev.IsSpare())
 {
 	stringstream guidString;
 
@@ -800,6 +867,10 @@ CaseFile::CaseFile(const Vdev &vdev)
 	guidString.str("");
 	guidString << m_poolGUID;
 	m_poolGUIDString = guidString.str();
+
+	ZpoolList zpl(ZpoolList::ZpoolByGUID, &m_poolGUID);
+	zpool_handle_t *zhp(zpl.empty() ? NULL : zpl.front());
+	m_vdevName = vdev.Name(zhp, false);
 
 	s_activeCases.push_back(this);
 
@@ -1132,32 +1203,56 @@ CaseFile::Replace(const char* vdev_type, const char* path, bool isspare) {
 	return (retval);
 }
 
-/* Does the argument event refer to a checksum error? */
-static bool
-IsChecksumEvent(const Event* const event)
+/* Lookup the vdev prop. Used for checksum, IO, or slow IO props */
+int
+CaseFile::GetVdevProp(vdev_prop_t vdev_prop) const
 {
-	return ("ereport.fs.zfs.checksum" == event->Value("type"));
-}
+	char val[ZFS_MAXPROPLEN];
+	zprop_source_t srctype;
+	DevdCtl::Guid poolGUID = PoolGUID();
+	ZpoolList zpl(ZpoolList::ZpoolByGUID, &poolGUID);
+	zpool_handle_t *zhp(zpl.empty() ? NULL : zpl.front());
 
-/* Does the argument event refer to an IO error? */
-static bool
-IsIOEvent(const Event* const event)
-{
-	return ("ereport.fs.zfs.io" == event->Value("type"));
+	char *prop_str = (char *) vdev_prop_to_name(vdev_prop);
+	if (zhp == NULL || zpool_get_vdev_prop(zhp, m_vdevName.c_str(),
+	    vdev_prop, prop_str, val, sizeof (val), &srctype, B_FALSE) != 0)
+		return (-1);
+
+	/* we'll get "-" from libzfs for a prop that is not set */
+	if (zfs_isnumber(val) == B_FALSE)
+		return (-1);
+
+	return (atoi(val));
 }
 
 bool
 CaseFile::ShouldDegrade() const
 {
+	int checksum_n = GetVdevProp(VDEV_PROP_CHECKSUM_N);
+	if (checksum_n == -1)
+		checksum_n = DEFAULT_ZFS_DEGRADE_IO_COUNT;
 	return (std::count_if(m_events.begin(), m_events.end(),
-			      IsChecksumEvent) > ZFS_DEGRADE_IO_COUNT);
+			      IsChecksumEvent) > checksum_n);
 }
 
 bool
 CaseFile::ShouldFault() const
 {
-	return (std::count_if(m_events.begin(), m_events.end(),
-			      IsIOEvent) > ZFS_DEGRADE_IO_COUNT);
+	bool should_fault_for_io, should_fault_for_delay;
+	int io_n = GetVdevProp(VDEV_PROP_IO_N);
+	int slow_io_n = GetVdevProp(VDEV_PROP_SLOW_IO_N);
+
+	if (io_n == -1)
+		io_n = DEFAULT_ZFS_DEGRADE_IO_COUNT;
+	if (slow_io_n == -1)
+		slow_io_n = DEFAULT_ZFS_FAULT_SLOW_IO_COUNT;
+
+	should_fault_for_io = std::count_if(m_events.begin(), m_events.end(),
+			      IsIOEvent) > io_n;
+	should_fault_for_delay = std::count_if(m_events.begin(), m_events.end(),
+			      IsDelayEvent) > slow_io_n;
+
+	return (should_fault_for_io || should_fault_for_delay);
 }
 
 nvlist_t *

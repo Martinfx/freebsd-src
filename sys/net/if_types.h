@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)if_types.h	8.3 (Berkeley) 4/28/95
- * $FreeBSD$
  * $NetBSD: if_types.h,v 1.16 2000/04/19 06:30:53 itojun Exp $
  */
 
@@ -256,6 +253,7 @@ typedef enum {
 	IFT_ENC		= 0xf4,		/* Encapsulating interface */
 	IFT_PFLOG	= 0xf6,		/* PF packet filter logging */
 	IFT_PFSYNC	= 0xf7,		/* PF packet filter synchronization */
+	IFT_WIREGUARD	= 0xf8,		/* WireGuard tunnel */
 } ifType;
 
 /*

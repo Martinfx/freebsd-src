@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013-2015 The FreeBSD Foundation
  *
@@ -27,9 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include "opt_acpi.h"
 #if defined(__amd64__)
@@ -70,6 +67,7 @@ __FBSDID("$FreeBSD$");
 #include <x86/include/busdma_impl.h>
 #include <dev/iommu/busdma_iommu.h>
 #include <x86/iommu/intel_reg.h>
+#include <x86/iommu/x86_iommu.h>
 #include <x86/iommu/intel_dmar.h>
 
 #ifdef DEV_APIC
@@ -159,6 +157,8 @@ dmar_count_iter(ACPI_DMAR_HEADER *dmarh, void *arg)
 	return (1);
 }
 
+int dmar_rmrr_enable = 1;
+
 static int dmar_enable = 0;
 static void
 dmar_identify(driver_t *driver, device_t parent)
@@ -173,14 +173,16 @@ dmar_identify(driver_t *driver, device_t parent)
 	TUNABLE_INT_FETCH("hw.dmar.enable", &dmar_enable);
 	if (!dmar_enable)
 		return;
+	TUNABLE_INT_FETCH("hw.dmar.rmrr_enable", &dmar_rmrr_enable);
+
 	status = AcpiGetTable(ACPI_SIG_DMAR, 1, (ACPI_TABLE_HEADER **)&dmartbl);
 	if (ACPI_FAILURE(status))
 		return;
 	haw = dmartbl->Width + 1;
 	if ((1ULL << (haw + 1)) > BUS_SPACE_MAXADDR)
-		dmar_high = BUS_SPACE_MAXADDR;
+		iommu_high = BUS_SPACE_MAXADDR;
 	else
-		dmar_high = 1ULL << (haw + 1);
+		iommu_high = 1ULL << (haw + 1);
 	if (bootverbose) {
 		printf("DMAR HAW=%d flags=<%b>\n", dmartbl->Width,
 		    (unsigned)dmartbl->Flags,
@@ -408,7 +410,6 @@ dmar_attach(device_t dev)
 	int i, error;
 
 	unit = device_get_softc(dev);
-	unit->dev = dev;
 	unit->iommu.unit = device_get_unit(dev);
 	unit->iommu.dev = dev;
 	dmaru = dmar_find_by_index(unit->iommu.unit);
@@ -431,7 +432,7 @@ dmar_attach(device_t dev)
 	dmar_quirks_post_ident(unit);
 
 	timeout = dmar_get_timeout();
-	TUNABLE_UINT64_FETCH("hw.dmar.timeout", &timeout);
+	TUNABLE_UINT64_FETCH("hw.iommu.dmar.timeout", &timeout);
 	dmar_update_timeout(timeout);
 
 	for (i = 0; i < DMAR_INTR_TOTAL; i++)
@@ -489,7 +490,7 @@ dmar_attach(device_t dev)
 	 * address translation after the required invalidations are
 	 * done.
 	 */
-	dmar_pgalloc(unit->ctx_obj, 0, IOMMU_PGF_WAITOK | IOMMU_PGF_ZERO);
+	iommu_pgalloc(unit->ctx_obj, 0, IOMMU_PGF_WAITOK | IOMMU_PGF_ZERO);
 	DMAR_LOCK(unit);
 	error = dmar_load_root_entry_ptr(unit);
 	if (error != 0) {
@@ -908,6 +909,9 @@ dmar_rmrr_iter(ACPI_DMAR_HEADER *dmarh, void *arg)
 	char *ptr, *ptrend;
 	int match;
 
+	if (!dmar_rmrr_enable)
+		return (1);
+
 	if (dmarh->Type != ACPI_DMAR_TYPE_RESERVED_MEMORY)
 		return (1);
 
@@ -971,7 +975,7 @@ dmar_path_dev(int segment, int path_len, int busno,
 		dev = pci_find_dbsf(segment, busno, path->Device,
 		    path->Function);
 		if (i != path_len - 1) {
-			busno = pci_cfgregread(busno, path->Device,
+			busno = pci_cfgregread(segment, busno, path->Device,
 			    path->Function, PCIR_SECBUS_1, 1);
 			path++;
 		}
@@ -993,6 +997,9 @@ dmar_inst_rmrr_iter(ACPI_DMAR_HEADER *dmarh, void *arg)
 	uint16_t rid;
 
 	iria = arg;
+
+	if (!dmar_rmrr_enable)
+		return (1);
 
 	if (dmarh->Type != ACPI_DMAR_TYPE_RESERVED_MEMORY)
 		return (1);
@@ -1021,10 +1028,10 @@ dmar_inst_rmrr_iter(ACPI_DMAR_HEADER *dmarh, void *arg)
 			if (bootverbose) {
 				printf("dmar%d no dev found for RMRR "
 				    "[%#jx, %#jx] rid %#x scope path ",
-				     iria->dmar->iommu.unit,
-				     (uintmax_t)resmem->BaseAddress,
-				     (uintmax_t)resmem->EndAddress,
-				     rid);
+				    iria->dmar->iommu.unit,
+				    (uintmax_t)resmem->BaseAddress,
+				    (uintmax_t)resmem->EndAddress,
+				    rid);
 				dmar_print_path(devscope->Bus, dev_path_len,
 				    (const ACPI_DMAR_PCI_PATH *)(devscope + 1));
 				printf("\n");

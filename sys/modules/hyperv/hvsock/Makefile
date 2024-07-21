@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:  ${SRCTOP}/sys/dev/hyperv/hvsock
 
 KMOD=	hv_sock

@@ -15,7 +15,7 @@
 */
 
 #ifndef SM_RPOOL_H
-# define SM_RPOOL_H
+# define SM_RPOOL_H 1
 
 # include <sm/gen.h>
 # include <sm/heap.h>
@@ -163,10 +163,20 @@ extern void *
 sm_rpool_malloc __P((
 	SM_RPOOL_T *_rpool,
 	size_t _size));
+#  define sm_rpool_malloc_tagged(rpool, size, file, line, group)	sm_rpool_malloc(rpool, size)
+#  define sm_rpool_malloc_tagged_x(rpool, size, file, line, group)	sm_rpool_malloc_x(rpool, size)
 # endif /* SM_HEAP_CHECK */
 
 #if DO_NOT_USE_STRCPY
+
+# if SM_HEAP_CHECK > 2
+extern char	*sm_rpool_strdup_tagged_x __P((SM_RPOOL_T *rpool, const char *s, char *, int, int));
+# define sm_rpool_strdup_x(rpool, str) sm_rpool_strdup_tagged_x(rpool, str, "sm_rpool_strdup_x:" __FILE__, __LINE__, SmHeapGroup)
+# else
 extern char *sm_rpool_strdup_x __P((SM_RPOOL_T *rpool, const char *s));
+# define sm_rpool_strdup_tagged_x(rpool, str, tag, line, group) sm_rpool_strdup_x(rpool, str)
+# endif
+
 #else
 # define sm_rpool_strdup_x(rpool, str) \
 	strcpy(sm_rpool_malloc_x(rpool, strlen(str) + 1), str)

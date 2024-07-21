@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006-2009 University of Zagreb
  * Copyright (c) 2006-2009 FreeBSD Foundation
@@ -33,8 +33,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*-
@@ -281,7 +279,7 @@ extern struct sx vnet_sxlock;
 #define	VNET_DEFINE(t, n)	\
     struct _hack; t VNET_NAME(n) __section(VNET_SETNAME) __used
 #if defined(KLD_MODULE) && (defined(__aarch64__) || defined(__riscv) \
-		|| defined(__powerpc64__))
+		|| defined(__powerpc64__) || defined(__i386__))
 /*
  * As with DPCPU_DEFINE_STATIC we are unable to mark this data as static
  * in modules on some architectures.
@@ -312,6 +310,12 @@ extern struct sx vnet_sxlock;
 void	*vnet_data_alloc(int size);
 void	 vnet_data_copy(void *start, int size);
 void	 vnet_data_free(void *start_arg, int size);
+
+/*
+ * Interfaces to manipulate the initial values of virtualized global variables.
+ */
+void    vnet_save_init(void *, size_t);
+void    vnet_restore_init(void *, size_t);
 
 /*
  * Virtual sysinit mechanism, allowing network stack components to declare
@@ -361,12 +365,6 @@ struct vnet_sysinit {
 	    vnet_deregister_sysuninit, &ident ## _vnet_uninit)
 
 /*
- * Run per-vnet sysinits or sysuninits during vnet creation/destruction.
- */
-void	 vnet_sysinit(void);
-void	 vnet_sysuninit(void);
-
-/*
  * Interfaces for managing per-vnet constructors and destructors.
  */
 void	vnet_register_sysinit(void *arg);
@@ -408,7 +406,7 @@ do {									\
 #define	CURVNET_SET(arg)
 #define	CURVNET_SET_QUIET(arg)
 #define	CURVNET_RESTORE()
-#define	CURVNET_ASSERT_SET()						\
+#define	CURVNET_ASSERT_SET()
 
 #define	VNET_LIST_RLOCK()
 #define	VNET_LIST_RLOCK_NOSLEEP()

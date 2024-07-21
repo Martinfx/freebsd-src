@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <libshare.h>
+#include <unistd.h>
+#include <libzutil.h>
 #include "nfs.h"
 
 
@@ -44,7 +46,8 @@ nfs_exports_lock(const char *name, int *nfs_lock_fd)
 	*nfs_lock_fd = open(name, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 	if (*nfs_lock_fd == -1) {
 		err = errno;
-		fprintf(stderr, "failed to lock %s: %s\n", name, strerror(err));
+		fprintf(stderr, "failed to lock %s: %s\n", name,
+		    zfs_strerror(err));
 		return (err);
 	}
 
@@ -52,7 +55,8 @@ nfs_exports_lock(const char *name, int *nfs_lock_fd)
 		;
 	if (err != 0) {
 		err = errno;
-		fprintf(stderr, "failed to lock %s: %s\n", name, strerror(err));
+		fprintf(stderr, "failed to lock %s: %s\n", name,
+		    zfs_strerror(err));
 		(void) close(*nfs_lock_fd);
 		*nfs_lock_fd = -1;
 		return (err);
@@ -68,7 +72,7 @@ nfs_exports_unlock(const char *name, int *nfs_lock_fd)
 
 	if (flock(*nfs_lock_fd, LOCK_UN) != 0)
 		fprintf(stderr, "failed to unlock %s: %s\n",
-		    name, strerror(errno));
+		    name, zfs_strerror(errno));
 
 	(void) close(*nfs_lock_fd);
 	*nfs_lock_fd = -1;
@@ -90,24 +94,25 @@ nfs_init_tmpfile(const char *prefix, const char *mdir, struct tmpfile *tmpf)
 	    mkdir(mdir, 0755) < 0 &&
 	    errno != EEXIST) {
 		fprintf(stderr, "failed to create %s: %s\n",
-		    mdir, strerror(errno));
+		// cppcheck-suppress uninitvar
+		    mdir, zfs_strerror(errno));
 		return (B_FALSE);
 	}
 
-	strcpy(tmpf->name, prefix);
-	strcat(tmpf->name, ".XXXXXXXX");
+	strlcpy(tmpf->name, prefix, sizeof (tmpf->name));
+	strlcat(tmpf->name, ".XXXXXXXX", sizeof (tmpf->name));
 
 	int fd = mkostemp(tmpf->name, O_CLOEXEC);
 	if (fd == -1) {
 		fprintf(stderr, "Unable to create temporary file: %s",
-		    strerror(errno));
+		    zfs_strerror(errno));
 		return (B_FALSE);
 	}
 
 	tmpf->fp = fdopen(fd, "w+");
 	if (tmpf->fp == NULL) {
 		fprintf(stderr, "Unable to reopen temporary file: %s",
-		    strerror(errno));
+		    zfs_strerror(errno));
 		close(fd);
 		return (B_FALSE);
 	}
@@ -127,14 +132,14 @@ nfs_fini_tmpfile(const char *exports, struct tmpfile *tmpf)
 {
 	if (fflush(tmpf->fp) != 0) {
 		fprintf(stderr, "Failed to write to temporary file: %s\n",
-		    strerror(errno));
+		    zfs_strerror(errno));
 		nfs_abort_tmpfile(tmpf);
 		return (SA_SYSTEM_ERR);
 	}
 
 	if (rename(tmpf->name, exports) == -1) {
 		fprintf(stderr, "Unable to rename %s -> %s: %s\n",
-		    tmpf->name, exports, strerror(errno));
+		    tmpf->name, exports, zfs_strerror(errno));
 		nfs_abort_tmpfile(tmpf);
 		return (SA_SYSTEM_ERR);
 	}
@@ -211,7 +216,7 @@ nfs_process_exports(const char *exports, const char *mountpoint,
 
 		if (fclose(oldfp) != 0) {
 			fprintf(stderr, "Unable to close file %s: %s\n",
-			    exports, strerror(errno));
+			    exports, zfs_strerror(errno));
 			error = error != SA_OK ? error : SA_SYSTEM_ERR;
 		}
 	}
@@ -279,6 +284,17 @@ fullerr:
 	nfs_abort_tmpfile(&tmpf);
 	nfs_exports_unlock(lockfile, &nfs_lock_fd);
 	return (error);
+}
+
+void
+nfs_reset_shares(const char *lockfile, const char *exports)
+{
+	int nfs_lock_fd = -1;
+
+	if (nfs_exports_lock(lockfile, &nfs_lock_fd) == 0) {
+		(void) ! truncate(exports, 0);
+		nfs_exports_unlock(lockfile, &nfs_lock_fd);
+	}
 }
 
 static boolean_t

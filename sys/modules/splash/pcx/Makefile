@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/fb
 
 KMOD=	splash_pcx

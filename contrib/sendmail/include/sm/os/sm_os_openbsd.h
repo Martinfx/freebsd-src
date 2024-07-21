@@ -21,10 +21,10 @@
 #define SM_CONF_SYS_CDEFS_H	1
 #ifndef SM_CONF_SHM
 # define SM_CONF_SHM	1
-#endif /* SM_CONF_SHM */
+#endif
 #ifndef SM_CONF_SEM
 # define SM_CONF_SEM	1
-#endif /* SM_CONF_SEM */
+#endif
 #ifndef SM_CONF_MSG
 # define SM_CONF_MSG	1
-#endif /* SM_CONF_MSG */
+#endif

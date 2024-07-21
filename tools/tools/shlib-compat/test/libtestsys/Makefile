@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTNUM=	sys
 
 CLEANFILES+= test.c

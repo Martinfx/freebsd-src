@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * Portions Copyright (c) Ryan Beasley <ryan.beasley@gmail.com> - GSoC 2006
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _PCMDSP_H_
@@ -35,12 +33,10 @@
 
 extern struct cdevsw dsp_cdevsw;
 
-struct dsp_cdevinfo;
-
-char *dsp_unit2name(char *, size_t, int);
-int dsp_oss_audioinfo(struct cdev *, oss_audioinfo *);
-
-void dsp_cdevinfo_init(struct snddev_info *);
-void dsp_cdevinfo_flush(struct snddev_info *);
+int dsp_make_dev(device_t);
+void dsp_destroy_dev(device_t);
+char *dsp_unit2name(char *, size_t, struct pcm_channel *);
+int dsp_oss_audioinfo(struct cdev *, oss_audioinfo *, bool);
+int dsp_oss_engineinfo(struct cdev *, oss_audioinfo *);
 
 #endif /* !_PCMDSP_H_ */

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	rdma
 PROG=	udaddy
 MAN=	udaddy.1

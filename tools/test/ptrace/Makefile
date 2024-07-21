@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	scescx
 MAN=
 

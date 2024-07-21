@@ -1,6 +1,5 @@
-/* $FreeBSD$ */
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Sylvestre Gallon. All rights reserved.
  *
@@ -246,7 +245,7 @@ enum libusb_log_level {
 /* XXX */
 /* libusb_set_debug should take parameters from libusb_log_level
  * above according to
- *   http://libusb.sourceforge.net/api-1.0/group__lib.html
+ *   https://libusb.sourceforge.io/api-1.0/group__libusb__lib.html
  */
 enum libusb_debug_level {
 	LIBUSB_DEBUG_NO=0,
@@ -265,6 +264,14 @@ typedef enum {
 	LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED = 1,
 	LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT = 2,
 } libusb_hotplug_event;
+
+enum libusb_option {
+	LIBUSB_OPTION_LOG_LEVEL = 0,
+	LIBUSB_OPTION_USE_USBDK = 1,
+	LIBUSB_OPTION_NO_DEVICE_DISCOVERY = 2,
+	LIBUSB_OPTION_WEAK_AUTHORITY = 2,
+	LIBUSB_OPTION_MAX = 3,
+};
 
 /* libusb structures */
 
@@ -286,6 +293,13 @@ struct libusb_version {
 	const uint16_t nano;
 	const char *rc;
 	const char *describe;
+};
+
+struct libusb_init_option {
+	enum libusb_option option;
+	union {
+		int64_t ival;
+	} value;
 };
 
 typedef struct libusb_context libusb_context;
@@ -465,6 +479,7 @@ const struct libusb_version *libusb_get_version(void);
 const char *libusb_strerror(int code);
 const char *libusb_error_name(int code);
 int	libusb_init(libusb_context ** context);
+int	libusb_init_context(libusb_context **, const struct libusb_init_option [], int num_options);
 void	libusb_exit(struct libusb_context *ctx);
 int	libusb_has_capability(uint32_t capability);
 
@@ -550,6 +565,7 @@ void	libusb_lock_events(libusb_context * ctx);
 void	libusb_unlock_events(libusb_context * ctx);
 int	libusb_event_handling_ok(libusb_context * ctx);
 int	libusb_event_handler_active(libusb_context * ctx);
+void	libusb_interrupt_event_handler(libusb_context *ctx);
 void	libusb_lock_event_waiters(libusb_context * ctx);
 void	libusb_unlock_event_waiters(libusb_context * ctx);
 int	libusb_wait_for_event(libusb_context * ctx, struct timeval *tv);

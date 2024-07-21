@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998-2003 Poul-Henning Kamp
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_clock.h"
 
 #include <sys/param.h>
@@ -141,7 +139,7 @@ tsc_freq_vmware(void)
 {
 	u_int regs[4];
 
-	vmware_hvcall(VMW_HVCMD_GETHZ, regs);
+	vmware_hvcall(0, VMW_HVCMD_GETHZ, VMW_HVCMD_DEFAULT_PARAM, regs);
 	if (regs[1] != UINT_MAX)
 		tsc_freq = regs[0] | ((uint64_t)regs[1] << 32);
 	tsc_early_calib_exact = 1;
@@ -990,7 +988,8 @@ x86_tsc_vdso_timehands32(struct vdso_timehands32 *vdso_th32,
 	vdso_th32->th_algo = VDSO_TH_ALGO_X86_TSC;
 	vdso_th32->th_x86_shift = (int)(intptr_t)tc->tc_priv;
 	vdso_th32->th_x86_hpet_idx = 0xffffffff;
-	vdso_th32->th_x86_pvc_last_systime = 0;
+	vdso_th32->th_x86_pvc_last_systime[0] = 0;
+	vdso_th32->th_x86_pvc_last_systime[1] = 0;
 	vdso_th32->th_x86_pvc_stable_mask = 0;
 	bzero(vdso_th32->th_res, sizeof(vdso_th32->th_res));
 	return (1);

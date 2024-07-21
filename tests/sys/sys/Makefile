@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.compiler.mk>
 
 TESTSDIR=	${TESTSBASE}/sys/sys

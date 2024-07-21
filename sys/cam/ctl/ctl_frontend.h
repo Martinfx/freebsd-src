@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * Copyright (c) 2014-2017 Alexander Motin <mav@FreeBSD.org>
@@ -31,7 +31,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_frontend.h#2 $
- * $FreeBSD$
  */
 /*
  * CAM Target Layer front end registration hooks
@@ -214,7 +213,7 @@ struct ctl_wwpn_iid {
  */
 struct ctl_port {
 	struct ctl_softc *ctl_softc;
-	struct ctl_frontend *frontend;
+	struct ctl_frontend *frontend;		/* passed to CTL */
 	ctl_port_type	port_type;		/* passed to CTL */
 	int		num_requested_ctl_io;	/* passed to CTL */
 	char		*port_name;		/* passed to CTL */

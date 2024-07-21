@@ -32,6 +32,7 @@
 
 AC_INIT(m4_esyscmd(awk '/^Name:/ {printf $2}' META),
 	m4_esyscmd(awk '/^Version:/ {printf $2}' META))
+CFGOPTS="$*"
 AC_LANG(C)
 ZFS_AC_META
 AC_CONFIG_AUX_DIR([config])
@@ -43,7 +44,7 @@ AM_INIT_AUTOMAKE([subdir-objects foreign])
 # Remove default macros from config.h:
 #   PACKAGE, PACKAGE_{BUGREPORT,NAME,STRING,TARNAME,VERSION}, STDC_HEADERS, VERSION
 AC_CONFIG_HEADERS([zfs_config.h], [
-	sed -nri~ -e '/^$/be' -e 'N;N;/#define (PACKAGE|VERSION|STDC_HEADERS)/d' -e ':e' -e 'p' zfs_config.h && rm zfs_config.h~ || exit])
+	$SED -nri~ -e '/^$/be' -e 'N;N;/#define (PACKAGE|VERSION|STDC_HEADERS)/d' -e ':e' -e 'p' zfs_config.h && rm zfs_config.h~ || exit])
 
 LT_INIT
 AC_PROG_INSTALL
@@ -65,6 +66,8 @@ ZFS_AC_DEBUG_KMEM_TRACKING
 ZFS_AC_DEBUG_INVARIANTS
 
 AC_CONFIG_FILES([
+	contrib/debian/rules
+	contrib/debian/changelog
 	Makefile
 	include/Makefile
 	lib/libzfs/libzfs.pc

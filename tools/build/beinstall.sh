@@ -24,7 +24,6 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 ##
 # Install a boot environment using the current FreeBSD source tree.
@@ -46,13 +45,10 @@
 BE_UTILITY="${BE_UTILITY:-"bectl"}"
 # If not empty, 'pkg upgrade' will be skipped.
 NO_PKG_UPGRADE="${NO_PKG_UPGRADE:-""}"
-# Config updater - 'etcupdate' and 'mergemaster' are supported.  Set to an
-# empty string to skip.
+# Config updater - 'etcupdate' is supported.  Set to an empty string to skip.
 CONFIG_UPDATER="${CONFIG_UPDATER:-"etcupdate"}"
 # Flags for etcupdate if used.
 ETCUPDATE_FLAGS="${ETCUPDATE_FLAGS:-"-F"}"
-# Flags for mergemaster if used.
-MERGEMASTER_FLAGS="${MERGEMASTER_FLAGS:-"-iFU"}"
 
 
 ########################################################################
@@ -123,14 +119,6 @@ create_be_dirs() {
 	return 0
 }
 
-update_mergemaster_pre() {
-	${MERGEMASTER_CMD} -p -m ${srcdir} -D ${BE_MNTPT} -t ${BE_MM_ROOT} ${MERGEMASTER_FLAGS}
-}
-
-update_mergemaster() {
-	${MERGEMASTER_CMD} -m ${srcdir} -D ${BE_MNTPT} -t ${BE_MM_ROOT} ${MERGEMASTER_FLAGS}
-}
-
 update_etcupdate_pre() {
 	${ETCUPDATE_CMD} -p -s ${srcdir} -D ${BE_MNTPT} ${ETCUPDATE_FLAGS} || return $?
 	${ETCUPDATE_CMD} resolve -D ${BE_MNTPT} || return $?
@@ -177,11 +165,10 @@ objdir=$(make -V .OBJDIR 2>/dev/null)
 
 ## Constants
 ETCUPDATE_CMD="${srcdir}/usr.sbin/etcupdate/etcupdate.sh"
-MERGEMASTER_CMD="${srcdir}/usr.sbin/mergemaster/mergemaster.sh"
 
 # May be a worktree, in which case .git is a file, not a directory.
 if [ -e .git ] ; then
-    commit_time=$(git show --format='%ct' 2>/dev/null | head -1)
+    commit_time=$(git show -s --format='%ct' 2>/dev/null)
     [ $? -ne 0 ] && errx "Can't lookup git commit timestamp"
     commit_ts=$(date -r ${commit_time} '+%Y%m%d.%H%M%S')
 elif [ -d .svn ] ; then
@@ -207,7 +194,6 @@ BE_TMP=$(mktemp -d /tmp/beinstall.XXXXXX)
 [ $? -ne 0 -o ! -d ${BE_TMP} ] && errx "Unable to create mountpoint"
 [ -z "$NO_CLEANUP_BE" ] && cleanup_commands="rmdir_be ${cleanup_commands}"
 BE_MNTPT=${BE_TMP}/mnt
-BE_MM_ROOT=${BE_TMP}/mergemaster # mergemaster will create
 mkdir -p ${BE_MNTPT}
 
 ${BE_UTILITY} create ${BENAME} >/dev/null || errx "Unable to create BE ${BENAME}"

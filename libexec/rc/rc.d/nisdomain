@@ -23,7 +23,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 
 # PROVIDE: nisdomain
@@ -52,4 +51,8 @@ nisdomain_start()
 }
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: config setting
+nisdomain_svcj="NO"
+
 run_rc_command "$1"

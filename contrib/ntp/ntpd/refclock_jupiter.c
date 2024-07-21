@@ -184,7 +184,7 @@ jupiter_start(
 	 * Open serial port
 	 */
 	snprintf(gpsdev, sizeof(gpsdev), DEVICE, unit);
-	fd = refclock_open(gpsdev, SPEED232, LDISC_RAW);
+	fd = refclock_open(&peer->srcadr, gpsdev, SPEED232, LDISC_RAW);
 	if (fd <= 0) {
 		jupiter_debug(peer, "jupiter_start", "open %s: %m",
 			      gpsdev);
@@ -1028,5 +1028,5 @@ jupiter_recv(
 }
 
 #else /* not (REFCLOCK && CLOCK_JUPITER && HAVE_PPSAPI) */
-int refclock_jupiter_bs;
+NONEMPTY_TRANSLATION_UNIT
 #endif /* not (REFCLOCK && CLOCK_JUPITER && HAVE_PPSAPI) */

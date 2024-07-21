@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008, 2009 Silicon Graphics International Corp.
  * Copyright (c) 2014-2015 Alexander Motin <mav@FreeBSD.org>
@@ -37,9 +37,6 @@
  *
  * Author: Ken Merry <ken@FreeBSD.org>
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/queue.h>
@@ -669,7 +666,7 @@ ctlfecleanup(struct cam_periph *periph)
 static void
 ctlfedata(struct ctlfe_lun_softc *softc, union ctl_io *io,
     ccb_flags *flags, uint8_t **data_ptr, uint32_t *dxfer_len,
-    u_int16_t *sglist_cnt)
+    uint16_t *sglist_cnt)
 {
 	struct ctlfe_softc *bus_softc;
 	struct ctlfe_cmd_info *cmd_info;
@@ -1185,7 +1182,7 @@ ctlfedone(struct cam_periph *periph, union ccb *done_ccb)
 		bcopy(atio_cdb_ptr(atio), io->scsiio.cdb, io->scsiio.cdb_len);
 
 #ifdef CTLFEDEBUG
-		printf("%s: %u:%u:%u: tag %04x CDB %02x\n", __func__,
+		printf("%s: %u:%u:%u: tag %jx CDB %02x\n", __func__,
 		        io->io_hdr.nexus.initid,
 		        io->io_hdr.nexus.targ_port,
 		        io->io_hdr.nexus.targ_lun,
@@ -1911,8 +1908,7 @@ ctlfe_datamove(union ctl_io *io)
 	struct cam_periph *periph;
 	struct ctlfe_lun_softc *softc;
 
-	KASSERT(io->io_hdr.io_type == CTL_IO_SCSI,
-	    ("%s: unexpected I/O type %x", __func__, io->io_hdr.io_type));
+	CTL_IO_ASSERT(io, SCSI);
 
 	io->scsiio.ext_data_filled = 0;
 	ccb = PRIV_CCB(io);

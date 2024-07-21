@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/sound/pci
 
 KMOD=	snd_cs4281

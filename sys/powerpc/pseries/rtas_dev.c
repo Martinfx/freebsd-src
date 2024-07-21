@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Nathan Whitehorn
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -157,13 +154,13 @@ rtas_shutdown(void *arg, int howto)
 {
 	cell_t token, status;
 
-	if (howto & RB_HALT) {
+	if ((howto & RB_POWEROFF) != 0) {
 		token = rtas_token_lookup("power-off");
 		if (token == -1)
 			return;
 
 		rtas_call_method(token, 2, 1, 0, 0, &status);
-	} else {
+	} else if ((howto & RB_HALT) == 0) {
 		token = rtas_token_lookup("system-reboot");
 		if (token == -1)
 			return;

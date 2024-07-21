@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -184,13 +181,13 @@ sendfd_payload(int sockfd, int send_fd, void *payload, size_t paylen)
 static void
 sendfd(int sockfd, int send_fd)
 {
-	size_t len;
+	ssize_t len;
 	char ch;
 
 	ch = 0;
 	len = sendfd_payload(sockfd, send_fd, &ch, sizeof(ch));
 	ATF_REQUIRE_MSG(len == sizeof(ch),
-	    "sendmsg: %zu bytes sent; expected %zu; %s", len, sizeof(ch),
+	    "sendmsg: %zd bytes sent; expected %zu; %s", len, sizeof(ch),
 	    strerror(errno));
 }
 
@@ -207,7 +204,7 @@ localcreds(int sockfd)
 	return (val != 0);
 }
 
-static void
+static ssize_t
 recvfd_payload(int sockfd, int *recv_fd, void *buf, size_t buflen,
     size_t cmsgsz, int recvmsg_flags)
 {
@@ -233,8 +230,6 @@ recvfd_payload(int sockfd, int *recv_fd, void *buf, size_t buflen,
 
 	len = recvmsg(sockfd, &msghdr, recvmsg_flags);
 	ATF_REQUIRE_MSG(len != -1, "recvmsg failed: %s", strerror(errno));
-	ATF_REQUIRE_MSG((size_t)len == buflen,
-	    "recvmsg: %zd bytes received; expected %zd", len, buflen);
 
 	cmsghdr = CMSG_FIRSTHDR(&msghdr);
 	ATF_REQUIRE_MSG(cmsghdr != NULL,
@@ -257,15 +252,80 @@ recvfd_payload(int sockfd, int *recv_fd, void *buf, size_t buflen,
 	    "recvmsg: expected credentials were not received");
 	ATF_REQUIRE_MSG((msghdr.msg_flags & MSG_TRUNC) == 0,
 	    "recvmsg: MSG_TRUNC is set while buffer is sufficient");
+
+	return (len);
 }
 
 static void
 recvfd(int sockfd, int *recv_fd, int flags)
 {
+	ssize_t len;
 	char ch = 0;
 
-	recvfd_payload(sockfd, recv_fd, &ch, sizeof(ch),
+	len = recvfd_payload(sockfd, recv_fd, &ch, sizeof(ch),
 	    CMSG_SPACE(sizeof(int)), flags);
+	ATF_REQUIRE_MSG((size_t)len == sizeof(ch),
+	    "recvmsg: %zd bytes received; expected %zd", len, sizeof(ch));
+}
+
+#if TEST_PROTO == SOCK_STREAM
+#define	LOCAL_SENDSPACE_SYSCTL	"net.local.stream.sendspace"
+#define	LOCAL_RECVSPACE_SYSCTL	"net.local.stream.recvspace"
+#elif TEST_PROTO == SOCK_DGRAM
+#define	LOCAL_SENDSPACE_SYSCTL	"net.local.dgram.maxdgram"
+#define	LOCAL_RECVSPACE_SYSCTL	"net.local.dgram.recvspace"
+#endif
+
+static u_long
+getsendspace(void)
+{
+	u_long sendspace;
+
+	ATF_REQUIRE_MSG(sysctlbyname(LOCAL_SENDSPACE_SYSCTL, &sendspace,
+            &(size_t){sizeof(u_long)}, NULL, 0) != -1,
+	    "sysctl %s failed: %s", LOCAL_SENDSPACE_SYSCTL, strerror(errno));
+
+	return (sendspace);
+}
+
+static u_long
+getrecvspace(void)
+{
+	u_long recvspace;
+
+	ATF_REQUIRE_MSG(sysctlbyname(LOCAL_RECVSPACE_SYSCTL, &recvspace,
+            &(size_t){sizeof(u_long)}, NULL, 0) != -1,
+	    "sysctl %s failed: %s", LOCAL_RECVSPACE_SYSCTL, strerror(errno));
+
+	return (recvspace);
+}
+
+/*
+ * Fill socket to a state when next max sized send would fail with EAGAIN.
+ */
+static void
+fill(int fd)
+{
+	u_long sendspace;
+	void *buf;
+
+	sendspace = getsendspace();
+	ATF_REQUIRE((buf = malloc(sendspace)) != NULL);
+
+	ATF_REQUIRE_MSG(fcntl(fd, F_SETFL, O_NONBLOCK) != -1,
+	    "fcntl(O_NONBLOCK) failed: %s", strerror(errno));
+
+#if TEST_PROTO == SOCK_STREAM
+	do {} while (send(fd, buf, sendspace, 0) == (ssize_t)sendspace);
+#elif TEST_PROTO == SOCK_DGRAM
+	u_long recvspace = getrecvspace();
+
+	for (ssize_t sent = 0;
+	    sent + sendspace + sizeof(struct sockaddr) < recvspace;
+	    sent += sendspace + sizeof(struct sockaddr))
+		ATF_REQUIRE(send(fd, buf, sendspace, 0) == (ssize_t)sendspace);
+#endif
+	free(buf);
 }
 
 /*
@@ -452,6 +512,40 @@ ATF_TC_BODY(send_a_lot, tc)
 }
 
 /*
+ * Exersize condition when SCM_RIGHTS is successfully internalized, but
+ * message delivery fails due to receive buffer overflow.  Check that no
+ * file descriptors are leaked.
+ */
+ATF_TC_WITHOUT_HEAD(send_overflow);
+ATF_TC_BODY(send_overflow, tc)
+{
+	void *buf;
+	ssize_t len;
+	int fd[2], putfd, nfiles;
+	int sendspace;
+
+	sendspace = (int)getsendspace();
+	ATF_REQUIRE((buf = malloc(sendspace)) != NULL);
+
+	domainsocketpair(fd);
+	fill(fd[0]);
+	nfiles = openfiles();
+	tempfile(&putfd);
+	len = sendfd_payload(fd[0], putfd, buf, sendspace);
+#if TEST_PROTO == SOCK_STREAM
+	ATF_REQUIRE_MSG(len == -1 && errno == EAGAIN,
+	    "sendmsg: %zd bytes sent, errno %d", len, errno);
+#elif TEST_PROTO == SOCK_DGRAM
+	ATF_REQUIRE_MSG(len == -1 && errno == ENOBUFS,
+	    "sendmsg: %zd bytes sent, errno %d", len, errno);
+#endif
+	close(putfd);
+	ATF_REQUIRE(nfiles == openfiles());
+	closesocketpair(fd);
+}
+
+
+/*
  * Send two files.  Then receive them.  Make sure they are returned in the
  * right order, and both get there.
  */
@@ -530,12 +624,6 @@ ATF_TC_BODY(devfs_orphan, tc)
 	closesocketpair(fd);
 }
 
-#if TEST_PROTO == SOCK_STREAM
-#define	LOCAL_SENDSPACE_SYSCTL	"net.local.stream.sendspace"
-#elif TEST_PROTO == SOCK_DGRAM
-#define	LOCAL_SENDSPACE_SYSCTL	"net.local.dgram.maxdgram"
-#endif
-
 /*
  * Test for PR 181741. Receiver sets LOCAL_CREDS, and kernel prepends a
  * control message to the data. Sender sends large payload using a non-blocking
@@ -547,16 +635,11 @@ ATF_TC_BODY(rights_creds_payload, tc)
 {
 	const int on = 1;
 	u_long sendspace;
-	ssize_t len;
+	ssize_t len, rlen;
 	void *buf;
 	int fd[2], getfd, putfd, rc;
 
-	len = sizeof(sendspace);
-	rc = sysctlbyname(LOCAL_SENDSPACE_SYSCTL, &sendspace,
-	    &len, NULL, 0);
-	ATF_REQUIRE_MSG(rc != -1,
-	    "sysctl %s failed: %s", LOCAL_SENDSPACE_SYSCTL, strerror(errno));
-
+	sendspace = getsendspace();
 	buf = calloc(1, sendspace);
 	ATF_REQUIRE(buf != NULL);
 
@@ -571,20 +654,28 @@ ATF_TC_BODY(rights_creds_payload, tc)
 	    strerror(errno));
 
 	len = sendfd_payload(fd[0], putfd, buf, sendspace);
-#if TEST_PROTO == SOCK_STREAM
 	ATF_REQUIRE_MSG(len != -1 , "sendmsg failed: %s", strerror(errno));
+#if TEST_PROTO == SOCK_STREAM
 	ATF_REQUIRE_MSG((size_t)len < sendspace,
-	    "sendmsg: %zu bytes sent", len);
-	recvfd_payload(fd[1], &getfd, buf, len,
-	    CMSG_SPACE(SOCKCREDSIZE(CMGROUP_MAX)) + CMSG_SPACE(sizeof(int)), 0);
+	    "sendmsg: %zd bytes sent, expected < %lu", len, sendspace);
 #endif
 #if TEST_PROTO == SOCK_DGRAM
-	ATF_REQUIRE_MSG(len != -1 , "sendmsg failed: %s", strerror(errno));
+	/*
+	 * sendmsg(2) can't truncate datagrams, only recvmsg(2) can.  There are
+	 * two options for the kernel here: either accept the datagram with
+	 * slight overcommit of the socket buffer space or return ENOBUFS for a
+	 * datagram that is smaller or equal to the socket buffer space.  Our
+	 * implementation does overcommit.  Explanation is simple: from our
+	 * side we see space available, we have no idea that remote side has
+	 * LOCAL_CREDS set.  From our side we expect sendmsg(2) to succeed.
+	 */
 	ATF_REQUIRE_MSG((size_t)len == sendspace,
-	    "sendmsg: %zu bytes sent", len);
-	recvfd_payload(fd[1], &getfd, buf, len,
-	    CMSG_SPACE(SOCKCREDSIZE(CMGROUP_MAX)) + CMSG_SPACE(sizeof(int)), 0);
+	    "sendmsg: %zd bytes sent, expected %lu", len, sendspace);
 #endif
+	rlen = recvfd_payload(fd[1], &getfd, buf, len,
+	    CMSG_SPACE(SOCKCREDSIZE(CMGROUP_MAX)) + CMSG_SPACE(sizeof(int)), 0);
+	ATF_REQUIRE_MSG(rlen == len,
+	    "recvmsg: %zd bytes received; expected %zd", rlen, len);
 
 	close(putfd);
 	close(getfd);
@@ -832,7 +923,7 @@ ATF_TC_BODY(empty_rights_message, tc)
 	/* Only the non-empty message should be received. */
 	len = recvmsg(fd[1], &msghdr, 0);
 	ATF_REQUIRE_MSG(len == 0, "recvmsg failed: %s", strerror(errno));
-	ATF_REQUIRE(msghdr.msg_controllen = CMSG_SPACE(sizeof(int)));
+	ATF_REQUIRE(msghdr.msg_controllen == CMSG_SPACE(sizeof(int)));
 	error = close(*(int *)CMSG_DATA(msghdr.msg_control));
 	ATF_REQUIRE_MSG(error == 0, "close failed: %s", strerror(errno));
 
@@ -858,11 +949,42 @@ ATF_TC_BODY(empty_rights_message, tc)
 	/* Only the non-empty message should be received. */
 	len = recvmsg(fd[1], &msghdr, 0);
 	ATF_REQUIRE_MSG(len == 0, "recvmsg failed: %s", strerror(errno));
-	ATF_REQUIRE(msghdr.msg_controllen = CMSG_SPACE(sizeof(int)));
+	ATF_REQUIRE(msghdr.msg_controllen == CMSG_SPACE(sizeof(int)));
 	error = close(*(int *)CMSG_DATA(msghdr.msg_control));
 	ATF_REQUIRE_MSG(error == 0, "close failed: %s", strerror(errno));
 
 	(void)close(putfd);
+}
+
+/*
+ * Check that sending control creates records in a stream socket, making it
+ * behave like a seqpacket socket.  If we stack several control+data writes
+ * on a stream socket, we won't be able to read them all at once, even if we
+ * provide a buffer large enough to receive all at once.
+ *
+ * XXXGL: adding MSG_WAITALL to the recvmsg() flags will make this test stuck.
+ */
+ATF_TC_WITHOUT_HEAD(control_creates_records);
+ATF_TC_BODY(control_creates_records, tc)
+{
+	int fd[2], putfd, getfd;
+	char buf[2];
+	ssize_t rlen;
+
+	domainsocketpair(fd);
+	tempfile(&putfd);
+
+	for (int i = 1; i <= 2; i++)
+		ATF_REQUIRE(sendfd_payload(fd[0], putfd, buf, 1) == 1);
+	ATF_REQUIRE(close(putfd) == 0);
+	for (int i = 1; i <= 2; i++) {
+		rlen = recvfd_payload(fd[1], &getfd, buf, 2,
+		    CMSG_SPACE(sizeof(int)) * 2, 0);
+		ATF_REQUIRE_MSG(rlen == 1,
+		    "recvmsg: %zd bytes received; expected 1", rlen);
+		ATF_REQUIRE(close(getfd) == 0);
+	}
+	closesocketpair(fd);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -874,6 +996,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, send_and_cancel);
 	ATF_TP_ADD_TC(tp, send_and_shutdown);
 	ATF_TP_ADD_TC(tp, send_a_lot);
+	ATF_TP_ADD_TC(tp, send_overflow);
 	ATF_TP_ADD_TC(tp, two_files);
 	ATF_TP_ADD_TC(tp, bundle);
 	ATF_TP_ADD_TC(tp, bundle_cancel);
@@ -882,6 +1005,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, truncated_rights);
 	ATF_TP_ADD_TC(tp, copyout_rights_error);
 	ATF_TP_ADD_TC(tp, empty_rights_message);
+	ATF_TP_ADD_TC(tp, control_creates_records);
 
 	return (atf_no_error());
 }

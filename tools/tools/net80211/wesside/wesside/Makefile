@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	wesside
 BINDIR=	/usr/local/bin
 LIBADD=	z

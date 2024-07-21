@@ -25,13 +25,8 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * From: @(#)scandir.c	8.3 (Berkeley) 1/2/94
  * From: FreeBSD: head/lib/libc/gen/scandir.c 317372 2017-04-24 14:56:41Z pfg
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 /*
  * Scan the directory dirname calling select to make a list of selected
@@ -58,8 +53,8 @@ __FBSDID("$FreeBSD$");
 
 #define	SELECT(x)	select(x)
 
-static int freebsd11_alphasort_thunk(void *thunk, const void *p1,
-    const void *p2);
+static int freebsd11_scandir_thunk_cmp(const void *p1, const void *p2,
+    void *thunk);
 
 int
 freebsd11_scandir(const char *dirname, struct freebsd11_dirent ***namelist,
@@ -116,7 +111,7 @@ freebsd11_scandir(const char *dirname, struct freebsd11_dirent ***namelist,
 	closedir(dirp);
 	if (numitems && dcomp != NULL)
 		qsort_r(names, numitems, sizeof(struct freebsd11_dirent *),
-		    &dcomp, freebsd11_alphasort_thunk);
+		    freebsd11_scandir_thunk_cmp, &dcomp);
 	*namelist = names;
 	return (numitems);
 
@@ -141,7 +136,7 @@ freebsd11_alphasort(const struct freebsd11_dirent **d1,
 }
 
 static int
-freebsd11_alphasort_thunk(void *thunk, const void *p1, const void *p2)
+freebsd11_scandir_thunk_cmp(const void *p1, const void *p2, void *thunk)
 {
 	int (*dc)(const struct freebsd11_dirent **, const struct
 	    freebsd11_dirent **);

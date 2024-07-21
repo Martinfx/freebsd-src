@@ -29,13 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-static char sccsid[] = "@(#)ls.c	8.1 (Berkeley) 6/6/93";
-#endif
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/stat.h>
 
@@ -88,6 +81,7 @@ printtime(time_t ftime)
 	static time_t lnow;
 	const char *format;
 	static int d_first = -1;
+	struct tm *tm;
 
 #ifdef D_MD_ORDER
 	if (d_first < 0)
@@ -103,7 +97,10 @@ printtime(time_t ftime)
 	else
 		/* mmm dd  yyyy || dd mmm  yyyy */
 		format = d_first ? "%e %b  %Y " : "%b %e  %Y ";
-	strftime(longstring, sizeof(longstring), format, localtime(&ftime));
+	if ((tm = localtime(&ftime)) != NULL)
+		strftime(longstring, sizeof(longstring), format, tm);
+	else
+		strlcpy(longstring, "bad date val ", sizeof(longstring));
 	fputs(longstring, stdout);
 }
 

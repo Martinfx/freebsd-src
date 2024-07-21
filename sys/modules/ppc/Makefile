@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/ppc
 KMOD=	ppc
 SRCS=	bus_if.h device_if.h ppbus_if.h isa_if.h pci_if.h serdev_if.h \

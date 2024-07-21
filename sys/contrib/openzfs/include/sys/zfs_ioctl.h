@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2020 by Delphix. All rights reserved.
+ * Copyright (c) 2012, 2024 by Delphix. All rights reserved.
  * Copyright 2016 RackTop Systems.
  * Copyright (c) 2017, Intel Corporation.
  */
@@ -124,7 +124,13 @@ typedef enum drr_headertype {
  * default use of "zfs send" won't encounter the bug mentioned above.
  */
 #define	DMU_BACKUP_FEATURE_SWITCH_TO_LARGE_BLOCKS (1 << 27)
-#define	DMU_BACKUP_FEATURE_BLAKE3		(1 << 28)
+/* flag #28 is reserved for a Nutanix feature */
+/*
+ * flag #29 is the last unused bit. It is reserved to indicate a to-be-designed
+ * extension to the stream format which will accomodate more feature flags.
+ * If you need to add another feature flag, please reach out to the OpenZFS
+ * community, e.g., on GitHub or Slack.
+ */
 
 /*
  * Mask of all supported backup features
@@ -135,7 +141,7 @@ typedef enum drr_headertype {
     DMU_BACKUP_FEATURE_COMPRESSED | DMU_BACKUP_FEATURE_LARGE_DNODE | \
     DMU_BACKUP_FEATURE_RAW | DMU_BACKUP_FEATURE_HOLDS | \
     DMU_BACKUP_FEATURE_REDACTED | DMU_BACKUP_FEATURE_SWITCH_TO_LARGE_BLOCKS | \
-    DMU_BACKUP_FEATURE_ZSTD | DMU_BACKUP_FEATURE_BLAKE3)
+    DMU_BACKUP_FEATURE_ZSTD)
 
 /* Are all features in the given flag word currently supported? */
 #define	DMU_STREAM_SUPPORTED(x)	(!((x) & ~DMU_BACKUP_FEATURE_MASK))
@@ -448,6 +454,8 @@ typedef enum zinject_type {
 	ZINJECT_PANIC,
 	ZINJECT_DELAY_IO,
 	ZINJECT_DECRYPT_FAULT,
+	ZINJECT_DELAY_IMPORT,
+	ZINJECT_DELAY_EXPORT,
 } zinject_type_t;
 
 typedef struct zfs_share {
@@ -569,7 +577,6 @@ typedef struct zfsdev_state {
 extern void *zfsdev_get_state(minor_t minor, enum zfsdev_state_type which);
 extern int zfsdev_getminor(zfs_file_t *fp, minor_t *minorp);
 
-extern uint_t zfs_fsyncer_key;
 extern uint_t zfs_allow_log_key;
 
 #endif	/* _KERNEL */

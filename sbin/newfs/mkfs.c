@@ -38,15 +38,7 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)mkfs.c	8.11 (Berkeley) 5/3/95";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#define	IN_RTLD			/* So we pickup the P_OSREL defines */
+#define _WANT_P_OSREL
 #include <sys/param.h>
 #include <sys/disklabel.h>
 #include <sys/file.h>
@@ -75,6 +67,23 @@ __FBSDID("$FreeBSD$");
  */
 #define UMASK		0755
 #define POWEROF2(num)	(((num) & ((num) - 1)) == 0)
+
+/*
+ * The definition of "struct cg" used to contain an extra field at the end
+ * to represent the variable-length data that followed the fixed structure.
+ * This had the effect of artificially limiting the number of blocks that
+ * newfs would put in a CG, since newfs thought that the fixed-size header
+ * was bigger than it really was.  When we started validating that the CG
+ * header data actually fit into one fs block, the placeholder field caused
+ * a problem because it caused struct cg to be a different size depending on
+ * platform.  The placeholder field was later removed, but this caused a
+ * backward compatibility problem with older binaries that still thought
+ * struct cg was larger, and a new file system could fail validation if
+ * viewed by the older binaries.  To avoid this compatibility problem, we
+ * now artificially reduce the amount of space that the variable-length data
+ * can use such that new file systems will pass validation by older binaries.
+ */
+#define CGSIZEFUDGE 8
 
 static struct	csum *fscs;
 #define	sblock	disk.d_fs
@@ -332,6 +341,7 @@ restart:
 	 * can put into each cylinder group. If this is too big, we reduce
 	 * the density until it fits.
 	 */
+retry:
 	maxinum = (((int64_t)(1)) << 32) - INOPB(&sblock);
 	minfragsperinode = 1 + fssize / maxinum;
 	if (density == 0) {
@@ -368,7 +378,8 @@ restart:
 			sblock.fs_fpg = minfpg;
 		sblock.fs_ipg = roundup(howmany(sblock.fs_fpg, fragsperinode),
 		    INOPB(&sblock));
-		if (CGSIZE(&sblock) < (unsigned long)sblock.fs_bsize)
+		if (CGSIZE(&sblock) < (unsigned long)sblock.fs_bsize -
+		    CGSIZEFUDGE)
 			break;
 		density -= sblock.fs_fsize;
 	}
@@ -387,9 +398,11 @@ restart:
 		if (Oflag > 1 || (Oflag == 1 && sblock.fs_ipg <= 0x7fff)) {
 			if (sblock.fs_size / sblock.fs_fpg < MINCYLGRPS)
 				break;
-			if (CGSIZE(&sblock) < (unsigned long)sblock.fs_bsize)
+			if (CGSIZE(&sblock) < (unsigned long)sblock.fs_bsize -
+			    CGSIZEFUDGE)
 				continue;
-			if (CGSIZE(&sblock) == (unsigned long)sblock.fs_bsize)
+			if (CGSIZE(&sblock) == (unsigned long)sblock.fs_bsize -
+			    CGSIZEFUDGE)
 				break;
 		}
 		sblock.fs_fpg -= sblock.fs_frag;
@@ -666,6 +679,21 @@ restart:
 		pp->p_frag = sblock.fs_frag;
 		pp->p_cpg = sblock.fs_fpg;
 	}
+	/*
+	 * This should NOT happen. If it does complain loudly and
+	 * take evasive action.
+	 */
+	if ((int32_t)CGSIZE(&sblock) > sblock.fs_bsize) {
+		printf("INTERNAL ERROR: ipg %d, fpg %d, contigsumsize %d, ",
+		    sblock.fs_ipg, sblock.fs_fpg, sblock.fs_contigsumsize);
+		printf("old_cpg %d, size_cg %zu, CGSIZE %zu\n",
+		    sblock.fs_old_cpg, sizeof(struct cg), CGSIZE(&sblock));
+		printf("Please file a FreeBSD bug report and include this "
+		    "output\n");
+		maxblkspercg = fragstoblks(&sblock, sblock.fs_fpg) - 1;
+		density = 0;
+		goto retry;
+	}
 }
 
 /*
@@ -705,7 +733,7 @@ initcg(int cylno, time_t utime)
 	acg.cg_ndblk = dmax - cbase;
 	if (sblock.fs_contigsumsize > 0)
 		acg.cg_nclusterblks = acg.cg_ndblk / sblock.fs_frag;
-	start = &acg.cg_space[0] - (u_char *)(&acg.cg_firstfield);
+	start = sizeof(acg);
 	if (Oflag == 2) {
 		acg.cg_iusedoff = start;
 	} else {
@@ -733,7 +761,8 @@ initcg(int cylno, time_t utime)
 		    howmany(fragstoblks(&sblock, sblock.fs_fpg), CHAR_BIT);
 	}
 	if (acg.cg_nextfreeoff > (unsigned)sblock.fs_cgsize) {
-		printf("Panic: cylinder group too big\n");
+		printf("Panic: cylinder group too big by %d bytes\n",
+		    acg.cg_nextfreeoff - (unsigned)sblock.fs_cgsize);
 		exit(37);
 	}
 	acg.cg_cs.cs_nifree += sblock.fs_ipg;
@@ -915,8 +944,9 @@ fsinit(time_t utime)
 				    alloc(sblock.fs_fsize, node.dp1.di_mode);
 			node.dp1.di_blocks =
 			    btodb(fragroundup(&sblock, node.dp1.di_size));
-				wtfs(fsbtodb(&sblock, node.dp1.di_db[0]),
-				    sblock.fs_fsize, iobuf);
+			node.dp1.di_dirdepth = 1;
+			wtfs(fsbtodb(&sblock, node.dp1.di_db[0]),
+			    sblock.fs_fsize, iobuf);
 			iput(&node, UFS_ROOTINO + 1);
 		}
 	} else {
@@ -951,8 +981,9 @@ fsinit(time_t utime)
 				    alloc(sblock.fs_fsize, node.dp2.di_mode);
 			node.dp2.di_blocks =
 			    btodb(fragroundup(&sblock, node.dp2.di_size));
-				wtfs(fsbtodb(&sblock, node.dp2.di_db[0]), 
-				    sblock.fs_fsize, iobuf);
+			node.dp2.di_dirdepth = 1;
+			wtfs(fsbtodb(&sblock, node.dp2.di_db[0]), 
+			    sblock.fs_fsize, iobuf);
 			iput(&node, UFS_ROOTINO + 1);
 		}
 	}
@@ -1191,7 +1222,7 @@ ilog2(int val)
 static u_int32_t
 newfs_random(void)
 {
-	static int nextnum = 1;
+	static u_int32_t nextnum = 1;
 
 	if (Rflag)
 		return (nextnum++);

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/sys/geom/class/${.CURDIR:T}
@@ -20,6 +18,9 @@ TAP_TESTS_SH+=	13_test
 
 ATF_TESTS_SH+=	component_selection
 ATF_TESTS_SH+=	sync_error
+
+# Tests use a global gmirror fail point.
+TEST_METADATA+=	is_exclusive=true
 
 ${PACKAGE}FILES+=		conf.sh
 

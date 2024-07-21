@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 BusyTech
  *
@@ -40,7 +40,7 @@
 #include <machine/bus.h>
 #include <machine/resource.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>

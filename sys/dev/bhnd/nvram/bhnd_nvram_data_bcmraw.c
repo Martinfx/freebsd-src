@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifdef _KERNEL
 
 #include <sys/param.h>
@@ -58,7 +56,7 @@ __FBSDID("$FreeBSD$");
  * The Broadcom NVRAM NUL-delimited ASCII format is used by most
  * Broadcom SoCs.
  * 
- * The NVRAM data is encoded as a stream of of NUL-terminated 'key=value'
+ * The NVRAM data is encoded as a stream of NUL-terminated 'key=value'
  * strings; the end of the stream is denoted by a single extra NUL character.
  */
 
@@ -318,7 +316,7 @@ bhnd_nvram_bcmraw_init(struct bhnd_nvram_bcmraw *bcm, struct bhnd_nvram_io *src)
 			break;
 	}
 
-	/* Reclaim any unused space in he backing buffer */
+	/* Reclaim any unused space in the backing buffer */
 	if (offset < bcm->size) {
 		bcm->data = bhnd_nv_reallocf(bcm->data, bcm->size);
 		if (bcm->data == NULL)

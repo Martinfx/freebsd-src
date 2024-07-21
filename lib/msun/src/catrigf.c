@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 Stephen Montgomery-Smith <stephen@FreeBSD.ORG>
  * All rights reserved.
@@ -39,9 +39,6 @@
  * of statements were removed (all of them), contrary to normal style.  Only
  * a few comments on the right of declarations remain.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <complex.h>
 #include <float.h>

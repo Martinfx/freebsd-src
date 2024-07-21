@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Dima Dorfman.
  * All rights reserved.
@@ -31,9 +31,6 @@
  * newfs(8), and mount(8) that mimics the command line option set of
  * the deprecated mount_mfs(8).
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/linker.h>

@@ -58,13 +58,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)in.c	8.2 (Berkeley) 11/15/93
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -88,6 +84,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/route/route_ctl.h>
@@ -103,6 +100,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/ip.h>
 #include <netinet/in_pcb.h>
 #include <netinet/ip_carp.h>
+#include <netinet/icmp6.h>
 
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
@@ -114,6 +112,10 @@ __FBSDID("$FreeBSD$");
 #include <netinet6/in6_fib.h>
 #include <netinet6/in6_pcb.h>
 
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
 /*
  * struct in6_ifreq and struct ifreq must be type punnable for common members
  * of ifr_ifru to allow accessors to be shared.
@@ -122,8 +124,19 @@ _Static_assert(offsetof(struct in6_ifreq, ifr_ifru) ==
     offsetof(struct ifreq, ifr_ifru),
     "struct in6_ifreq and struct ifreq are not type punnable");
 
-VNET_DECLARE(int, icmp6_nodeinfo_oldmcprefix);
+VNET_DEFINE_STATIC(int, icmp6_nodeinfo_oldmcprefix) = 1;
 #define V_icmp6_nodeinfo_oldmcprefix	VNET(icmp6_nodeinfo_oldmcprefix)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_NODEINFO_OLDMCPREFIX,
+    nodeinfo_oldmcprefix, CTLFLAG_VNET | CTLFLAG_RW,
+    &VNET_NAME(icmp6_nodeinfo_oldmcprefix), 0,
+    "Join old IPv6 NI group address in draft-ietf-ipngwg-icmp-name-lookup "
+    "for compatibility with KAME implementation");
+
+VNET_DEFINE_STATIC(int, nd6_useloopback) = 1;
+#define	V_nd6_useloopback	VNET(nd6_useloopback)
+SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_USELOOPBACK, nd6_useloopback,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nd6_useloopback), 0,
+    "Create a loopback route when configuring an IPv6 address");
 
 /*
  * Definitions of some costant IP6 addresses.
@@ -166,6 +179,9 @@ static void in6_leave_proxy_ndp_mc(struct ifnet *, const struct in6_addr *);
 
 #define ifa2ia6(ifa)	((struct in6_ifaddr *)(ifa))
 #define ia62ifa(ia6)	(&((ia6)->ia_ifa))
+
+static struct sx in6_control_sx;
+SX_SYSINIT(in6_control_sx, &in6_control_sx, "in6_control");
 
 void
 in6_newaddrmsg(struct in6_ifaddr *ia, int cmd)
@@ -245,22 +261,23 @@ struct in6_ndifreq32 {
 #endif
 
 int
-in6_control(struct socket *so, u_long cmd, void *data,
-    struct ifnet *ifp, struct thread *td)
+in6_control_ioctl(u_long cmd, void *data,
+    struct ifnet *ifp, struct ucred *cred)
 {
 	struct	in6_ifreq *ifr = (struct in6_ifreq *)data;
 	struct	in6_ifaddr *ia = NULL;
 	struct	in6_aliasreq *ifra = (struct in6_aliasreq *)data;
 	struct sockaddr_in6 *sa6;
-	int carp_attached = 0;
 	int error;
-	u_long ocmd = cmd;
+	bool control_locked = false;
 
 	/*
 	 * Compat to make pre-10.x ifconfig(8) operable.
 	 */
-	if (cmd == OSIOCAIFADDR_IN6)
+	if (cmd == OSIOCAIFADDR_IN6) {
 		cmd = SIOCAIFADDR_IN6;
+		ifra->ifra_vhid = 0;
+	}
 
 	switch (cmd) {
 	case SIOCGETSGCNT_IN6:
@@ -276,8 +293,8 @@ in6_control(struct socket *so, u_long cmd, void *data,
 	switch (cmd) {
 	case SIOCAADDRCTL_POLICY:
 	case SIOCDADDRCTL_POLICY:
-		if (td != NULL) {
-			error = priv_check(td, PRIV_NETINET_ADDRCTRL6);
+		if (cred != NULL) {
+			error = priv_check_cred(cred, PRIV_NETINET_ADDRCTRL6);
 			if (error)
 				return (error);
 		}
@@ -294,8 +311,8 @@ in6_control(struct socket *so, u_long cmd, void *data,
 	case SIOCSDEFIFACE_IN6:
 	case SIOCSIFINFO_FLAGS:
 	case SIOCSIFINFO_IN6:
-		if (td != NULL) {
-			error = priv_check(td, PRIV_NETINET_ND6);
+		if (cred != NULL) {
+			error = priv_check_cred(cred, PRIV_NETINET_ND6);
 			if (error)
 				return (error);
 		}
@@ -338,8 +355,8 @@ in6_control(struct socket *so, u_long cmd, void *data,
 
 	switch (cmd) {
 	case SIOCSSCOPE6:
-		if (td != NULL) {
-			error = priv_check(td, PRIV_NETINET_SCOPE6);
+		if (cred != NULL) {
+			error = priv_check_cred(cred, PRIV_NETINET_SCOPE6);
 			if (error)
 				return (error);
 		}
@@ -407,9 +424,11 @@ in6_control(struct socket *so, u_long cmd, void *data,
 			error = in6_setscope(&sa6->sin6_addr, ifp, NULL);
 		if (error != 0)
 			return (error);
-		if (td != NULL && (error = prison_check_ip6(td->td_ucred,
+		if (cred != NULL && (error = prison_check_ip6(cred,
 		    &sa6->sin6_addr)) != 0)
 			return (error);
+		sx_xlock(&in6_control_sx);
+		control_locked = true;
 		ia = in6ifa_ifpwithaddr(ifp, &sa6->sin6_addr);
 	} else
 		ia = NULL;
@@ -450,8 +469,8 @@ in6_control(struct socket *so, u_long cmd, void *data,
 			goto out;
 		}
 
-		if (td != NULL) {
-			error = priv_check(td, (cmd == SIOCDIFADDR_IN6) ?
+		if (cred != NULL) {
+			error = priv_check_cred(cred, (cmd == SIOCDIFADDR_IN6) ?
 			    PRIV_NET_DELIFADDR : PRIV_NET_ADDIFADDR);
 			if (error)
 				goto out;
@@ -560,142 +579,15 @@ in6_control(struct socket *so, u_long cmd, void *data,
 		break;
 
 	case SIOCAIFADDR_IN6:
-	{
-		struct nd_prefixctl pr0;
-		struct nd_prefix *pr;
-
-		/*
-		 * first, make or update the interface address structure,
-		 * and link it to the list.
-		 */
-		if ((error = in6_update_ifa(ifp, ifra, ia, 0)) != 0)
+#ifdef MAC
+		/* Check if a MAC policy disallows setting the IPv6 address. */
+		error = mac_inet6_check_add_addr(cred, &sa6->sin6_addr, ifp);
+		if (error != 0)
 			goto out;
-		if (ia != NULL) {
-			if (ia->ia_ifa.ifa_carp)
-				(*carp_detach_p)(&ia->ia_ifa, true);
-			ifa_free(&ia->ia_ifa);
-		}
-		if ((ia = in6ifa_ifpwithaddr(ifp, &ifra->ifra_addr.sin6_addr))
-		    == NULL) {
-			/*
-			 * this can happen when the user specify the 0 valid
-			 * lifetime.
-			 */
-			break;
-		}
-
-		if (cmd == ocmd && ifra->ifra_vhid > 0) {
-			if (carp_attach_p != NULL)
-				error = (*carp_attach_p)(&ia->ia_ifa,
-				    ifra->ifra_vhid);
-			else
-				error = EPROTONOSUPPORT;
-			if (error)
-				goto out;
-			else
-				carp_attached = 1;
-		}
-
-		/*
-		 * then, make the prefix on-link on the interface.
-		 * XXX: we'd rather create the prefix before the address, but
-		 * we need at least one address to install the corresponding
-		 * interface route, so we configure the address first.
-		 */
-
-		/*
-		 * convert mask to prefix length (prefixmask has already
-		 * been validated in in6_update_ifa().
-		 */
-		bzero(&pr0, sizeof(pr0));
-		pr0.ndpr_ifp = ifp;
-		pr0.ndpr_plen = in6_mask2len(&ifra->ifra_prefixmask.sin6_addr,
-		    NULL);
-		if (pr0.ndpr_plen == 128) {
-			/* we don't need to install a host route. */
-			goto aifaddr_out;
-		}
-		pr0.ndpr_prefix = ifra->ifra_addr;
-		/* apply the mask for safety. */
-		IN6_MASK_ADDR(&pr0.ndpr_prefix.sin6_addr,
-		    &ifra->ifra_prefixmask.sin6_addr);
-
-		/*
-		 * XXX: since we don't have an API to set prefix (not address)
-		 * lifetimes, we just use the same lifetimes as addresses.
-		 * The (temporarily) installed lifetimes can be overridden by
-		 * later advertised RAs (when accept_rtadv is non 0), which is
-		 * an intended behavior.
-		 */
-		pr0.ndpr_raf_onlink = 1; /* should be configurable? */
-		pr0.ndpr_raf_auto =
-		    ((ifra->ifra_flags & IN6_IFF_AUTOCONF) != 0);
-		pr0.ndpr_vltime = ifra->ifra_lifetime.ia6t_vltime;
-		pr0.ndpr_pltime = ifra->ifra_lifetime.ia6t_pltime;
-
-		/* add the prefix if not yet. */
-		if ((pr = nd6_prefix_lookup(&pr0)) == NULL) {
-			/*
-			 * nd6_prelist_add will install the corresponding
-			 * interface route.
-			 */
-			if ((error = nd6_prelist_add(&pr0, NULL, &pr)) != 0) {
-				if (carp_attached)
-					(*carp_detach_p)(&ia->ia_ifa, false);
-				goto out;
-			}
-		}
-
-		/* relate the address to the prefix */
-		if (ia->ia6_ndpr == NULL) {
-			ia->ia6_ndpr = pr;
-			pr->ndpr_addrcnt++;
-
-			/*
-			 * If this is the first autoconf address from the
-			 * prefix, create a temporary address as well
-			 * (when required).
-			 */
-			if ((ia->ia6_flags & IN6_IFF_AUTOCONF) &&
-			    V_ip6_use_tempaddr && pr->ndpr_addrcnt == 1) {
-				int e;
-				if ((e = in6_tmpifadd(ia, 1, 0)) != 0) {
-					log(LOG_NOTICE, "in6_control: failed "
-					    "to create a temporary address, "
-					    "errno=%d\n", e);
-				}
-			}
-		}
-		nd6_prefix_rele(pr);
-
-		/*
-		 * this might affect the status of autoconfigured addresses,
-		 * that is, this address might make other addresses detached.
-		 */
-		pfxlist_onlink_check();
-
-aifaddr_out:
-		/*
-		 * Try to clear the flag when a new IPv6 address is added
-		 * onto an IFDISABLED interface and it succeeds.
-		 */
-		if (ND_IFINFO(ifp)->flags & ND6_IFF_IFDISABLED) {
-			struct in6_ndireq nd;
-
-			memset(&nd, 0, sizeof(nd));
-			nd.ndi.flags = ND_IFINFO(ifp)->flags;
-			nd.ndi.flags &= ~ND6_IFF_IFDISABLED;
-			if (nd6_ioctl(SIOCSIFINFO_FLAGS, (caddr_t)&nd, ifp) < 0)
-				log(LOG_NOTICE, "SIOCAIFADDR_IN6: "
-				    "SIOCSIFINFO_FLAGS for -ifdisabled "
-				    "failed.");
-			/*
-			 * Ignore failure of clearing the flag intentionally.
-			 * The failure means address duplication was detected.
-			 */
-		}
+#endif
+		error = in6_addifaddr(ifp, ifra, ia);
+		ia = NULL;
 		break;
-	}
 
 	case SIOCDIFADDR_IN6:
 		in6_purgeifaddr(ia);
@@ -714,9 +606,19 @@ aifaddr_out:
 
 	error = 0;
 out:
+	if (control_locked)
+		sx_xunlock(&in6_control_sx);
+
 	if (ia != NULL)
 		ifa_free(&ia->ia_ifa);
 	return (error);
+}
+
+int
+in6_control(struct socket *so, u_long cmd, void *data,
+    struct ifnet *ifp, struct thread *td)
+{
+	return (in6_control_ioctl(cmd, data, ifp, td ? td->td_ucred : NULL));
 }
 
 static struct in6_multi_mship *
@@ -1324,6 +1226,151 @@ ifa_is_p2p(struct in6_ifaddr *ia)
 	return (false);
 }
 
+int
+in6_addifaddr(struct ifnet *ifp, struct in6_aliasreq *ifra, struct in6_ifaddr *ia)
+{
+	struct nd_prefixctl pr0;
+	struct nd_prefix *pr;
+	int carp_attached = 0;
+	int error;
+
+	/*
+	 * first, make or update the interface address structure,
+	 * and link it to the list.
+	 */
+	if ((error = in6_update_ifa(ifp, ifra, ia, 0)) != 0)
+		goto out;
+	if (ia != NULL) {
+		if (ia->ia_ifa.ifa_carp)
+			(*carp_detach_p)(&ia->ia_ifa, true);
+		ifa_free(&ia->ia_ifa);
+	}
+	if ((ia = in6ifa_ifpwithaddr(ifp, &ifra->ifra_addr.sin6_addr)) == NULL) {
+		/*
+		 * this can happen when the user specify the 0 valid
+		 * lifetime.
+		 */
+		return (0);
+	}
+
+	if (ifra->ifra_vhid > 0) {
+		if (carp_attach_p != NULL)
+			error = (*carp_attach_p)(&ia->ia_ifa,
+			    ifra->ifra_vhid);
+		else
+			error = EPROTONOSUPPORT;
+		if (error)
+			goto out;
+		else
+			carp_attached = 1;
+	}
+
+	/*
+	 * then, make the prefix on-link on the interface.
+	 * XXX: we'd rather create the prefix before the address, but
+	 * we need at least one address to install the corresponding
+	 * interface route, so we configure the address first.
+	 */
+
+	/*
+	 * convert mask to prefix length (prefixmask has already
+	 * been validated in in6_update_ifa().
+	 */
+	bzero(&pr0, sizeof(pr0));
+	pr0.ndpr_ifp = ifp;
+	pr0.ndpr_plen = in6_mask2len(&ifra->ifra_prefixmask.sin6_addr,
+	    NULL);
+	if (pr0.ndpr_plen == 128) {
+		/* we don't need to install a host route. */
+		goto aifaddr_out;
+	}
+	pr0.ndpr_prefix = ifra->ifra_addr;
+	/* apply the mask for safety. */
+	IN6_MASK_ADDR(&pr0.ndpr_prefix.sin6_addr,
+	    &ifra->ifra_prefixmask.sin6_addr);
+
+	/*
+	 * XXX: since we don't have an API to set prefix (not address)
+	 * lifetimes, we just use the same lifetimes as addresses.
+	 * The (temporarily) installed lifetimes can be overridden by
+	 * later advertised RAs (when accept_rtadv is non 0), which is
+	 * an intended behavior.
+	 */
+	pr0.ndpr_raf_onlink = 1; /* should be configurable? */
+	pr0.ndpr_raf_auto =
+	    ((ifra->ifra_flags & IN6_IFF_AUTOCONF) != 0);
+	pr0.ndpr_vltime = ifra->ifra_lifetime.ia6t_vltime;
+	pr0.ndpr_pltime = ifra->ifra_lifetime.ia6t_pltime;
+
+	/* add the prefix if not yet. */
+	if ((pr = nd6_prefix_lookup(&pr0)) == NULL) {
+		/*
+		 * nd6_prelist_add will install the corresponding
+		 * interface route.
+		 */
+		if ((error = nd6_prelist_add(&pr0, NULL, &pr)) != 0) {
+			if (carp_attached)
+				(*carp_detach_p)(&ia->ia_ifa, false);
+			goto out;
+		}
+	}
+
+	/* relate the address to the prefix */
+	if (ia->ia6_ndpr == NULL) {
+		ia->ia6_ndpr = pr;
+		pr->ndpr_addrcnt++;
+
+		/*
+		 * If this is the first autoconf address from the
+		 * prefix, create a temporary address as well
+		 * (when required).
+		 */
+		if ((ia->ia6_flags & IN6_IFF_AUTOCONF) &&
+		    V_ip6_use_tempaddr && pr->ndpr_addrcnt == 1) {
+			int e;
+			if ((e = in6_tmpifadd(ia, 1, 0)) != 0) {
+				log(LOG_NOTICE, "in6_control: failed "
+				    "to create a temporary address, "
+				    "errno=%d\n", e);
+			}
+		}
+	}
+	nd6_prefix_rele(pr);
+
+	/*
+	 * this might affect the status of autoconfigured addresses,
+	 * that is, this address might make other addresses detached.
+	 */
+	pfxlist_onlink_check();
+
+aifaddr_out:
+	/*
+	 * Try to clear the flag when a new IPv6 address is added
+	 * onto an IFDISABLED interface and it succeeds.
+	 */
+	if (ND_IFINFO(ifp)->flags & ND6_IFF_IFDISABLED) {
+		struct in6_ndireq nd;
+
+		memset(&nd, 0, sizeof(nd));
+		nd.ndi.flags = ND_IFINFO(ifp)->flags;
+		nd.ndi.flags &= ~ND6_IFF_IFDISABLED;
+		if (nd6_ioctl(SIOCSIFINFO_FLAGS, (caddr_t)&nd, ifp) < 0)
+			log(LOG_NOTICE, "SIOCAIFADDR_IN6: "
+			    "SIOCSIFINFO_FLAGS for -ifdisabled "
+			    "failed.");
+		/*
+		 * Ignore failure of clearing the flag intentionally.
+		 * The failure means address duplication was detected.
+		 */
+	}
+	error = 0;
+
+out:
+	if (ia != NULL)
+		ifa_free(&ia->ia_ifa);
+	return (error);
+}
+
 void
 in6_purgeaddr(struct ifaddr *ifa)
 {
@@ -1770,7 +1817,7 @@ in6_localip(struct in6_addr *in6)
 }
 
 /*
- * Like in6_localip(), but FIB-aware.
+ * Like in6_localip(), but FIB-aware and carp(4)-aware.
  */
 bool
 in6_localip_fib(struct in6_addr *in6, uint16_t fib)
@@ -1781,6 +1828,8 @@ in6_localip_fib(struct in6_addr *in6, uint16_t fib)
 	IN6_IFADDR_RLOCK(&in6_ifa_tracker);
 	CK_LIST_FOREACH(ia, IN6ADDR_HASH(in6), ia6_hash) {
 		if (IN6_ARE_ADDR_EQUAL(in6, &ia->ia_addr.sin6_addr) &&
+		    (ia->ia_ifa.ifa_carp == NULL ||
+		    carp_master_p(&ia->ia_ifa)) &&
 		    ia->ia_ifa.ifa_ifp->if_fib == fib) {
 			IN6_IFADDR_RUNLOCK(&in6_ifa_tracker);
 			return (true);
@@ -2026,6 +2075,20 @@ in6_if_up(struct ifnet *ifp)
 	 */
 	in6_ifattach(ifp, NULL);
 }
+
+static void
+in6_ifevent(void *arg __unused, struct ifnet *ifp, int event)
+{
+	if (event == IFNET_EVENT_UP)
+		in6_if_up(ifp);
+}
+
+static void
+in6_init(void *arg __unused)
+{
+	EVENTHANDLER_REGISTER(ifnet_event, in6_ifevent, NULL, EVENTHANDLER_PRI_ANY);
+}
+SYSINIT(in6_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD, in6_init, NULL);
 
 int
 in6if_do_dad(struct ifnet *ifp)
@@ -2628,20 +2691,6 @@ in6_sin6_2_sin_in_sock(struct sockaddr *nam)
 	sin6 = *(struct sockaddr_in6 *)nam;
 	sin_p = (struct sockaddr_in *)nam;
 	in6_sin6_2_sin(sin_p, &sin6);
-}
-
-/* Convert sockaddr_in into sockaddr_in6 in v4 mapped addr format. */
-void
-in6_sin_2_v4mapsin6_in_sock(struct sockaddr **nam)
-{
-	struct sockaddr_in *sin_p;
-	struct sockaddr_in6 *sin6_p;
-
-	sin6_p = malloc(sizeof *sin6_p, M_SONAME, M_WAITOK);
-	sin_p = (struct sockaddr_in *)*nam;
-	in6_sin_2_v4mapsin6(sin_p, sin6_p);
-	free(*nam, M_SONAME);
-	*nam = (struct sockaddr *)sin6_p;
 }
 
 /*

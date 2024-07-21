@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002 Tim J. Robbins.
  * All rights reserved.
@@ -43,9 +43,6 @@
  * symlinks to named pipes or character devices), but make no such
  * assumption about the input.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 

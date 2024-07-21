@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.own.mk>
 
 NETBSD_ATF_TESTS_C+=	inet_addr_test

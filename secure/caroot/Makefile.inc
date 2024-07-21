@@ -1,3 +1,1 @@
-# $FreeBSD$
-
 PACKAGE=	caroot

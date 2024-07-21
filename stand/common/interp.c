@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Simple commandline interpreter, toplevel and misc.
  *
@@ -36,6 +33,10 @@ __FBSDID("$FreeBSD$");
 #include <stand.h>
 #include <string.h>
 #include "bootstrap.h"
+
+#ifdef LOADER_VERIEXEC
+#include <verify_file.h>
+#endif
 
 #define	MAXARGS	20			/* maximum number of arguments allowed */
 
@@ -59,6 +60,7 @@ interact(void)
 	 * we need to switch interpreters.
 	 */
 	interp_identifier = bootprog_interp;
+	interp_preinit();
 	interp_init();
 
 	printf("\n");
@@ -81,6 +83,10 @@ interact(void)
 		input[0] = '\0';
 		interp_emit_prompt();
 		ngets(input, sizeof(input));
+#ifdef LOADER_VERIEXEC
+		/* some settings should be restritcted */
+		ve_status_set(-1, VE_UNVERIFIED_OK);
+#endif
 		interp_run(input);
 	}
 }
@@ -152,6 +158,19 @@ interp_emit_prompt(void)
 	free(pr);
 }
 
+static struct bootblk_command *
+interp_lookup_cmd(const char *cmd)
+{
+	struct bootblk_command	**cmdp;
+
+	/* search the command set for the command */
+	SET_FOREACH(cmdp, Xcommand_set) {
+		if (((*cmdp)->c_name != NULL) && !strcmp(cmd, (*cmdp)->c_name))
+			return (*cmdp);
+	}
+	return (NULL);
+}
+
 /*
  * Perform a builtin command
  */
@@ -159,27 +178,30 @@ int
 interp_builtin_cmd(int argc, char *argv[])
 {
 	int			result;
-	struct bootblk_command	**cmdp;
-	bootblk_cmd_t		*cmd;
+	struct bootblk_command	*cmd;
 
 	if (argc < 1)
-		return(CMD_OK);
+		return (CMD_OK);
 
 	/* set return defaults; a successful command will override these */
 	command_errmsg = command_errbuf;
 	strcpy(command_errbuf, "no error message");
-	cmd = NULL;
 	result = CMD_ERROR;
 
-	/* search the command set for the command */
-	SET_FOREACH(cmdp, Xcommand_set) {
-		if (((*cmdp)->c_name != NULL) && !strcmp(argv[0], (*cmdp)->c_name))
-			cmd = (*cmdp)->c_fn;
-	}
-	if (cmd != NULL) {
-		result = (cmd)(argc, argv);
+	cmd = interp_lookup_cmd(argv[0]);
+	if (cmd != NULL && cmd->c_fn) {
+		result = cmd->c_fn(argc, argv);
 	} else {
 		command_errmsg = "unknown command";
 	}
-	return(result);
+	return (result);
+}
+
+/*
+ * Return true if the builtin command exists
+ */
+bool
+interp_has_builtin_cmd(const char *cmd)
+{
+	return (interp_lookup_cmd(cmd) != NULL);
 }

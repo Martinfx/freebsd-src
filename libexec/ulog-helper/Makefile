@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	ulog-helper
 BINOWN=	root
 BINMODE=4555

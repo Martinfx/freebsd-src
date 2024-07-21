@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <stand.h>
 #include <bootstrap.h>
 #include "libi386/libi386.h"
@@ -45,9 +42,6 @@ __FBSDID("$FreeBSD$");
  * XXX as libi386 and biosboot merge, some of these can become linker sets.
  */
 
-#if defined(LOADER_FIREWIRE_SUPPORT)
-extern struct devsw fwohci;
-#endif
 extern struct devsw vdisk_dev;
 
 /* Exported for libsa */
@@ -57,9 +51,6 @@ struct devsw *devsw[] = {
     &bioshd,
 #if defined(LOADER_NFS_SUPPORT) || defined(LOADER_TFTP_SUPPORT)
     &pxedisk,
-#endif
-#if defined(LOADER_FIREWIRE_SUPPORT)
-    &fwohci,
 #endif
     &vdisk_dev,
 #if defined(LOADER_ZFS_SUPPORT)
@@ -136,20 +127,19 @@ struct file_format *file_formats[] = {
  * We don't prototype these in libi386.h because they require
  * data structures from bootstrap.h as well.
  */
+extern struct console textvidc;
 extern struct console vidconsole;
 extern struct console comconsole;
-#if defined(LOADER_FIREWIRE_SUPPORT)
-extern struct console dconsole;
-#endif
 extern struct console nullconsole;
 extern struct console spinconsole;
 
 struct console *consoles[] = {
+#ifdef BIOS_TEXT_ONLY
+    &textvidc,
+#else
     &vidconsole,
-    &comconsole,
-#if defined(LOADER_FIREWIRE_SUPPORT)
-    &dconsole,
 #endif
+    &comconsole,
     &nullconsole,
     &spinconsole,
     NULL

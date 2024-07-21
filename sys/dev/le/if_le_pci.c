@@ -1,7 +1,7 @@
 /*	$NetBSD: if_le_pci.c,v 1.43 2005/12/11 12:22:49 christos Exp $	*/
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD AND BSD-3-Clause
+ * SPDX-License-Identifier: BSD-2-Clause AND BSD-3-Clause
  *
  * Copyright (c) 1997, 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -62,12 +62,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)if_le.c	8.2 (Berkeley) 11/16/93
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

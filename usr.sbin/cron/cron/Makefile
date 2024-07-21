@@ -1,5 +1,4 @@
-# $FreeBSD$
-
+PACKAGE=cron
 CONFS=	crontab
 PROG=	cron
 MAN=	cron.8

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Andriy Gapon <avg@FreeBSD.org>
  *
@@ -25,11 +25,7 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
-__FBSDID("$FreeBSD$");
-
-
 /*
  * Prevent some headers from getting included and fake some types
  * in order to allow this file to compile without bringing in

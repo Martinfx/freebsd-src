@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 The FreeBSD Foundation
  *
@@ -33,9 +33,6 @@
  * All the "defined" stuff is for handling variables,
  * such as ${OSNAME}, in maps.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/time.h>

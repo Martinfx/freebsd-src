@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
  *
- * Copyright (C) 2019 - 2020 Intel Corporation
+ * Copyright (C) 2019 - 2022 Intel Corporation
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,7 +31,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*$FreeBSD$*/
 
 #ifndef IRDMA_UMAIN_H
 #define IRDMA_UMAIN_H
@@ -46,12 +45,6 @@
 #include "i40iw_hw.h"
 #include "irdma_user.h"
 
-#ifndef likely
-#define likely(x)	__builtin_expect((x), 1)
-#endif
-#ifndef unlikely
-#define unlikely(x)	__builtin_expect((x), 0)
-#endif
 #define PFX	"libirdma-"
 
 #define IRDMA_BASE_PUSH_PAGE		1
@@ -62,13 +55,12 @@
 LIST_HEAD(list_head, irdma_cq_buf);
 LIST_HEAD(list_head_cmpl, irdma_cmpl_gen);
 
-enum irdma_supported_wc_flags {
-	IRDMA_CQ_SUPPORTED_WC_FLAGS = IBV_WC_EX_WITH_BYTE_LEN
+enum irdma_supported_wc_flags_ex {
+	IRDMA_STANDARD_WC_FLAGS_EX = IBV_WC_EX_WITH_BYTE_LEN
 				    | IBV_WC_EX_WITH_IMM
 				    | IBV_WC_EX_WITH_QP_NUM
 				    | IBV_WC_EX_WITH_SRC_QP
-				    | IBV_WC_EX_WITH_SL
-				    | IBV_WC_EX_WITH_COMPLETION_TIMESTAMP,
+				    | IBV_WC_EX_WITH_SL,
 };
 
 struct irdma_udevice {
@@ -94,7 +86,8 @@ struct irdma_uvcontext {
 	struct irdma_uk_attrs uk_attrs;
 	void *db;
 	int abi_ver;
-	bool legacy_mode;
+	bool legacy_mode:1;
+	bool use_raw_attrs:1;
 };
 
 struct irdma_uqp;
@@ -105,16 +98,13 @@ struct irdma_cq_buf {
 	struct verbs_mr vmr;
 };
 
+extern pthread_mutex_t sigusr1_wait_mutex;
+
 struct verbs_cq {
 	union {
 		struct ibv_cq cq;
 		struct ibv_cq_ex cq_ex;
 	};
-};
-
-struct irdma_cmpl_gen {
-	LIST_ENTRY(irdma_cmpl_gen) list;
-	struct irdma_cq_poll_info cpi;
 };
 
 struct irdma_ucq {
@@ -128,18 +118,15 @@ struct irdma_ucq {
 	bool arm_sol;
 	bool skip_sol;
 	int comp_vector;
-	uint32_t report_rtt;
 	struct irdma_uqp *uqp;
 	struct irdma_cq_uk cq;
 	struct list_head resize_list;
 	/* for extended CQ completion fields */
 	struct irdma_cq_poll_info cur_cqe;
-	struct list_head_cmpl cmpl_generated;
 };
 
 struct irdma_uqp {
 	struct ibv_qp ibv_qp;
-	struct ibv_qp_attr attr;
 	struct irdma_ucq *send_cq;
 	struct irdma_ucq *recv_cq;
 	struct verbs_mr vmr;
@@ -154,14 +141,6 @@ struct irdma_uqp {
 	struct ibv_recv_wr *pend_rx_wr;
 	struct irdma_qp_uk qp;
 	enum ibv_qp_type qp_type;
-	enum ibv_qp_attr_mask attr_mask;
-	struct irdma_sge *recv_sges;
-	pthread_t flush_thread;
-};
-
-struct irdma_umr {
-	struct verbs_mr vmr;
-	uint32_t acc_flags;
 };
 
 /* irdma_uverbs.c */
@@ -176,6 +155,10 @@ int irdma_uquery_device(struct ibv_context *, struct ibv_device_attr *);
 struct ibv_mr *irdma_ureg_mr(struct ibv_pd *pd, void *addr, size_t length,
 			     int access);
 int irdma_udereg_mr(struct ibv_mr *mr);
+
+int irdma_urereg_mr(struct verbs_mr *mr, int flags, struct ibv_pd *pd, void *addr,
+		    size_t length, int access);
+
 struct ibv_mw *irdma_ualloc_mw(struct ibv_pd *pd, enum ibv_mw_type type);
 int irdma_ubind_mw(struct ibv_qp *qp, struct ibv_mw *mw,
 		   struct ibv_mw_bind *mw_bind);
@@ -214,5 +197,4 @@ void irdma_async_event(struct ibv_context *context,
 void irdma_set_hw_attrs(struct irdma_hw_attrs *attrs);
 void *irdma_mmap(int fd, off_t offset);
 void irdma_munmap(void *map);
-void *irdma_flush_thread(void *arg);
 #endif /* IRDMA_UMAIN_H */

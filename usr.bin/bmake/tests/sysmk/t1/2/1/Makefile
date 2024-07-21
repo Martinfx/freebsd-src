@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/usr.bin/bmake/sysmk/t1/2/1

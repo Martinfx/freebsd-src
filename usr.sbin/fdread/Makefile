@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	fdread
 SRCS=	fdread.c fdutil.c
 

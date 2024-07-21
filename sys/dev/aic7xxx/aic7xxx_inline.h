@@ -40,8 +40,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/aic7xxx/aic7xxx/aic7xxx_inline.h#47 $
- *
- * $FreeBSD$
  */
 
 #ifndef _AIC7XXX_INLINE_H_
@@ -219,7 +217,7 @@ ahc_sync_sglist(struct ahc_softc *ahc, struct scb *scb, int op)
 static __inline uint32_t
 ahc_targetcmd_offset(struct ahc_softc *ahc, u_int index)
 {
-	return (((uint8_t *)&ahc->targetcmds[index]) - ahc->qoutfifo);
+	return (((uint8_t *)&ahc->targetcmds[index]) - (uint8_t *)ahc->targetcmds);
 }
 
 /******************************** Debugging ***********************************/

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=lib${LIB}
 LIB=	openbsd
 SRCS=	imsg-buffer.c \

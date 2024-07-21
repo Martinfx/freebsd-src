@@ -28,9 +28,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 
 #include <netinet/in.h>
@@ -402,7 +399,7 @@ fetchParseURL(const char *URL)
 
 	/* hostname */
 	if (*p == '[') {
-		q = p + 1 + strspn(p + 1, ":0123456789ABCDEFabcdef");
+		q = p + 1 + strspn(p + 1, ":0123456789ABCDEFabcdef.");
 		if (*q++ != ']')
 			goto ouch;
 	} else {
@@ -429,7 +426,7 @@ fetchParseURL(const char *URL)
 				goto ouch;
 			}
 		}
-		if (n < 1 || n > IPPORT_MAX)
+		if (p != q && (n < 1 || n > IPPORT_MAX))
 			goto ouch;
 		u->port = n;
 		p = q;

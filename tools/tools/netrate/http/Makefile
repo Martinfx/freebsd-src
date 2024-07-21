@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	http
 MAN=
 LIBADD=	pthread

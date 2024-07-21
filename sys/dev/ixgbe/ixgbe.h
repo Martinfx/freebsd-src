@@ -31,7 +31,6 @@
   POSSIBILITY OF SUCH DAMAGE.
 
 ******************************************************************************/
-/*$FreeBSD$*/
 
 #ifndef _IXGBE_H_
 #define _IXGBE_H_
@@ -507,7 +506,6 @@ struct ixgbe_softc {
     "\nSum of the following RX errors counters:\n" \
     " * CRC errors,\n" \
     " * illegal byte error count,\n" \
-    " * checksum error count,\n" \
     " * missed packet count,\n" \
     " * length error count,\n" \
     " * undersized packets count,\n" \
@@ -530,6 +528,8 @@ ixv_check_ether_addr(u8 *addr)
 
 	return (status);
 }
+
+uint64_t ixgbe_link_speed_to_baudrate(ixgbe_link_speed speed);
 
 /* Shared Prototypes */
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013  Chris Torek <torek @ torek net>
  * All rights reserved.
@@ -27,14 +27,10 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/uio.h>
 
 #include <machine/atomic.h>
-#include <machine/vmm_snapshot.h>
 
 #include <dev/virtio/pci/virtio_pci_legacy_var.h>
 
@@ -47,6 +43,9 @@ __FBSDID("$FreeBSD$");
 #include "bhyverun.h"
 #include "debug.h"
 #include "pci_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "virtio.h"
 
 /*
@@ -214,10 +213,9 @@ vi_vq_init(struct virtio_softc *vs, uint32_t pfn)
  * descriptor.
  */
 static inline void
-_vq_record(int i, volatile struct vring_desc *vd,
-	   struct vmctx *ctx, struct iovec *iov, int n_iov,
-	   struct vi_req *reqp) {
-
+_vq_record(int i, struct vring_desc *vd, struct vmctx *ctx, struct iovec *iov,
+    int n_iov, struct vi_req *reqp)
+{
 	if (i >= n_iov)
 		return;
 	iov[i].iov_base = paddr_guest2host(ctx, vd->addr, vd->len);
@@ -271,7 +269,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	u_int ndesc, n_indir;
 	u_int idx, next;
 	struct vi_req req;
-	volatile struct vring_desc *vdir, *vindir, *vp;
+	struct vring_desc *vdir, *vindir, *vp;
 	struct vmctx *ctx;
 	struct virtio_softc *vs;
 	const char *name;
@@ -409,8 +407,8 @@ vq_retchains(struct vqueue_info *vq, uint16_t n_chains)
 void
 vq_relchain_prepare(struct vqueue_info *vq, uint16_t idx, uint32_t iolen)
 {
-	volatile struct vring_used *vuh;
-	volatile struct vring_used_elem *vue;
+	struct vring_used *vuh;
+	struct vring_used_elem *vue;
 	uint16_t mask;
 
 	/*
@@ -559,8 +557,7 @@ vi_find_cr(int offset) {
  * Otherwise dispatch to the actual driver.
  */
 uint64_t
-vi_pci_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
-	    int baridx, uint64_t offset, int size)
+vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 {
 	struct virtio_softc *vs = pi->pi_arg;
 	struct virtio_consts *vc;
@@ -679,8 +676,8 @@ done:
  * Otherwise dispatch to the actual driver.
  */
 void
-vi_pci_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
-	     int baridx, uint64_t offset, int size, uint64_t value)
+vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
+    uint64_t value)
 {
 	struct virtio_softc *vs = pi->pi_arg;
 	struct vqueue_info *vq;
@@ -772,7 +769,7 @@ bad:
 		vs->vs_curq = value;
 		break;
 	case VIRTIO_PCI_QUEUE_NOTIFY:
-		if (value >= vc->vc_nvq) {
+		if (value >= (unsigned int)vc->vc_nvq) {
 			EPRINTLN("%s: queue %d notify out of range",
 				name, (int)value);
 			goto done;
@@ -815,7 +812,7 @@ done:
 
 #ifdef BHYVE_SNAPSHOT
 int
-vi_pci_pause(struct vmctx *ctx, struct pci_devinst *pi)
+vi_pci_pause(struct pci_devinst *pi)
 {
 	struct virtio_softc *vs;
 	struct virtio_consts *vc;
@@ -831,7 +828,7 @@ vi_pci_pause(struct vmctx *ctx, struct pci_devinst *pi)
 }
 
 int
-vi_pci_resume(struct vmctx *ctx, struct pci_devinst *pi)
+vi_pci_resume(struct pci_devinst *pi)
 {
 	struct virtio_softc *vs;
 	struct virtio_consts *vc;
@@ -882,8 +879,10 @@ vi_pci_snapshot_queues(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 	int ret;
 	struct virtio_consts *vc;
 	struct vqueue_info *vq;
+	struct vmctx *ctx;
 	uint64_t addr_size;
 
+	ctx = vs->vs_pi->pi_vmctx;
 	vc = vs->vs_vc;
 
 	/* Save virtio queue info */
@@ -905,15 +904,15 @@ vi_pci_snapshot_queues(struct virtio_softc *vs, struct vm_snapshot_meta *meta)
 			continue;
 
 		addr_size = vq->vq_qsize * sizeof(struct vring_desc);
-		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(vq->vq_desc, addr_size,
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_desc, addr_size,
 			false, meta, ret, done);
 
 		addr_size = (2 + vq->vq_qsize + 1) * sizeof(uint16_t);
-		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(vq->vq_avail, addr_size,
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_avail, addr_size,
 			false, meta, ret, done);
 
 		addr_size  = (2 + 2 * vq->vq_qsize + 1) * sizeof(uint16_t);
-		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(vq->vq_used, addr_size,
+		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(ctx, vq->vq_used, addr_size,
 			false, meta, ret, done);
 
 		SNAPSHOT_BUF_OR_LEAVE(vq->vq_desc,

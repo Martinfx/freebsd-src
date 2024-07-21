@@ -36,8 +36,9 @@
 .\" Copyright 2018 Nexenta Systems, Inc.
 .\" Copyright 2019 Joyent, Inc.
 .\" Copyright (c) 2019, Kjeld Schouten-Lebbing
+.\" Copyright (c) 2022 Hewlett Packard Enterprise Development LP.
 .\"
-.Dd May 24, 2021
+.Dd August 8, 2023
 .Dt ZFSPROPS 7
 .Os
 .
@@ -79,7 +80,9 @@ for zettabyte
 The following are all valid
 .Pq and equal
 specifications:
-.Li 1536M, 1.5g, 1.50GB .
+.Li 1536M ,
+.Li 1.5g ,
+.Li 1.50GB .
 .Pp
 The values of non-numeric properties are case sensitive and must be lowercase,
 except for
@@ -191,7 +194,8 @@ and
 .It Sy guid
 The 64 bit GUID of this dataset or bookmark which does not change over its
 entire lifetime.
-When a snapshot is sent to another pool, the received snapshot has the same GUID.
+When a snapshot is sent to another pool, the received snapshot has the same
+GUID.
 Thus, the
 .Sy guid
 is suitable to identify a snapshot across pools.
@@ -258,7 +262,8 @@ this opaque token can be provided to
 to resume and complete the
 .Nm zfs Cm receive .
 .It Sy redact_snaps
-For bookmarks, this is the list of snapshot guids the bookmark contains a redaction
+For bookmarks, this is the list of snapshot guids the bookmark contains a
+redaction
 list for.
 For snapshots, this is the list of snapshot guids the snapshot is redacted with
 respect to.
@@ -526,6 +531,9 @@ Specifies the time at which a snapshot for a dataset was last
 created or deleted.
 .Pp
 This allows us to be more efficient how often we query snapshots.
+The property is persistent across mount and unmount operations only if the
+.Sy extensible_dataset
+feature is enabled.
 .It Sy volblocksize
 For volumes, specifies the block size of the volume.
 The
@@ -794,7 +802,8 @@ Controls the compression algorithm used for this dataset.
 .Pp
 When set to
 .Sy on
-(the default), indicates that the current default compression algorithm should be used.
+(the default), indicates that the current default compression algorithm should
+be used.
 The default balances compression and decompression speed, with compression ratio
 and is expected to work well on a wide variety of workloads.
 Unlike all other settings for this property,
@@ -857,7 +866,8 @@ is equivalent to
 .Pp
 The
 .Sy zstd
-compression algorithm provides both high compression ratios and good performance.
+compression algorithm provides both high compression ratios and good
+performance.
 You can specify the
 .Sy zstd
 level by using the value
@@ -912,7 +922,8 @@ after compression, otherwise the compression will not be considered worthwhile
 and the block saved uncompressed.
 Note that when the logical block is less than
 8 times the disk sector size this effectively reduces the necessary compression
-ratio; for example, 8 KiB blocks on disks with 4 KiB disk sectors must compress to 1/2
+ratio; for example, 8 KiB blocks on disks with 4 KiB disk sectors must compress
+to 1/2
 or less of their original size.
 .It Xo
 .Sy context Ns = Ns Sy none Ns | Ns
@@ -1036,7 +1047,7 @@ file system.
 The default value is
 .Sy legacy .
 Setting this property to a value other than
-.Sy legacy No requires the Sy large_dnode No pool feature to be enabled.
+.Sy legacy No requires the Sy large_dnode No pool feature to be enabled .
 .Pp
 Consider setting
 .Sy dnodesize
@@ -1059,7 +1070,7 @@ if you need to receive a send stream of this dataset on a pool that doesn't
 enable the
 .Sy large_dnode
 feature, or if you need to import this pool on a system that doesn't support the
-.Sy large_dnode No feature.
+.Sy large_dnode No feature .
 .Pp
 This property can also be referred to by its shortened column name,
 .Sy dnsize .
@@ -1128,14 +1139,16 @@ is selected ZFS will ask for the key at the command prompt when it is required
 to access the encrypted data (see
 .Nm zfs Cm load-key
 for details).
-This setting will also allow the key to be passed in via the standard input stream,
+This setting will also allow the key to be passed in via the standard input
+stream,
 but users should be careful not to place keys which should be kept secret on
 the command line.
 If a file URI is selected, the key will be loaded from the
 specified absolute file path.
 If an HTTPS or HTTP URL is selected, it will be GETted using
 .Xr fetch 3 ,
-libcurl, or nothing, depending on compile-time configuration and run-time availability.
+libcurl, or nothing, depending on compile-time configuration and run-time
+availability.
 The
 .Sy SSL_CA_CERT_FILE
 environment variable can be set to set the location
@@ -1184,6 +1197,18 @@ are equivalent to the
 and
 .Sy noexec
 mount options.
+.It Sy volthreading Ns = Ns Sy on Ns | Ns Sy off
+Controls internal zvol threading.
+The value
+.Sy off
+disables zvol threading, and zvol relies on application threads.
+The default value is
+.Sy on ,
+which enables threading within a zvol.
+Please note that this property will be overridden by
+.Sy zvol_request_sync
+module parameter.
+This property is only applicable to Linux.
 .It Sy filesystem_limit Ns = Ns Ar count Ns | Ns Sy none
 Limits the number of filesystems and volumes that can exist under this point in
 the dataset tree.
@@ -1235,18 +1260,28 @@ Otherwise, they are automatically remounted in the new location if the property
 was previously
 .Sy legacy
 or
-.Sy none ,
-or if they were mounted before the property was changed.
+.Sy none .
 In addition, any shared file systems are unshared and shared in the new
 location.
+.Pp
+When the
+.Sy mountpoint
+property is set with
+.Nm zfs Cm set Fl u
+, the
+.Sy mountpoint
+property is updated but dataset is not mounted or unmounted and remains
+as it was before.
 .It Sy nbmand Ns = Ns Sy on Ns | Ns Sy off
 Controls whether the file system should be mounted with
 .Sy nbmand
 .Pq Non-blocking mandatory locks .
-This is used for SMB clients.
 Changes to this property only take effect when the file system is umounted and
 remounted.
-Support for these locks is scarce and not described by POSIX.
+This was only supported by Linux prior to 5.15, and was buggy there,
+and is not supported by
+.Fx .
+On Solaris it's used for SMB clients.
 .It Sy overlay Ns = Ns Sy on Ns | Ns Sy off
 Allow mounting on a busy directory or a directory which already contains
 files or directories.
@@ -1451,7 +1486,7 @@ affects only files created afterward; existing files are unaffected.
 .Pp
 This property can also be referred to by its shortened column name,
 .Sy recsize .
-.It Sy redundant_metadata Ns = Ns Sy all Ns | Ns Sy most
+.It Sy redundant_metadata Ns = Ns Sy all Ns | Ns Sy most Ns | Ns Sy some Ns | Ns Sy none
 Controls what types of metadata are stored redundantly.
 ZFS stores an extra copy of metadata, so that if a single block is corrupted,
 the amount of user data lost is limited.
@@ -1483,7 +1518,7 @@ When set to
 ZFS stores an extra copy of most types of metadata.
 This can improve performance of random writes, because less metadata must be
 written.
-In practice, at worst about 100 blocks
+In practice, at worst about 1000 blocks
 .Po of
 .Sy recordsize
 bytes each
@@ -1491,6 +1526,18 @@ bytes each
 of user data can be lost if a single on-disk block is corrupt.
 The exact behavior of which metadata blocks are stored redundantly may change in
 future releases.
+.Pp
+When set to
+.Sy some ,
+ZFS stores an extra copy of only critical metadata.
+This can improve file create performance since less metadata
+needs to be written.
+If a single on-disk block is corrupt, at worst a single user file can be lost.
+.Pp
+When set to
+.Sy none ,
+ZFS does not store any copies of metadata redundantly.
+If a single on-disk block is corrupt, an entire dataset can be lost.
 .Pp
 The default value is
 .Sy all .
@@ -1545,7 +1592,7 @@ Access time is only updated if the previous
 access time was earlier than the current modify or change time or if the
 existing access time hasn't been updated within the past 24 hours.
 The default value is
-.Sy off .
+.Sy on .
 The values
 .Sy on
 and
@@ -1578,6 +1625,23 @@ If this property is set to
 then only metadata is cached.
 The default value is
 .Sy all .
+.It Sy prefetch Ns = Ns Sy all Ns | Ns Sy none Ns | Ns Sy metadata
+Controls what speculative prefetch does.
+If this property is set to
+.Sy all ,
+then both user data and metadata are prefetched.
+If this property is set to
+.Sy none ,
+then neither user data nor metadata are prefetched.
+If this property is set to
+.Sy metadata ,
+then only metadata are prefetched.
+The default value is
+.Sy all .
+.Pp
+Please note that the module parameter zfs_prefetch_disable=1 can
+be used to totally disable speculative prefetch, bypassing anything
+this property does.
 .It Sy setuid Ns = Ns Sy on Ns | Ns Sy off
 Controls whether the setuid bit is respected for the file system.
 The default value is
@@ -1627,7 +1691,15 @@ LDAP- or
 .Xr smbpasswd 5 Ns -based )
 by default.
 This means that any additional access control
-(disallow specific user specific access etc) must be done on the underlying file system.
+(disallow specific user specific access etc) must be done on the underlying file
+system.
+.Pp
+When the
+.Sy sharesmb
+property is updated with
+.Nm zfs Cm set Fl u
+, the property is set to desired value, but the operation to share, reshare
+or unshare the the dataset is not performed.
 .It Sy sharenfs Ns = Ns Sy on Ns | Ns Sy off Ns | Ns Ar opts
 Controls whether the file system is shared via NFS, and what options are to be
 used.
@@ -1671,6 +1743,13 @@ or if they were shared before the property was changed.
 If the new property is
 .Sy off ,
 the file systems are unshared.
+.Pp
+When the
+.Sy sharenfs
+property is updated with
+.Nm zfs Cm set Fl u
+, the property is set to desired value, but the operation to share, reshare
+or unshare the the dataset is not performed.
 .It Sy logbias Ns = Ns Sy latency Ns | Ns Sy throughput
 Provide a hint to ZFS about handling of synchronous requests in this dataset.
 If
@@ -1888,13 +1967,15 @@ See
 for more information.
 Jails are a
 .Fx
-feature and are not relevant on other platforms.
-The default value is
-.Sy off .
-.It Sy zoned Ns = Ns Sy on Ns | Ns Sy off
+feature and this property is not available on other platforms.
+.It Sy zoned Ns = Ns Sy off Ns | Ns Sy on
 Controls whether the dataset is managed from a non-global zone or namespace.
-The default value is
-.Sy off .
+See
+.Xr zfs-zone 8
+for more information.
+Zoning is a
+Linux
+feature and this property is not available on other platforms.
 .El
 .Pp
 The following three properties cannot be changed after the file system is

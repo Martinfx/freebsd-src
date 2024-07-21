@@ -31,15 +31,13 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 /*
  * Intel fourth generation mobile cpus integrated I2C device.
  *
  * Datasheet reference:  Section 22.
  *
- * http://www.intel.com/content/www/us/en/processors/core/4th-gen-core-family-mobile-i-o-datasheet.html?wapkw=datasheets+4th+generation
+ * https://www.intel.com/content/dam/www/public/us/en/documents/datasheets/4th-gen-core-family-mobile-i-o-datasheet.pdf
  *
  * This is a from-scratch driver under the BSD license using the Intel data
  * sheet and the linux driver for reference.  All code is freshly written

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/dev/iicbus/pmic/rockchip
 
 KMOD=	rk808

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${.CURDIR:H}
 
 .include <src.opts.mk>

@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ypldap
@@ -12,6 +11,8 @@
 
 name="ypldap"
 rcvar="nis_ypldap_enable"
+
+: ${ypldap_svcj_options:="net_basic"}
 
 load_rc_config $name
 

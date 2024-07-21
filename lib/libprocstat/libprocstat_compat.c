@@ -22,12 +22,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/user.h>
@@ -187,7 +182,7 @@ freebsd11_procstat_get_socket_info(struct procstat *procstat, struct filestat *f
 	r = procstat_get_socket_info(procstat, fst, &sock, errbuf);
 	if (r != 0)
 		return (r);
-	sock_compat->inp_ppcb = sock.inp_ppcb;
+	sock_compat->inp_ppcb = sock.so_pcb;
 	sock_compat->so_addr = sock.so_addr;
 	sock_compat->so_pcb = sock.so_pcb;
 	sock_compat->unp_conn = sock.unp_conn;

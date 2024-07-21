@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=	daily security weekly monthly
 SUBDIR_PARALLEL=
 

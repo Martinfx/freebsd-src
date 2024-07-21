@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2021 Peter Holm
 #
@@ -27,7 +27,7 @@
 # SUCH DAMAGE.
 #
 
-# unionfs(8) test
+# unionfs(4) test
 # "panic: ufs dir vp 0xfffffe0157351068 ip 0xfffffe016a63d488 flags 0x3c06" seen
 
 [ `id -u ` -ne 0 ] && echo "Must be root!" && exit 1
@@ -56,6 +56,10 @@ mount /dev/md$md2 $mp2
 mount -t unionfs -o noatime $mp1 $mp2
 set +e
 mount | grep -E "$mp1|$mp2"
+
+set `df -ik $mp2 | tail -1 | awk '{print $4,$7}'`
+export KBLOCKS=$(($1 / 4))
+export INODES=$(($2 / 4))
 
 export CTRLDIR=$mp2/stressX.control
 export INCARNATIONS=10

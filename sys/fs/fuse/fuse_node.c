@@ -60,9 +60,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/counter.h>
@@ -115,14 +112,15 @@ SYSCTL_COUNTER_U64(_vfs_fusefs_stats, OID_AUTO, node_count, CTLFLAG_RD,
 int	fuse_data_cache_mode = FUSE_CACHE_WT;
 
 /*
- * DEPRECATED
- * This sysctl is no longer needed as of fuse protocol 7.23.  Individual
+ * OBSOLETE
+ * This sysctl is no longer needed as of fuse protocol 7.23.  Now, individual
  * servers can select the cache behavior they need for each mountpoint:
  * - writethrough: the default
  * - writeback: set FUSE_WRITEBACK_CACHE in fuse_init_out.flags
  * - uncached: set FOPEN_DIRECT_IO for every file
- * The sysctl is retained primarily for use by jails supporting older FUSE
- * protocols.  It may be removed entirely once FreeBSD 11.3 and 12.0 are EOL.
+ * The sysctl is retained primarily due to the enduring popularity of libfuse2,
+ * which is frozen at protocol version 7.19.  As of 4-April-2024, 90% of
+ * FreeBSD ports that use libfuse still bind to libfuse2.
  */
 SYSCTL_PROC(_vfs_fusefs, OID_AUTO, data_cache_mode,
     CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RW,
@@ -154,11 +152,18 @@ sysctl_fuse_cache_mode(SYSCTL_HANDLER_ARGS)
 
 static void
 fuse_vnode_init(struct vnode *vp, struct fuse_vnode_data *fvdat,
-    uint64_t nodeid, enum vtype vtyp)
+    uint64_t nodeid, __enum_uint8(vtype) vtyp)
 {
 	fvdat->nid = nodeid;
 	LIST_INIT(&fvdat->handles);
+
 	vattr_null(&fvdat->cached_attrs);
+	fvdat->cached_attrs.va_birthtime.tv_sec = -1;
+	fvdat->cached_attrs.va_birthtime.tv_nsec = 0;
+	fvdat->cached_attrs.va_fsid = VNOVAL;
+	fvdat->cached_attrs.va_gen = 0;
+	fvdat->cached_attrs.va_rdev = NODEV;
+
 	if (nodeid == FUSE_ROOT_ID) {
 		vp->v_vflag |= VV_ROOT;
 	}
@@ -189,13 +194,13 @@ fuse_vnode_cmp(struct vnode *vp, void *nidp)
 	return (VTOI(vp) != *((uint64_t *)nidp));
 }
 
-SDT_PROBE_DEFINE3(fusefs, , node, stale_vnode, "struct vnode*", "enum vtype",
+SDT_PROBE_DEFINE3(fusefs, , node, stale_vnode, "struct vnode*", "uint8_t",
 		"uint64_t");
 static int
 fuse_vnode_alloc(struct mount *mp,
     struct thread *td,
     uint64_t nodeid,
-    enum vtype vtyp,
+    __enum_uint8(vtype) vtyp,
     struct vnode **vpp)
 {
 	struct fuse_data *data;
@@ -263,6 +268,7 @@ fuse_vnode_alloc(struct mount *mp,
 	if (data->dataflags & FSESS_ASYNC_READ && vtyp != VFIFO)
 		VN_LOCK_ASHARE(*vpp);
 
+	vn_set_state(*vpp, VSTATE_CONSTRUCTED);
 	err = vfs_hash_insert(*vpp, fuse_vnode_hash(nodeid), LK_EXCLUSIVE,
 	    td, &vp2, fuse_vnode_cmp, &nodeid);
 	if (err) {
@@ -288,7 +294,7 @@ fuse_vnode_get(struct mount *mp,
     struct vnode *dvp,
     struct vnode **vpp,
     struct componentname *cnp,
-    enum vtype vtyp)
+    __enum_uint8(vtype) vtyp)
 {
 	struct thread *td = curthread;
 	/* 
@@ -348,7 +354,7 @@ void
 fuse_vnode_open(struct vnode *vp, int32_t fuse_open_flags, struct thread *td)
 {
 	if (vnode_vtype(vp) == VREG)
-		vnode_create_vobject(vp, 0, td);
+		vnode_create_vobject(vp, VNODE_NO_SIZE, td);
 }
 
 int

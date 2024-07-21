@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -28,9 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 
 #include <sys/param.h>
@@ -57,6 +54,7 @@ __FBSDID("$FreeBSD$");
 #include <x86/include/busdma_impl.h>
 #include <x86/iommu/intel_reg.h>
 #include <dev/iommu/busdma_iommu.h>
+#include <x86/iommu/x86_iommu.h>
 #include <x86/iommu/intel_dmar.h>
 
 /*

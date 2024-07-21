@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifndef ECORE_SP_H
 #define ECORE_SP_H
 
@@ -161,7 +159,7 @@ typedef struct mtx ECORE_MUTEX_SPIN;
 #define ECORE_FREE(_s, _buf, _size) free(_buf, M_TEMP)
 
 #define SC_ILT(sc)  ((sc)->ilt)
-#define ILOG2(x)    bxe_ilog2(x)
+#define ILOG2(x)    ilog2(x)
 
 #define ECORE_ILT_ZALLOC(x, y, size)                                       \
     do {                                                                   \

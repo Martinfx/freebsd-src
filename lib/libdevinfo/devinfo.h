@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Michael Smith
  * Copyright (c) 2000 BSDi
@@ -25,14 +25,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	$FreeBSD$
  */
 
 #ifndef _DEVINFO_H_INCLUDED
 #define _DEVINFO_H_INCLUDED
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/bus.h>
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 Ruslan Bukin <br@bsdpad.com>
  * All rights reserved.
@@ -30,9 +30,6 @@
  * Vybrid Family Enhanced Direct Memory Access Controller (eDMA)
  * Chapter 21, Vybrid Reference Manual, Rev. 5, 07/2013
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

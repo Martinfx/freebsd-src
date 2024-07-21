@@ -5,12 +5,11 @@
 #include <stdio.h>
 
 #include "ntp_net.h"
-#include "lib_strbuf.h"
 #include "ntp_stdlib.h"
 
 const char *
 refnumtoa(
-	sockaddr_u *num
+	const sockaddr_u *num
 	)
 {
 	u_int32 netnum;

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2018 Marvell International Ltd.
  *
@@ -28,9 +28,6 @@
  */
 
 #include "opt_acpi.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -99,15 +96,15 @@ struct iort_node {
 	u_int			usecount;	/* for bookkeeping */
 	u_int			revision;	/* node revision */
 	union {
+		struct iort_map_entry	*mappings;	/* node mappings  */
+		struct iort_its_entry	*its;		/* ITS IDs array */
+	} entries;
+	union {
 		ACPI_IORT_ROOT_COMPLEX		pci_rc;	/* PCI root complex */
 		ACPI_IORT_SMMU			smmu;
 		ACPI_IORT_SMMU_V3		smmu_v3;
 		struct iort_named_component	named_comp;
 	} data;
-	union {
-		struct iort_map_entry	*mappings;	/* node mappings  */
-		struct iort_its_entry	*its;		/* ITS IDs array */
-	} entries;
 };
 
 /* Lists for each of the types. */

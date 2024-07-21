@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MAN=
 
 .include <src.opts.mk>
@@ -7,15 +5,16 @@ MAN=
 .PATH:	${SRCTOP}/contrib/ntp/util \
 	${SRCTOP}/contrib/ntp/ntpd
 
+PACKAGE=ntp
 PROG=	ntp-keygen
 SRCS=	ntp-keygen.c ntp-keygen-opts.c
 
 CFLAGS+= -I${SRCTOP}/contrib/ntp/include \
 	-I${SRCTOP}/contrib/ntp/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/unix/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/pthreads/include \
-	-I${SRCTOP}/contrib/ntp/lib/isc/${NTP_ATOMIC}/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/unix/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/pthreads/include \
+	-I${SRCTOP}/contrib/ntp/libntp/lib/isc/${NTP_ATOMIC}/include \
 	-I${SRCTOP}/contrib/ntp/sntp/libopts \
 	-I${.CURDIR}/lib/libc/${MACHINE_ARCH} \
 	-I${.CURDIR:H}

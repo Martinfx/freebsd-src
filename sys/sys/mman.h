@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)mman.h	8.2 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_MMAN_H_
@@ -104,9 +101,7 @@
 #define	MAP_EXCL	 0x00004000 /* for MAP_FIXED, fail if address is used */
 #define	MAP_NOCORE	 0x00020000 /* dont include these pages in a coredump */
 #define	MAP_PREFAULT_READ 0x00040000 /* prefault mapping for reading */
-#ifdef __LP64__
 #define	MAP_32BIT	 0x00080000 /* map in the low 2GB of address space */
-#endif
 
 /*
  * Request specific alignment (n == log2 of the desired alignment).
@@ -180,7 +175,9 @@
 #define	MINCORE_REFERENCED_OTHER 0x8 /* Page has been referenced */
 #define	MINCORE_MODIFIED_OTHER	0x10 /* Page has been modified */
 #define	MINCORE_SUPER		0x60 /* Page is a "super" page */
-#define	MINCORE_PSIND(i)	(((i) << 5) & MINCORE_SUPER) /* Page size */
+#define	MINCORE_PSIND_SHIFT	5
+#define	MINCORE_PSIND(i)	(((i) << MINCORE_PSIND_SHIFT) & MINCORE_SUPER)
+				     /* Page size */
 
 /*
  * Anonymous object constant for shm_open().
@@ -268,6 +265,7 @@ struct file;
 struct shmfd {
 	vm_ooffset_t	shm_size;
 	vm_object_t	shm_object;
+	vm_pindex_t	shm_pages;	/* allocated pages */
 	int		shm_refs;
 	uid_t		shm_uid;
 	gid_t		shm_gid;

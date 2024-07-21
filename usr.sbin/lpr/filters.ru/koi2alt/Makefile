@@ -1,5 +1,4 @@
-# $FreeBSD$
-
+PACKAGE=lp
 PROG=	koi2alt
 MAN=
 

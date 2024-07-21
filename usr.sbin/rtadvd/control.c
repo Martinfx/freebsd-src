@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2011 Hiroki Sato <hrs@FreeBSD.org>
  * All rights reserved.
@@ -25,12 +25,10 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * $FreeBSD$
- *
  */
 
+#include <sys/param.h>
 #include <sys/queue.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -77,7 +75,7 @@ cm_recv(int fd, char *buf)
 	pfds[0].events = POLLIN;
 
 	for (;;) {
-		i = poll(pfds, sizeof(pfds)/sizeof(pfds[0]),
+		i = poll(pfds, nitems(pfds),
 		    CM_RECV_TIMEOUT);
 
 		if (i == 0)
@@ -133,7 +131,7 @@ cm_recv(int fd, char *buf)
 		    msglen);
 
 		for (;;) {
-			i = poll(pfds, sizeof(pfds)/sizeof(pfds[0]),
+			i = poll(pfds, nitems(pfds),
 			    CM_RECV_TIMEOUT);
 
 			if (i == 0)

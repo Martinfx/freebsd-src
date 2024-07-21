@@ -34,8 +34,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include "opt_atpic.h"
@@ -209,7 +207,7 @@ X\l:
 	 * alltraps_u/k entry points.
 	 * SWAPGS must be already performed by prologue,
 	 * if this is the first time in the kernel from userland.
-	 * Reenable interrupts if they were enabled before the trap.
+	 * Re-enable interrupts if they were enabled before the trap.
 	 * This approximates SDT_SYS386TGT on the i386 port.
 	 */
 	SUPERALIGN_TEXT
@@ -514,7 +512,7 @@ prot_addrf:
 
 /*
  * Fast syscall entry point.  We enter here with just our new %cs/%ss set,
- * and the new privilige level.  We are still running on the old user stack
+ * and the new privilege level.  We are still running on the old user stack
  * pointer.  We have to juggle a few things around to find our stack etc.
  * swapgs gives us access to our PCPU space only.
  *
@@ -1089,7 +1087,7 @@ ENTRY(fork_trampoline)
  * and bintr, and only interrupt handlers between the labels bintr and
  * eintr.  This is implemented (partly) by including files that contain
  * some of the handlers.  Before including the files, set up a normal asm
- * environment so that the included files doen't need to know that they are
+ * environment so that the included files doesn't need to know that they are
  * included.
  */
 

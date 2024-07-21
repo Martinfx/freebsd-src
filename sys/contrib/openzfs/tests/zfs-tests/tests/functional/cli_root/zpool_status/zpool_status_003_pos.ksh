@@ -37,6 +37,7 @@
 # 3. Read the file
 # 4. Take a snapshot and make a clone
 # 5. Verify we see "snapshot, clone and filesystem" output in 'zpool status -v'
+#      and 'zpool status -ev'
 
 function cleanup
 {
@@ -61,10 +62,14 @@ dd if=/$TESTPOOL2/10m_file bs=1M || true
 
 log_must zfs snapshot $TESTPOOL2@snap
 log_must zfs clone $TESTPOOL2@snap $TESTPOOL2/clone
+log_must zfs create $TESTPOOL2/$TESTFS1
 
 # Look to see that snapshot, clone and filesystem our files report errors
+log_must zpool status -v $TESTPOOL2
 log_must eval "zpool status -v | grep '$TESTPOOL2@snap:/10m_file'"
 log_must eval "zpool status -v | grep '$TESTPOOL2/clone/10m_file'"
 log_must eval "zpool status -v | grep '$TESTPOOL2/10m_file'"
+log_must eval "zpool status -ev | grep '$TESTPOOL2/10m_file'"
+log_mustnot eval "zpool status -v | grep '$TESTFS1'"
 
 log_pass "'zpool status -v' outputs affected filesystem, snapshot & clone"

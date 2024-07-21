@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR= include
 
 FILESDIR=	${LIBEXECDIR}/bsdconfig/includes

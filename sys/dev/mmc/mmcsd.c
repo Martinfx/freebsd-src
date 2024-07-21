@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 Bernd Walter.  All rights reserved.
  * Copyright (c) 2006 M. Warner Losh <imp@FreeBSD.org>
@@ -53,9 +53,6 @@
  * information, know-how or other confidential information to any third party.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
@@ -86,11 +83,6 @@ __FBSDID("$FreeBSD$");
 #include <dev/mmc/mmcvar.h>
 
 #include "mmcbus_if.h"
-
-#if __FreeBSD_version < 800002
-#define	kproc_create	kthread_create
-#define	kproc_exit	kthread_exit
-#endif
 
 #define	MMCSD_CMD_RETRIES	5
 

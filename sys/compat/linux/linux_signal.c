@@ -26,19 +26,15 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ktrace.h"
 
 #include <sys/param.h>
-#include <sys/systm.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
-#include <sys/sx.h>
 #include <sys/proc.h>
 #include <sys/signalvar.h>
+#include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
 #ifdef KTRACE
@@ -46,8 +42,6 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include <security/audit/audit.h>
-
-#include "opt_compat.h"
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -58,7 +52,7 @@ __FBSDID("$FreeBSD$");
 #endif
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_signal.h>
-#include <compat/linux/linux_timer.h>
+#include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_misc.h>
@@ -176,6 +170,7 @@ linux_do_sigaction(struct thread *td, int linux_sig, l_sigaction_t *linux_nsa,
 
 	if (!LINUX_SIG_VALID(linux_sig))
 		return (EINVAL);
+	sig = linux_to_bsd_signal(linux_sig);
 
 	osa = (linux_osa != NULL) ? &oact : NULL;
 	if (linux_nsa != NULL) {
@@ -186,9 +181,11 @@ linux_do_sigaction(struct thread *td, int linux_sig, l_sigaction_t *linux_nsa,
 			linux_ktrsigset(&linux_nsa->lsa_mask,
 			    sizeof(linux_nsa->lsa_mask));
 #endif
+		if ((sig == SIGKILL || sig == SIGSTOP) &&
+		    nsa->sa_handler == SIG_DFL)
+			return (EINVAL);
 	} else
 		nsa = NULL;
-	sig = linux_to_bsd_signal(linux_sig);
 
 	error = kern_sigaction(td, sig, nsa, osa, 0);
 	if (error != 0)
@@ -772,14 +769,14 @@ siginfo_to_lsiginfo(const siginfo_t *si, l_siginfo_t *lsi, l_int sig)
 	}
 }
 
-int
+static int
 lsiginfo_to_siginfo(struct thread *td, const l_siginfo_t *lsi,
     siginfo_t *si, int sig)
 {
 
 	switch (lsi->lsi_code) {
 	case LINUX_SI_TKILL:
-		if (linux_kernver(td) >= LINUX_KERNVER_2006039) {
+		if (linux_kernver(td) >= LINUX_KERNVER(2,6,39)) {
 			linux_msg(td, "SI_TKILL forbidden since 2.6.39");
 			return (EPERM);
 		}

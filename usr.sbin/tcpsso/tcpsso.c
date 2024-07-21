@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 Michael Tuexen <tuexen@FreeBSD.org>
  * Copyright (c) 2009 Juli Mallett <jmallett@FreeBSD.org>
@@ -115,10 +115,6 @@ tcpssoall(const char *ca_name, const char *stack, int state,
 			continue;
 
 
-		/* Skip endpoints in TIME WAIT. */
-		if (xtp->t_state == TCPS_TIME_WAIT)
-			continue;
-
 		/* If requested, skip sockets not having the requested state. */
 		if ((state != -1) && (xtp->t_state != state))
 			continue;
@@ -192,6 +188,7 @@ static struct so_name so_names[] = {
 	tcp_entry(TCP_REMOTE_UDP_ENCAPS_PORT),	/* int */
 	tcp_entry(TCP_MAXSEG),			/* int */
 	tcp_entry(TCP_TXTLS_MODE),		/* unsigned int */
+	tcp_entry(TCP_MAXUNACKTIME),		/* unsigned int */
 	tcp_entry(TCP_KEEPIDLE),		/* unsigned int */
 	tcp_entry(TCP_KEEPINTVL),		/* unsigned int */
 	tcp_entry(TCP_KEEPINIT),		/* unsigned int */
@@ -452,7 +449,6 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 	if ((state == TCP_NSTATES) ||
-	    (state == TCPS_TIME_WAIT) ||
 	    (argc < 2) || (argc > 3) ||
 	    (apply_all && apply_subset) ||
 	    (apply_all && apply_specific) ||

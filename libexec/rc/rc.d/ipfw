@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ipfw
@@ -163,5 +162,8 @@ ipfw_status()
 
 load_rc_config $name
 firewall_coscripts="/etc/rc.d/natd ${firewall_coscripts}"
+
+# doesn't make sense to run in a svcj: config setting
+ipfw_svcj="NO"
 
 run_rc_command $*

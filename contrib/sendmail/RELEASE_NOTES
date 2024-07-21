@@ -5,6 +5,296 @@ This listing shows the version of the sendmail binary, the version
 of the sendmail configuration files, the date of release, and a
 summary of the changes in that release.
 
+
+8.18.1/8.18.1	2024/01/31
+	sendmail is now stricter in following the RFCs and rejects
+		some invalid input with respect to line endings
+		and pipelining:
+		- Prevent transaction stuffing by ensuring SMTP clients
+		wait for the HELO/EHLO and DATA response before sending
+		further SMTP commands.  This can be disabled using
+		the new srv_features option 'F'.  Issue reported by
+		Yepeng Pan and Christian Rossow from CISPA Helmholtz
+		Center for Information Security.
+		- Accept only CRLF . CRLF as end of an SMTP message
+		as required by the RFCs, which can disabled by the
+		new srv_features option 'O'.
+		- Do not accept a CR or LF except in the combination
+		CRLF (as required by the RFCs).  These checks can
+		be disabled by the new srv_features options
+		'U' and 'G', respectively.  In this case it is
+		suggested to use 'u2' and 'g2' instead so the server
+		replaces offending bare CR or bare LF with a space.
+		It is recommended to only turn these protections off
+		for trusted networks due to the potential for abuse.
+	Full DANE support is available if OpenSSL versions 1.1.1 or 3.x
+		are used, i.e., TLSA RR 2-x-y and 3-x-y are supported
+		as required by RFC 7672.
+	OpenSSL version 3.0.x is supported.  Note: OpenSSL 3 loads by
+		default an openssl.cnf file from a location specified
+		in the library which may cause unwanted behaviour
+		in sendmail.  Hence sendmail sets the environment
+		variable OPENSSL_CONF to /etc/mail/sendmail.ossl
+		to override the default.  The file name can be
+		changed by defining confOPENSSL_CNF in the mc file;
+		using an empty value prevents setting OPENSSL_CONF.
+		Note: referring to a file which does not exist does
+		not cause an an error.
+	Two new values have been added for {verify}:
+		"DANE_TEMP": DANE verification failed temporarily.
+		"DANE_NOTLS": DANE was required but STARTTLS was not
+		offered by the server.
+		The default rules return a temporary error for these
+		cases, so delivery is not attempted.
+	If the TLS setup code in the client fails and DANE requirements
+		exist then {verify} will be set to "DANE_TEMP" thus
+		preventing delivery by default.
+	DANE related logging has been slightly changed for clarification:
+		"DANE configured in DNS but no STARTTLS available"
+		changed to
+		"DANE configured in DNS but STARTTLS not offered"
+	When the compile time option USE_EAI is enabled, vacation could
+		fail to respond when it should (the code change in
+		8.17.2 was incomplete).  Problem reported by Alex
+		Hautequest.
+	If SMTPUTF8 BODY=7BIT are used as parameters for the MAIL command
+		the parsing of UTF8 addresses could fail (USE_EAI).
+	If a reply to a previous RCPT was received while sending
+		another RCPT in pipelining mode then parts of the
+		reply could have been assigned to the wrong RCPT.
+	New DontBlameSendmail option CertOwner to relax requirement
+		for certificate public and private key ownership.
+		Based on suggestion from Marius Strobl of the
+		FreeBSD project.
+	clt_features was not checked for connections via Unix domain
+		sockets.
+	CONFIG: FEATURE(`enhdnsbl') did not handle multiple replies
+		from DNS lookups thus potentially causing random
+		"false negatives".
+		Note: the fix creates an incompatibility:
+		the arguments must not have a trailing dot anymore
+		because the -a. option has been removed (as it only
+		applies to the entire result, not individual values).
+	CONFIG: New FEATURE(`fips3') for basic FIPS support in OpenSSL 3.
+	VACATION: Add support for Return-Path header to set sender
+		to match OpenBSD and NetBSD functionality.
+	VACATION: Honor RFC3834 and avoid an auto-reply if
+		'Auto-Submitted: no' is found in the headers to
+		match OpenBSD and NetBSD functionality.
+	VACATION: Avoid an auto-reply if a 'List-Id:' is found in
+		the headers to match OpenBSD functionality.
+	VACATION: Add support for $SUBJECT in .vacation.msg which
+		is replaced with the first line of the subject of the
+		original message to match OpenBSD and NetBSD
+		functionality.
+	Portability:
+		Add support for Darwin 23.
+	New Files:
+		cf/feature/fips3.m4
+		devtools/OS/Darwin.23.x
+
+8.17.2/8.17.2	2023/06/03
+	Make sure DANE checks (if enabled) are performed even if
+		CACertPath or CACertFile are not set or unusable.
+	Note: if the code to set up TLS in the client fails, then
+		{verify} will be set to TEMP but DANE requirements
+		will be ignored, i.e., by default mail will be sent
+		without STARTTLS.  This can be changed via a
+		LOCAL_TLS_SERVER ruleset.
+	Pass server name to clt_features ruleset instead of client
+		name to account for limitations in macro availability
+		described below in CONFIG section.  This may break
+		custom clt_features rulesets which expect to receive
+		the client name as input.
+	Fix a regression introduced in 8.17.1: aliases file which
+		contain continuation lines caused parsing errors.
+	Add an FFR (for future release) compile time option _FFR_LOG_STAGE
+		to log the protocol stage as stage= for some errors during
+		delivery attempts to make troubleshooting simpler.  This
+		new logging may be enabled in a future release.
+	When EAI is enabled, milters also got the arguments of MAIL/RCPT
+		commands in argv[0] for xxfi_envfrom()/xxfi_envrcpt()
+		callbacks instead of just the mail address.
+		Problem reported by Dilyan Palauzo.
+	When EAI is enabled, mailq prints UTF-8 addresses as such
+		if SMTPUTF8 was used.
+	When EAI is enabled, the $h macro is now in the correct format.
+		Previously this could cause wrong values for relay=
+		in log entries and the mailer argument vector.
+	When the compile time option USE_EAI is enabled, vacation could
+		fail to respond when it should.  Problem reported by
+		Alex Hautequest.
+	When EAI was enabled, header truncation might not have been
+		logged even when it happened. Problem reported by
+		Werner Wiethege.
+	Handle a possible change in an upcoming release of Cyrus-SASL
+		(2.1.28) by changing the definition of an internal flag.
+		Patch from Dilyan Palauzo.
+	Avoid an assertion failure when an smtps connection is made
+		to the server and a milter is unavailable.
+		Problem reported by Dilyan Palauzo.
+	Fixed some spelling errors in documentation and comments,
+		based on a codespell report by Jens Schleusener
+		of fossies.org.
+	The result of try_tls is now logged using status= instead
+		of reject=.
+	If tls_rcpt rejected the delivery of a recipient then a bogus
+		dsn= entry might have been logged under some circumstances.
+	If a server replied with 421 to a RCPT command then a bogus reply=
+		might have been logged.
+	When quoting the value for ${currHeader} avoid causing a syntax
+		error (Unbalanced '"') when truncating a header value
+		which is too long.  Problem reported by Werner Wiethege.
+	Reduce the performance impact of a change introduced in
+		8.12.9: the default for MaxMimeHeaderLength was
+		set to 2048/1024.  Problem reported by Tabata
+		Shintaro of Internet Initiative Japan Inc.
+	CONFIG: The default clt_features ruleset tried to access
+		${server_name} and ${server_addr} which are not set
+		when the ruleset is invoked.  Only the server name
+		is available which is passed as an argument.
+	CONFIG: Properly quote host variable to prevent cf build
+		breakage when a hostname contains 'dnl'.  Problem
+		reported by Maxim Shalomikhin of Kaspersky.
+	DEVTOOLS: Add configure.sh support for BSD's mandoc as an
+		alternative man page formatting tool.
+	DOC: Document that USAGE is a possible value for {verify}.
+	LIBMILTER: The macros for the EOH and EOM callbacks are
+		sent in reverse order which means accessing macros
+		in the EOM callback got the macro for the EOH
+		callback. Store those macros in the expected order
+		in libmilter. Note: this does not affect sendmail
+		because the macros for both callbacks are the same
+		because the message is sent to libmilter after it
+		is completely read by sendmail.  Fix and problem
+		report from David Buergin.
+	Portability:
+		Make use of IN_LOOPBACK, if defined, to determine if
+		using a loopback address.  Patch from Mike Karels of
+		FreeBSD.
+		On Linux use gethostbyname2(3) if glibc 2.19 or newer
+		is used to avoid potential problems with IPv6 lookups.
+		Patch from Werner Wiethege.
+		Add support for Darwin 21 and Darwin 22.
+		Solaris 12 has been renamed to Solaris 11.4, hence
+		adapt a condition for sigwait(2) taking one argument.
+		Patch from John Beck.
+	New Files:
+		devtools/M4/UNIX/sharedlib.m4
+		devtools/OS/Darwin.21.x
+		devtools/OS/Darwin.22.x
+		sendmail/sched.c
+		libsm/notify.h
+
+8.17.1/8.17.1	2021/08/17
+	Deprecation notice: due to compatibility problems with some
+		third party code, we plan to finally switch from K&R
+		to ANSI C. If you are using sendmail on a system
+		which does not have a compiler for ANSI C contact us
+		with details as soon as possible so we can determine
+		how to proceed.
+	Experimental support for SMTPUTF8 (EAI, see RFC 6530-6533)
+		is available when using the compile time option USE_EAI
+		(see also devtools/Site/site.config.m4.sample for other
+		required settings) and the cf option SMTPUTF8.
+		If a mail submission via the command line requires
+		the use of SMTPUTF8, e.g., because a header uses UTF-8
+		encoding, but the addresses on the command line are all
+		ASCII, then the new option -U must be used, and
+		the cf option SMTPUTF8 must be set in submit.cf.
+		Please test and provide feedback.
+	Experimental support for SMTP MTA Strict Transport Security
+		(MTA-STS, see RFC 8461) is available when using
+		- the compile time option _FFR_MTA_STS (which requires
+		  STARTTLS, MAP_REGEX, SOCKETMAP, and _FFR_TLS_ALTNAMES),
+		- FEATURE(sts), which implicitly sets the cf option
+		  StrictTransportSecurity,
+		- postfix-mta-sts-resolver, see
+		https://github.com/Snawoot/postfix-mta-sts-resolver.git
+	New ruleset check_other which is called for all unknown SMTP
+		commands in the server and for commands which do not
+		have specific rulesets, e.g., NOOP and VERB.
+	New ruleset clt_features which can be used to select features
+		in the SMTP client per server.  Currently only two
+		flags are available: D/M to disable DANE/MTA-STS,
+		respectively.
+	New compile time option NO_EOH_FIELDS to disable the special
+		meaning of the headers Message: and Text: to denote the
+		end of the message header.
+	Avoid leaking session macros for an envelope between
+		delivery attempts to different servers.  This problem
+		could have affected check_compat.
+	Avoid leaking actual SMTP replies between delivery attempts
+		to different servers which could cause bogus logging
+		of reply= entries.
+	Change default SMTP reply code for STARTTLS related problems
+		from 403 to 454 to better match the RFCs.
+	Fix a theoretical buffer overflow when encountering an
+		unknown/unsupported socket address family on an
+		operating system where sa_data is larger than 30
+		(the standard is 14).  Based on patch by Toomas Soome.
+	Several potential memory leaks and other similar problems
+		(mostly in error handling code) have been fixed.
+		Problems reported by Tomas Korbar of RedHat.
+	Previously the commands GET, POST, CONNECT, or USER terminate
+		a connection immediately only if sent as first command.
+		Now this is also done if any of these is sent directly
+		after STARTTLS or if the 'h' option is set via
+		srv_features.
+	CDB map locking has been changed so a sendmail process which
+		does have a CDB map open does not block an in-place
+		update of the map by makemap.  The simple workaround
+		for that problem in earlier versions is to create
+		the map under a different name and then move it
+		into place.
+	On some systems the rejection of a RCPT by a milter could
+		silently fail.
+	CONFIG: New FEATURE(`check_other') to provide a default
+		check_other ruleset.
+	CONFIG: FEATURE(`tls_failures') is deprecated and will be
+		removed in future versions because it has a fundamental
+		problem: it is message oriented but STARTTLS is
+		session oriented.  For example, having multiple
+		RCPTs in one envelope for different destinations,
+		with different temporary errors, does not work
+		properly, as the persistent macro applies to all
+		RCPTs and hence implicitly to all destinations (servers).
+		The option TLSFallbacktoClear should be used if needed.
+	CONTRIB: AuthRealm.p0 has been modified for 8.16.1 by Anne Bennett.
+	CONTRIB: Added cidrexpand -O option for suppressing duplicates from
+		a CIDR expansion that overlaps a later entry and -S option
+		for skipping comments exactly like makemap does.
+	MAIL.LOCAL: Enhance some error messages to simplify
+		troubleshooting.
+	Portability:
+		Add support for Darwin 19 & 20.
+		Use proper FreeBSD version define to allow for cross
+			compiling.  Fix from Brooks Davis of the FreeBSD
+			project.
+		NOTE: File locking using fcntl() does not interoperate
+		  with Berkeley DB 5.x (and probably later).  Use
+		  CDB, flock() (-DHASFLOCK), or an earlier Berkeley
+		  DB version.  Problem noted by Harald Hannelius.
+	New Files:
+		cf/feature/check_other.m4
+		cf/feature/sts.m4
+		devtools/OS/Darwin.19.x
+		devtools/OS/Darwin.20.x
+		include/sm/ixlen.h
+		libsm/ilenx.c
+		libsm/lowercase.c
+		libsm/strcaseeq.c
+		libsm/t-ixlen.c
+		libsm/t-ixlen.sh
+		libsm/t-streq.c
+		libsm/t-streq.sh
+		libsm/utf8_valid.c
+		libsm/uxtext_unquote.c
+		libsm/xleni.c
+		libsmutil/t-lockfile.c
+		libsmutil/t-lockfile-0.sh
+		libsmutil/t-maplock-0.sh
+
 8.16.1/8.16.1	2020/07/05
 	SECURITY: If sendmail tried to reuse an SMTP session which had
 		already been closed by the server, then the connection
@@ -114,14 +404,22 @@ summary of the changes in that release.
 		changes in sys/sem.h
 		On Linux set MAXHOSTNAMELEN (the maximum length
 		of a FQHN) to 256 if it is less than that value.
-	Added Files:
+	New Files:
 		cf/feature/blocklist_recipients.m4
+		cf/feature/check_cert_altnames.m4
 		cf/feature/tls_failures.m4
 		devtools/OS/Darwin.14.x
 		devtools/OS/Darwin.15.x
 		devtools/OS/Darwin.16.x
+		devtools/OS/Darwin.17.x
+		devtools/OS/Darwin.18.x
+		include/sm/notify.h
+		libsm/notify.c
+		libsm/t-notify.c
 		libsmdb/smcdb.c
 		sendmail/ratectrl.h
+		sendmail/tls.h
+		sendmail/tlsh.c
 
 8.15.2/8.15.2	2015/07/03
 	If FEATURE(`nopercenthack') is used then some bogus input triggered
@@ -335,7 +633,7 @@ summary of the changes in that release.
 		On Linux use socklen_t as the type for the 3rd argument
 		for getsockname/getpeername if the glibc version is at
 		least 2.1.
-	Added Files:
+	New Files:
 		devtools/OS/Darwin.12.x
 		devtools/OS/Darwin.13.x
 
@@ -416,7 +714,7 @@ summary of the changes in that release.
 		Add support for Darwin 11.x (Mac OS X 10.7).
 		Add support for SunOS 5.12 (aka Solaris 12). Patch from
 		John Beck of Oracle.
-	Added Files:
+	New Files:
 		devtools/OS/Darwin.11.x
 		devtools/OS/SunOS.5.12
 
@@ -601,7 +899,7 @@ summary of the changes in that release.
 		Chris Behrens of Concentric.
 		Add support for SCO OpenServer 6, patch from Boyd Gerber.
 	DEVTOOLS: Clarify that confSHAREDLIBDIR requires a trailing slash.
-	Added Files:
+	New Files:
 		devtools/OS/Darwin.9.x
 		devtools/OS/OSR.i386
 
@@ -1825,7 +2123,7 @@ summary of the changes in that release.
 		Use strerror(3) on Linux.  If this causes a problem on
 			your Linux distribution, compile with
 			-DHASSTRERROR=0 and tell sendmail.org about it.
-	Added Files:
+	New Files:
 		devtools/OS/AIX.5.2
 
 8.12.9/8.12.9	2003/03/29
@@ -3987,7 +4285,7 @@ summary of the changes in that release.
 		have a From line.
 	VACATION: Read all of the headers before deciding whether or not
 		to respond instead of stopping after finding recipient.
-	Added Files:
+	New Files:
 		cf/ostype/darwin.m4
 		contrib/cidrexpand
 		contrib/link_hash.sh
@@ -4004,7 +4302,7 @@ summary of the changes in that release.
 		Purczynski of elzabsoft.pl.
 	SECURITY: Add more vigilance around set*uid(), setgid(), setgroups(),
 		initgroups(), and chroot() calls.
-	Added Files:
+	New Files:
 		test/t_setuid.c
 
 8.10.1/8.10.1	2000/04/06
@@ -4109,7 +4407,7 @@ summary of the changes in that release.
 	VACATION: Fix -t option which is ignored but available for
 		compatibility with Sun's version, based on patch from
 		Volker Dobler of Infratest Burke.
-	Added Files:
+	New Files:
 		devtools/M4/UNIX/smlib.m4
 		devtools/OS/OSF1.V5.0
 	Deleted Files:
@@ -5269,7 +5567,7 @@ summary of the changes in that release.
 		characters (in LMTP mode), mail.local split the incoming
 		line up into 2046-character output lines (excluding the
 		newline).  If an input line was 2047 characters long
-		(excluding CR-LF) and the last character was a '.',
+		(excluding CRLF) and the last character was a '.',
 		mail.local saw it as the end of input, transferred it to the
 		user mailbox and tried to write an `ok' back to sendmail.
 		If the message was much longer, both sendmail and
@@ -7552,7 +7850,7 @@ summary of the changes in that release.
 		files that are group writable are considered "unsafe" -- that
 		is, programs and files referenced from such files are not
 		valid recipients.
-	Delete bogosity test for FallBackMX host; this prevented it to be a
+	Delete bogosity test for FallBackMXhost; this prevented it to be a
 		name that was not in DNS or was a domain-literal.  Problem
 		noted by Tom May.
 	Change the introduction to error messages to more clearly delineate
@@ -8291,7 +8589,7 @@ summary of the changes in that release.
 		should show the pathname rather than hex bytes.
 	Restore ``-ba'' mode -- this reads a file from stdin and parses
 		the header for envelope sender information and uses
-		CR-LF as message terminators.  It was thought to be
+		CRLF as message terminators.  It was thought to be
 		obsolete (used only for Arpanet NCP protocols), but it
 		turns out that the UK ``Grey Book'' protocols require
 		that functionality.
@@ -10619,7 +10917,7 @@ summary of the changes in that release.
 		as well as the effective.  The program test/t_setreuid.c
 		will test to see if your implementation of setreuid(2)
 		is appropriately functional.
-	The FallBackMX (option V) handling failed to properly identify
+	The FallBackMXhost (option V) handling failed to properly identify
 		fallback to yourself -- most of the code was there,
 		but it wasn't being enabled.  Problem noted by Murray
 		Kucherawy of the University of Waterloo.

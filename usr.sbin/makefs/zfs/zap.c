@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 The FreeBSD Foundation
  *
@@ -167,6 +167,15 @@ zap_add_uint64(zfs_zap_t *zap, const char *name, uint64_t val)
 }
 
 void
+zap_add_uint64_self(zfs_zap_t *zap, uint64_t val)
+{
+	char name[32];
+
+	snprintf(name, sizeof(name), "%jx", (uintmax_t)val);
+	zap_add(zap, name, sizeof(uint64_t), 1, (uint8_t *)&val);
+}
+
+void
 zap_add_string(zfs_zap_t *zap, const char *name, const char *val)
 {
 	zap_add(zap, name, 1, strlen(val) + 1, val);
@@ -215,7 +224,6 @@ zap_micro_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	dnode = zap->dnode;
 	dnode->dn_maxblkid = 0;
 	dnode->dn_datablkszsec = bytes >> MINBLOCKSHIFT;
-	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 
 	vdev_pwrite_dnode_data(zfs, dnode, zfs->filebuf, bytes, loc);
 }
@@ -388,7 +396,7 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	 * header.
 	 */
 	prefixlen = zap_fat_write_prefixlen(zap, &l);
-	lblkcnt = 1 << prefixlen;
+	lblkcnt = (uint64_t)1 << prefixlen;
 	leafblks = ecalloc(lblkcnt, blksz);
 	for (unsigned int li = 0; li < lblkcnt; li++) {
 		l.l_phys = (zap_leaf_phys_t *)(leafblks + li * blksz);
@@ -505,10 +513,8 @@ zap_fat_write(zfs_opt_t *zfs, zfs_zap_t *zap)
 	 * Write the whole thing to disk.
 	 */
 	dnode = zap->dnode;
-	dnode->dn_nblkptr = 1;
 	dnode->dn_datablkszsec = blksz >> MINBLOCKSHIFT;
 	dnode->dn_maxblkid = lblkcnt + 1;
-	dnode->dn_flags = DNODE_FLAG_USED_BYTES;
 
 	c = dnode_cursor_init(zfs, zap->os, zap->dnode,
 	    (lblkcnt + 1) * blksz, blksz);

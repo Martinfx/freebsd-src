@@ -29,15 +29,7 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)yacc.c	8.3 (Berkeley) 4/2/94";
-#endif
-#endif
-
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -56,7 +48,7 @@ y_entries(void)
 	bool	in_rule;
 	char	tok[MAXTOKEN];
 
-	in_rule = NO;
+	in_rule = false;
 
 	while (GETC(!=, EOF))
 		switch (c) {
@@ -70,12 +62,12 @@ y_entries(void)
 			break;
 		case '{':
 			if (skip_key('}'))
-				in_rule = NO;
+				in_rule = false;
 			break;
 		case '\'':
 		case '"':
 			if (skip_key(c))
-				in_rule = NO;
+				in_rule = false;
 			break;
 		case '%':
 			if (GETC(==, '%'))
@@ -90,7 +82,7 @@ y_entries(void)
 			break;
 		case '|':
 		case ';':
-			in_rule = NO;
+			in_rule = false;
 			break;
 		default:
 			if (in_rule || (!isalpha(c) && c != '.' && c != '_'))
@@ -109,7 +101,7 @@ y_entries(void)
 			}
 			if (c == ':') {
 				pfnote(tok, lineno);
-				in_rule = YES;
+				in_rule = true;
 			}
 			else
 				(void)ungetc(c, inf);

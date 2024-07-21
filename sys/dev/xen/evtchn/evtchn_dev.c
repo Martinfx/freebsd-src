@@ -35,9 +35,6 @@
  * IN THE SOFTWARE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/uio.h>
@@ -57,8 +54,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/filio.h>
 #include <sys/vnode.h>
-
-#include <machine/xen/synch_bitops.h>
 
 #include <xen/xen-os.h>
 #include <xen/evtchn.h>

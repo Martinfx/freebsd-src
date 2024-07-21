@@ -1,8 +1,6 @@
-#	From: @(#)Makefile	8.1 (Berkeley) 6/6/93
-# $FreeBSD$
-
 .PATH: ${.CURDIR:H}/common_source
 
+PACKAGE=lp
 PROG=	lpc
 MAN=	lpc.8
 SRCS=	lpc.c cmds.c cmdtab.c movejobs.c

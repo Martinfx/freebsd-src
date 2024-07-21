@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	syscons-data
 
 FILES=	INDEX.keymaps \

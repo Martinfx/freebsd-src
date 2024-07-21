@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/usr.sbin/ypserv
 
 PACKAGE=yp

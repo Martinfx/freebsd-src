@@ -22,8 +22,6 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
 .Dd January 3, 2009
 .Dt DEV_CLONE 9
 .Os
@@ -44,7 +42,7 @@ EVENTHANDLER_REGISTER(dev_clone, clone_handler, arg, priority);
 .Sh DESCRIPTION
 A device driver may register a listener that will be notified each time
 a name lookup on the
-.Xr devfs 5
+.Xr devfs 4
 mount point fails to find the vnode.
 A listener shall be registered for the
 .Va dev_clone
@@ -74,5 +72,5 @@ that were started before
 .Fn drain_dev_clone_events
 call, are finished before it returns control.
 .Sh SEE ALSO
-.Xr devfs 5 ,
+.Xr devfs 4 ,
 .Xr namei 9

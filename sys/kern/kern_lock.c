@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Attilio Rao <attilio@FreeBSD.org>
  * All rights reserved.
@@ -30,9 +30,6 @@
 
 #include "opt_ddb.h"
 #include "opt_hwpmc_hooks.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/kdb.h>
@@ -118,7 +115,7 @@ CTASSERT(LK_UNLOCKED == (LK_UNLOCKED &
 	}								\
 } while (0)
 
-static bool __always_inline
+static __always_inline bool
 LK_CAN_SHARE(uintptr_t x, int flags, bool fp)
 {
 
@@ -140,9 +137,6 @@ LK_CAN_SHARE(uintptr_t x, int flags, bool fp)
 	(((x) & LK_NOWITNESS) == 0 && !LK_TRYOP(x))
 #define	LK_TRYWIT(x)							\
 	(LK_TRYOP(x) ? LOP_TRYLOCK : 0)
-
-#define	lockmgr_disowned(lk)						\
-	(((lk)->lk_lock & ~(LK_FLAGMASK & ~LK_SHARE)) == LK_KERNPROC)
 
 #define	lockmgr_xlocked_v(v)						\
 	(((v) & ~(LK_FLAGMASK & ~LK_SHARE)) == (uintptr_t)curthread)
@@ -186,9 +180,10 @@ struct lockmgr_wait {
 	int itimo;
 };
 
-static bool __always_inline lockmgr_slock_try(struct lock *lk, uintptr_t *xp,
+static __always_inline bool lockmgr_slock_try(struct lock *lk, uintptr_t *xp,
     int flags, bool fp);
-static bool __always_inline lockmgr_sunlock_try(struct lock *lk, uintptr_t *xp);
+static __always_inline bool lockmgr_sunlock_try(struct lock *lk,
+    uintptr_t *xp);
 
 static void
 lockmgr_exit(u_int flags, struct lock_object *ilk, int wakeup_swapper)
@@ -246,7 +241,7 @@ static void
 lockmgr_note_exclusive_release(struct lock *lk, const char *file, int line)
 {
 
-	if (LK_HOLDER(lockmgr_read_value(lk)) != LK_KERNPROC) {
+	if (!lockmgr_disowned(lk)) {
 		WITNESS_UNLOCK(&lk->lock_object, LOP_EXCLUSIVE, file, line);
 		TD_LOCKS_DEC(curthread);
 	}
@@ -517,7 +512,7 @@ lockdestroy(struct lock *lk)
 	lock_destroy(&lk->lock_object);
 }
 
-static bool __always_inline
+static __always_inline bool
 lockmgr_slock_try(struct lock *lk, uintptr_t *xp, int flags, bool fp)
 {
 
@@ -537,7 +532,7 @@ lockmgr_slock_try(struct lock *lk, uintptr_t *xp, int flags, bool fp)
 	return (false);
 }
 
-static bool __always_inline
+static __always_inline bool
 lockmgr_sunlock_try(struct lock *lk, uintptr_t *xp)
 {
 
@@ -603,7 +598,7 @@ lockmgr_slock_hard(struct lock *lk, u_int flags, struct lock_object *ilk,
 #endif
 	struct lock_delay_arg lda;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		goto out;
 
 	tid = (uintptr_t)curthread;
@@ -789,7 +784,7 @@ lockmgr_xlock_hard(struct lock *lk, u_int flags, struct lock_object *ilk,
 #endif
 	struct lock_delay_arg lda;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		goto out;
 
 	tid = (uintptr_t)curthread;
@@ -985,7 +980,7 @@ lockmgr_upgrade(struct lock *lk, u_int flags, struct lock_object *ilk,
 	int error = 0;
 	int op;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		goto out;
 
 	tid = (uintptr_t)curthread;
@@ -1046,7 +1041,7 @@ lockmgr_lock_flags(struct lock *lk, u_int flags, struct lock_object *ilk,
 	u_int op;
 	bool locked;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		return (0);
 
 	op = flags & LK_TYPE_MASK;
@@ -1109,7 +1104,7 @@ lockmgr_sunlock_hard(struct lock *lk, uintptr_t x, u_int flags, struct lock_obje
 {
 	int wakeup_swapper = 0;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		goto out;
 
 	wakeup_swapper = wakeupshlk(lk, file, line);
@@ -1128,7 +1123,7 @@ lockmgr_xunlock_hard(struct lock *lk, uintptr_t x, u_int flags, struct lock_obje
 	u_int realexslp;
 	int queue;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		goto out;
 
 	tid = (uintptr_t)curthread;
@@ -1138,7 +1133,7 @@ lockmgr_xunlock_hard(struct lock *lk, uintptr_t x, u_int flags, struct lock_obje
 	 * any waiter.
 	 * Fix-up the tid var if the lock has been disowned.
 	 */
-	if (LK_HOLDER(x) == LK_KERNPROC)
+	if (lockmgr_disowned_v(x))
 		tid = LK_KERNPROC;
 
 	/*
@@ -1320,7 +1315,7 @@ __lockmgr_args(struct lock *lk, u_int flags, struct lock_object *ilk,
 	int contested = 0;
 #endif
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		return (0);
 
 	error = 0;
@@ -1729,7 +1724,7 @@ _lockmgr_assert(const struct lock *lk, int what, const char *file, int line)
 {
 	int slocked = 0;
 
-	if (KERNEL_PANICKED())
+	if (SCHEDULER_STOPPED())
 		return;
 	switch (what) {
 	case KA_SLOCKED:

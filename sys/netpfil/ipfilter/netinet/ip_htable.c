@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -48,9 +47,6 @@
 #include "netinet/ip_htable.h"
 /* END OF INCLUDES */
 
-#if !defined(lint)
-static const char rcsid[] = "@(#)$Id$";
-#endif
 
 # ifdef USE_INET6
 static iphtent_t *ipf_iphmfind6(iphtable_t *, i6addr_t *);
@@ -177,9 +173,7 @@ ipf_htable_soft_destroy(ipf_main_softc_t *softc, void *arg)
 /* Initialise the hash table ready for use.                                 */
 /* ------------------------------------------------------------------------ */
 static int
-ipf_htable_soft_init(softc, arg)
-	ipf_main_softc_t *softc;
-	void *arg;
+ipf_htable_soft_init(ipf_main_softc_t *softc, void *arg)
 {
 	ipf_htable_softc_t *softh = arg;
 

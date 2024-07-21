@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Rubicon Communications, LLC (Netgate)
  *
@@ -26,9 +26,6 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -53,7 +50,7 @@ struct simplebus_devinfo *simple_mfd_setup_dinfo(device_t dev, phandle_t node,
     struct simplebus_devinfo *di);
 
 #include "syscon_if.h"
-#include <dev/extres/syscon/syscon.h>
+#include <dev/syscon/syscon.h>
 
 MALLOC_DECLARE(M_SYSCON);
 
@@ -89,7 +86,7 @@ simple_mfd_syscon_read_4(struct syscon *syscon, bus_size_t offset)
 	uint32_t val;
 
 	sc = device_get_softc(syscon->pdev);
-	SYSCON_ASSERT_LOCKED(sc);;
+	SYSCON_ASSERT_LOCKED(sc);
 	val = bus_read_4(sc->mem_res, offset);
 	return (val);
 }
@@ -171,7 +168,6 @@ simple_mfd_attach(device_t dev)
 {
 	struct simple_mfd_softc *sc;
 	phandle_t node, child;
-	device_t cdev;
 	int rid;
 
 	sc = device_get_softc(dev);
@@ -206,9 +202,7 @@ simple_mfd_attach(device_t dev)
 
 	/* Attach child devices */
 	for (child = OF_child(node); child > 0; child = OF_peer(child)) {
-		cdev = simple_mfd_add_device(dev, child, 0, NULL, -1, NULL);
-		if (cdev != NULL)
-			device_probe_and_attach(cdev);
+		(void)simple_mfd_add_device(dev, child, 0, NULL, -1, NULL);
 	}
 
 	if (ofw_bus_is_compatible(dev, "syscon")) {

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	ibcacheedit
 SRCS=	ibcacheedit.c
 LIBADD=	ibnetdisc

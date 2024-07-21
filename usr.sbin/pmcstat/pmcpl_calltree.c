@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012, Fabien Thomas
  * All rights reserved.
@@ -32,9 +32,6 @@
  * Output file format compatible with Kcachegrind (kdesdk).
  * Handle top mode with a sorted tree display.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/endian.h>

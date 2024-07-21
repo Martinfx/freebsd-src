@@ -1,5 +1,3 @@
-# $FreeBSD$ 
-
 PROGS=	listen connect
 MAN=
 

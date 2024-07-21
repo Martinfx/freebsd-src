@@ -43,6 +43,7 @@
 #define LISTEN_DNSPORT_H
 
 #include "util/netevent.h"
+#include "daemon/acl_list.h"
 #ifdef HAVE_NGHTTP2_NGHTTP2_H
 #include <nghttp2/nghttp2.h>
 #endif
@@ -106,12 +107,16 @@ enum listen_type {
  * socket properties (just like NSD nsd_socket structure definition)
  */
 struct unbound_socket {
-	/** socket-address structure */
-        struct addrinfo *       addr;
+	/** the address of the socket */
+	struct sockaddr* addr;
+	/** length of the address */
+	socklen_t addrlen;
 	/** socket descriptor returned by socket() syscall */
-        int                     s;
-	/** address family (AF_INET/IF_INET6) */
-        int                     fam;
+	int s;
+	/** address family (AF_INET/AF_INET6) */
+	int fam;
+	/** ACL on the socket (listening interface) */
+	struct acl_addr* acl;
 };
 
 /**
@@ -125,7 +130,10 @@ struct listen_port {
 	int fd;
 	/** type of file descriptor, udp or tcp */
 	enum listen_type ftype;
-	/** fill in unbpound_socket structure for every opened socket at Unbound startup */
+	/** if the port should support PROXYv2 */
+	int pp2_enabled;
+	/** fill in unbound_socket structure for every opened socket at
+	 * Unbound startup */
 	struct unbound_socket* socket;
 };
 

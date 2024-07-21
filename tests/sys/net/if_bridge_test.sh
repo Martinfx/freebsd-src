@@ -1,6 +1,5 @@
-# $FreeBSD$
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2020 The FreeBSD Foundation
 #
@@ -40,6 +39,7 @@ bridge_transmit_ipv4_unicast_head()
 bridge_transmit_ipv4_unicast_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair_alcatraz=$(vnet_mkepair)
 	epair_singsing=$(vnet_mkepair)
@@ -77,6 +77,7 @@ stp_head()
 stp_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair_one=$(vnet_mkepair)
 	epair_two=$(vnet_mkepair)
@@ -143,6 +144,7 @@ stp_vlan_head()
 stp_vlan_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair_one=$(vnet_mkepair)
 	epair_two=$(vnet_mkepair)
@@ -217,6 +219,7 @@ static_head()
 static_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair=$(vnet_mkepair)
 	bridge=$(vnet_mkbridge)
@@ -273,12 +276,8 @@ span_head()
 
 span_body()
 {
-	set -x
 	vnet_init
-
-	if [ "$(atf_config_get ci false)" = "true" ]; then
-		atf_skip "https://bugs.freebsd.org/260461"
-	fi
+	vnet_init_bridge
 
 	epair=$(vnet_mkepair)
 	epair_span=$(vnet_mkepair)
@@ -332,6 +331,7 @@ delete_with_members_head()
 delete_with_members_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	bridge=$(vnet_mkbridge)
 	epair=$(vnet_mkepair)
@@ -358,6 +358,7 @@ mac_conflict_head()
 mac_conflict_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair=$(vnet_mkepair)
 
@@ -396,6 +397,7 @@ inherit_mac_head()
 inherit_mac_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	bridge=$(vnet_mkbridge)
 	epair=$(vnet_mkepair)
@@ -424,6 +426,7 @@ stp_validation_head()
 stp_validation_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair_one=$(vnet_mkepair)
 	epair_two=$(vnet_mkepair)
@@ -467,6 +470,7 @@ gif_head()
 gif_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair=$(vnet_mkepair)
 
@@ -551,6 +555,7 @@ check_mtu()
 mtu_body()
 {
 	vnet_init
+	vnet_init_bridge
 
 	epair=$(vnet_mkepair)
 	gif=$(ifconfig gif create)
@@ -602,6 +607,102 @@ mtu_cleanup()
 	vnet_cleanup
 }
 
+atf_test_case "vlan" "cleanup"
+vlan_head()
+{
+	atf_set descr 'Ensure the bridge takes vlan ID into account, PR#270559'
+	atf_set require.user root
+}
+
+vlan_body()
+{
+	vnet_init
+	vnet_init_bridge
+
+	vid=1
+
+	epaira=$(vnet_mkepair)
+	epairb=$(vnet_mkepair)
+
+	br=$(vnet_mkbridge)
+
+	vnet_mkjail one ${epaira}b
+	vnet_mkjail two ${epairb}b
+
+	ifconfig ${br} up
+	ifconfig ${epaira}a up
+	ifconfig ${epairb}a up
+	ifconfig ${br} addm ${epaira}a addm ${epairb}a
+
+	jexec one ifconfig ${epaira}b up
+	jexec one ifconfig ${epaira}b.${vid} create
+
+	jexec two ifconfig ${epairb}b up
+	jexec two ifconfig ${epairb}b.${vid} create
+
+	# Create a MAC address conflict between an untagged and tagged interface
+	jexec two ifconfig ${epairb}b.${vid} ether 02:05:6e:06:28:1a
+	jexec one ifconfig ${epaira}b ether 02:05:6e:06:28:1a
+	jexec one ifconfig ${epaira}b.${vid} ether 02:05:6e:06:28:1b
+
+	# Add ip address, will also populate $br's fowarding table, by ARP announcement
+	jexec one ifconfig ${epaira}b.${vid} 192.0.2.1/24 up
+	jexec two ifconfig ${epairb}b.${vid} 192.0.2.2/24 up
+
+	sleep 0.5
+
+	ifconfig ${br}
+	jexec one ifconfig
+	jexec two ifconfig
+	ifconfig ${br} addr
+
+	atf_check -s exit:0 -o ignore \
+	    jexec one ping -c 1 -t 1 192.0.2.2
+
+	# This will trigger a mac flap (by ARP announcement)
+	jexec one ifconfig ${epaira}b 192.0.2.1/24 up
+
+	sleep 0.5
+
+	ifconfig ${br} addr
+
+	atf_check -s exit:0 -o ignore \
+	    jexec one ping -c 1 -t 1 192.0.2.2
+}
+
+vlan_cleanup()
+{
+	vnet_cleanup
+}
+
+atf_test_case "many_bridge_members" "cleanup"
+many_bridge_members_head()
+{
+	atf_set descr 'many_bridge_members ifconfig test'
+	atf_set require.user root
+}
+
+many_bridge_members_body()
+{
+	vnet_init
+	vnet_init_bridge
+
+	bridge=$(vnet_mkbridge)
+	ifcount=256
+	for _ in $(seq 1 $ifcount); do
+		epair=$(vnet_mkepair)
+		ifconfig "${bridge}" addm "${epair}"a
+	done
+
+	atf_check -s exit:0 -o inline:"$ifcount\n" \
+	  sh -c "ifconfig ${bridge} | grep member: | wc -l | xargs"
+}
+
+many_bridge_members_cleanup()
+{
+	vnet_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "bridge_transmit_ipv4_unicast"
@@ -615,4 +716,6 @@ atf_init_test_cases()
 	atf_add_test_case "stp_validation"
 	atf_add_test_case "gif"
 	atf_add_test_case "mtu"
+	atf_add_test_case "vlan"
+	atf_add_test_case "many_bridge_members"
 }

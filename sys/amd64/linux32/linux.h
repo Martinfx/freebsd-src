@@ -28,8 +28,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _AMD64_LINUX_H_
@@ -48,6 +46,10 @@
 #define	LINUX32_MAXSSIZ		(64 * 1024 * 1024)	/* 64MB */
 #define	LINUX32_MAXVMEM		0			/* Unlimited */
 
+#define	LINUX_ARCHWANT_MMAP2PGOFF	1	/* 32-bit off_t want offset
+						 * represented in multiples
+						 * of page size. */
+
 /*
  * Provide a separate set of types for the Linux types.
  */
@@ -63,7 +65,6 @@ typedef unsigned short	l_ushort;
 typedef l_ulong		l_uintptr_t;
 typedef l_long		l_clock_t;
 typedef l_int		l_daddr_t;
-typedef l_ushort	l_dev_t;
 typedef l_uint		l_gid_t;
 typedef l_ushort	l_gid16_t;
 typedef l_ulong		l_ino_t;
@@ -103,9 +104,9 @@ typedef struct {
 /*
  * Miscellaneous
  */
-#define	LINUX_AT_COUNT		21	/* Count of used aux entry types.
+#define	LINUX_AT_COUNT		22	/* Count of used aux entry types.
 					 * Keep this synchronized with
-					 * linux_fixup_elf() code.
+					 * linux_copyout_auxargs() code.
 					 */
 struct l___sysctl_args
 {
@@ -180,15 +181,13 @@ struct l_timespec64 {
 };
 
 struct l_newstat {
-	l_ushort	st_dev;
-	l_ushort	__pad1;
+	l_ulong		st_dev;
 	l_ulong		st_ino;
 	l_ushort	st_mode;
 	l_ushort	st_nlink;
 	l_ushort	st_uid;
 	l_ushort	st_gid;
-	l_ushort	st_rdev;
-	l_ushort	__pad2;
+	l_ulong		st_rdev;
 	l_ulong		st_size;
 	l_ulong		st_blksize;
 	l_ulong		st_blocks;
@@ -199,7 +198,8 @@ struct l_newstat {
 	l_ulong		__unused5;
 };
 
-struct l_stat {
+/* __old_kernel_stat now */
+struct l_old_stat {
 	l_ushort	st_dev;
 	l_ulong		st_ino;
 	l_ushort	st_mode;
@@ -218,19 +218,18 @@ struct l_stat {
 };
 
 struct l_stat64 {
-	l_ushort	st_dev;
-	u_char		__pad0[10];
+	l_ulonglong	st_dev;
+	u_char		__pad0[4];
 	l_ulong		__st_ino;
 	l_uint		st_mode;
 	l_uint		st_nlink;
 	l_ulong		st_uid;
 	l_ulong		st_gid;
-	l_ushort	st_rdev;
-	u_char		__pad3[10];
+	l_ulonglong	st_rdev;
+	u_char		__pad3[4];
 	l_longlong	st_size;
 	l_ulong		st_blksize;
-	l_ulong		st_blocks;
-	l_ulong		__pad4;
+	l_ulonglong	st_blocks;
 	struct l_timespec	st_atim;
 	struct l_timespec	st_mtim;
 	struct l_timespec	st_ctim;
@@ -303,40 +302,6 @@ union l_semun {
 	l_uintptr_t	__buf;
 	l_uintptr_t	__pad;
 };
-
-struct l_ifmap {
-	l_ulong		mem_start;
-	l_ulong		mem_end;
-	l_ushort	base_addr;
-	u_char		irq;
-	u_char		dma;
-	u_char		port;
-	/* 3 bytes spare */
-};
-
-struct l_ifreq {
-	union {
-		char	ifrn_name[LINUX_IFNAMSIZ];
-	} ifr_ifrn;
-
-	union {
-		struct l_sockaddr	ifru_addr;
-		struct l_sockaddr	ifru_dstaddr;
-		struct l_sockaddr	ifru_broadaddr;
-		struct l_sockaddr	ifru_netmask;
-		struct l_sockaddr	ifru_hwaddr;
-		l_short		ifru_flags[1];
-		l_int		ifru_ivalue;
-		l_int		ifru_mtu;
-		struct l_ifmap	ifru_map;
-		char		ifru_slave[LINUX_IFNAMSIZ];
-		l_uintptr_t	ifru_data;
-	} ifr_ifru;
-};
-
-#define	ifr_name	ifr_ifrn.ifrn_name	/* Interface name */
-#define	ifr_hwaddr	ifr_ifru.ifru_hwaddr	/* MAC address */
-#define	ifr_ifindex	ifr_ifru.ifru_ivalue	/* Interface index */
 
 struct l_ifconf {
 	int	ifc_len;
@@ -427,31 +392,8 @@ struct l_user_desc {
 	(((desc)->b >> LINUX_ENTRY_B_USEABLE) & 1)
 
 #ifdef _KERNEL
-struct iovec;
-struct uio;
-
-struct l_iovec32 {
-	uint32_t	iov_base;
-	l_size_t	iov_len;
-};
-
-int linux32_copyiniov(struct l_iovec32 *iovp32, l_ulong iovcnt,
-			    struct iovec **iovp, int error);
-int linux32_copyinuio(struct l_iovec32 *iovp, l_ulong iovcnt,
-			    struct uio **uiop);
 int linux_copyout_rusage(struct rusage *ru, void *uaddr);
 #endif /* _KERNEL */
-
-/* robust futexes */
-struct linux_robust_list {
-	l_uintptr_t			next;
-};
-
-struct linux_robust_list_head {
-	struct linux_robust_list	list;
-	l_long				futex_offset;
-	l_uintptr_t			pending_list;
-};
 
 /* This corresponds to 'struct user_regs_struct32' in Linux. */
 struct linux_pt_regset32 {
@@ -479,6 +421,10 @@ struct reg32;
 
 void	bsd_to_linux_regset32(const struct reg32 *b_reg,
 	    struct linux_pt_regset32 *l_regset);
+int	linux_ptrace_peekuser(struct thread *td, pid_t pid,
+	    void *addr, void *data);
+int	linux_ptrace_pokeuser(struct thread *td, pid_t pid,
+	    void *addr, void *data);
 
 extern bool linux32_emulate_i386;
 #endif /* _KERNEL */

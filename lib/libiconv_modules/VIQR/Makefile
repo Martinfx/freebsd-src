@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SHLIB=	VIQR
 SRCS+=	citrus_viqr.c
 

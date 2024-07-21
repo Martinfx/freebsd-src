@@ -82,11 +82,13 @@
  * 3/1 memory split doesn't leave much room for 16M chunks.
  */
 #ifdef _ILP32
-int zfs_max_recordsize =  1 * 1024 * 1024;
+uint_t zfs_max_recordsize =  1 * 1024 * 1024;
 #else
-int zfs_max_recordsize = 16 * 1024 * 1024;
+uint_t zfs_max_recordsize = 16 * 1024 * 1024;
 #endif
 static int zfs_allow_redacted_dataset_mount = 0;
+
+int zfs_snapshot_history_enabled = 1;
 
 #define	SWITCH64(x, y) \
 	{ \
@@ -104,7 +106,7 @@ static void dsl_dataset_unset_remap_deadlist_object(dsl_dataset_t *ds,
 
 static void unload_zfeature(dsl_dataset_t *ds, spa_feature_t f);
 
-extern int spa_asize_inflation;
+extern uint_t spa_asize_inflation;
 
 static zil_header_t zero_zil;
 
@@ -131,30 +133,6 @@ parent_delta(dsl_dataset_t *ds, int64_t delta)
 }
 
 void
-dsl_dataset_feature_set_activation(const blkptr_t *bp, dsl_dataset_t *ds)
-{
-	spa_feature_t f;
-	if (BP_GET_LSIZE(bp) > SPA_OLD_MAXBLOCKSIZE) {
-		ds->ds_feature_activation[SPA_FEATURE_LARGE_BLOCKS] =
-		    (void *)B_TRUE;
-	}
-
-	f = zio_checksum_to_feature(BP_GET_CHECKSUM(bp));
-	if (f != SPA_FEATURE_NONE) {
-		ASSERT3S(spa_feature_table[f].fi_type, ==,
-		    ZFEATURE_TYPE_BOOLEAN);
-		ds->ds_feature_activation[f] = (void *)B_TRUE;
-	}
-
-	f = zio_compress_to_feature(BP_GET_COMPRESS(bp));
-	if (f != SPA_FEATURE_NONE) {
-		ASSERT3S(spa_feature_table[f].fi_type, ==,
-		    ZFEATURE_TYPE_BOOLEAN);
-		ds->ds_feature_activation[f] = (void *)B_TRUE;
-	}
-}
-
-void
 dsl_dataset_block_born(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx)
 {
 	spa_t *spa = dmu_tx_pool(tx)->dp_spa;
@@ -162,6 +140,7 @@ dsl_dataset_block_born(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx)
 	int compressed = BP_GET_PSIZE(bp);
 	int uncompressed = BP_GET_UCSIZE(bp);
 	int64_t delta;
+	spa_feature_t f;
 
 	dprintf_bp(bp, "ds=%p", ds);
 
@@ -177,7 +156,8 @@ dsl_dataset_block_born(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx)
 		return;
 	}
 
-	ASSERT3U(bp->blk_birth, >, dsl_dataset_phys(ds)->ds_prev_snap_txg);
+	ASSERT3U(BP_GET_LOGICAL_BIRTH(bp), >,
+	    dsl_dataset_phys(ds)->ds_prev_snap_txg);
 	dmu_buf_will_dirty(ds->ds_dbuf, tx);
 	mutex_enter(&ds->ds_lock);
 	delta = parent_delta(ds, used);
@@ -186,14 +166,32 @@ dsl_dataset_block_born(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx)
 	dsl_dataset_phys(ds)->ds_uncompressed_bytes += uncompressed;
 	dsl_dataset_phys(ds)->ds_unique_bytes += used;
 
-	dsl_dataset_feature_set_activation(bp, ds);
+	if (BP_GET_LSIZE(bp) > SPA_OLD_MAXBLOCKSIZE) {
+		ds->ds_feature_activation[SPA_FEATURE_LARGE_BLOCKS] =
+		    (void *)B_TRUE;
+	}
+
+
+	f = zio_checksum_to_feature(BP_GET_CHECKSUM(bp));
+	if (f != SPA_FEATURE_NONE) {
+		ASSERT3S(spa_feature_table[f].fi_type, ==,
+		    ZFEATURE_TYPE_BOOLEAN);
+		ds->ds_feature_activation[f] = (void *)B_TRUE;
+	}
+
+	f = zio_compress_to_feature(BP_GET_COMPRESS(bp));
+	if (f != SPA_FEATURE_NONE) {
+		ASSERT3S(spa_feature_table[f].fi_type, ==,
+		    ZFEATURE_TYPE_BOOLEAN);
+		ds->ds_feature_activation[f] = (void *)B_TRUE;
+	}
 
 	/*
 	 * Track block for livelist, but ignore embedded blocks because
 	 * they do not need to be freed.
 	 */
 	if (dsl_deadlist_is_open(&ds->ds_dir->dd_livelist) &&
-	    bp->blk_birth > ds->ds_dir->dd_origin_txg &&
+	    BP_GET_LOGICAL_BIRTH(bp) > ds->ds_dir->dd_origin_txg &&
 	    !(BP_IS_EMBEDDED(bp))) {
 		ASSERT(dsl_dir_is_clone(ds->ds_dir));
 		ASSERT(spa_feature_is_enabled(spa,
@@ -239,7 +237,7 @@ dsl_dataset_block_remapped(dsl_dataset_t *ds, uint64_t vdev, uint64_t offset,
 		mutex_exit(&ds->ds_remap_deadlist_lock);
 
 		BP_ZERO(&fakebp);
-		fakebp.blk_birth = birth;
+		BP_SET_LOGICAL_BIRTH(&fakebp, birth);
 		DVA_SET_VDEV(dva, vdev);
 		DVA_SET_OFFSET(dva, offset);
 		DVA_SET_ASIZE(dva, size);
@@ -262,7 +260,7 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 		return (0);
 
 	ASSERT(dmu_tx_is_syncing(tx));
-	ASSERT(bp->blk_birth <= tx->tx_txg);
+	ASSERT(BP_GET_LOGICAL_BIRTH(bp) <= tx->tx_txg);
 
 	if (ds == NULL) {
 		dsl_free(tx->tx_pool, tx->tx_txg, bp);
@@ -280,7 +278,7 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 	 * they do not need to be freed.
 	 */
 	if (dsl_deadlist_is_open(&ds->ds_dir->dd_livelist) &&
-	    bp->blk_birth > ds->ds_dir->dd_origin_txg &&
+	    BP_GET_LOGICAL_BIRTH(bp) > ds->ds_dir->dd_origin_txg &&
 	    !(BP_IS_EMBEDDED(bp))) {
 		ASSERT(dsl_dir_is_clone(ds->ds_dir));
 		ASSERT(spa_feature_is_enabled(spa,
@@ -288,7 +286,7 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 		bplist_append(&ds->ds_dir->dd_pending_frees, bp);
 	}
 
-	if (bp->blk_birth > dsl_dataset_phys(ds)->ds_prev_snap_txg) {
+	if (BP_GET_LOGICAL_BIRTH(bp) > dsl_dataset_phys(ds)->ds_prev_snap_txg) {
 		int64_t delta;
 
 		dprintf_bp(bp, "freeing ds=%llu", (u_longlong_t)ds->ds_object);
@@ -320,16 +318,16 @@ dsl_dataset_block_kill(dsl_dataset_t *ds, const blkptr_t *bp, dmu_tx_t *tx,
 		ASSERT3U(ds->ds_prev->ds_object, ==,
 		    dsl_dataset_phys(ds)->ds_prev_snap_obj);
 		ASSERT(dsl_dataset_phys(ds->ds_prev)->ds_num_children > 0);
-		/* if (bp->blk_birth > prev prev snap txg) prev unique += bs */
+		/* if (logical birth > prev prev snap txg) prev unique += bs */
 		if (dsl_dataset_phys(ds->ds_prev)->ds_next_snap_obj ==
-		    ds->ds_object && bp->blk_birth >
+		    ds->ds_object && BP_GET_LOGICAL_BIRTH(bp) >
 		    dsl_dataset_phys(ds->ds_prev)->ds_prev_snap_txg) {
 			dmu_buf_will_dirty(ds->ds_prev->ds_dbuf, tx);
 			mutex_enter(&ds->ds_prev->ds_lock);
 			dsl_dataset_phys(ds->ds_prev)->ds_unique_bytes += used;
 			mutex_exit(&ds->ds_prev->ds_lock);
 		}
-		if (bp->blk_birth > ds->ds_dir->dd_origin_txg) {
+		if (BP_GET_LOGICAL_BIRTH(bp) > ds->ds_dir->dd_origin_txg) {
 			dsl_dir_transfer_space(ds->ds_dir, used,
 			    DD_USED_HEAD, DD_USED_SNAP, tx);
 		}
@@ -643,6 +641,8 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, const void *tag,
 				    dsl_dataset_phys(ds)->ds_prev_snap_obj,
 				    ds, &ds->ds_prev);
 			}
+			if (err != 0)
+				goto after_dsl_bookmark_fini;
 			err = dsl_bookmark_init_ds(ds);
 		} else {
 			if (zfs_flags & ZFS_DEBUG_SNAPNAMES)
@@ -691,11 +691,11 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, const void *tag,
 			winner = dmu_buf_set_user_ie(dbuf, &ds->ds_dbu);
 
 		if (err != 0 || winner != NULL) {
-			bplist_destroy(&ds->ds_pending_deadlist);
 			dsl_deadlist_close(&ds->ds_deadlist);
 			if (dsl_deadlist_is_open(&ds->ds_remap_deadlist))
 				dsl_deadlist_close(&ds->ds_remap_deadlist);
 			dsl_bookmark_fini_ds(ds);
+after_dsl_bookmark_fini:
 			if (ds->ds_prev)
 				dsl_dataset_rele(ds->ds_prev, ds);
 			dsl_dir_rele(ds->ds_dir, ds);
@@ -706,6 +706,7 @@ dsl_dataset_hold_obj(dsl_pool_t *dp, uint64_t dsobj, const void *tag,
 
 			list_destroy(&ds->ds_prop_cbs);
 			list_destroy(&ds->ds_sendstreams);
+			bplist_destroy(&ds->ds_pending_deadlist);
 			mutex_destroy(&ds->ds_lock);
 			mutex_destroy(&ds->ds_opening_lock);
 			mutex_destroy(&ds->ds_sendstream_lock);
@@ -1272,9 +1273,6 @@ dsl_dataset_zero_zil(dsl_dataset_t *ds, dmu_tx_t *tx)
 		zio = zio_root(dp->dp_spa, NULL, NULL, ZIO_FLAG_MUSTSUCCEED);
 		dsl_dataset_sync(ds, zio, tx);
 		VERIFY0(zio_wait(zio));
-
-		/* dsl_dataset_sync_done will drop this reference. */
-		dmu_buf_add_ref(ds->ds_dbuf, ds);
 		dsl_dataset_sync_done(ds, tx);
 	}
 }
@@ -1623,7 +1621,7 @@ dsl_dataset_snapshot_check(void *arg, dmu_tx_t *tx)
 		for (pair = nvlist_next_nvpair(cnt_track, NULL);
 		    pair != NULL; pair = nvlist_next_nvpair(cnt_track, pair)) {
 			int error = 0;
-			char *name;
+			const char *name;
 			uint64_t cnt = 0;
 			dsl_dataset_t *ds;
 
@@ -1655,7 +1653,7 @@ dsl_dataset_snapshot_check(void *arg, dmu_tx_t *tx)
 	    pair != NULL; pair = nvlist_next_nvpair(ddsa->ddsa_snaps, pair)) {
 		int error = 0;
 		dsl_dataset_t *ds;
-		char *name, *atp = NULL;
+		const char *name, *atp = NULL;
 		char dsname[ZFS_MAX_DATASET_NAME_LEN];
 
 		name = nvpair_name(pair);
@@ -1698,7 +1696,6 @@ dsl_dataset_snapshot_sync_impl(dsl_dataset_t *ds, const char *snapname,
 	dsl_dataset_phys_t *dsphys;
 	uint64_t dsobj, crtxg;
 	objset_t *mos = dp->dp_meta_objset;
-	static zil_header_t zero_zil __maybe_unused;
 	objset_t *os __maybe_unused;
 
 	ASSERT(RRW_WRITE_HELD(&dp->dp_config_rwlock));
@@ -1867,7 +1864,8 @@ dsl_dataset_snapshot_sync_impl(dsl_dataset_t *ds, const char *snapname,
 
 	dsl_dir_snap_cmtime_update(ds->ds_dir, tx);
 
-	spa_history_log_internal_ds(ds->ds_prev, "snapshot", tx, " ");
+	if (zfs_snapshot_history_enabled)
+		spa_history_log_internal_ds(ds->ds_prev, "snapshot", tx, " ");
 }
 
 void
@@ -1880,7 +1878,7 @@ dsl_dataset_snapshot_sync(void *arg, dmu_tx_t *tx)
 	for (pair = nvlist_next_nvpair(ddsa->ddsa_snaps, NULL);
 	    pair != NULL; pair = nvlist_next_nvpair(ddsa->ddsa_snaps, pair)) {
 		dsl_dataset_t *ds;
-		char *name, *atp;
+		const char *name, *atp;
 		char dsname[ZFS_MAX_DATASET_NAME_LEN];
 
 		name = nvpair_name(pair);
@@ -1909,7 +1907,7 @@ dsl_dataset_snapshot(nvlist_t *snaps, nvlist_t *props, nvlist_t *errors)
 	boolean_t needsuspend;
 	int error;
 	spa_t *spa;
-	char *firstname;
+	const char *firstname;
 	nvlist_t *suspended = NULL;
 
 	pair = nvlist_next_nvpair(snaps, NULL);
@@ -1928,8 +1926,8 @@ dsl_dataset_snapshot(nvlist_t *snaps, nvlist_t *props, nvlist_t *errors)
 		for (pair = nvlist_next_nvpair(snaps, NULL); pair != NULL;
 		    pair = nvlist_next_nvpair(snaps, pair)) {
 			char fsname[ZFS_MAX_DATASET_NAME_LEN];
-			char *snapname = nvpair_name(pair);
-			char *atp;
+			const char *snapname = nvpair_name(pair);
+			const char *atp;
 			void *cookie;
 
 			atp = strchr(snapname, '@');
@@ -2072,8 +2070,9 @@ dsl_dataset_snapshot_tmp(const char *fsname, const char *snapname,
 	return (error);
 }
 
+/* Nonblocking dataset sync. Assumes dataset:objset is always 1:1 */
 void
-dsl_dataset_sync(dsl_dataset_t *ds, zio_t *zio, dmu_tx_t *tx)
+dsl_dataset_sync(dsl_dataset_t *ds, zio_t *rio, dmu_tx_t *tx)
 {
 	ASSERT(dmu_tx_is_syncing(tx));
 	ASSERT(ds->ds_objset != NULL);
@@ -2101,17 +2100,7 @@ dsl_dataset_sync(dsl_dataset_t *ds, zio_t *zio, dmu_tx_t *tx)
 		ds->ds_resume_bytes[tx->tx_txg & TXG_MASK] = 0;
 	}
 
-	dmu_objset_sync(ds->ds_objset, zio, tx);
-
-	for (spa_feature_t f = 0; f < SPA_FEATURES; f++) {
-		if (zfeature_active(f, ds->ds_feature_activation[f])) {
-			if (zfeature_active(f, ds->ds_feature[f]))
-				continue;
-			dsl_dataset_activate_feature(ds->ds_object, f,
-			    ds->ds_feature_activation[f], tx);
-			ds->ds_feature[f] = ds->ds_feature_activation[f];
-		}
-	}
+	dmu_objset_sync(ds->ds_objset, rio, tx);
 }
 
 /*
@@ -2127,8 +2116,6 @@ dsl_livelist_should_disable(dsl_dataset_t *ds)
 
 	used = dsl_dir_get_usedds(ds->ds_dir);
 	referenced = dsl_get_referenced(ds);
-	ASSERT3U(referenced, >=, 0);
-	ASSERT3U(used, >=, 0);
 	if (referenced == 0)
 		return (B_FALSE);
 	percent_shared = (100 * (referenced - used)) / referenced;
@@ -2283,9 +2270,18 @@ dsl_dataset_sync_done(dsl_dataset_t *ds, dmu_tx_t *tx)
 	else
 		ASSERT0(os->os_next_write_raw[tx->tx_txg & TXG_MASK]);
 
-	ASSERT(!dmu_objset_is_dirty(os, dmu_tx_get_txg(tx)));
+	for (spa_feature_t f = 0; f < SPA_FEATURES; f++) {
+		if (zfeature_active(f,
+		    ds->ds_feature_activation[f])) {
+			if (zfeature_active(f, ds->ds_feature[f]))
+				continue;
+			dsl_dataset_activate_feature(ds->ds_object, f,
+			    ds->ds_feature_activation[f], tx);
+			ds->ds_feature[f] = ds->ds_feature_activation[f];
+		}
+	}
 
-	dmu_buf_rele(ds->ds_dbuf, ds);
+	ASSERT(!dmu_objset_is_dirty(os, dmu_tx_get_txg(tx)));
 }
 
 int
@@ -2741,6 +2737,8 @@ dsl_get_mountpoint(dsl_dataset_t *ds, const char *dsname, char *value,
 		    relpath[0] != '\0'))
 			mnt = value + 1;
 
+		mnt = kmem_strdup(mnt);
+
 		if (relpath[0] == '\0') {
 			(void) snprintf(value, ZAP_MAXVALUELEN, "%s%s",
 			    root, mnt);
@@ -2750,6 +2748,7 @@ dsl_get_mountpoint(dsl_dataset_t *ds, const char *dsname, char *value,
 			    relpath);
 		}
 		kmem_free(buf, ZAP_MAXVALUELEN);
+		kmem_strfree(mnt);
 	}
 
 	return (0);
@@ -2897,7 +2896,7 @@ dsl_dataset_modified_since_snap(dsl_dataset_t *ds, dsl_dataset_t *snap)
 	if (snap == NULL)
 		return (B_FALSE);
 	rrw_enter(&ds->ds_bp_rwlock, RW_READER, FTAG);
-	birth = dsl_dataset_get_blkptr(ds)->blk_birth;
+	birth = BP_GET_LOGICAL_BIRTH(dsl_dataset_get_blkptr(ds));
 	rrw_exit(&ds->ds_bp_rwlock, FTAG);
 	if (birth > dsl_dataset_phys(snap)->ds_creation_txg) {
 		objset_t *os, *os_snap;
@@ -2916,14 +2915,6 @@ dsl_dataset_modified_since_snap(dsl_dataset_t *ds, dsl_dataset_t *snap)
 	}
 	return (B_FALSE);
 }
-
-typedef struct dsl_dataset_rename_snapshot_arg {
-	const char *ddrsa_fsname;
-	const char *ddrsa_oldsnapname;
-	const char *ddrsa_newsnapname;
-	boolean_t ddrsa_recursive;
-	dmu_tx_t *ddrsa_tx;
-} dsl_dataset_rename_snapshot_arg_t;
 
 static int
 dsl_dataset_rename_snapshot_check_impl(dsl_pool_t *dp,
@@ -2955,7 +2946,7 @@ dsl_dataset_rename_snapshot_check_impl(dsl_pool_t *dp,
 	return (error);
 }
 
-static int
+int
 dsl_dataset_rename_snapshot_check(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_rename_snapshot_arg_t *ddrsa = arg;
@@ -3017,7 +3008,7 @@ dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
 	return (0);
 }
 
-static void
+void
 dsl_dataset_rename_snapshot_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_rename_snapshot_arg_t *ddrsa = arg;
@@ -3291,7 +3282,6 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 	dsl_pool_t *dp = dmu_tx_pool(tx);
 	dsl_dataset_t *hds;
 	struct promotenode *snap;
-	dsl_dataset_t *origin_ds, *origin_head;
 	int err;
 	uint64_t unused;
 	uint64_t ss_mv_cnt;
@@ -3311,12 +3301,11 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 	}
 
 	snap = list_head(&ddpa->shared_snaps);
-	origin_head = snap->ds;
 	if (snap == NULL) {
 		err = SET_ERROR(ENOENT);
 		goto out;
 	}
-	origin_ds = snap->ds;
+	dsl_dataset_t *const origin_ds = snap->ds;
 
 	/*
 	 * Encrypted clones share a DSL Crypto Key with their origin's dsl dir.
@@ -3412,10 +3401,10 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 	 * Check that bookmarks that are being transferred don't have
 	 * name conflicts.
 	 */
-	for (dsl_bookmark_node_t *dbn = avl_first(&origin_head->ds_bookmarks);
+	for (dsl_bookmark_node_t *dbn = avl_first(&origin_ds->ds_bookmarks);
 	    dbn != NULL && dbn->dbn_phys.zbm_creation_txg <=
 	    dsl_dataset_phys(origin_ds)->ds_creation_txg;
-	    dbn = AVL_NEXT(&origin_head->ds_bookmarks, dbn)) {
+	    dbn = AVL_NEXT(&origin_ds->ds_bookmarks, dbn)) {
 		if (strlen(dbn->dbn_name) >= max_snap_len) {
 			err = SET_ERROR(ENAMETOOLONG);
 			goto out;
@@ -3429,7 +3418,8 @@ dsl_dataset_promote_check(void *arg, dmu_tx_t *tx)
 			conflicting_snaps = B_TRUE;
 		} else if (err == ESRCH) {
 			err = 0;
-		} else if (err != 0) {
+		}
+		if (err != 0) {
 			goto out;
 		}
 	}
@@ -3722,16 +3712,19 @@ dsl_dataset_promote_sync(void *arg, dmu_tx_t *tx)
 	spa_history_log_internal_ds(hds, "promote", tx, " ");
 
 	dsl_dir_rele(odd, FTAG);
-	promote_rele(ddpa, FTAG);
 
 	/*
-	 * Transfer common error blocks from old head to new head.
+	 * Transfer common error blocks from old head to new head, before
+	 * calling promote_rele() on ddpa since we need to dereference
+	 * origin_head and hds.
 	 */
 	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_HEAD_ERRLOG)) {
 		uint64_t old_head = origin_head->ds_object;
 		uint64_t new_head = hds->ds_object;
 		spa_swap_errlog(dp->dp_spa, new_head, old_head, tx);
 	}
+
+	promote_rele(ddpa, FTAG);
 }
 
 /*
@@ -3794,8 +3787,7 @@ snaplist_destroy(list_t *l, const void *tag)
 	if (l == NULL || !list_link_active(&l->list_head))
 		return;
 
-	while ((snap = list_tail(l)) != NULL) {
-		list_remove(l, snap);
+	while ((snap = list_remove_tail(l)) != NULL) {
 		dsl_dataset_rele(snap->ds, tag);
 		kmem_free(snap, sizeof (*snap));
 	}
@@ -4529,6 +4521,7 @@ dsl_dataset_set_compression_sync(void *arg, dmu_tx_t *tx)
 
 	uint64_t compval = ZIO_COMPRESS_ALGO(ddsca->ddsca_value);
 	spa_feature_t f = zio_compress_to_feature(compval);
+	ASSERT3S(f, !=, SPA_FEATURE_NONE);
 	ASSERT3S(spa_feature_table[f].fi_type, ==, ZFEATURE_TYPE_BOOLEAN);
 
 	VERIFY0(dsl_dataset_hold(dp, ddsca->ddsca_name, FTAG, &ds));
@@ -4979,11 +4972,14 @@ dsl_dataset_oldest_snapshot(spa_t *spa, uint64_t head_ds, uint64_t min_txg,
 	return (0);
 }
 
-ZFS_MODULE_PARAM(zfs, zfs_, max_recordsize, INT, ZMOD_RW,
+ZFS_MODULE_PARAM(zfs, zfs_, max_recordsize, UINT, ZMOD_RW,
 	"Max allowed record size");
 
 ZFS_MODULE_PARAM(zfs, zfs_, allow_redacted_dataset_mount, INT, ZMOD_RW,
 	"Allow mounting of redacted datasets");
+
+ZFS_MODULE_PARAM(zfs, zfs_, snapshot_history_enabled, INT, ZMOD_RW,
+	"Include snapshot events in pool history/events");
 
 EXPORT_SYMBOL(dsl_dataset_hold);
 EXPORT_SYMBOL(dsl_dataset_hold_flags);
@@ -5021,4 +5017,3 @@ EXPORT_SYMBOL(dsl_dsobj_to_dsname);
 EXPORT_SYMBOL(dsl_dataset_check_quota);
 EXPORT_SYMBOL(dsl_dataset_clone_swap_check_impl);
 EXPORT_SYMBOL(dsl_dataset_clone_swap_sync_impl);
-EXPORT_SYMBOL(dsl_dataset_feature_set_activation);

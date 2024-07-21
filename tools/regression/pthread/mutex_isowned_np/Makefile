@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	mutex_isowned_np
 MAN=
 LIBADD=	pthread

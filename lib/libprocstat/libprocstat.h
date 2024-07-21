@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Stanislav Sedov <stas@FreeBSD.org>
  * Copyright (c) 2017 Dell EMC
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _LIBPROCSTAT_H_
@@ -104,7 +102,13 @@
 #define	PS_FST_FFLAG_EXEC	0x2000
 #define	PS_FST_FFLAG_HASLOCK	0x4000
 
+#if !defined(__ILP32__) && !defined(__riscv)
+/* Target architecture supports 32-bit compat */
+#define	PS_ARCH_HAS_FREEBSD32	1
+#endif
+
 struct kinfo_kstack;
+struct kinfo_proc;
 struct kinfo_vmentry;
 struct procstat;
 struct ptrace_lwpinfo;
@@ -150,7 +154,6 @@ struct shmstat {
 	uint16_t	mode;
 };
 struct sockstat {
-	uint64_t	inp_ppcb;
 	uint64_t	so_addr;
 	uint64_t	so_pcb;
 	uint64_t	unp_conn;

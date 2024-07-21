@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=   rctl
 MAN=	rctl.8
 

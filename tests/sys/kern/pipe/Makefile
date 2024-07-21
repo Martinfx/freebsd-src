@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTSDIR=	${TESTSBASE}/sys/kern/pipe
 
 PLAIN_TESTS_C+= big_pipe_test

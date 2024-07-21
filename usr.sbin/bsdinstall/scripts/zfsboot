@@ -25,7 +25,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 ############################################################ INCLUDES
 
@@ -72,7 +71,7 @@ f_include $BSDCFG_SHARE/variable.subr
 #
 # Should we use sysctl(8) vfs.zfs.min_auto_ashift=12 to force 4K sectors?
 #
-: ${ZFSBOOT_FORCE_4K_SECTORS:=1}
+: ${ZFSBOOT_FORCE_4K_SECTORS=1}
 
 #
 # Should we use geli(8) to encrypt the drives?
@@ -150,14 +149,14 @@ f_isset ZFSBOOT_DATASETS || ZFSBOOT_DATASETS="
 	/$ZFSBOOT_BEROOT_NAME				mountpoint=none
 	/$ZFSBOOT_BEROOT_NAME/$ZFSBOOT_BOOTFS_NAME	mountpoint=/
 
+	# Home directories separated so they are common to all BEs
+	/home		mountpoint=/home
+
 	# Compress /tmp, allow exec but not setuid
 	/tmp		mountpoint=/tmp,exec=on,setuid=off
 
 	# Don't mount /usr so that 'base' files go to the BEROOT
 	/usr		mountpoint=/usr,canmount=off
-
-	# Home directories separated so they are common to all BEs
-	/usr/home	# NB: /home is a symlink to /usr/home
 
 	# Ports tree
 	/usr/ports	setuid=off
@@ -318,7 +317,7 @@ msg_swap_mirror="Mirror Swap?"
 msg_swap_mirror_help="Mirror swap partitions for redundancy, breaks crash dumps"
 msg_swap_size="Swap Size"
 msg_swap_size_help="Customize how much swap space is allocated to each selected disk"
-msg_swap_toosmall="The selected swap size (%s) is to small. Please enter a value greater than 100MB or enter 0 for no swap"
+msg_swap_toosmall="The selected swap size (%s) is too small. Please enter a value greater than 100MB or enter 0 for no swap"
 msg_these_disks_are_too_small="These disks are smaller than the amount of requested\nswap (%s) and/or geli(8) (%s) partitions, which would\ntake 100%% or more of each of the following selected disks:\n\n  %s\n\nRecommend changing partition size(s) and/or selecting a\ndifferent set of disks."
 msg_unable_to_get_disk_capacity="Unable to get disk capacity of \`%s'"
 msg_unsupported_partition_scheme="%s is an unsupported partition scheme"
@@ -397,7 +396,7 @@ dialog_menu_main()
 		--default-item \"\$defaultitem\" \
 		--menu \"\$prompt\"              \
 		$height $width $rows             \
-		$menu_list                       \
+		${USE_DIALOG:+--} $menu_list     \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	)
 	local retval=$?

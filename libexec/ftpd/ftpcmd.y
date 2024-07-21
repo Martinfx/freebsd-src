@@ -27,8 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ftpcmd.y	8.3 (Berkeley) 4/6/94
  */
 
 /*
@@ -37,15 +35,6 @@
  */
 
 %{
-
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)ftpcmd.y	8.3 (Berkeley) 4/6/94";
-#endif
-#endif /* not lint */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -462,12 +451,12 @@ cmd
 	| LIST check_login CRLF
 		{
 			if ($2)
-				retrieve(_PATH_LS " -lgA", "");
+				retrieve(_PATH_LS " -lA", "");
 		}
 	| LIST check_login SP pathstring CRLF
 		{
 			if ($2)
-				retrieve(_PATH_LS " -lgA %s", $4);
+				retrieve(_PATH_LS " -lA %s", $4);
 			free($4);
 		}
 	| STAT check_login SP pathname CRLF

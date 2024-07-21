@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "qlnx_os.h"
 #include "bcm_osal.h"
 
@@ -78,7 +76,7 @@ int
 qlnx_make_cdev(qlnx_host_t *ha)
 {
 	ha->ioctl_dev = make_dev(&qlnx_cdevsw,
-				ha->ifp->if_dunit,
+				if_getdunit(ha->ifp),
 				UID_ROOT,
 				GID_WHEEL,
 				0600,

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	ac
 PACKAGE=	acct
 MAN=	ac.8

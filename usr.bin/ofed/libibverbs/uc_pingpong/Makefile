@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	rdma
 PROG=	ibv_uc_pingpong
 MAN=	ibv_uc_pingpong.1

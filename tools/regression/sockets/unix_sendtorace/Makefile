@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	unix_sendtorace
 MAN=
 

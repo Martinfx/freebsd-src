@@ -36,8 +36,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_bus.h"
 
 #include <sys/stdint.h>
@@ -337,7 +335,7 @@ static int
 err_intr(void *arg)
 {
 	ehci_softc_t *sc = arg;
-	unsigned int cause;
+	unsigned cause;
 
 	cause = EREAD4(sc, USB_BRIDGE_INTR_CAUSE);
 	if (cause) {

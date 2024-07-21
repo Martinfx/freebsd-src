@@ -27,13 +27,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_proc.c	8.7 (Berkeley) 2/14/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
 #include "opt_kstack_pages.h"
@@ -163,7 +159,8 @@ EVENTHANDLER_LIST_DEFINE(process_fork);
 EVENTHANDLER_LIST_DEFINE(process_exec);
 
 int kstack_pages = KSTACK_PAGES;
-SYSCTL_INT(_kern, OID_AUTO, kstack_pages, CTLFLAG_RD, &kstack_pages, 0,
+SYSCTL_INT(_kern, OID_AUTO, kstack_pages, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
+    &kstack_pages, 0,
     "Kernel stack size in pages");
 static int vmmap_skip_res_cnt = 0;
 SYSCTL_INT(_kern, OID_AUTO, proc_vmmap_skip_resident_count, CTLFLAG_RW,
@@ -278,6 +275,7 @@ proc_init(void *mem, int size, int flags)
 	EVENTHANDLER_DIRECT_INVOKE(process_init, p);
 	p->p_stats = pstats_alloc();
 	p->p_pgrp = NULL;
+	TAILQ_INIT(&p->p_kqtim_stop);
 	return (0);
 }
 
@@ -310,6 +308,7 @@ pgrp_init(void *mem, int size, int flags)
 
 	pg = mem;
 	mtx_init(&pg->pg_mtx, "process group", NULL, MTX_DEF | MTX_DUPOK);
+	sx_init(&pg->pg_killsx, "killpg racer");
 	return (0);
 }
 
@@ -573,6 +572,7 @@ errout:
 int
 enterpgrp(struct proc *p, pid_t pgid, struct pgrp *pgrp, struct session *sess)
 {
+	struct pgrp *old_pgrp;
 
 	sx_assert(&proctree_lock, SX_XLOCKED);
 
@@ -583,6 +583,15 @@ enterpgrp(struct proc *p, pid_t pgid, struct pgrp *pgrp, struct session *sess)
 	    ("enterpgrp: pgrp with pgid exists"));
 	KASSERT(!SESS_LEADER(p),
 	    ("enterpgrp: session leader attempted setpgrp"));
+
+	old_pgrp = p->p_pgrp;
+	if (!sx_try_xlock(&old_pgrp->pg_killsx)) {
+		sx_xunlock(&proctree_lock);
+		sx_xlock(&old_pgrp->pg_killsx);
+		sx_xunlock(&old_pgrp->pg_killsx);
+		return (ERESTART);
+	}
+	MPASS(old_pgrp == p->p_pgrp);
 
 	if (sess != NULL) {
 		/*
@@ -625,6 +634,7 @@ enterpgrp(struct proc *p, pid_t pgid, struct pgrp *pgrp, struct session *sess)
 
 	doenterpgrp(p, pgrp);
 
+	sx_xunlock(&old_pgrp->pg_killsx);
 	return (0);
 }
 
@@ -634,6 +644,7 @@ enterpgrp(struct proc *p, pid_t pgid, struct pgrp *pgrp, struct session *sess)
 int
 enterthispgrp(struct proc *p, struct pgrp *pgrp)
 {
+	struct pgrp *old_pgrp;
 
 	sx_assert(&proctree_lock, SX_XLOCKED);
 	PROC_LOCK_ASSERT(p, MA_NOTOWNED);
@@ -646,8 +657,26 @@ enterthispgrp(struct proc *p, struct pgrp *pgrp)
 	KASSERT(pgrp != p->p_pgrp,
 	    ("%s: p %p belongs to pgrp %p", __func__, p, pgrp));
 
+	old_pgrp = p->p_pgrp;
+	if (!sx_try_xlock(&old_pgrp->pg_killsx)) {
+		sx_xunlock(&proctree_lock);
+		sx_xlock(&old_pgrp->pg_killsx);
+		sx_xunlock(&old_pgrp->pg_killsx);
+		return (ERESTART);
+	}
+	MPASS(old_pgrp == p->p_pgrp);
+	if (!sx_try_xlock(&pgrp->pg_killsx)) {
+		sx_xunlock(&old_pgrp->pg_killsx);
+		sx_xunlock(&proctree_lock);
+		sx_xlock(&pgrp->pg_killsx);
+		sx_xunlock(&pgrp->pg_killsx);
+		return (ERESTART);
+	}
+
 	doenterpgrp(p, pgrp);
 
+	sx_xunlock(&pgrp->pg_killsx);
+	sx_xunlock(&old_pgrp->pg_killsx);
 	return (0);
 }
 
@@ -2513,6 +2542,7 @@ kern_proc_vmmap_resident(vm_map_t map, vm_map_entry_t entry,
 	vm_offset_t addr;
 	vm_paddr_t pa;
 	vm_pindex_t pi, pi_adv, pindex;
+	int incore;
 
 	*super = false;
 	*resident_count = 0;
@@ -2548,10 +2578,15 @@ kern_proc_vmmap_resident(vm_map_t map, vm_map_entry_t entry,
 		}
 		m_adv = NULL;
 		if (m->psind != 0 && addr + pagesizes[1] <= entry->end &&
-		    (addr & (pagesizes[1] - 1)) == 0 &&
-		    (pmap_mincore(map->pmap, addr, &pa) & MINCORE_SUPER) != 0) {
+		    (addr & (pagesizes[1] - 1)) == 0 && (incore =
+		    pmap_mincore(map->pmap, addr, &pa) & MINCORE_SUPER) != 0) {
 			*super = true;
-			pi_adv = atop(pagesizes[1]);
+			/*
+			 * The virtual page might be smaller than the physical
+			 * page, so we use the page size reported by the pmap
+			 * rather than m->psind.
+			 */
+			pi_adv = atop(pagesizes[incore >> MINCORE_PSIND_SHIFT]);
 		} else {
 			/*
 			 * We do not test the found page on validity.
@@ -3266,7 +3301,6 @@ sysctl_kern_proc_vm_layout(SYSCTL_HANDLER_ARGS)
 		kvm32.kvm_shp_addr = (uint32_t)kvm.kvm_shp_addr;
 		kvm32.kvm_shp_size = (uint32_t)kvm.kvm_shp_size;
 		kvm32.kvm_map_flags = kvm.kvm_map_flags;
-		vmspace_free(vmspace);
 		error = SYSCTL_OUT(req, &kvm32, sizeof(kvm32));
 		goto out;
 	}
@@ -3449,7 +3483,8 @@ allproc_loop:
 		LIST_REMOVE(cp, p_list);
 		LIST_INSERT_AFTER(p, cp, p_list);
 		PROC_LOCK(p);
-		if ((p->p_flag & (P_KPROC | P_SYSTEM | P_TOTAL_STOP)) != 0) {
+		if ((p->p_flag & (P_KPROC | P_SYSTEM | P_TOTAL_STOP |
+		    P_STOPPED_SIG)) != 0) {
 			PROC_UNLOCK(p);
 			continue;
 		}
@@ -3467,6 +3502,16 @@ allproc_loop:
 			 * thread running.
 			 */
 			seen_stopped = true;
+			PROC_UNLOCK(p);
+			continue;
+		}
+		if ((p->p_flag & P_TRACED) != 0) {
+			/*
+			 * thread_single() below cannot stop traced p,
+			 * so skip it.  OTOH, we cannot require
+			 * restart because debugger might be either
+			 * already stopped or traced as well.
+			 */
 			PROC_UNLOCK(p);
 			continue;
 		}

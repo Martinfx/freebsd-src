@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR = \
 	iicmux \
 	ltc430x \

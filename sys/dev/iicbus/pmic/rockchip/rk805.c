@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018-2021 Emmanuel Vadot <manu@FreeBSD.org>
  *
@@ -24,9 +24,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -193,8 +190,8 @@ DEFINE_CLASS_1(rk805_pmu, rk805_driver, rk805_methods,
     sizeof(struct rk8xx_softc), rk8xx_driver);
 
 EARLY_DRIVER_MODULE(rk805_pmu, iicbus, rk805_driver, 0, 0,
-    BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LAST);
+    BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
 EARLY_DRIVER_MODULE(iicbus, rk805_pmu, iicbus_driver, 0, 0,
-    BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LAST);
+    BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
 MODULE_DEPEND(rk805_pmu, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
 MODULE_VERSION(rk805_pmu, 1);

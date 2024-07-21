@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Michal Meloun <mmel@FreeBSD.org>
  *
@@ -25,9 +25,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -367,7 +364,7 @@ mv_ap806_sei_attach(device_t dev)
 		if (rv != 0)
 			goto fail; /* XXX deregister ISRCs */
 	}
-	xref = OF_xref_from_node(node);;
+	xref = OF_xref_from_node(node);
 	if (intr_pic_register(dev, xref) == NULL) {
 		device_printf(dev, "Cannot register SEI\n");
 		rv = ENXIO;

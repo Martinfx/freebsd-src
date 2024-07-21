@@ -25,9 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/module.h>
 #include <sys/systm.h>
@@ -319,7 +316,7 @@ fsl_sata_probe(device_t dev)
 	    !ofw_bus_is_compatible(dev, "fsl,pq-sata"))
 		return (ENXIO);
 
-	device_set_desc_copy(dev, "Freescale Integrated SATA Controller");
+	device_set_desc(dev, "Freescale Integrated SATA Controller");
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -355,9 +352,8 @@ fsl_sata_attach(device_t dev)
 	}
 	ch->r_mid = 0;
 	if (!(ch->r_mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-	    &ch->r_mid, RF_ACTIVE)))
+	    &ch->r_mid, RF_ACTIVE | RF_LITTLEENDIAN)))
 		return (ENXIO);
-	rman_set_bustag(ch->r_mem, &bs_le_tag);
 	fsl_sata_dmainit(dev);
 	fsl_sata_slotsalloc(dev);
 	fsl_sata_init(dev);

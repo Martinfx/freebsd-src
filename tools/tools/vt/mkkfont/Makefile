@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	mkkfont
 MAN1=
 

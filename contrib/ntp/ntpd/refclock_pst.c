@@ -128,7 +128,7 @@ pst_start(
 	 * Open serial port. Use CLK line discipline, if available.
 	 */
 	snprintf(device, sizeof(device), DEVICE, unit);
-	fd = refclock_open(device, SPEED232, LDISC_CLK);
+	fd = refclock_open(&peer->srcadr, device, SPEED232, LDISC_CLK);
 	if (fd <= 0)
 		return (0);
 
@@ -314,5 +314,5 @@ pst_poll(
 }
 
 #else
-int refclock_pst_int;
+NONEMPTY_TRANSLATION_UNIT
 #endif /* REFCLOCK */

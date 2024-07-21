@@ -37,9 +37,6 @@
  * $Id$
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <dev/aic7xxx/aic7xxx_osm.h>
 
 #include <sys/limits.h>		/* For CHAR_BIT*/

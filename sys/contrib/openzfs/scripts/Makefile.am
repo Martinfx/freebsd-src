@@ -1,11 +1,4 @@
 scriptsdir = $(datadir)/$(PACKAGE)
-dist_scripts_SCRIPTS = \
-	%D%/zfs-helpers.sh \
-	%D%/zfs-tests.sh \
-	%D%/zfs.sh \
-	%D%/zimport.sh \
-	%D%/zloop.sh
-
 dist_noinst_SCRIPTS = \
 	%D%/commitcheck.sh \
 	%D%/common.sh.in \
@@ -18,9 +11,25 @@ dist_noinst_SCRIPTS = \
 	%D%/paxcheck.sh \
 	%D%/zfs-tests-color.sh
 
+scripts_scripts = \
+	%D%/zfs-helpers.sh \
+	%D%/zfs-tests.sh \
+	%D%/zfs.sh \
+	%D%/zimport.sh \
+	%D%/zloop.sh
+
+if CONFIG_USER
+dist_scripts_SCRIPTS = $(scripts_scripts)
+dist_zfsexec_SCRIPTS = \
+	%D%/zfs_prepare_disk
+else
+dist_noinst_SCRIPTS += $(scripts_scripts)
+endif
+
 dist_noinst_DATA += \
 	%D%/cstyle.pl \
 	%D%/enum-extract.pl \
+	%D%/update_authors.pl \
 	%D%/zfs2zol-patch.sed \
 	%D%/zol2zfs-patch.sed
 

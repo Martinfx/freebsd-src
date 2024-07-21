@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:  ${SRCTOP}/sys/dev/ntb
 
 KMOD    = ntb_transport

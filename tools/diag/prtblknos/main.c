@@ -22,8 +22,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <ufs/ffs/fs.h>
@@ -44,9 +42,7 @@ void prtblknos(struct fs *fs, union dinode *dp);
 struct uufsd disk;
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 	union dinodep dp;
 	struct fs *fs;

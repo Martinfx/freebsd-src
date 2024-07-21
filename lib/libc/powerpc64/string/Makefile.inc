@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MDSRCS+= \
 	bcopy.S \
 	bcopy_vsx.S \

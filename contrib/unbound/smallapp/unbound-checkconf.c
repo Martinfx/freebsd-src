@@ -88,6 +88,7 @@ usage(void)
 	printf("file	if omitted %s is used.\n", CONFIGFILE);
 	printf("-o option	print value of option to stdout.\n");
 	printf("-f 		output full pathname with chroot applied, eg. with -o pidfile.\n");
+	printf("-q 		quiet (suppress output on success).\n");
 	printf("-h		show this usage help.\n");
 	printf("Version %s\n", PACKAGE_VERSION);
 	printf("BSD licensed, see LICENSE in source package for details.\n");
@@ -316,7 +317,7 @@ warn_hosts(const char* typ, struct config_stub* list)
 	struct config_strlist* h;
 	for(s=list; s; s=s->next) {
 		for(h=s->hosts; h; h=h->next) {
-			if(extstrtoaddr(h->str, &a, &alen)) {
+			if(extstrtoaddr(h->str, &a, &alen, UNBOUND_DNS_PORT)) {
 				fprintf(stderr, "unbound-checkconf: warning:"
 				  " %s %s: \"%s\" is an IP%s address, "
 				  "and when looked up as a host name "
@@ -338,6 +339,8 @@ interfacechecks(struct config_file* cfg)
 	int i, j, i2, j2;
 	char*** resif = NULL;
 	int* num_resif = NULL;
+	char portbuf[32];
+	snprintf(portbuf, sizeof(portbuf), "%d", cfg->port);
 
 	if(cfg->num_ifs != 0) {
 		resif = (char***)calloc(cfg->num_ifs, sizeof(char**));
@@ -359,9 +362,21 @@ interfacechecks(struct config_file* cfg)
 			fatal_exit("could not resolve interface names, for %s",
 				cfg->ifs[i]);
 		}
+		/* check for port combinations that are not supported */
+		if(if_is_pp2(resif[i][0], portbuf, cfg->proxy_protocol_port)) {
+			if(if_is_dnscrypt(resif[i][0], portbuf,
+				cfg->dnscrypt_port)) {
+				fatal_exit("PROXYv2 and DNSCrypt combination not "
+					"supported!");
+			} else if(if_is_https(resif[i][0], portbuf,
+				cfg->https_port)) {
+				fatal_exit("PROXYv2 and DoH combination not "
+					"supported!");
+			}
+		}
 		/* search for duplicates in the returned addresses */
 		for(j=0; j<num_resif[i]; j++) {
-			if(!extstrtoaddr(resif[i][j], &a, &alen)) {
+			if(!extstrtoaddr(resif[i][j], &a, &alen, cfg->port)) {
 				if(strcmp(cfg->ifs[i], resif[i][j]) != 0)
 					fatal_exit("cannot parse interface address '%s' from the interface specified as '%s'",
 						resif[i][j], cfg->ifs[i]);
@@ -693,6 +708,23 @@ morechecks(struct config_file* cfg)
 		cfg->auto_trust_anchor_file_list, cfg->chrootdir, cfg);
 	check_chroot_filelist_wild("trusted-keys-file",
 		cfg->trusted_keys_file_list, cfg->chrootdir, cfg);
+	if(cfg->disable_edns_do && strstr(cfg->module_conf, "validator")
+		&& (cfg->trust_anchor_file_list
+		|| cfg->trust_anchor_list
+		|| cfg->auto_trust_anchor_file_list
+		|| cfg->trusted_keys_file_list)) {
+		char* key = NULL;
+		if(cfg->auto_trust_anchor_file_list)
+			key = cfg->auto_trust_anchor_file_list->str;
+		if(!key && cfg->trust_anchor_file_list)
+			key = cfg->trust_anchor_file_list->str;
+		if(!key && cfg->trust_anchor_list)
+			key = cfg->trust_anchor_list->str;
+		if(!key && cfg->trusted_keys_file_list)
+			key = cfg->trusted_keys_file_list->str;
+		if(!key) key = "";
+		fatal_exit("disable-edns-do does not allow DNSSEC to work, but the validator module uses a trust anchor %s, turn off disable-edns-do or disable validation", key);
+	}
 #ifdef USE_IPSECMOD
 	if(cfg->ipsecmod_enabled && strstr(cfg->module_conf, "ipsecmod")) {
 		/* only check hook if enabled */
@@ -700,7 +732,7 @@ morechecks(struct config_file* cfg)
 			cfg->chrootdir, cfg);
 	}
 #endif
-	/* remove chroot setting so that modules are not stripping pathnames*/
+	/* remove chroot setting so that modules are not stripping pathnames */
 	free(cfg->chrootdir);
 	cfg->chrootdir = NULL;
 
@@ -934,7 +966,7 @@ check_auth(struct config_file* cfg)
 
 /** check config file */
 static void
-checkconf(const char* cfgfile, const char* opt, int final)
+checkconf(const char* cfgfile, const char* opt, int final, int quiet)
 {
 	char oldwd[4096];
 	struct config_file* cfg = config_create();
@@ -967,7 +999,7 @@ checkconf(const char* cfgfile, const char* opt, int final)
 	check_fwd(cfg);
 	check_hints(cfg);
 	check_auth(cfg);
-	printf("unbound-checkconf: no errors in %s\n", cfgfile);
+	if(!quiet) { printf("unbound-checkconf: no errors in %s\n", cfgfile); }
 	config_delete(cfg);
 }
 
@@ -981,6 +1013,7 @@ int main(int argc, char* argv[])
 {
 	int c;
 	int final = 0;
+	int quiet = 0;
 	const char* f;
 	const char* opt = NULL;
 	const char* cfgfile = CONFIGFILE;
@@ -993,13 +1026,16 @@ int main(int argc, char* argv[])
 		cfgfile = CONFIGFILE;
 #endif /* USE_WINSOCK */
 	/* parse the options */
-	while( (c=getopt(argc, argv, "fho:")) != -1) {
+	while( (c=getopt(argc, argv, "fhqo:")) != -1) {
 		switch(c) {
 		case 'f':
 			final = 1;
 			break;
 		case 'o':
 			opt = optarg;
+			break;
+		case 'q':
+			quiet = 1;
 			break;
 		case '?':
 		case 'h':
@@ -1014,7 +1050,7 @@ int main(int argc, char* argv[])
 	if(argc == 1)
 		f = argv[0];
 	else	f = cfgfile;
-	checkconf(f, opt, final);
+	checkconf(f, opt, final, quiet);
 	checklock_stop();
 	return 0;
 }

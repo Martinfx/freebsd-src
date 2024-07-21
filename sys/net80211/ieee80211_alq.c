@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Adrian Chadd, Xenion Lty Ltd
  * All rights reserved.
@@ -24,11 +24,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-__FBSDID("$FreeBSD$");
-#endif
 
 /*
  * net80211 fast-logging support, primarily for debugging.

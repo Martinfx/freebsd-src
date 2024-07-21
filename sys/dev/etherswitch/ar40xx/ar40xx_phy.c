@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 Adrian Chadd <adrian@FreeBSD.org>.
  *
@@ -51,8 +51,8 @@
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 #include <dev/mdio/mdio.h>
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>
@@ -147,7 +147,7 @@ ar40xx_phy_miiforport(struct ar40xx_softc *sc, int port)
 	return (device_get_softc(sc->sc_phys.miibus[phy]));
 }
 
-struct ifnet *
+if_t 
 ar40xx_phy_ifpforport(struct ar40xx_softc *sc, int port)
 {
 	int phy;
@@ -159,13 +159,13 @@ ar40xx_phy_ifpforport(struct ar40xx_softc *sc, int port)
 }
 
 static int
-ar40xx_ifmedia_upd(struct ifnet *ifp)
+ar40xx_ifmedia_upd(if_t ifp)
 {
-	struct ar40xx_softc *sc = ifp->if_softc;
-	struct mii_data *mii = ar40xx_phy_miiforport(sc, ifp->if_dunit);
+	struct ar40xx_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = ar40xx_phy_miiforport(sc, if_getdunit(ifp));
 
 	AR40XX_DPRINTF(sc, AR40XX_DBG_PORT_STATUS, "%s: called, PHY %d\n",
-	    __func__, ifp->if_dunit);
+	    __func__, if_getdunit(ifp));
 
 	if (mii == NULL)
 		return (ENXIO);
@@ -174,13 +174,13 @@ ar40xx_ifmedia_upd(struct ifnet *ifp)
 }
 
 static void
-ar40xx_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
+ar40xx_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-	struct ar40xx_softc *sc = ifp->if_softc;
-	struct mii_data *mii = ar40xx_phy_miiforport(sc, ifp->if_dunit);
+	struct ar40xx_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = ar40xx_phy_miiforport(sc, if_getdunit(ifp));
 
 	AR40XX_DPRINTF(sc, AR40XX_DBG_PORT_STATUS, "%s: called, PHY %d\n",
-	    __func__, ifp->if_dunit);
+	    __func__, if_getdunit(ifp));
 
 	if (mii == NULL)
 		return;
@@ -200,14 +200,6 @@ ar40xx_attach_phys(struct ar40xx_softc *sc)
 	snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->sc_dev));
 	for (phy = 0; phy < AR40XX_NUM_PHYS; phy++) {
 		sc->sc_phys.ifp[phy] = if_alloc(IFT_ETHER);
-		if (sc->sc_phys.ifp[phy] == NULL) {
-			device_printf(sc->sc_dev,
-			    "PHY %d: couldn't allocate ifnet structure\n",
-			    phy);
-			err = ENOMEM;
-			break;
-		}
-
 		sc->sc_phys.ifp[phy]->if_softc = sc;
 		sc->sc_phys.ifp[phy]->if_flags |= IFF_UP | IFF_BROADCAST |
 		    IFF_DRV_RUNNING | IFF_SIMPLEX;

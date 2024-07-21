@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)rtsock.c	8.7 (Berkeley) 10/12/95
- * $FreeBSD$
  */
 #include "opt_ddb.h"
 #include "opt_route.h"
@@ -57,6 +54,7 @@
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_dl.h>
 #include <net/if_llatbl.h>
 #include <net/if_types.h>
@@ -138,7 +136,9 @@ struct linear_buffer {
 };
 #define	SCRATCH_BUFFER_SIZE	1024
 
-#define	RTS_PID_LOG(_l, _fmt, ...)	RT_LOG_##_l(_l, "PID %d: " _fmt, curproc ? curproc->p_pid : 0, ## __VA_ARGS__)
+#define	RTS_PID_LOG(_l, _fmt, ...)					\
+	RT_LOG_##_l(_l, "PID %d: " _fmt, curproc ? curproc->p_pid : 0,	\
+	    ## __VA_ARGS__)
 
 MALLOC_DEFINE(M_RTABLE, "routetbl", "routing tables");
 
@@ -217,8 +217,8 @@ static int	update_rtm_from_rc(struct rt_addrinfo *info,
 static void	send_rtm_reply(struct socket *so, struct rt_msghdr *rtm,
 			struct mbuf *m, sa_family_t saf, u_int fibnum,
 			int rtm_errno);
-static bool	can_export_rte(struct ucred *td_ucred, bool rt_is_host,
-			const struct sockaddr *rt_dst);
+static void	rtsock_notify_event(uint32_t fibnum, const struct rib_cmd_info *rc);
+static void	rtsock_ifmsg(struct ifnet *ifp, int if_flags_mask);
 
 static struct netisr_handler rtsock_nh = {
 	.nh_name = "rtsock",
@@ -241,7 +241,7 @@ sysctl_route_netisr_maxqlen(SYSCTL_HANDLER_ARGS)
 	return (netisr_setqlimit(&rtsock_nh, qlimit));
 }
 SYSCTL_PROC(_net_route, OID_AUTO, netisr_maxqlen,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    CTLTYPE_INT | CTLFLAG_RWTUN | CTLFLAG_NOFETCH | CTLFLAG_MPSAFE,
     0, 0, sysctl_route_netisr_maxqlen, "I",
     "maximum routing socket dispatch queue length");
 
@@ -273,6 +273,48 @@ vnet_rts_uninit(void)
 VNET_SYSUNINIT(vnet_rts_uninit, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD,
     vnet_rts_uninit, 0);
 #endif
+
+static void
+report_route_event(const struct rib_cmd_info *rc, void *_cbdata)
+{
+	uint32_t fibnum = (uint32_t)(uintptr_t)_cbdata;
+	struct nhop_object *nh;
+
+	nh = rc->rc_cmd == RTM_DELETE ? rc->rc_nh_old : rc->rc_nh_new;
+	rt_routemsg(rc->rc_cmd, rc->rc_rt, nh, fibnum);
+}
+
+static void
+rts_handle_route_event(uint32_t fibnum, const struct rib_cmd_info *rc)
+{
+#ifdef ROUTE_MPATH
+	if ((rc->rc_nh_new && NH_IS_NHGRP(rc->rc_nh_new)) ||
+	    (rc->rc_nh_old && NH_IS_NHGRP(rc->rc_nh_old))) {
+		rib_decompose_notification(rc, report_route_event,
+		    (void *)(uintptr_t)fibnum);
+	} else
+#endif
+		report_route_event(rc, (void *)(uintptr_t)fibnum);
+}
+static struct rtbridge rtsbridge = {
+	.route_f = rts_handle_route_event,
+	.ifmsg_f = rtsock_ifmsg,
+};
+static struct rtbridge *rtsbridge_orig_p;
+
+static void
+rtsock_notify_event(uint32_t fibnum, const struct rib_cmd_info *rc)
+{
+	netlink_callback_p->route_f(fibnum, rc);
+}
+
+static void
+rtsock_init(void)
+{
+	rtsbridge_orig_p = rtsock_callback_p;
+	rtsock_callback_p = &rtsbridge;
+}
+SYSINIT(rtsock_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD, rtsock_init, NULL);
 
 static void
 rts_handle_ifnet_arrival(void *arg __unused, struct ifnet *ifp)
@@ -403,10 +445,29 @@ rts_detach(struct socket *so)
 }
 
 static int
-rts_shutdown(struct socket *so)
+rts_disconnect(struct socket *so)
 {
 
-	socantsendmore(so);
+	return (ENOTCONN);
+}
+
+static int
+rts_shutdown(struct socket *so, enum shutdown_how how)
+{
+	/*
+	 * Note: route socket marks itself as connected through its lifetime.
+	 */
+	switch (how) {
+	case SHUT_RD:
+		sorflush(so);
+		break;
+	case SHUT_RDWR:
+		sorflush(so);
+		/* FALLTHROUGH */
+	case SHUT_WR:
+		socantsendmore(so);
+	}
+
 	return (0);
 }
 
@@ -634,7 +695,7 @@ fill_addrinfo(struct rt_msghdr *rtm, int len, struct linear_buffer *lb, u_int fi
 
 		/* 
 		 * A host route through the loopback interface is 
-		 * installed for each interface adddress. In pre 8.0
+		 * installed for each interface address. In pre 8.0
 		 * releases the interface address of a PPP link type
 		 * is not reachable locally. This behavior is fixed as 
 		 * part of the new L2/L3 redesign and rewrite work. The
@@ -935,7 +996,7 @@ update_rtm_from_rc(struct rt_addrinfo *info, struct rt_msghdr **prtm,
 
 #ifdef ROUTE_MPATH
 static void
-save_del_notification(struct rib_cmd_info *rc, void *_cbdata)
+save_del_notification(const struct rib_cmd_info *rc, void *_cbdata)
 {
 	struct rib_cmd_info *rc_new = (struct rib_cmd_info *)_cbdata;
 
@@ -944,7 +1005,7 @@ save_del_notification(struct rib_cmd_info *rc, void *_cbdata)
 }
 
 static void
-save_add_notification(struct rib_cmd_info *rc, void *_cbdata)
+save_add_notification(const struct rib_cmd_info *rc, void *_cbdata)
 {
 	struct rib_cmd_info *rc_new = (struct rib_cmd_info *)_cbdata;
 
@@ -1074,6 +1135,7 @@ rts_send(struct socket *so, int flags, struct mbuf *m,
 		}
 		error = rib_action(fibnum, rtm->rtm_type, &info, &rc);
 		if (error == 0) {
+			rtsock_notify_event(fibnum, &rc);
 #ifdef ROUTE_MPATH
 			if (NH_IS_NHGRP(rc.rc_nh_new) ||
 			    (rc.rc_nh_old && NH_IS_NHGRP(rc.rc_nh_old))) {
@@ -1095,6 +1157,7 @@ rts_send(struct socket *so, int flags, struct mbuf *m,
 	case RTM_DELETE:
 		error = rib_action(fibnum, RTM_DELETE, &info, &rc);
 		if (error == 0) {
+			rtsock_notify_event(fibnum, &rc);
 #ifdef ROUTE_MPATH
 			if (NH_IS_NHGRP(rc.rc_nh_old) ||
 			    (rc.rc_nh_new && NH_IS_NHGRP(rc.rc_nh_new))) {
@@ -1114,11 +1177,8 @@ rts_send(struct socket *so, int flags, struct mbuf *m,
 			senderr(error);
 		nh = rc.rc_nh_new;
 
-		if (!can_export_rte(curthread->td_ucred,
-		    info.rti_info[RTAX_NETMASK] == NULL,
-		    info.rti_info[RTAX_DST])) {
+		if (!rt_is_exportable(rc.rc_rt, curthread->td_ucred))
 			senderr(ESRCH);
-		}
 		break;
 
 	default:
@@ -1874,8 +1934,8 @@ rt_missmsg(int type, struct rt_addrinfo *rtinfo, int flags, int error)
  * This routine is called to generate a message from the routing
  * socket indicating that the status of a network interface has changed.
  */
-void
-rt_ifmsg(struct ifnet *ifp)
+static void
+rtsock_ifmsg(struct ifnet *ifp, int if_flags_mask __unused)
 {
 	struct if_msghdr *ifm;
 	struct mbuf *m;
@@ -2145,23 +2205,6 @@ rt_dispatch(struct mbuf *m, sa_family_t saf)
 }
 
 /*
- * Checks if rte can be exported w.r.t jails/vnets.
- *
- * Returns true if it can, false otherwise.
- */
-static bool
-can_export_rte(struct ucred *td_ucred, bool rt_is_host,
-    const struct sockaddr *rt_dst)
-{
-
-	if ((!rt_is_host) ? jailed_without_vnet(td_ucred)
-	    : prison_if(td_ucred, rt_dst) != 0)
-		return (false);
-	return (true);
-}
-
-
-/*
  * This is used in dumping the kernel table via sysctl().
  */
 static int
@@ -2172,9 +2215,10 @@ sysctl_dumpentry(struct rtentry *rt, void *vw)
 
 	NET_EPOCH_ASSERT();
 
-	export_rtaddrs(rt, w->dst, w->mask);
-	if (!can_export_rte(w->w_req->td->td_ucred, rt_is_host(rt), w->dst))
+	if (!rt_is_exportable(rt, w->w_req->td->td_ucred))
 		return (0);
+
+	export_rtaddrs(rt, w->dst, w->mask);
 	nh = rt_get_raw_nhop(rt);
 #ifdef ROUTE_MPATH
 	if (NH_IS_NHGRP(nh)) {
@@ -2656,6 +2700,7 @@ static struct protosw routesw = {
 	.pr_detach =		rts_detach,
 	.pr_send =		rts_send,
 	.pr_shutdown =		rts_shutdown,
+	.pr_disconnect =	rts_disconnect,
 	.pr_close =		rts_close,
 };
 

@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Copyright (c) 2005-2020 Rich Felker, et al.
- * Copyright (c) 2020 Greg V
+ * Copyright (c) 2020 Val Packett
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -23,9 +23,6 @@
  * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include "namespace.h"
 #include <sys/eventfd.h>

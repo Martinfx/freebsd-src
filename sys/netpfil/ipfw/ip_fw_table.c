@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Ruslan Ermilov and Vsevolod Lobko.
  * Copyright (c) 2014 Yandex LLC
@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Lookup table support for ipfw.
  *
@@ -1514,21 +1512,6 @@ destroy_table(struct ip_fw_chain *ch, struct tid_info *ti)
 	return (0);
 }
 
-static uint32_t
-roundup2p(uint32_t v)
-{
-
-	v--;
-	v |= v >> 1;
-	v |= v >> 2;
-	v |= v >> 4;
-	v |= v >> 8;
-	v |= v >> 16;
-	v++;
-
-	return (v);
-}
-
 /*
  * Grow tables index.
  *
@@ -1550,7 +1533,7 @@ ipfw_resize_tables(struct ip_fw_chain *ch, unsigned int ntables)
 	if (ntables > IPFW_TABLES_MAX)
 		ntables = IPFW_TABLES_MAX;
 	/* Alight to nearest power of 2 */
-	ntables = (unsigned int)roundup2p(ntables); 
+	ntables = roundup_pow_of_two(ntables); 
 
 	/* Allocate new pointers */
 	tablestate = malloc(ntables * sizeof(struct table_info),
@@ -2760,6 +2743,7 @@ classify_srcdst(ipfw_insn *cmd, uint16_t *puidx, uint8_t *ptype)
 		case LOOKUP_UID:
 		case LOOKUP_JAIL:
 		case LOOKUP_DSCP:
+		case LOOKUP_MARK:
 			*ptype = IPFW_TABLE_NUMBER;
 			break;
 		case LOOKUP_DST_MAC:

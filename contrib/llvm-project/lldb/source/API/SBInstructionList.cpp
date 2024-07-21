@@ -13,7 +13,7 @@
 #include "lldb/API/SBStream.h"
 #include "lldb/Core/Disassembler.h"
 #include "lldb/Core/Module.h"
-#include "lldb/Core/StreamFile.h"
+#include "lldb/Host/StreamFile.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Utility/Instrumentation.h"
 #include "lldb/Utility/Stream.h"
@@ -165,8 +165,9 @@ bool SBInstructionList::GetDescription(Stream &sref) {
               addr, eSymbolContextEverything, sc);
         }
 
-        inst->Dump(&sref, max_opcode_byte_size, true, false, nullptr, &sc,
-                   &prev_sc, &format, 0);
+        inst->Dump(&sref, max_opcode_byte_size, true, false,
+                   /*show_control_flow_kind=*/false, nullptr, &sc, &prev_sc,
+                   &format, 0);
         sref.EOL();
       }
       return true;

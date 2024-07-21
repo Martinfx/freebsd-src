@@ -1,6 +1,3 @@
-#	from: @(#)Makefile	5.8 (Berkeley) 7/28/90
-# $FreeBSD$
-
 PROG=	callbootd
 MAN=
 SRCS=	callbootd.c ${GENSRCS}

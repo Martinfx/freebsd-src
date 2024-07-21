@@ -17,7 +17,6 @@
 #include "ntp_leapsec.h"
 #include "ntp_psl.h"
 #include "refidsmear.h"
-#include "lib_strbuf.h"
 
 #include <stdio.h>
 #ifdef HAVE_LIBSCF_H
@@ -35,9 +34,9 @@
 #define SRVFUZ_SHIFT	6	/* 64 seconds */
 #define SRVRSP_FUZZ(x)					\
 	do {						\
-		x.l_uf &= 0;				\
+		x.l_uf = 0;				\
 		x.l_ui &= ~((1 << SRVFUZ_SHIFT) - 1U);	\
-	} while(0)
+	} while (FALSE)
 
 /*
  * This macro defines the authentication state. If x is 1 authentication
@@ -87,7 +86,7 @@ nak_error_codes {
 #define	POOL_SOLICIT_WINDOW	8
 
 /*
- * flag bits propagated from pool to individual peers
+ * flag bits propagated from pool/manycast to individual peers
  */
 #define POOL_FLAG_PMASK		(FLAG_IBURST | FLAG_NOSELECT)
 
@@ -141,6 +140,7 @@ int leap_sec_in_progress;
  * Nonspecified system state variables
  */
 int	sys_bclient;		/* broadcast client enable */
+int	sys_mclient;		/* multicast client enable */
 double	sys_bdelay;		/* broadcast client default delay */
 int	sys_authenticate;	/* requre authentication for config */
 l_fp	sys_authdelay;		/* authentication delay */
@@ -471,7 +471,16 @@ transmit(
 		return;
 	}
 
-	/*
+	/* [Bug 3851] drop pool servers which can no longer be reached. */
+	if (MDF_PCLNT & peer->cast_flags) {
+		if (   (IS_IPV6(&peer->srcadr) && !nonlocal_v6_addr_up)
+		    || !nonlocal_v4_addr_up) {
+			unpeer(peer);
+			return;
+		}
+	}
+
+	 /*
 	 * In unicast modes the dance is much more intricate. It is
 	 * designed to back off whenever possible to minimize network
 	 * traffic.
@@ -583,6 +592,7 @@ transmit(
 }
 
 
+#ifdef DEBUG
 const char *
 amtoa(
 	int am
@@ -606,6 +616,7 @@ amtoa(
 		return bp;
 	}
 }
+#endif	/* DEBUG */
 
 
 /*
@@ -625,7 +636,6 @@ receive(
 	r4addr	r4a;			/* address restrictions */
 	u_short	restrict_mask;		/* restrict bits */
 	const char *hm_str;		/* hismode string */
-	const char *am_str;		/* association match string */
 	int	kissCode = NOKISS;	/* Kiss Code */
 	int	has_mac;		/* length of MAC field */
 	int	authlen;		/* offset of MAC field */
@@ -635,11 +645,15 @@ receive(
 	keyid_t	skeyid = 0;		/* key IDs */
 	u_int32	opcode = 0;		/* extension field opcode */
 	sockaddr_u *dstadr_sin;		/* active runway */
+	u_char	cast_flags;		/* MDF_* flags for newpeer() */
 	struct peer *peer2;		/* aux peer structure pointer */
 	endpt	*match_ep;		/* newpeer() local address */
 	l_fp	p_org;			/* origin timestamp */
 	l_fp	p_rec;			/* receive timestamp */
 	l_fp	p_xmt;			/* transmit timestamp */
+#ifdef DEBUG
+	const char *am_str;		/* association match string */
+#endif
 #ifdef AUTOKEY
 	char	hostname[NTP_MAXSTRLEN + 1];
 	char	*groupname = NULL;
@@ -688,12 +702,11 @@ receive(
 	}
 	if (hismode == MODE_PRIVATE) {
 		if (!ntp_mode7 || (restrict_mask & RES_NOQUERY)) {
-			DPRINTF(2, ("receive: drop: RES_NOQUERY\n"));
+			DPRINTF(2, ("receive: drop: !mode7 or RES_NOQUERY\n"));
 			sys_restricted++;
 			return;			/* no query private */
 		}
-		process_private(rbufp, ((restrict_mask &
-		    RES_NOMODIFY) == 0));
+		process_private(rbufp, !(RES_NOMODIFY & restrict_mask));
 		return;
 	}
 	if (hismode == MODE_CONTROL) {
@@ -724,14 +737,14 @@ receive(
 	
 	hisleap = PKT_LEAP(pkt->li_vn_mode);
 	hisstratum = PKT_TO_STRATUM(pkt->stratum);
-	INSIST(0 != hisstratum); /* paranoia check PKT_TO_STRATUM result */
-
+	DEBUG_INSIST(0 != hisstratum);	/* paranoia check PKT_TO_STRATUM result */
+					/* TODO: this should be in a unit test */
 	DPRINTF(1, ("receive: at %ld %s<-%s ippeerlimit %d mode %d iflags %s "
-		    "restrict %s org %#010x.%08x xmt %#010x.%08x\n",
+		    "restrict %s org 0x%x.%08x xmt 0x%x.%08x\n",
 		    current_time, stoa(&rbufp->dstadr->sin),
 		    stoa(&rbufp->recv_srcadr), r4a.ippeerlimit, hismode,
-		    build_iflags(rbufp->dstadr->flags),
-		    build_rflags(restrict_mask),
+		    iflags_str(rbufp->dstadr->flags),
+		    rflags_str(restrict_mask),
 		    ntohl(pkt->org.l_ui), ntohl(pkt->org.l_uf),
 		    ntohl(pkt->xmt.l_ui), ntohl(pkt->xmt.l_uf)));
 
@@ -740,7 +753,7 @@ receive(
 	 * surviving packets.
 	 */
 	if (restrict_mask & RES_FLAKE) {
-		if ((double)ntp_random() / 0x7fffffff < .1) {
+		if (ntp_uurandom() < .1) {
 			DPRINTF(2, ("receive: drop: RES_FLAKE\n"));
 			sys_restricted++;
 			return;			/* no flakeway */
@@ -788,6 +801,33 @@ receive(
 			sys_badlength++;
 			return;			/* invalid mode */
 		}
+	}
+
+	/*
+	 * Validate the poll interval in the packet.
+	 * 0 probably indicates a data-minimized packet.
+	 * A valid poll interval is required for RATEKISS, where
+	 * a value of 0 is not allowed.  We check for this below.
+	 * 
+	 * There might be arguments against this check.  If you have
+	 * any of these arguments, please let us know.
+	 *
+	 * At this point, the packet cannot be a mode[67] packet.
+	 */
+	if (   pkt->ppoll
+	    && (   (NTP_MINPOLL > pkt->ppoll)
+	        || (NTP_MAXPOLL < pkt->ppoll)
+	       )
+	   ) {
+#ifdef BUG3870
+		DPRINTF(2, ("receive: drop: Invalid ppoll (%d) from %s\n",
+				pkt->ppoll, stoa(&rbufp->recv_srcadr)));
+		sys_badlength++;
+		return;			/* invalid packet poll */
+#else
+		DPRINTF(2, ("receive: info: Invalid ppoll (%d) from %s\n",
+				pkt->ppoll, stoa(&rbufp->recv_srcadr)));
+#endif
 	}
 
 	/*
@@ -964,7 +1004,9 @@ receive(
 	NTOHL_FP(&pkt->rec, &p_rec);
 	NTOHL_FP(&pkt->xmt, &p_xmt);
 	hm_str = modetoa(hismode);
+#ifdef DEBUG
 	am_str = amtoa(retcode);
+#endif
 
 	/*
 	 * Authentication is conditioned by three switches:
@@ -1007,7 +1049,7 @@ receive(
 	if (has_mac == 0) {
 		restrict_mask &= ~RES_MSSNTP;
 		is_authentic = AUTH_NONE; /* not required */
-		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s len %d org %#010x.%08x xmt %#010x.%08x NOMAC\n",
+		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s len %d org 0x%x.%08x xmt 0x%x.%08x NOMAC\n",
 			    current_time, stoa(dstadr_sin),
 			    stoa(&rbufp->recv_srcadr), hismode, hm_str, am_str,
 			    authlen,
@@ -1016,7 +1058,7 @@ receive(
 	} else if (crypto_nak_test == VALIDNAK) {
 		restrict_mask &= ~RES_MSSNTP;
 		is_authentic = AUTH_CRYPTO; /* crypto-NAK */
-		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s keyid %08x len %d auth %d org %#010x.%08x xmt %#010x.%08x CRYPTONAK\n",
+		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s keyid %08x len %d auth %d org 0x%x.%08x xmt 0x%x.%08x CRYPTONAK\n",
 			    current_time, stoa(dstadr_sin),
 			    stoa(&rbufp->recv_srcadr), hismode, hm_str, am_str,
 			    skeyid, authlen + has_mac, is_authentic,
@@ -1039,7 +1081,7 @@ receive(
 		   && (memcmp(zero_key, (char *)pkt + authlen + 4,
 			      MAX_MD5_LEN - 4) == 0)) {
 		is_authentic = AUTH_NONE;
-		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s len %d org %#010x.%08x xmt %#010x.%08x SIGND\n",
+		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s len %d org %x.%08x xmt %x.%08x SIGND\n",
 			    current_time, stoa(dstadr_sin),
 			    stoa(&rbufp->recv_srcadr), hismode, hm_str, am_str,
 			    authlen,
@@ -1162,7 +1204,7 @@ receive(
 		if (crypto_flags && skeyid > NTP_MAXKEY)
 			authtrust(skeyid, 0);
 #endif	/* AUTOKEY */
-		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s keyid %08x len %d auth %d org %#010x.%08x xmt %#010x.%08x MAC\n",
+		DPRINTF(1, ("receive: at %ld %s<-%s mode %d/%s:%s keyid %08x len %d auth %d org 0x%x.%08x xmt 0x%x.%08x MAC\n",
 			    current_time, stoa(dstadr_sin),
 			    stoa(&rbufp->recv_srcadr), hismode, hm_str, am_str,
 			    skeyid, authlen + has_mac, is_authentic,
@@ -1333,13 +1375,29 @@ receive(
 		 * manycaster has already synchronized to us.
 		 */
 		if (   sys_leap == LEAP_NOTINSYNC
-		    || sys_stratum > hisstratum + 1
+		    || sys_stratum >= hisstratum
 		    || (!sys_cohort && sys_stratum == hisstratum + 1)
-		    || rbufp->dstadr->addr_refid == pkt->refid) {
+		    || rbufp->dstadr->addr_refid == pkt->refid
+#	    ifdef WORDS_BIGENDIAN	/* see local_refid() comment */
+		    || (   IS_IPV6(&rbufp->dstadr->sin)
+			&&rbufp->dstadr->old_refid ==  pkt->refid)
+#	    endif
+								  ) {
 			DPRINTF(2, ("receive: sys leap: %0x, sys_stratum %d > hisstratum+1 %d, !sys_cohort %d && sys_stratum == hisstratum+1, loop refid %#x == pkt refid %#x\n", sys_leap, sys_stratum, hisstratum + 1, !sys_cohort, rbufp->dstadr->addr_refid, pkt->refid));
 			DPRINTF(2, ("receive: AM_FXMIT drop: LEAP_NOTINSYNC || stratum || loop\n"));
 			sys_declined++;
 			return;			/* no help */
+		}
+
+		/*
+		 * Do not respond if the packet came into an IPv6 link-local
+		 * address on an interface where we also have a usable
+		 * global address, to avoid duplicate associations.
+		 */
+		if (INT_LL_OF_GLOB & rbufp->dstadr->flags) {
+			DPRINTF(2, ("receive: declining manycast solicitation on link-local IPv6\n"));
+			sys_declined++;
+			return;
 		}
 
 		/*
@@ -1400,6 +1458,12 @@ receive(
 			return;
 		}
 #endif /* AUTOKEY */
+		/* Do not spin up duplicate manycast associations */
+		if (INT_LL_OF_GLOB & rbufp->dstadr->flags) {
+			DPRINTF(2, ("receive: AM_MANYCAST drop: link-local server\n"));
+			sys_declined++;
+			return;
+		}
 		if ((peer2 = findmanycastpeer(rbufp)) == NULL) {
 			DPRINTF(2, ("receive: AM_MANYCAST drop: No manycast peer\n"));
 			sys_restricted++;
@@ -1427,11 +1491,15 @@ receive(
 			sys_declined++;
 			return;			/* no help */
 		}
+		cast_flags = MDF_UCAST;
+		if (MDF_POOL & peer2->cast_flags) {
+			cast_flags |= MDF_PCLNT;
+		}
 		peer = newpeer(&rbufp->recv_srcadr, NULL, rbufp->dstadr,
 			       r4a.ippeerlimit, MODE_CLIENT, hisversion,
 			       peer2->minpoll, peer2->maxpoll,
 			       (FLAG_PREEMPT | (POOL_FLAG_PMASK & peer2->flags)),
-			       (MDF_UCAST | MDF_UCLNT), 0, skeyid, sys_ident);
+			       cast_flags, 0, skeyid, sys_ident);
 		if (NULL == peer) {
 			DPRINTF(2, ("receive: AM_MANYCAST drop: duplicate\n"));
 			sys_declined++;
@@ -1475,8 +1543,8 @@ receive(
 			return;
 		}
 #endif /* AUTOKEY */
-		if (sys_bclient == 0) {
-			DPRINTF(2, ("receive: AM_NEWBCL drop: not a bclient\n"));
+		if (!sys_bclient && !sys_mclient) {
+			DPRINTF(2, ("receive: AM_NEWBCL drop: not a bclient/mclient\n"));
 			sys_restricted++;
 			return;			/* not enabled */
 		}
@@ -1817,7 +1885,7 @@ receive(
 			if (   tdiff.l_i < 0
 			    && (current_time - peer->timereceived) < deadband)
 			{
-				msyslog(LOG_INFO, "receive: broadcast packet from %s contains non-monotonic timestamp: %#010x.%08x -> %#010x.%08x",
+				msyslog(LOG_INFO, "receive: broadcast packet from %s contains non-monotonic timestamp: 0x%x.%08x -> 0x%x.%08x",
 					stoa(&rbufp->recv_srcadr),
 					peer->bxmt.l_ui, peer->bxmt.l_uf,
 					p_xmt.l_ui, p_xmt.l_uf
@@ -1968,7 +2036,7 @@ receive(
 		if (peer->flip == 0 && !L_ISEQU(&p_org, &peer->aorg)) {
 			peer->bogusorg++;
 			msyslog(LOG_INFO,
-				"receive: flip 0 KoD origin timestamp %#010x.%08x from %s does not match %#010x.%08x - ignoring.",
+				"receive: flip 0 KoD origin timestamp 0x%x.%08x from %s does not match 0x%x.%08x - ignoring.",
 				p_org.l_ui, p_org.l_uf,
 				ntoa(&peer->srcadr),
 				peer->aorg.l_ui, peer->aorg.l_uf);
@@ -1976,39 +2044,48 @@ receive(
 		} else if (peer->flip == 1 && !L_ISEQU(&p_org, &peer->borg)) {
 			peer->bogusorg++;
 			msyslog(LOG_INFO,
-				"receive: flip 1 KoD origin timestamp %#010x.%08x from %s does not match interleave %#010x.%08x - ignoring.",
+				"receive: flip 1 KoD origin timestamp 0x%x.%08x from %s does not match interleave 0x%x.%08x - ignoring.",
 				p_org.l_ui, p_org.l_uf,
 				ntoa(&peer->srcadr),
 				peer->borg.l_ui, peer->borg.l_uf);
 			return;
 		}
 
-	/*
-	 * Basic mode checks:
-	 *
-	 * If there is no origin timestamp, it's either an initial packet
-	 * or we've already received a response to our query.  Of course,
-	 * should 'aorg' be all-zero because this really was the original
-	 * transmit timestamp, we'll ignore this reply.  There is a window
-	 * of one nanosecond once every 136 years' time where this is
-	 * possible.  We currently ignore this situation, as a completely
-	 * zero timestamp is (quietly?) disallowed.
-	 *
-	 * Otherwise, check for bogus packet in basic mode.
-	 * If it is bogus, switch to interleaved mode and resynchronize,
-	 * but only after confirming the packet is not bogus in
-	 * symmetric interleaved mode.
-	 *
-	 * This could also mean somebody is forging packets claiming to
-	 * be from us, attempting to cause our server to KoD us.
-	 *
-	 * We have earlier asserted that hisstratum cannot be 0.
-	 * If hisstratum is STRATUM_UNSPEC, it means he's not sync'd.
-	 */
+		/*
+		 * Basic mode checks:
+		 *
+		 * If there is no origin timestamp, it's either an initial
+		 * packet or we've already received a response to our query.
+		 * Of course, should 'aorg' be all-zero because this really
+		 * was the original transmit timestamp, we'll ignore this
+		 * reply.  There is a window of one nanosecond once every
+		 * 136 years' time where this is possible.  We currently
+		 * ignore this situation, as a completely zero timestamp
+		 * is (quietly?) disallowed.
+		 *
+		 * Otherwise, check for bogus packet in basic mode.
+		 * If it is bogus, switch to interleaved mode and
+		 * resynchronize, but only after confirming the packet is
+		 * not bogus in symmetric interleaved mode.
+		 *
+		 * This could also mean somebody is forging packets claiming
+		 * to be from us, attempting to cause our server to KoD us.
+		 *
+		 * We have earlier asserted that hisstratum cannot be 0.
+		 * If hisstratum is STRATUM_UNSPEC, it means he's not sync'd.
+		 */
 
-	/* XXX: FLAG_LOOPNONCE */
-	DEBUG_INSIST(0 == (FLAG_LOOPNONCE & peer->flags));
+		/* XXX: FLAG_LOOPNONCE */
+		DEBUG_INSIST(0 == (FLAG_LOOPNONCE & peer->flags));
 
+		if (RATEKISS == kissCode) {
+			msyslog(LOG_INFO, "RATE KoD from %s poll %u",
+				ntoa(&peer->srcadr), 1u << pkt->ppoll);
+		} else {
+			msyslog(LOG_INFO, "KoD %s from %s",
+				refid_str(pkt->refid, -1),
+				ntoa(&peer->srcadr));
+		}
 	} else if (peer->flip == 0) {
 		if (0) {
 		} else if (L_ISZERO(&p_org)) {
@@ -2022,11 +2099,11 @@ receive(
 #endif
 			/**/
 			switch (hismode) {
-			/* We allow 0org for: */
+				/* We allow 0org for: */
 			    case UCHAR_MAX:
 				action = "Allow";
 				break;
-			/* We disallow 0org for: */
+				/* We disallow 0org for: */
 			    case MODE_UNSPEC:
 			    case MODE_ACTIVE:
 			    case MODE_PASSIVE:
@@ -2044,20 +2121,22 @@ receive(
 			}
 			/**/
 			msyslog(LOG_INFO,
-				"receive: %s 0 origin timestamp from %s@%s xmt %#010x.%08x",
+				"receive: %s 0 origin timestamp from %s@%s xmt 0x%x.%08x",
 				action, hm_str, ntoa(&peer->srcadr),
 				ntohl(pkt->xmt.l_ui), ntohl(pkt->xmt.l_uf));
+		} else if (   L_ISZERO(&peer->aorg) && MODE_CLIENT != hismode
+			   && !memcmp("STEP", &peer->refid, 4)) {
+			/* response came in just after we stepped clock, normal */
 		} else if (!L_ISEQU(&p_org, &peer->aorg)) {
 			/* are there cases here where we should bail? */
 			/* Should we set TEST2 if we decide to try xleave? */
 			peer->bogusorg++;
 			peer->flash |= TEST2;	/* bogus */
-			msyslog(LOG_INFO,
-				"receive: Unexpected origin timestamp %#010x.%08x does not match aorg %#010x.%08x from %s@%s xmt %#010x.%08x",
+			msyslog(LOG_INFO, 
+				"duplicate or replay: org 0x%x.%08x does not match 0x%x.%08x from %s@%s",
 				ntohl(pkt->org.l_ui), ntohl(pkt->org.l_uf),
 				peer->aorg.l_ui, peer->aorg.l_uf,
-				hm_str, ntoa(&peer->srcadr),
-				ntohl(pkt->xmt.l_ui), ntohl(pkt->xmt.l_uf));
+				hm_str, ntoa(&peer->srcadr));
 			if (  !L_ISZERO(&peer->dst)
 			    && L_ISEQU(&p_org, &peer->dst)) {
 				/* Might be the start of an interleave */
@@ -2235,9 +2314,17 @@ receive(
 
 	/*
 	 * Check to see if this is a RATE Kiss Code
-	 * Currently this kiss code will accept whatever poll
+	 * Currently this kiss code will accept whatever valid poll
 	 * rate that the server sends
 	 */
+	if (   (NTP_MINPOLL > pkt->ppoll)
+	    || (NTP_MAXPOLL < pkt->ppoll)
+	   ) {
+		DPRINTF(2, ("RATEKISS: Invalid ppoll (%d) from %s\n",
+				pkt->ppoll, stoa(&rbufp->recv_srcadr)));
+		sys_badlength++;
+		return;			/* invalid packet poll */
+	}
 	peer->ppoll = max(peer->minpoll, pkt->ppoll);
 	if (kissCode == RATEKISS) {
 		peer->selbroken++;	/* Increment the KoD count */
@@ -2439,8 +2526,10 @@ receive(
 	 * more flashers. Leave if the packet is not good.
 	 */
 	process_packet(peer, pkt, rbufp->recv_length);
-	if (peer->flash & PKT_TEST_MASK)
+	/* Bug 2734: TEST3 prevents initial interleave sync */
+	if ((~TEST3 & peer->flash) & PKT_TEST_MASK) {
 		return;
+	}
 
 	/* [bug 3592] Update poll. Ideally this should not happen in a
 	 * receive branch, but too much is going on here... at least we
@@ -2481,7 +2570,6 @@ process_packet(
 	double	p_offset, p_del, p_disp;
 	l_fp	p_rec, p_xmt, p_org, p_reftime, ci;
 	u_char	pmode, pleap, pversion, pstratum;
-	char	statstr[NTP_MAXSTRLEN];
 #ifdef ASSYM
 	int	itemp;
 	double	etemp, ftemp, td;
@@ -2617,9 +2705,8 @@ process_packet(
 		p_del = t21 - t34;
 		p_offset = (t21 + t34) / 2.;
 		if (p_del < 0 || p_del > 1.) {
-			snprintf(statstr, sizeof(statstr),
-			    "t21 %.6f t34 %.6f", t21, t34);
-			report_event(PEVNT_XERR, peer, statstr);
+			mprintf_event(PEVNT_XERR, peer,
+				      "t21 %.9f t34 %.9f", t21, t34);
 			return;
 		}
 
@@ -2645,9 +2732,9 @@ process_packet(
 				/* drop all if in the initial volley */
 				if (FLAG_BC_VOL & peer->flags)
 					goto bcc_init_volley_fail;
-				snprintf(statstr, sizeof(statstr),
-				    "offset %.6f delay %.6f", t21, t34);
-				report_event(PEVNT_XERR, peer, statstr);
+				mprintf_event(PEVNT_XERR, peer,
+					      "offset %.9f delay %.9f",
+					      t21, t34);
 				return;
 			}
 			p_offset = t21;
@@ -2886,23 +2973,28 @@ clock_update(
 	 * Clock exceeds panic threshold. Life as we know it ends.
 	 */
 	case -1:
+		msyslog(LOG_ERR, "Clock offset exceeds panic threshold.");
 #ifdef HAVE_LIBSCF_H
 		/*
 		 * For Solaris enter the maintenance mode.
 		 */
 		if ((fmri = getenv("SMF_FMRI")) != NULL) {
 			if (smf_maintain_instance(fmri, 0) < 0) {
-				printf("smf_maintain_instance: %s\n",
-				    scf_strerror(scf_error()));
+				msyslog(LOG_ERR, "smf_maintain_instance: %s",
+						 scf_strerror(scf_error()));
 				exit(1);
 			}
 			/*
 			 * Sleep until SMF kills us.
 			 */
+			msyslog(LOG_ERR, "%s placed into maintenance. "
+				"Set system clock by hand before clearing.",
+				fmri);
 			for (;;)
 				pause();
 		}
 #endif /* HAVE_LIBSCF_H */
+		msyslog(LOG_ERR, "Set system clock by hand.");
 		exit (-1);
 		/* not reached */
 
@@ -2941,18 +3033,6 @@ clock_update(
 			if (crypto_flags)
 				crypto_update();
 #endif	/* AUTOKEY */
-			/*
-			 * If our parent process is waiting for the
-			 * first clock sync, send them home satisfied.
-			 */
-#ifdef HAVE_WORKING_FORK
-			if (daemon_pipe[1] != -1) {
-				write(daemon_pipe[1], "S\n", 2);
-				close(daemon_pipe[1]);
-				daemon_pipe[1] = -1;
-				DPRINTF(1, ("notified parent --wait-sync is done\n"));
-			}
-#endif /* HAVE_WORKING_FORK */
 
 		}
 
@@ -3108,7 +3188,7 @@ poll_update(
 
 				if (   0 != sub
 				    || 0 != qty) {
-				    	do {
+					do {
 						val = ntp_random() & msk;
 					} while (val > qty);
 
@@ -3151,8 +3231,9 @@ peer_clear(
 	const char *ident		/* tally lights */
 	)
 {
-	u_char	u;
-	l_fp	bxmt = peer->bxmt;	/* bcast clients retain this! */
+	static u_long	earliest;
+	u_char		u;
+	l_fp		bxmt = peer->bxmt;	/* bcast clients retain this! */
 
 #ifdef AUTOKEY
 	/*
@@ -3218,19 +3299,24 @@ peer_clear(
 
 	/*
 	 * During initialization use the association count to spread out
-	 * the polls at one-second intervals. Passive associations'
-	 * first poll is delayed by the "discard minimum" to avoid rate
-	 * limiting. Other post-startup new or cleared associations
+	 * the polls at one-second intervals. Unconfigured associations'
+	 * first poll is delayed by the "discard minimum" plus 1 to avoid
+	 * rate limiting. Other post-startup new or cleared associations
 	 * randomize the first poll over the minimum poll interval to
 	 * avoid implosion.
 	 */
 	peer->nextdate = peer->update = peer->outdate = current_time;
 	if (initializing) {
 		peer->nextdate += peer_associations;
-	} else if (MODE_PASSIVE == peer->hmode) {
-		peer->nextdate += ntp_minpkt;
+	} else if (!(FLAG_CONFIG & peer->flags)) {
+		peer->nextdate += ntp_minpkt + 1;
+		/* space out manycastclient first polls */
+		if (peer->nextdate < earliest) {
+			peer->nextdate = earliest;
+		}
+		earliest = peer->nextdate + 1;
 	} else {
-		peer->nextdate += ntp_random() % peer->minpoll;
+		peer->nextdate += ntp_random() % (1 << peer->minpoll);
 	}
 #ifdef AUTOKEY
 	peer->refresh = current_time + (1 << NTP_REFRESH);
@@ -3254,10 +3340,10 @@ clock_filter(
 	)
 {
 	double	dst[NTP_SHIFT];		/* distance vector */
-	int	ord[NTP_SHIFT];		/* index vector */
-	int	i, j, k, m;
+	u_char	ord[NTP_SHIFT];		/* index vector */
+	short	i, j;
+	u_char	k, m;
 	double	dtemp, etemp;
-	char	tbuf[80];
 
 	/*
 	 * A sample consists of the offset, delay, dispersion and epoch
@@ -3274,7 +3360,7 @@ clock_filter(
 	peer->filter_disp[j] = sample_disp;
 	peer->filter_epoch[j] = current_time;
 	j = (j + 1) % NTP_SHIFT;
-	peer->filter_nextpt = j;
+	peer->filter_nextpt = (u_char)j;
 
 	/*
 	 * Update dispersions since the last update and at the same
@@ -3302,7 +3388,7 @@ clock_filter(
 		} else {
 			dst[i] = peer->filter_delay[j];
 		}
-		ord[i] = j;
+		ord[i] = (u_char)j;
 		j = (j + 1) % NTP_SHIFT;
 	}
 
@@ -3335,7 +3421,7 @@ clock_filter(
 	 */
 	m = 0;
 	for (i = 0; i < NTP_SHIFT; i++) {
-		peer->filter_order[i] = (u_char) ord[i];
+		peer->filter_order[i] = ord[i];
 		if (   dst[i] >= MAXDISPERSE
 		    || (m >= 2 && dst[i] >= sys_maxdist))
 			continue;
@@ -3352,11 +3438,12 @@ clock_filter(
 	k = ord[0];
 	for (i = NTP_SHIFT - 1; i >= 0; i--) {
 		j = ord[i];
-		peer->disp = NTP_FWEIGHT * (peer->disp +
-		    peer->filter_disp[j]);
-		if (i < m)
+		peer->disp = NTP_FWEIGHT * (  peer->disp
+					    + peer->filter_disp[j]);
+		if (i < m) {
 			peer->jitter += DIFF(peer->filter_offset[j],
-			    peer->filter_offset[k]);
+					     peer->filter_offset[k]);
+		}
 	}
 
 	/*
@@ -3365,15 +3452,16 @@ clock_filter(
 	 * save the offset, delay and jitter. Note the jitter must not
 	 * be less than the precision.
 	 */
-	if (m == 0) {
+	if (0 == m) {
 		clock_select();
 		return;
 	}
 	etemp = fabs(peer->offset - peer->filter_offset[k]);
 	peer->offset = peer->filter_offset[k];
 	peer->delay = peer->filter_delay[k];
-	if (m > 1)
+	if (m > 1) {
 		peer->jitter /= m - 1;
+	}
 	peer->jitter = max(SQRT(peer->jitter), LOGTOD(sys_precision));
 
 	/*
@@ -3386,23 +3474,22 @@ clock_filter(
 	if (   peer->disp < sys_maxdist
 	    && peer->filter_disp[k] < sys_maxdist
 	    && etemp > CLOCK_SGATE * peer->jitter
-	    && peer->filter_epoch[k] - peer->epoch
+	    &&   peer->filter_epoch[k] - peer->epoch
 	       < 2. * ULOGTOD(peer->hpoll)) {
-		snprintf(tbuf, sizeof(tbuf), "%.6f s", etemp);
-		report_event(PEVNT_POPCORN, peer, tbuf);
+		mprintf_event(PEVNT_POPCORN, peer, "%.9f s", etemp);
 		return;
 	}
 
 	/*
 	 * A new minimum sample is useful only if it is later than the
 	 * last one used. In this design the maximum lifetime of any
-	 * sample is not greater than eight times the poll interval, so
-	 * the maximum interval between minimum samples is eight
-	 * packets.
+	 * sample is not greater than NTP_SHIFT (8) times the poll
+	 * interval, so the maximum interval between minimum samples is
+	 * NTP_SHIFT packets.
 	 */
 	if (peer->filter_epoch[k] <= peer->epoch) {
-	DPRINTF(2, ("clock_filter: old sample %lu\n", current_time -
-		    peer->filter_epoch[k]));
+		DPRINTF(2, ("clock_filter: old sample %lu s\n",
+			    current_time - peer->filter_epoch[k]));
 		return;
 	}
 	peer->epoch = peer->filter_epoch[k];
@@ -3412,13 +3499,14 @@ clock_filter(
 	 * processing. If not synchronized or not in a burst, tickle the
 	 * clock select algorithm.
 	 */
-	record_peer_stats(&peer->srcadr, ctlpeerstatus(peer),
-	    peer->offset, peer->delay, peer->disp, peer->jitter);
-	DPRINTF(1, ("clock_filter: n %d off %.6f del %.6f dsp %.6f jit %.6f\n",
-		    m, peer->offset, peer->delay, peer->disp,
+	record_peer_stats(&peer->srcadr, ctlpeerstatus(peer), peer->offset,
+			  peer->delay, peer->disp, peer->jitter);
+	DPRINTF(1, ("clock_filter: n %hu off %.9f del %.9f dsp %.9f jit %.9f\n",
+		    (u_short)m, peer->offset, peer->delay, peer->disp,
 		    peer->jitter));
-	if (peer->burst == 0 || sys_leap == LEAP_NOTINSYNC)
+	if (0 == peer->burst || LEAP_NOTINSYNC == sys_leap) {
 		clock_select();
+	}
 }
 
 
@@ -3812,7 +3900,7 @@ clock_select(void)
 		    || ((FLAG_TRUE | FLAG_PREFER) & peers[k].peer->flags))
 			break;
 
-		DPRINTF(3, ("select: drop %s seljit %.6f jit %.6f\n",
+		DPRINTF(3, ("select: drop %s seljit %.9f jit %.9f\n",
 			ntoa(&peers[k].peer->srcadr), g, d));
 		if (nlist > sys_maxclock)
 			peers[k].peer->new_status = CTL_PST_SEL_EXCESS;
@@ -3891,13 +3979,13 @@ clock_select(void)
 			sys_clockhop = 0;
 		} else if ((x = fabs(typesystem->offset -
 		    osys_peer->offset)) < sys_mindisp) {
-			if (sys_clockhop == 0)
+			if (0 == sys_clockhop)
 				sys_clockhop = sys_mindisp;
 			else
 				sys_clockhop *= .5;
-			DPRINTF(1, ("select: clockhop %d %.6f %.6f\n",
+			DPRINTF(1, ("select: clockhop %d %.9f %.9f\n",
 				j, x, sys_clockhop));
-			if (fabs(x) < sys_clockhop)
+			if (x < sys_clockhop)
 				typesystem = osys_peer;
 			else
 				sys_clockhop = 0;
@@ -4066,9 +4154,9 @@ peer_xmit(
 	keyid_t	xkeyid = 0;	/* transmit key ID */
 	l_fp	xmt_tx, xmt_ty;
 
-	if (!peer->dstadr)	/* drop peers without interface */
+	if (!peer->dstadr) {	/* can't send */
 		return;
-
+	}
 	xpkt.li_vn_mode = PKT_LI_VN_MODE(sys_leap, peer->version,
 	    peer->hmode);
 	xpkt.stratum = STRATUM_TO_PKT(sys_stratum);
@@ -4146,9 +4234,8 @@ peer_xmit(
 		}
 		L_SUB(&xmt_ty, &xmt_tx);
 		LFPTOD(&xmt_ty, peer->xleave);
-		DPRINTF(1, ("peer_xmit: at %ld %s->%s mode %d len %zu xmt %#010x.%08x\n",
-			    current_time,
-			    peer->dstadr ? stoa(&peer->dstadr->sin) : "-",
+		DPRINTF(1, ("peer_xmit: at %ld %s->%s mode %d len %zu xmt 0x%x.%08x\n",
+			    current_time, latoa(peer->dstadr),
 			    stoa(&peer->srcadr), peer->hmode, sendlen,
 			    xmt_tx.l_ui, xmt_tx.l_uf));
 		return;
@@ -4435,8 +4522,8 @@ peer_xmit(
 		authtrust(xkeyid, 0);
 #endif	/* AUTOKEY */
 	if (sendlen > sizeof(xpkt)) {
-		msyslog(LOG_ERR, "peer_xmit: buffer overflow %zu", sendlen);
-		exit (-1);
+		msyslog(LOG_ERR, "peer_xmit: buffer overflow %u", (u_int)sendlen);
+		exit(EX_SOFTWARE);
 	}
 	peer->t21_bytes = sendlen;
 	sendpkt(&peer->srcadr, peer->dstadr,
@@ -4460,9 +4547,8 @@ peer_xmit(
 	LFPTOD(&xmt_ty, peer->xleave);
 #ifdef AUTOKEY
 	DPRINTF(1, ("peer_xmit: at %ld %s->%s mode %d keyid %08x len %zu index %d\n",
-		    current_time, latoa(peer->dstadr),
-		    ntoa(&peer->srcadr), peer->hmode, xkeyid, sendlen,
-		    peer->keynumber));
+		    current_time, latoa(peer->dstadr), stoa(&peer->srcadr),
+		    peer->hmode, xkeyid, sendlen, peer->keynumber));
 #else	/* !AUTOKEY follows */
 	DPRINTF(1, ("peer_xmit: at %ld %s->%s mode %d keyid %08x len %zu\n",
 		    current_time, peer->dstadr ?
@@ -4501,14 +4587,14 @@ leap_smear_add_offs(
  */
 static void
 fast_xmit(
-	struct recvbuf *rbufp,	/* receive packet pointer */
+	struct recvbuf* rbufp,	/* receive packet pointer */
 	int	xmode,		/* receive mode */  /* XXX: HMS: really? */
 	keyid_t	xkeyid,		/* transmit key ID */
 	int	flags		/* restrict mask */
-	)
+)
 {
 	struct pkt xpkt;	/* transmit packet structure */
-	struct pkt *rpkt;	/* receive packet structure */
+	struct pkt* rpkt;	/* receive packet structure */
 	l_fp	xmt_tx, xmt_ty;
 	size_t	sendlen;
 #ifdef AUTOKEY
@@ -4522,13 +4608,26 @@ fast_xmit(
 	 * the system minimum poll (ntp_minpoll). This is for KoD rate
 	 * control and not strictly specification compliant, but doesn't
 	 * break anything.
-	 *
-	 * If the gazinta was from a multicast address, the gazoutta
-	 * must go out another way.
 	 */
 	rpkt = &rbufp->recv_pkt;
-	if (rbufp->dstadr->flags & INT_MCASTOPEN)
+	/*
+	 * If the packet was received on an endpoint open only on
+	 * a multicast address, the response needs to go out from
+	 * a unicast endpoint.
+	 */
+#ifndef MULTICAST_NONEWSOCKET
+	if (rbufp->dstadr->flags & INT_MCASTOPEN) {
 		rbufp->dstadr = findinterface(&rbufp->recv_srcadr);
+		if (NULL == rbufp->dstadr ||
+		    ANY_INTERFACE_CHOOSE(&rbufp->recv_srcadr) /* wildcard */
+		      == rbufp->dstadr) {
+			DPRINTF(2, ("No unicast local address found for"
+				    " reply to %s mcast.",
+				    stoa(&rbufp->recv_srcadr)));
+			return;
+		}
+	}
+#endif
 
 	/*
 	 * If this is a kiss-o'-death (KoD) packet, show leap
@@ -4760,15 +4859,14 @@ pool_xmit(
 	)
 {
 #ifdef WORKER
-	struct pkt		xpkt;	/* transmit packet structure */
-	struct addrinfo		hints;
-	int			rc;
-	struct interface *	lcladr;
-	sockaddr_u *		rmtadr;
-	r4addr			r4a;
-	u_short			restrict_mask;
-	struct peer *		p;
-	l_fp			xmt_tx;
+	struct pkt	xpkt;	/* transmit packet structure */
+	struct addrinfo	hints;
+	int		rc;
+	endpt *		lcladr;
+	sockaddr_u *	rmtadr;
+	u_short		af;
+	struct peer *	p;
+	l_fp		xmt_tx;
 
 	DEBUG_REQUIRE(pool);
 	if (NULL == pool->ai) {
@@ -4776,6 +4874,16 @@ pool_xmit(
 			/* free() is used with copy_addrinfo_list() */
 			free(pool->addrs);
 			pool->addrs = NULL;
+		}
+		af = AF(&pool->srcadr);
+		if (   (AF_INET == af && !nonlocal_v4_addr_up)
+		    || (AF_INET6 == af && !nonlocal_v6_addr_up)
+		    || (   AF_UNSPEC == af
+			&& !nonlocal_v4_addr_up
+			&& !nonlocal_v6_addr_up)) {
+
+			/* POOL DNS query would be useless [Bug 3845] */
+			return;
 		}
 		ZERO(hints);
 		hints.ai_family = AF(&pool->srcadr);
@@ -4803,15 +4911,17 @@ pool_xmit(
 		/* copy_addrinfo_list ai_addr points to a sockaddr_u */
 		rmtadr = (sockaddr_u *)(void *)pool->ai->ai_addr;
 		pool->ai = pool->ai->ai_next;
+		/* do not solicit when hopeless [Bug 3845] */
+		if (   (IS_IPV4(rmtadr) && !nonlocal_v4_addr_up)
+		    || (IS_IPV6(rmtadr) && !nonlocal_v6_addr_up)) {
+			continue;
+		}
 		p = findexistingpeer(rmtadr, NULL, NULL, MODE_CLIENT, 0, NULL);
 	} while (p != NULL && pool->ai != NULL);
-	if (p != NULL)
+	if (p != NULL) {
 		return;	/* out of addresses, re-query DNS next poll */
-	restrictions(rmtadr, &r4a);
-	restrict_mask = r4a.rflags;
-	if (RES_FLAGS & restrict_mask)
-		restrict_source(rmtadr, 0,
-				current_time + POOL_SOLICIT_WINDOW + 1);
+	}
+	restrict_source(rmtadr, FALSE, 1 + POOL_SOLICIT_WINDOW);
 	lcladr = findinterface(rmtadr);
 	memset(&xpkt, 0, sizeof(xpkt));
 	xpkt.li_vn_mode = PKT_LI_VN_MODE(sys_leap, pool->version,
@@ -4825,7 +4935,6 @@ pool_xmit(
 	/* Bug 3596: What are the pros/cons of using sys_reftime here? */
 	HTONL_FP(&sys_reftime, &xpkt.reftime);
 
-	/* HMS: the following is better done after the ntp_random() calls */
 	get_systime(&xmt_tx);
 	pool->aorg = xmt_tx;
 
@@ -4844,14 +4953,14 @@ pool_xmit(
 		L_CLR(&pool->nonce);
 		HTONL_FP(&xmt_tx, &xpkt.xmt);
 	}
-	sendpkt(rmtadr, lcladr,
-		sys_ttl[(pool->ttl >= sys_ttlmax) ? sys_ttlmax : pool->ttl],
-		&xpkt, LEN_PKT_NOMAC);
 	pool->sent++;
 	pool->throttle += (1 << pool->minpoll) - 2;
 	DPRINTF(1, ("pool_xmit: at %ld %s->%s pool\n",
 		    current_time, latoa(lcladr), stoa(rmtadr)));
 	msyslog(LOG_INFO, "Soliciting pool server %s", stoa(rmtadr));
+	sendpkt(rmtadr, lcladr,
+		sys_ttl[(pool->ttl >= sys_ttlmax) ? sys_ttlmax : pool->ttl],
+		&xpkt, LEN_PKT_NOMAC);
 #endif	/* WORKER */
 }
 
@@ -4957,8 +5066,18 @@ key_expire(
 
 
 /*
- * local_refid(peer) - check peer refid to avoid selecting peers
+ * local_refid(peer) - Check peer refid to avoid selecting peers
  *		       currently synced to this ntpd.
+ * Note that until 4.2.8p18 and 4.3.1XX ntpd calculated the IPv6
+ * refid differently on different-endian systems.  It now calculates
+ * the refid the same on both, the same way it did on little-endian
+ * in the past.  On big-endian systems, ntpd also calculates a
+ * byte-swapped version of each of its IPv6 local addresses' refids,
+ * as endpt.old_refid and also detects a loop when seeing it.  This
+ * ensures new BE ntpd will detect loops interoperating with older
+ * BE ntpd, and keeps the more-common LE old ntpd code detecting
+ * loops with IPv6 refids correctly.  Thanks to Hal Murray for
+ * the byte-swapping idea.
  */
 static int
 local_refid(
@@ -4972,10 +5091,17 @@ local_refid(
 	else
 		unicast_ep = findinterface(&p->srcadr);
 
-	if (unicast_ep != NULL && p->refid == unicast_ep->addr_refid)
+	if (unicast_ep != NULL
+	    && (   p->refid == unicast_ep->addr_refid
+#ifdef WORDS_BIGENDIAN
+		|| (   IS_IPV6(&unicast_ep->sin)
+		    && p->refid == unicast_ep->old_refid)
+#endif
+							 )) {
 		return TRUE;
-	else
+	} else {
 		return FALSE;
+	}
 }
 
 
@@ -5210,6 +5336,7 @@ init_proto(void)
 	sys_survivors = 0;
 	sys_manycastserver = 0;
 	sys_bclient = 0;
+	sys_mclient = 0;
 	sys_bdelay = BDELAY_DEFAULT;	/*[Bug 3031] delay cutoff */
 	sys_authenticate = 1;
 	sys_stattime = current_time;
@@ -5251,7 +5378,7 @@ proto_config(
 
 	case PROTO_BROADCLIENT: /* broadcast client (bclient) */
 		sys_bclient = (int)value;
-		if (sys_bclient == 0)
+		if (!sys_bclient)
 			io_unsetbclient();
 		else
 			io_setbclient();
@@ -5361,7 +5488,7 @@ proto_config(
 	case PROTO_MULTICAST_ADD: /* add group address */
 		if (svalue != NULL)
 			io_multicast_add(svalue);
-		sys_bclient = 1;
+		sys_mclient = 1;
 		break;
 
 	case PROTO_MULTICAST_DEL: /* delete group address */

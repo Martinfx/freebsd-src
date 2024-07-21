@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Alexander V. Chernikov
  *
@@ -26,7 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_route.h"
@@ -1383,7 +1382,7 @@ rebuild_fd_flm(struct fib_data *fd, struct fib_lookup_module *flm_new)
 	if (flm_new == fd->fd_flm)
 		fd_tmp = fd;
 	else
-		FD_PRINTF(LOG_NOTICE, fd, "switching algo to %s", flm_new->flm_name);
+		FD_PRINTF(LOG_INFO, fd, "switching algo to %s", flm_new->flm_name);
 
 	result = setup_fd_instance(flm_new, fd->fd_rh, fd_tmp, &fd_new, true);
 	if (result != FLM_SUCCESS) {
@@ -1738,7 +1737,7 @@ fib_set_algo_ptr(struct fib_data *fd, void *algo_data)
 void
 fib_epoch_call(epoch_callback_t callback, epoch_context_t ctx)
 {
-	epoch_call(net_epoch_preempt, callback, ctx);
+	NET_EPOCH_CALL(callback, ctx);
 }
 
 /*

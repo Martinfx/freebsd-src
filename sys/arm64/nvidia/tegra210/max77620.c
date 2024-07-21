@@ -24,8 +24,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * MAX77620 PMIC driver
  */
@@ -42,7 +40,7 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/extres/regulator/regulator.h>
+#include <dev/regulator/regulator.h>
 #include <dev/fdt/fdt_pinctrl.h>
 #include <dev/gpio/gpiobusvar.h>
 #include <dev/iicbus/iiconf.h>
@@ -291,7 +289,7 @@ max77620_encode_fps_period(struct max77620_softc *sc, int val)
 static int
 max77620_init(struct max77620_softc *sc)
 {
-	uint8_t mask, val, tmp;;
+	uint8_t mask, val, tmp;
 	int i, rv;
 
 	mask = 0;

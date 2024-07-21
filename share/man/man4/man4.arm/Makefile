@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MAN=	\
 	aw_gpio.4 \
 	aw_mmc.4 \

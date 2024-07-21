@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008, Jeffrey Roberson <jeff@freebsd.org>
  * All rights reserved.
@@ -27,8 +27,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_BITSET_H_
@@ -137,6 +135,18 @@
 		(d)->__bits[__i] = (s1)->__bits[__i] | (s2)->__bits[__i];\
 } while (0)
 
+#define	__BIT_ORNOT(_s, d, s) do {					\
+	__size_t __i;							\
+	for (__i = 0; __i < __bitset_words((_s)); __i++)		\
+		(d)->__bits[__i] |= ~(s)->__bits[__i];			\
+} while (0)
+
+#define	__BIT_ORNOT2(_s, d, s1, s2) do {				\
+	__size_t __i;							\
+	for (__i = 0; __i < __bitset_words((_s)); __i++)		\
+		(d)->__bits[__i] = (s1)->__bits[__i] | ~(s2)->__bits[__i];\
+} while (0)
+
 #define	__BIT_AND(_s, d, s) do {					\
 	__size_t __i;							\
 	for (__i = 0; __i < __bitset_words((_s)); __i++)		\
@@ -222,8 +232,9 @@
 } while (0)
 
 /*
- * Note that `start` and the returned value from __BIT_FFS_AT are
- * 1-based bit indices.
+ * 'start' and 'end' are 0-based bit (runtime) indices. Note that, as for ffs(),
+ * the returned index is 1-based, 0 being reserved to indicate that no bits are
+ * set.
  */
 #define	__BIT_FFS_AT(_s, p, start) __extension__ ({			\
 	__size_t __i;							\
@@ -309,9 +320,6 @@
 #define	__BITSET_SIZE(_s)	(__bitset_words((_s)) * sizeof(long))
 
 #if defined(_KERNEL) || defined(_WANT_FREEBSD_BITSET)
-/*
- * Dynamically allocate a bitset.
- */
 #define	BIT_AND(_s, d, s)			__BIT_AND(_s, d, s)
 #define	BIT_AND2(_s, d, s1, s2)			__BIT_AND2(_s, d, s1, s2)
 #define	BIT_ANDNOT(_s, d, s)			__BIT_ANDNOT(_s, d, s)
@@ -328,14 +336,15 @@
 #define	BIT_FFS_AT(_s, p, start)		__BIT_FFS_AT(_s, p, start)
 #define	BIT_FILL(_s, p)				__BIT_FILL(_s, p)
 #define	BIT_FLS(_s, p)				__BIT_FLS(_s, p)
-#define BIT_FOREACH(_s, i, p, op)		__BIT_FOREACH(_s, i, p, op)
-#define	BIT_FOREACH_ADVANCE(_s, i, p, op)	__BIT_FOREACH_ADVANCE(_s, i, p, op)
+#define	BIT_FOREACH(_s, i, p, op)		__BIT_FOREACH(_s, i, p, op)
 #define	BIT_FOREACH_ISCLR(_s, i, p)		__BIT_FOREACH_ISCLR(_s, i, p)
 #define	BIT_FOREACH_ISSET(_s, i, p)		__BIT_FOREACH_ISSET(_s, i, p)
 #define	BIT_ISFULLSET(_s, p)			__BIT_ISFULLSET(_s, p)
 #define	BIT_ISSET(_s, n, p)			__BIT_ISSET(_s, n, p)
 #define	BIT_OR(_s, d, s)			__BIT_OR(_s, d, s)
 #define	BIT_OR2(_s, d, s1, s2)			__BIT_OR2(_s, d, s1, s2)
+#define	BIT_ORNOT(_s, d, s)			__BIT_ORNOT(_s, d, s)
+#define	BIT_ORNOT2(_s, d, s1, s2)		__BIT_ORNOT2(_s, d, s1, s2)
 #define	BIT_OR_ATOMIC(_s, d, s)			__BIT_OR_ATOMIC(_s, d, s)
 #define	BIT_OVERLAP(_s, p, c)			__BIT_OVERLAP(_s, p, c)
 #define	BIT_SET(_s, n, p)			__BIT_SET(_s, n, p)
@@ -350,6 +359,9 @@
 #define	BIT_ZERO(_s, p)				__BIT_ZERO(_s, p)
 
 #if defined(_KERNEL)
+/*
+ * Dynamically allocate a bitset.
+ */
 #define BITSET_ALLOC(_s, mt, mf)		malloc(__BITSET_SIZE((_s)), mt, (mf))
 #define	BITSET_FREE(p, mt)			free(p, mt)
 #endif /* _KERNEL */

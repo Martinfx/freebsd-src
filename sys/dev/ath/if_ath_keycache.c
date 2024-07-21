@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002-2009 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Driver for the Atheros Wireless LAN controller.
  *
@@ -436,8 +434,7 @@ ath_key_alloc(struct ieee80211vap *vap, struct ieee80211_key *k,
 		/*
 		 * Only global keys should have key index assigned.
 		 */
-		if (!(&vap->iv_nw_keys[0] <= k &&
-		      k < &vap->iv_nw_keys[IEEE80211_WEP_NKID])) {
+		if (!ieee80211_is_key_global(vap, k)) {
 			/* should not happen */
 			DPRINTF(sc, ATH_DEBUG_KEYCACHE,
 				"%s: bogus group key\n", __func__);

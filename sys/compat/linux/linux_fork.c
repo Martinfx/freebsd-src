@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Tim J. Robbins
  * Copyright (c) 2002 Doug Rabson
@@ -28,14 +28,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include "opt_compat.h"
-
 #include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/imgact.h>
 #include <sys/ktr.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -47,7 +40,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/sx.h>
 #include <sys/umtxvar.h>
 #include <sys/unistd.h>
-#include <sys/wait.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>

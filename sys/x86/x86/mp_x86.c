@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #ifdef __i386__
 #include "opt_apic.h"
@@ -47,9 +45,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/cons.h>	/* cngetc() */
 #include <sys/cpuset.h>
 #include <sys/csan.h>
-#ifdef GPROF 
-#include <sys/gmon.h>
-#endif
 #include <sys/interrupt.h>
 #include <sys/kdb.h>
 #include <sys/kernel.h>
@@ -91,9 +86,6 @@ __FBSDID("$FreeBSD$");
 
 static MALLOC_DEFINE(M_CPUS, "cpus", "CPU items");
 
-/* lock region used by kernel profiling */
-int	mcount_lock;
-
 int	mp_naps;		/* # of Applications processors */
 int	boot_cpu_id = -1;	/* designated BSP */
 
@@ -105,7 +97,6 @@ int bootAP;
 void *bootstacks[MAXCPU];
 void *dpcpu;
 
-struct pcb stoppcbs[MAXCPU];
 struct susppcb **susppcbs;
 
 #ifdef COUNT_IPIS
@@ -162,6 +153,11 @@ SYSCTL_INT(_machdep, OID_AUTO, hyperthreading_intr_allowed, CTLFLAG_RDTUN,
 	&hyperthreading_intr_allowed, 0,
 	"Allow interrupts on HTT logical CPUs");
 
+static int	intr_apic_id_limit = -1;
+SYSCTL_INT(_machdep, OID_AUTO, intr_apic_id_limit, CTLFLAG_RDTUN,
+	&intr_apic_id_limit, 0,
+	"Maximum permitted APIC ID for interrupt delivery (-1 is unlimited)");
+
 static struct topo_node topo_root;
 
 static int pkg_id_shift;
@@ -187,15 +183,13 @@ mem_range_AP_init(void)
 }
 
 /*
- * Round up to the next power of two, if necessary, and then
- * take log2.
- * Returns -1 if argument is zero.
+ * Compute ceil(log2(x)).  Returns -1 if x is zero.
  */
 static __inline int
 mask_width(u_int x)
 {
 
-	return (fls(x << (1 - powerof2(x))) - 1);
+	return (x == 0 ? -1 : order_base_2(x));
 }
 
 /*
@@ -266,6 +260,22 @@ topo_probe_amd(void)
 	/* No multi-core capability. */
 	if ((amd_feature2 & AMDID2_CMP) == 0)
 		return;
+
+	/*
+	 * XXX Lack of an AMD IOMMU driver prevents use of APIC IDs above
+	 * xAPIC_MAX_APIC_ID.  This is a workaround so we boot and function on
+	 * AMD systems with high thread counts, albeit with reduced interrupt
+	 * performance.
+	 *
+	 * We should really set the limit to xAPIC_MAX_APIC_ID by default, and
+	 * have the IOMMU driver increase it.  That way if a driver is present
+	 * but disabled, or is otherwise not able to route the interrupts, the
+	 * system can fall back to a functional state.  That will require a more
+	 * substantial change though, including having the IOMMU initialize
+	 * earlier.
+	 */
+	if (intr_apic_id_limit == -1)
+		intr_apic_id_limit = xAPIC_MAX_APIC_ID;
 
 	/* For families 10h and newer. */
 	pkg_id_shift = (cpu_procinfo2 & AMDID_COREID_SIZE) >>
@@ -983,10 +993,9 @@ void
 cpu_add(u_int apic_id, char boot_cpu)
 {
 
-	if (apic_id > max_apic_id) {
+	if (apic_id > max_apic_id)
 		panic("SMP: APIC ID %d too high", apic_id);
-		return;
-	}
+
 	KASSERT(cpu_info[apic_id].cpu_present == 0, ("CPU %u added twice",
 	    apic_id));
 	cpu_info[apic_id].cpu_present = 1;
@@ -1122,11 +1131,6 @@ init_secondary_tail(void)
 	while (atomic_load_acq_int(&smp_started) == 0)
 		ia32_pause();
 
-#ifndef EARLY_AP_STARTUP
-	/* Start per-CPU event timers. */
-	cpu_initclocks_ap();
-#endif
-
 	kcsan_cpu_init(cpuid);
 
 	sched_ap_entry();
@@ -1154,8 +1158,7 @@ smp_after_idle_runnable(void *arg __unused)
 	    smp_no_rendezvous_barrier, NULL);
 
 	for (cpu = 1; cpu < mp_ncpus; cpu++) {
-		kmem_free((vm_offset_t)bootstacks[cpu], kstack_pages *
-		    PAGE_SIZE);
+		kmem_free(bootstacks[cpu], kstack_pages * PAGE_SIZE);
 	}
 }
 SYSINIT(smp_after_idle_runnable, SI_SUB_SMP, SI_ORDER_ANY,
@@ -1180,6 +1183,8 @@ set_interrupt_apic_ids(void)
 		if (cpu_info[apic_id].cpu_bsp)
 			continue;
 		if (cpu_info[apic_id].cpu_disabled)
+			continue;
+		if (intr_apic_id_limit >= 0 && apic_id > intr_apic_id_limit)
 			continue;
 
 		/* Don't let hyperthreads service interrupts. */
@@ -1587,6 +1592,24 @@ cpususpend_handler(void)
 	mtx_assert(&smp_ipi_mtx, MA_NOTOWNED);
 
 	cpu = PCPU_GET(cpuid);
+
+#ifdef XENHVM
+	/*
+	 * Some Xen guest types (PVH) expose a very minimal set of ACPI tables,
+	 * and for example have no support for SCI.  That leads to the suspend
+	 * stacks not being allocated, and hence when attempting to perform a
+	 * Xen triggered suspension FreeBSD will hit a #PF.  Avoid saving the
+	 * CPU and FPU contexts if the stacks are not allocated, as the
+	 * hypervisor will already take care of this.  Note that we could even
+	 * do this for Xen triggered suspensions on guests that have full ACPI
+	 * support, but doing so would introduce extra complexity.
+	 */
+	if (susppcbs == NULL) {
+		KASSERT(vm_guest == VM_GUEST_XEN, ("Missing suspend stack"));
+		CPU_SET_ATOMIC(cpu, &suspended_cpus);
+		CPU_SET_ATOMIC(cpu, &resuming_cpus);
+	} else
+#endif
 	if (savectx(&susppcbs[cpu]->sp_pcb)) {
 #ifdef __amd64__
 		fpususpend(susppcbs[cpu]->sp_fpususpend);
@@ -1718,7 +1741,7 @@ mp_ipi_intrcnt(void *dummy)
 		intrcnt_add(buf, &ipi_rendezvous_counts[i]);
 		snprintf(buf, sizeof(buf), "cpu%d:hardclock", i);
 		intrcnt_add(buf, &ipi_hardclock_counts[i]);
-	}		
+	}
 }
 SYSINIT(mp_ipi_intrcnt, SI_SUB_INTR, SI_ORDER_MIDDLE, mp_ipi_intrcnt, NULL);
 #endif

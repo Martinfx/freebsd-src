@@ -1,5 +1,2 @@
-# $FreeBSD$
-
 SUBDIR += bsdlabel
 SUBDIR += fdisk
-SUBDIR += sconfig

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2010
  *	Swinburne University of Technology, Melbourne, Australia
@@ -53,15 +53,13 @@
  *   http://caia.swin.edu.au/urp/newtcp/
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/khelp.h>
 #include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/prng.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
@@ -70,7 +68,8 @@ __FBSDID("$FreeBSD$");
 
 #include <net/vnet.h>
 
-#include <netinet/tcp.h>
+#include <netinet/in.h>
+#include <netinet/in_pcb.h>
 #include <netinet/tcp_seq.h>
 #include <netinet/tcp_timer.h>
 #include <netinet/tcp_var.h>
@@ -79,10 +78,10 @@ __FBSDID("$FreeBSD$");
 
 #include <netinet/khelp/h_ertt.h>
 
-/* Largest possible number returned by random(). */
-#define	RANDOM_MAX	INT_MAX
+/* Largest possible number returned by prng32(). */
+#define	RANDOM_MAX	UINT32_MAX
 
-static void	hd_ack_received(struct cc_var *ccv, uint16_t ack_type);
+static void	hd_ack_received(struct cc_var *ccv, ccsignal_t ack_type);
 static int	hd_mod_init(void);
 static size_t	hd_data_sz(void);
 
@@ -130,7 +129,7 @@ should_backoff(int qdly, int maxqdly)
 			p = (RANDOM_MAX / 100) * V_hd_pmax;
 	}
 
-	return (random() < p);
+	return (prng32() < p);
 }
 
 /*
@@ -140,13 +139,13 @@ should_backoff(int qdly, int maxqdly)
  * as NewReno in all other circumstances.
  */
 static void
-hd_ack_received(struct cc_var *ccv, uint16_t ack_type)
+hd_ack_received(struct cc_var *ccv, ccsignal_t ack_type)
 {
 	struct ertt *e_t;
 	int qdly;
 
 	if (ack_type == CC_ACK) {
-		e_t = khelp_get_osd(CCV(ccv, osd), ertt_id);
+		e_t = khelp_get_osd(&CCV(ccv, t_osd), ertt_id);
 
 		if (e_t->rtt && e_t->minrtt && V_hd_qthresh > 0) {
 			qdly = e_t->rtt - e_t->minrtt;

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Chuck Tuffli
  *
@@ -24,9 +24,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/ioccom.h>
@@ -102,8 +99,7 @@ selftest(const struct cmd *f, int argc, char *argv[])
 	if (read_controller_data(fd, &cdata))
 		errx(EX_IOERR, "Identify request failed");
 
-	if (((cdata.oacs >> NVME_CTRLR_DATA_OACS_SELFTEST_SHIFT) &
-	     NVME_CTRLR_DATA_OACS_SELFTEST_MASK) == 0)
+	if (NVMEV(NVME_CTRLR_DATA_OACS_SELFTEST, cdata.oacs) == 0)
 		errx(EX_UNAVAILABLE, "controller does not support self-test");
 
 	selftest_op(fd, nsid, opt.stc);

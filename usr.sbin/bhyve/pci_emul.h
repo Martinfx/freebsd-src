@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _PCI_EMUL_H_
@@ -35,11 +33,14 @@
 #include <sys/queue.h>
 #include <sys/kernel.h>
 #include <sys/nv.h>
+#include <sys/pciio.h>
 #include <sys/_pthreadtypes.h>
 
 #include <dev/pci/pcireg.h>
 
 #include <assert.h>
+
+#include "pci_irq.h"
 
 #define	PCI_BARMAX	PCIR_MAX_BAR_0	/* BAR registers in a Type 0 header */
 #define PCI_BARMAX_WITH_ROM (PCI_BARMAX + 1)
@@ -54,8 +55,7 @@ struct pci_devemu {
 	const char      *pe_emu;	/* Name of device emulation */
 
 	/* instance creation */
-	int       (*pe_init)(struct vmctx *, struct pci_devinst *,
-			     nvlist_t *);
+	int       (*pe_init)(struct pci_devinst *, nvlist_t *);
 	int	(*pe_legacy_config)(nvlist_t *, const char *);
 	const char *pe_alias;
 
@@ -63,31 +63,27 @@ struct pci_devemu {
 	void	(*pe_write_dsdt)(struct pci_devinst *);
 
 	/* config space read/write callbacks */
-	int	(*pe_cfgwrite)(struct vmctx *ctx, int vcpu,
-			       struct pci_devinst *pi, int offset,
+	int	(*pe_cfgwrite)(struct pci_devinst *pi, int offset,
 			       int bytes, uint32_t val);
-	int	(*pe_cfgread)(struct vmctx *ctx, int vcpu,
-			      struct pci_devinst *pi, int offset,
+	int	(*pe_cfgread)(struct pci_devinst *pi, int offset,
 			      int bytes, uint32_t *retval);
 
 	/* BAR read/write callbacks */
-	void      (*pe_barwrite)(struct vmctx *ctx, int vcpu,
-				 struct pci_devinst *pi, int baridx,
+	void      (*pe_barwrite)(struct pci_devinst *pi, int baridx,
 				 uint64_t offset, int size, uint64_t value);
-	uint64_t  (*pe_barread)(struct vmctx *ctx, int vcpu,
-				struct pci_devinst *pi, int baridx,
+	uint64_t  (*pe_barread)(struct pci_devinst *pi, int baridx,
 				uint64_t offset, int size);
 
-	void	(*pe_baraddr)(struct vmctx *ctx, struct pci_devinst *pi,
+	void	(*pe_baraddr)(struct pci_devinst *pi,
 			      int baridx, int enabled, uint64_t address);
 
 	/* Save/restore device state */
 	int	(*pe_snapshot)(struct vm_snapshot_meta *meta);
-	int	(*pe_pause)(struct vmctx *ctx, struct pci_devinst *pi);
-	int	(*pe_resume)(struct vmctx *ctx, struct pci_devinst *pi);
+	int	(*pe_pause)(struct pci_devinst *pi);
+	int	(*pe_resume)(struct pci_devinst *pi);
 
 };
-#define PCI_EMUL_SET(x)   DATA_SET(pci_devemu_set, x);
+#define PCI_EMUL_SET(x)   DATA_SET(pci_devemu_set, x)
 
 enum pcibar_type {
 	PCIBAR_NONE,
@@ -121,12 +117,6 @@ struct msix_table_entry {
 #define MAX_MSIX_TABLE_ENTRIES	2048
 #define	PBA_SIZE(msgnum)	(roundup2((msgnum), 64) / 8)
 
-enum lintr_stat {
-	IDLE,
-	ASSERTED,
-	PENDING
-};
-
 struct pci_devinst {
 	struct pci_devemu *pi_d;
 	struct vmctx *pi_vmctx;
@@ -138,9 +128,12 @@ struct pci_devinst {
 
 	struct {
 		int8_t    	pin;
-		enum lintr_stat	state;
-		int		pirq_pin;
-		int	  	ioapic_irq;
+		enum {
+			IDLE,
+			ASSERTED,
+			PENDING,
+		} state;
+		struct pci_irq	irq;
 		pthread_mutex_t	lock;
 	} pi_lintr;
 
@@ -227,15 +220,24 @@ struct pciecap {
 } __packed;
 static_assert(sizeof(struct pciecap) == 60, "compile-time assertion failed");
 
-typedef void (*pci_lintr_cb)(int b, int s, int pin, int pirq_pin,
-    int ioapic_irq, void *arg);
+typedef void (*pci_lintr_cb)(int b, int s, int pin, struct pci_irq *irq,
+    void *arg);
+void	pci_lintr_assert(struct pci_devinst *pi);
+void	pci_lintr_deassert(struct pci_devinst *pi);
+void	pci_lintr_request(struct pci_devinst *pi);
+int	pci_count_lintr(int bus);
+void	pci_walk_lintr(int bus, pci_lintr_cb cb, void *arg);
 
 int	init_pci(struct vmctx *ctx);
 void	pci_callback(void);
+uint32_t pci_config_read_reg(const struct pcisel *host_sel, nvlist_t *nvl,
+	    uint32_t reg, uint8_t size, uint32_t def);
 int	pci_emul_alloc_bar(struct pci_devinst *pdi, int idx,
 	    enum pcibar_type type, uint64_t size);
 int 	pci_emul_alloc_rom(struct pci_devinst *const pdi, const uint64_t size,
     	    void **const addr);
+int 	pci_emul_add_boot_device(struct pci_devinst *const pi,
+	    const int bootindex);
 int	pci_emul_add_msicap(struct pci_devinst *pi, int msgnum);
 int	pci_emul_add_pciecap(struct pci_devinst *pi, int pcie_device_type);
 void	pci_emul_capwrite(struct pci_devinst *pi, int offset, int bytes,
@@ -243,9 +245,6 @@ void	pci_emul_capwrite(struct pci_devinst *pi, int offset, int bytes,
 void	pci_emul_cmd_changed(struct pci_devinst *pi, uint16_t old);
 void	pci_generate_msi(struct pci_devinst *pi, int msgnum);
 void	pci_generate_msix(struct pci_devinst *pi, int msgnum);
-void	pci_lintr_assert(struct pci_devinst *pi);
-void	pci_lintr_deassert(struct pci_devinst *pi);
-void	pci_lintr_request(struct pci_devinst *pi);
 int	pci_msi_enabled(struct pci_devinst *pi);
 int	pci_msix_enabled(struct pci_devinst *pi);
 int	pci_msix_table_bar(struct pci_devinst *pi);
@@ -259,15 +258,15 @@ int	pci_emul_add_msixcap(struct pci_devinst *pi, int msgnum, int barnum);
 int	pci_emul_msix_twrite(struct pci_devinst *pi, uint64_t offset, int size,
 			     uint64_t value);
 uint64_t pci_emul_msix_tread(struct pci_devinst *pi, uint64_t offset, int size);
-int	pci_count_lintr(int bus);
-void	pci_walk_lintr(int bus, pci_lintr_cb cb, void *arg);
 void	pci_write_dsdt(void);
 uint64_t pci_ecfg_base(void);
 int	pci_bus_configured(int bus);
+
 #ifdef BHYVE_SNAPSHOT
+struct pci_devinst *pci_next(const struct pci_devinst *cursor);
 int	pci_snapshot(struct vm_snapshot_meta *meta);
-int	pci_pause(struct vmctx *ctx, const char *dev_name);
-int	pci_resume(struct vmctx *ctx, const char *dev_name);
+int	pci_pause(struct pci_devinst *pdi);
+int	pci_resume(struct pci_devinst *pdi);
 #endif
 
 static __inline void

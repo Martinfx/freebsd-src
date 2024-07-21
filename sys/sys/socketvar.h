@@ -27,10 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)socketvar.h	8.3 (Berkeley) 2/19/95
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_SOCKETVAR_H_
@@ -215,7 +211,7 @@ struct socket {
 #define	SS_ISDISCONNECTING	0x0008	/* in process of disconnecting */
 #define	SS_NBIO			0x0100	/* non-blocking ops */
 #define	SS_ASYNC		0x0200	/* async i/o notify */
-#define	SS_ISCONFIRMING		0x0400	/* deciding to accept connection req */
+/* was	SS_ISCONFIRMING		0x0400	*/
 #define	SS_ISDISCONNECTED	0x2000	/* socket disconnected from peer */
 
 #ifdef _KERNEL
@@ -418,7 +414,8 @@ MALLOC_DECLARE(M_SONAME);
 #define HHOOK_FILT_SOREAD		4
 #define HHOOK_FILT_SOWRITE		5
 #define HHOOK_SOCKET_CLOSE		6
-#define HHOOK_SOCKET_LAST		HHOOK_SOCKET_CLOSE
+#define HHOOK_SOCKET_NEWCONN		7
+#define HHOOK_SOCKET_LAST		HHOOK_SOCKET_NEWCONN
 
 struct socket_hhook_data {
 	struct socket	*so;
@@ -438,6 +435,7 @@ struct mbuf;
 struct sockaddr;
 struct ucred;
 struct uio;
+enum shutdown_how;
 
 /* Return values for socket upcalls. */
 #define	SU_OK		0
@@ -449,9 +447,13 @@ struct uio;
 int	getsockaddr(struct sockaddr **namp, const struct sockaddr *uaddr,
 	    size_t len);
 int	getsock_cap(struct thread *td, int fd, cap_rights_t *rightsp,
-	    struct file **fpp, u_int *fflagp, struct filecaps *havecaps);
+	    struct file **fpp, struct filecaps *havecaps);
+int	getsock(struct thread *td, int fd, cap_rights_t *rightsp,
+	    struct file **fpp);
 void	soabort(struct socket *so);
-int	soaccept(struct socket *so, struct sockaddr **nam);
+int	soaccept(struct socket *so, struct sockaddr *sa);
+int	sopeeraddr(struct socket *so, struct sockaddr *sa);
+int	sosockaddr(struct socket *so, struct sockaddr *sa);
 void	soaio_enqueue(struct task *task);
 void	soaio_rcv(void *context, int pending);
 void	soaio_snd(void *context, int pending);
@@ -474,7 +476,7 @@ int	solisten(struct socket *so, int backlog, struct thread *td);
 void	solisten_proto(struct socket *so, int backlog);
 void	solisten_proto_abort(struct socket *so);
 int	solisten_proto_check(struct socket *so);
-void	solisten_enqueue(struct socket *, int);
+bool	solisten_enqueue(struct socket *, int);
 int	solisten_dequeue(struct socket *, struct socket **, int);
 struct socket *
 	solisten_clone(struct socket *);
@@ -504,13 +506,15 @@ void	sorflush(struct socket *so);
 int	sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	    struct mbuf *top, struct mbuf *control, int flags,
 	    struct thread *td);
+int	sousrsend(struct socket *so, struct sockaddr *addr, struct uio *uio,
+	    struct mbuf *control, int flags, struct proc *);
 int	sosend_dgram(struct socket *so, struct sockaddr *addr,
 	    struct uio *uio, struct mbuf *top, struct mbuf *control,
 	    int flags, struct thread *td);
 int	sosend_generic(struct socket *so, struct sockaddr *addr,
 	    struct uio *uio, struct mbuf *top, struct mbuf *control,
 	    int flags, struct thread *td);
-int	soshutdown(struct socket *so, int how);
+int	soshutdown(struct socket *so, enum shutdown_how);
 void	soupcall_clear(struct socket *, sb_which);
 void	soupcall_set(struct socket *, sb_which, so_upcall_t, void *);
 void	solisten_upcall_set(struct socket *, so_upcall_t, void *);

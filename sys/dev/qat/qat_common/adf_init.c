@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #include "qat_freebsd.h"
 #include "adf_cfg.h"
 #include "adf_common_drv.h"
@@ -10,6 +9,7 @@
 #include "icp_qat_fw_init_admin.h"
 #include "adf_cfg_strings.h"
 #include "adf_dev_err.h"
+#include "adf_uio.h"
 #include "adf_transport_access_macros.h"
 #include "adf_transport_internal.h"
 #include <sys/mutex.h>
@@ -77,7 +77,6 @@ adf_cfg_add_device_params(struct adf_accel_dev *accel_dev)
 	char mmp_version[ADF_CFG_MAX_VAL_LEN_IN_BYTES];
 	struct adf_hw_device_data *hw_data = NULL;
 	unsigned long val;
-
 	if (!accel_dev)
 		return -EINVAL;
 
@@ -213,7 +212,7 @@ adf_set_ssm_wdtimer(struct adf_accel_dev *accel_dev)
 	unsigned int mask;
 	u32 clk_per_sec = hw_data->get_clock_speed(hw_data);
 	u32 timer_val = ADF_WDT_TIMER_SYM_COMP_MS * (clk_per_sec / 1000);
-	u32 timer_val_pke = ADF_SSM_WDT_PKE_DEFAULT_VALUE;
+	u32 timer_val_pke = ADF_GEN2_SSM_WDT_PKE_DEFAULT_VALUE;
 	char timer_str[ADF_CFG_MAX_VAL_LEN_IN_BYTES] = { 0 };
 
 	/* Get Watch Dog Timer for CySym+Comp from the configuration */
@@ -289,6 +288,12 @@ adf_dev_init(struct adf_accel_dev *accel_dev)
 		return EFAULT;
 	}
 
+	if (hw_data->init_device && hw_data->init_device(accel_dev)) {
+		device_printf(GET_DEV(accel_dev),
+			      "Failed to initialize device\n");
+		return EFAULT;
+	}
+
 	if (hw_data->init_accel_units && hw_data->init_accel_units(accel_dev)) {
 		device_printf(GET_DEV(accel_dev),
 			      "Failed initialize accel_units\n");
@@ -343,17 +348,9 @@ adf_dev_init(struct adf_accel_dev *accel_dev)
 
 	hw_data->enable_error_correction(accel_dev);
 
-	if (hw_data->enable_vf2pf_comms(accel_dev)) {
-		device_printf(GET_DEV(accel_dev),
-			      "QAT: Failed to enable vf2pf comms\n");
-		return EFAULT;
-	}
-
-	if (adf_pf_vf_capabilities_init(accel_dev))
-		return EFAULT;
-
-	if (adf_pf_vf_ring_to_svc_init(accel_dev))
-		return EFAULT;
+	ret = hw_data->csr_info.pfvf_ops.enable_comms(accel_dev);
+	if (ret)
+		return ret;
 
 	if (adf_cfg_add_device_params(accel_dev))
 		return EFAULT;
@@ -455,6 +452,12 @@ adf_dev_start(struct adf_accel_dev *accel_dev)
 		return EFAULT;
 	}
 
+	if (hw_data->int_timer_init && hw_data->int_timer_init(accel_dev)) {
+		device_printf(GET_DEV(accel_dev),
+			      "Failed to init heartbeat interrupt timer\n");
+		return -EFAULT;
+	}
+
 	list_for_each(list_itr, &service_table)
 	{
 		service = list_entry(list_itr, struct service_hndl, list);
@@ -465,6 +468,18 @@ adf_dev_start(struct adf_accel_dev *accel_dev)
 			return EFAULT;
 		}
 		set_bit(accel_dev->accel_id, service->start_status);
+	}
+
+	if (accel_dev->is_vf || !accel_dev->u1.pf.vf_info) {
+		/*Register UIO devices */
+		if (adf_uio_register(accel_dev)) {
+			adf_uio_remove(accel_dev);
+			device_printf(GET_DEV(accel_dev),
+				      "Failed to register UIO devices\n");
+			set_bit(ADF_STATUS_STARTING, &accel_dev->status);
+			clear_bit(ADF_STATUS_STARTED, &accel_dev->status);
+			return ENODEV;
+		}
 	}
 
 	if (!test_bit(ADF_STATUS_RESTARTING, &accel_dev->status) &&
@@ -514,12 +529,20 @@ adf_dev_stop(struct adf_accel_dev *accel_dev)
 	clear_bit(ADF_STATUS_STARTING, &accel_dev->status);
 	clear_bit(ADF_STATUS_STARTED, &accel_dev->status);
 
+	if (accel_dev->hw_device->int_timer_exit)
+		accel_dev->hw_device->int_timer_exit(accel_dev);
+
 	list_for_each(list_itr, &service_table)
 	{
 		service = list_entry(list_itr, struct service_hndl, list);
 		if (!test_bit(accel_dev->accel_id, service->start_status))
 			continue;
 		clear_bit(accel_dev->accel_id, service->start_status);
+	}
+
+	if (accel_dev->is_vf || !accel_dev->u1.pf.vf_info) {
+		/* Remove UIO Devices */
+		adf_uio_remove(accel_dev);
 	}
 
 	if (test_bit(ADF_STATUS_AE_STARTED, &accel_dev->status)) {
@@ -588,9 +611,6 @@ adf_dev_shutdown(struct adf_accel_dev *accel_dev)
 	}
 
 	hw_data->disable_iov(accel_dev);
-
-	if (hw_data->disable_vf2pf_comms)
-		hw_data->disable_vf2pf_comms(accel_dev);
 
 	if (test_bit(ADF_STATUS_IRQ_ALLOCATED, &accel_dev->status)) {
 		hw_data->free_irq(accel_dev);

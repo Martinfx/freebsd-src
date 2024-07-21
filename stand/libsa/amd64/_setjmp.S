@@ -30,12 +30,7 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-	.asciz "@(#)_setjmp.s	5.1 (Berkeley) 4/23/90"
-#endif /* LIBC_SCCS and not lint */
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * C library -- _setjmp, _longjmp
  *
@@ -90,3 +85,5 @@ ENTRY(_longjmp)
 1:	movq	%rcx,0(%rsp)
 	ret
 END(_longjmp)
+
+	.section .note.GNU-stack,"",%progbits

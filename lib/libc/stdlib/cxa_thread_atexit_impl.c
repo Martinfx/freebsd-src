@@ -28,9 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/queue.h>
 #include "namespace.h"
 #include <errno.h>
@@ -105,12 +102,13 @@ walk_cb_call(struct cxa_thread_dtor *dtor)
 {
 	struct dl_phdr_info phdr_info;
 
-	if (_rtld_addr_phdr(dtor->dso, &phdr_info) &&
+	if (_rtld_addr_phdr(dtor->func, &phdr_info) &&
 	    __elf_phdr_match_addr(&phdr_info, dtor->func))
 		dtor->func(dtor->obj);
 	else
-		fprintf(stderr, "__cxa_thread_call_dtors: dtr %p from "
-		    "unloaded dso, skipping\n", (void *)(dtor->func));
+		fprintf(stderr,
+		    "__cxa_thread_call_dtors: dtr %p from unloaded dso, skipping\n",
+		    (void *)(dtor->func));
 }
 
 static void

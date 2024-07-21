@@ -61,16 +61,12 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
-#include <sys/socketvar.h>
 #include <sys/mbuf.h>
 #include <sys/rwlock.h>
 #include <sys/syslog.h>
@@ -78,6 +74,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/route.h>
 #include <net/route/route_ctl.h>
 #include <net/route/route_var.h>

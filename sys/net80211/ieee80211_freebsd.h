@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003-2008 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -23,8 +23,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef _NET80211_IEEE80211_FREEBSD_H_
 #define _NET80211_IEEE80211_FREEBSD_H_
@@ -419,8 +417,7 @@ MODULE_DEPEND(wlan_##name, wlan, 1, 1, 1)
 /*
  * Crypto modules implement cipher support.
  */
-#define	IEEE80211_CRYPTO_MODULE(name, version)				\
-_IEEE80211_POLICY_MODULE(crypto, name, version);			\
+#define	IEEE80211_CRYPTO_MODULE_ADD(name)				\
 static void								\
 name##_modevent(int type)						\
 {									\
@@ -430,6 +427,10 @@ name##_modevent(int type)						\
 		ieee80211_crypto_unregister(&name);			\
 }									\
 TEXT_SET(crypto##_set, name##_modevent)
+
+#define	IEEE80211_CRYPTO_MODULE(name, version)				\
+	_IEEE80211_POLICY_MODULE(crypto, name, version);		\
+	IEEE80211_CRYPTO_MODULE_ADD(name)
 
 /*
  * Scanner modules provide scanning policy.

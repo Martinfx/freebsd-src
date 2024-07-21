@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019-2020 Vladimir Kondratyev <wulf@FreeBSD.org>
  *
@@ -24,9 +24,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -256,6 +253,9 @@ acpi_iicbus_space_handler(UINT32 Function, ACPI_PHYSICAL_ADDRESS Address,
 	Function &= AML_FIELD_ATTRIO(AML_FIELD_ATTRIB_MASK, ACPI_IO_MASK);
 	sc = __containerof(info, struct acpi_iicbus_softc, space_handler_info);
 	dev = sc->super_sc.dev;
+
+	/* the address is expected to need shifting */
+	sb->SlaveAddress <<= 1;
 
 	switch (Function) {
 	case AML_FIELD_ATTRIO(AML_FIELD_ATTRIB_SEND_RECEIVE, ACPI_READ):

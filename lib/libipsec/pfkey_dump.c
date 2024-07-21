@@ -31,9 +31,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -46,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -150,6 +148,9 @@ static struct val2str str_alg_auth[] = {
 #ifdef SADB_X_AALG_AES_XCBC_MAC
 	{ SADB_X_AALG_AES_XCBC_MAC, "aes-xcbc-mac", },
 #endif
+#ifdef SADB_X_AALG_CHACHA20POLY1305
+	{ SADB_X_AALG_CHACHA20POLY1305, "chacha20-poly1305", },
+#endif
 	{ -1, NULL, },
 };
 
@@ -170,6 +171,9 @@ static struct val2str str_alg_enc[] = {
 #endif
 #ifdef SADB_X_EALG_AESGCM16
 	{ SADB_X_EALG_AESGCM16, "aes-gcm-16", },
+#endif
+#ifdef SADB_X_EALG_CHACHA20POLY1305
+	{ SADB_X_EALG_CHACHA20POLY1305, "chacha20-poly1305", },
 #endif
 	{ -1, NULL, },
 };
@@ -193,13 +197,12 @@ static struct val2str str_sp_scope[] = {
  * dump SADB_MSG formatted.  For debugging, you should use kdebug_sadb().
  */
 void
-pfkey_sadump(m)
-	struct sadb_msg *m;
+pfkey_sadump(struct sadb_msg *m)
 {
 	caddr_t mhp[SADB_EXT_MAX + 1];
 	struct sadb_sa *m_sa;
 	struct sadb_x_sa2 *m_sa2;
-	struct sadb_lifetime *m_lftc, *m_lfth, *m_lfts;
+	struct sadb_lifetime *m_lftc, *m_lfth, *m_lfts, *m_lft_sw, *m_lft_hw;
 	struct sadb_address *m_saddr, *m_daddr, *m_paddr;
 	struct sadb_key *m_auth, *m_enc;
 	struct sadb_ident *m_sid, *m_did;
@@ -208,6 +211,10 @@ pfkey_sadump(m)
 	struct sadb_x_nat_t_type *natt_type;
 	struct sadb_x_nat_t_port *natt_sport, *natt_dport;
 	struct sadb_address *natt_oai, *natt_oar;
+	struct sadb_x_if_hw_offl *if_hw_offl;
+	caddr_t p, ep;
+	struct sadb_ext *ext;
+	bool first;
 
 	/* check pfkey message. */
 	if (pfkey_align(m, mhp)) {
@@ -238,7 +245,9 @@ pfkey_sadump(m)
 	natt_dport = (struct sadb_x_nat_t_port *)mhp[SADB_X_EXT_NAT_T_DPORT];
 	natt_oai = (struct sadb_address *)mhp[SADB_X_EXT_NAT_T_OAI];
 	natt_oar = (struct sadb_address *)mhp[SADB_X_EXT_NAT_T_OAR];
-
+	m_lft_sw = (struct sadb_lifetime *)mhp[SADB_X_EXT_LFT_CUR_SW_OFFL];
+	m_lft_hw = (struct sadb_lifetime *)mhp[SADB_X_EXT_LFT_CUR_HW_OFFL];
+	if_hw_offl = (struct sadb_x_if_hw_offl *)mhp[SADB_X_EXT_IF_HW_OFFL];
 
 	/* source address */
 	if (m_saddr == NULL) {
@@ -330,6 +339,27 @@ pfkey_sadump(m)
 	GETMSGSTR(str_state, m_sa->sadb_sa_state);
 	printf("\n");
 
+	/* hw offload interface */
+	if (if_hw_offl != NULL) {
+		p = (caddr_t)m;
+		ep = p + PFKEY_UNUNIT64(m->sadb_msg_len);
+		p += sizeof(struct sadb_msg);
+		printf("\thw offl if: ");
+
+		for (first = true; p < ep; p += PFKEY_EXTLEN(ext)) {
+			ext = (struct sadb_ext *)p;
+			if (ext->sadb_ext_type != SADB_X_EXT_IF_HW_OFFL)
+				continue;
+			if_hw_offl = (struct sadb_x_if_hw_offl *)ext;
+			if (first)
+				first = false;
+			else
+				printf(",");
+			printf("%s", if_hw_offl->sadb_x_if_hw_offl_if);
+		}
+		printf("\n");
+	}
+
 	/* lifetime */
 	if (m_lftc != NULL) {
 		time_t tmp_time = time(0);
@@ -379,7 +409,23 @@ pfkey_sadump(m)
 	/* XXX DEBUG */
 	printf("refcnt=%u\n", m->sadb_msg_reserved);
 
-	return;
+	if (m_lft_sw != NULL) {
+		printf("\tsw offl use: %s",
+		    str_time(m_lft_sw->sadb_lifetime_usetime));
+		printf("\tsw offl allocated: %lu",
+		    (unsigned long)m_lft_sw->sadb_lifetime_allocations);
+		str_lifetime_byte(m_lft_sw, "sw offl");
+		printf("\n");
+	}
+
+	if (m_lft_hw != NULL) {
+		printf("\thw offl use: %s",
+		    str_time(m_lft_hw->sadb_lifetime_usetime));
+		printf("\thw offl allocated: %lu",
+		    (unsigned long)m_lft_hw->sadb_lifetime_allocations);
+		str_lifetime_byte(m_lft_hw, "hw offl");
+		printf("\n");
+	}
 }
 
 void
@@ -511,8 +557,7 @@ pfkey_spdump(struct sadb_msg *m)
  * set "ipaddress" to buffer.
  */
 static char *
-str_ipaddr(sa)
-	struct sockaddr *sa;
+str_ipaddr(struct sockaddr *sa)
 {
 	static char buf[NI_MAXHOST];
 	const int niflag = NI_NUMERICHOST;
@@ -529,8 +574,7 @@ str_ipaddr(sa)
  * set "/prefix[port number]" to buffer.
  */
 static char *
-str_prefport(family, pref, port, ulp)
-	u_int family, pref, port, ulp;
+str_prefport(u_int family, u_int pref, u_int port, u_int ulp)
 {
 	static char buf[128];
 	char prefbuf[128];
@@ -568,8 +612,7 @@ str_prefport(family, pref, port, ulp)
 }
 
 static void
-str_upperspec(ulp, p1, p2)
-	u_int ulp, p1, p2;
+str_upperspec(u_int ulp, u_int p1, u_int p2)
 {
 	if (ulp == IPSEC_ULPROTO_ANY)
 		printf("any");
@@ -601,8 +644,7 @@ str_upperspec(ulp, p1, p2)
  * set "Mon Day Time Year" to buffer
  */
 static char *
-str_time(t)
-	time_t t;
+str_time(time_t t)
 {
 	static char buf[128];
 
@@ -621,9 +663,7 @@ str_time(t)
 }
 
 static void
-str_lifetime_byte(x, str)
-	struct sadb_lifetime *x;
-	char *str;
+str_lifetime_byte(struct sadb_lifetime *x, char *str)
 {
 	double y;
 	char *unit;

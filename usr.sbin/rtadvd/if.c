@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: if.c,v 1.17 2001/01/21 15:27:30 itojun Exp $	*/
 
 /*-
@@ -144,8 +143,6 @@ lladdropt_fill(struct sockaddr_dl *sdl, struct nd_opt_hdr *ndopt)
 		    __func__, sdl->sdl_type);
 		exit(1);
 	}
-
-	return;
 }
 
 int
@@ -645,7 +642,7 @@ getinet6sysctl(int code)
 
 	mib[3] = code;
 	size = sizeof(value);
-	if (sysctl(mib, sizeof(mib)/sizeof(mib[0]), &value, &size, NULL, 0)
+	if (sysctl(mib, nitems(mib), &value, &size, NULL, 0)
 	    < 0) {
 		syslog(LOG_ERR, "<%s>: failed to get ip6 sysctl(%d): %s",
 		    __func__, code,

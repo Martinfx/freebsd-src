@@ -160,6 +160,10 @@ public:
 
   virtual lldb::LanguageType GetLanguageType() const = 0;
 
+  // Implement this function to return the user-defined entry point name
+  // for the language.
+  virtual llvm::StringRef GetUserEntryPointName() const { return {}; }
+
   virtual bool IsTopLevelFunction(Function &function);
 
   virtual bool IsSourceFile(llvm::StringRef file_path) const = 0;
@@ -175,7 +179,7 @@ public:
   virtual HardcodedFormatters::HardcodedSyntheticFinder
   GetHardcodedSynthetics();
 
-  virtual std::vector<ConstString>
+  virtual std::vector<FormattersMatchCandidate>
   GetPossibleFormattersMatches(ValueObject &valobj,
                                lldb::DynamicValueType use_dynamic);
 
@@ -208,14 +212,32 @@ public:
   /// that the name actually belongs to this language.
   virtual bool SymbolNameFitsToLanguage(Mangled name) const { return false; }
 
-  // if an individual data formatter can apply to several types and cross a
-  // language boundary it makes sense for individual languages to want to
-  // customize the printing of values of that type by appending proper
-  // prefix/suffix information in language-specific ways
-  virtual bool GetFormatterPrefixSuffix(ValueObject &valobj,
-                                        ConstString type_hint,
-                                        std::string &prefix,
-                                        std::string &suffix);
+  /// An individual data formatter may apply to several types and cross language
+  /// boundaries. Each of those languages may want to customize the display of
+  /// values of said types by appending proper prefix/suffix information in
+  /// language-specific ways. This function returns that prefix and suffix.
+  ///
+  /// \param[in] type_hint
+  ///   A StringRef used to determine what the prefix and suffix should be. It
+  ///   is called a hint because some types may have multiple variants for which
+  ///   the prefix and/or suffix may vary.
+  ///
+  /// \return
+  ///   A std::pair<StringRef, StringRef>, the first being the prefix and the
+  ///   second being the suffix. They may be empty.
+  virtual std::pair<llvm::StringRef, llvm::StringRef>
+  GetFormatterPrefixSuffix(llvm::StringRef type_hint);
+
+  // When looking up functions, we take a user provided string which may be a
+  // partial match to the full demangled name and compare it to the actual
+  // demangled name to see if it matches as much as the user specified.  An
+  // example of this is if the user provided A::my_function, but the
+  // symbol was really B::A::my_function.  We want that to be
+  // a match.  But we wouldn't want this to match AnotherA::my_function.  The
+  // user is specifying a truncated path, not a truncated set of characters.
+  // This function does a language-aware comparison for those purposes.
+  virtual bool DemangledNameContainsPath(llvm::StringRef path, 
+                                         ConstString demangled) const;
 
   // if a language has a custom format for printing variable declarations that
   // it wants LLDB to honor it should return an appropriate closure here
@@ -268,6 +290,16 @@ public:
   static void PrintAllLanguages(Stream &s, const char *prefix,
                                 const char *suffix);
 
+  /// Prints to the specified stream 's' each language type that the
+  /// current target supports for expression evaluation.
+  ///
+  /// \param[out] s      Stream to which the language types are written.
+  /// \param[in]  prefix String that is prepended to the language type.
+  /// \param[in]  suffix String that is appended to the language type.
+  static void PrintSupportedLanguagesForExpressions(Stream &s,
+                                                    llvm::StringRef prefix,
+                                                    llvm::StringRef suffix);
+
   // return false from callback to stop iterating
   static void ForAllLanguages(std::function<bool(lldb::LanguageType)> callback);
 
@@ -304,6 +336,8 @@ public:
                                        const SymbolContext &sym_ctx) const {
     return ConstString();
   }
+
+  virtual llvm::StringRef GetInstanceVariableName() { return {}; }
 
 protected:
   // Classes that inherit from Language can see and modify these

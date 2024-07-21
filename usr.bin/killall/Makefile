@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	killall
 LIBADD=	jail
 

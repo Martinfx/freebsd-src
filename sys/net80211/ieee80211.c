@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Atsushi Onoe
  * Copyright (c) 2002-2009 Sam Leffler, Errno Consulting
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * IEEE 802.11 generic handler
  */
@@ -47,6 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_var.h>
 #include <net/if_dl.h>
 #include <net/if_media.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/ethernet.h>
 
@@ -435,6 +434,40 @@ ieee80211_ifdetach(struct ieee80211com *ic)
 	IEEE80211_LOCK_DESTROY(ic);
 }
 
+/*
+ * Called by drivers during attach to set the supported
+ * cipher set for software encryption.
+ */
+void
+ieee80211_set_software_ciphers(struct ieee80211com *ic,
+    uint32_t cipher_suite)
+{
+	ieee80211_crypto_set_supported_software_ciphers(ic, cipher_suite);
+}
+
+/*
+ * Called by drivers during attach to set the supported
+ * cipher set for hardware encryption.
+ */
+void
+ieee80211_set_hardware_ciphers(struct ieee80211com *ic,
+    uint32_t cipher_suite)
+{
+	ieee80211_crypto_set_supported_hardware_ciphers(ic, cipher_suite);
+}
+
+/*
+ * Called by drivers during attach to set the supported
+ * key management suites by the driver/hardware.
+ */
+void
+ieee80211_set_driver_keymgmt_suites(struct ieee80211com *ic,
+    uint32_t keymgmt_set)
+{
+	ieee80211_crypto_set_supported_driver_keymgmt(ic,
+	    keymgmt_set);
+}
+
 struct ieee80211com *
 ieee80211_find_com(const char *name)
 {
@@ -529,10 +562,6 @@ ieee80211_vap_setup(struct ieee80211com *ic, struct ieee80211vap *vap,
 	struct ifnet *ifp;
 
 	ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		ic_printf(ic, "%s: unable to allocate ifnet\n", __func__);
-		return ENOMEM;
-	}
 	if_initname(ifp, name, unit);
 	ifp->if_softc = vap;			/* back pointer */
 	ifp->if_flags = IFF_SIMPLEX | IFF_BROADCAST | IFF_MULTICAST;
@@ -554,7 +583,7 @@ ieee80211_vap_setup(struct ieee80211com *ic, struct ieee80211vap *vap,
 	vap->iv_htextcaps = ic->ic_htextcaps;
 
 	/* 11ac capabilities - XXX methodize */
-	vap->iv_vhtcaps = ic->ic_vhtcaps;
+	vap->iv_vht_cap.vht_cap_info = ic->ic_vht_cap.vht_cap_info;
 	vap->iv_vhtextcaps = ic->ic_vhtextcaps;
 
 	vap->iv_opmode = opmode;
@@ -731,6 +760,7 @@ ieee80211_vap_detach(struct ieee80211vap *vap)
 {
 	struct ieee80211com *ic = vap->iv_ic;
 	struct ifnet *ifp = vap->iv_ifp;
+	int i;
 
 	CURVNET_SET(ifp->if_vnet);
 
@@ -745,7 +775,8 @@ ieee80211_vap_detach(struct ieee80211vap *vap)
 	/*
 	 * Flush any deferred vap tasks.
 	 */
-	ieee80211_draintask(ic, &vap->iv_nstate_task);
+	for (i = 0; i < NET80211_IV_NSTATE_NUM; i++)
+		ieee80211_draintask(ic, &vap->iv_nstate_task[i]);
 	ieee80211_draintask(ic, &vap->iv_swbmiss_task);
 	ieee80211_draintask(ic, &vap->iv_wme_task);
 	ieee80211_draintask(ic, &ic->ic_parent_task);
@@ -940,14 +971,14 @@ ieee80211_syncflag_vht_locked(struct ieee80211com *ic, int flag)
 
 	bit = 0;
 	TAILQ_FOREACH(vap, &ic->ic_vaps, iv_next)
-		if (vap->iv_flags_vht & flag) {
+		if (vap->iv_vht_flags & flag) {
 			bit = 1;
 			break;
 		}
 	if (bit)
-		ic->ic_flags_vht |= flag;
+		ic->ic_vht_flags |= flag;
 	else
-		ic->ic_flags_vht &= ~flag;
+		ic->ic_vht_flags &= ~flag;
 }
 
 void
@@ -958,9 +989,9 @@ ieee80211_syncflag_vht(struct ieee80211vap *vap, int flag)
 	IEEE80211_LOCK(ic);
 	if (flag < 0) {
 		flag = -flag;
-		vap->iv_flags_vht &= ~flag;
+		vap->iv_vht_flags &= ~flag;
 	} else
-		vap->iv_flags_vht |= flag;
+		vap->iv_vht_flags |= flag;
 	ieee80211_syncflag_vht_locked(ic, flag);
 	IEEE80211_UNLOCK(ic);
 }
@@ -1552,7 +1583,7 @@ ieee80211_get_channel_center_freq(const struct ieee80211_channel *c)
  * For 5, 10, 20MHz channels it'll be the normally configured channel
  * frequency.
  *
- * For 40MHz, 80MHz, 160Mhz channels it'll the the centre of the
+ * For 40MHz, 80MHz, 160MHz channels it will be the centre of the
  * wide channel, not the centre of the primary channel (that's ic_freq).
  *
  * For 80+80MHz channels this will be the centre of the primary
@@ -2647,4 +2678,35 @@ ieee80211_channel_type_char(const struct ieee80211_channel *c)
 	if (IEEE80211_IS_CHAN_B(c))
 		return 'b';
 	return 'f';
+}
+
+/*
+ * Determine whether the given key in the given VAP is a global key.
+ * (key index 0..3, shared between all stations on a VAP.)
+ *
+ * This is either a WEP key or a GROUP key.
+ *
+ * Note this will NOT return true if it is a IGTK key.
+ */
+bool
+ieee80211_is_key_global(const struct ieee80211vap *vap,
+    const struct ieee80211_key *key)
+{
+	return (&vap->iv_nw_keys[0] <= key &&
+	    key < &vap->iv_nw_keys[IEEE80211_WEP_NKID]);
+}
+
+/*
+ * Determine whether the given key in the given VAP is a unicast key.
+ */
+bool
+ieee80211_is_key_unicast(const struct ieee80211vap *vap,
+    const struct ieee80211_key *key)
+{
+	/*
+	 * This is a short-cut for now; eventually we will need
+	 * to support multiple unicast keys, IGTK, etc) so we
+	 * will absolutely need to fix the key flags.
+	 */
+	return (!ieee80211_is_key_global(vap, key));
 }

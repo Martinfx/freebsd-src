@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2015-2020 Amazon.com, Inc. or its affiliates.
+ * Copyright (c) 2015-2023 Amazon.com, Inc. or its affiliates.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,8 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifdef DEV_NETMAP
 
 #include "ena.h"
@@ -224,7 +222,7 @@ ena_ring_in_netmap(struct ena_adapter *adapter, int qid, enum txrx x)
 	struct netmap_adapter *na;
 	struct netmap_kring *kring;
 
-	if (adapter->ifp->if_capenable & IFCAP_NETMAP) {
+	if (if_getcapenable(adapter->ifp) & IFCAP_NETMAP) {
 		na = NA(adapter->ifp);
 		kring = (x == NR_RX) ? na->rx_rings[qid] : na->tx_rings[qid];
 		if (kring->nr_mode == NKR_NETMAP_ON)
@@ -271,8 +269,8 @@ ena_netmap_reset_tx_ring(struct ena_adapter *adapter, int qid)
 static int
 ena_netmap_reg(struct netmap_adapter *na, int onoff)
 {
-	struct ifnet *ifp = na->ifp;
-	struct ena_adapter *adapter = ifp->if_softc;
+	if_t ifp = na->ifp;
+	struct ena_adapter *adapter = if_getsoftc(ifp);
 	device_t pdev = adapter->pdev;
 	struct netmap_kring *kring;
 	enum txrx t;
@@ -528,7 +526,7 @@ ena_netmap_map_single_slot(struct netmap_adapter *na, struct netmap_slot *slot,
 	device_t pdev;
 	int rc;
 
-	pdev = ((struct ena_adapter *)na->ifp->if_softc)->pdev;
+	pdev = ((struct ena_adapter *)if_getsoftc(na->ifp))->pdev;
 
 	*vaddr = PNMB(na, slot, paddr);
 	if (unlikely(vaddr == NULL)) {
@@ -816,7 +814,6 @@ ena_netmap_tx_cleanup(struct ena_netmap_ctx *ctx)
 		/* acknowledge completion of sent packets */
 		ctx->ring->next_to_clean = ctx->nt;
 		ena_com_comp_ack(ctx->ring->ena_com_io_sq, total_tx_descs);
-		ena_com_update_dev_comp_head(ctx->ring->ena_com_io_cq);
 	}
 }
 
@@ -1065,7 +1062,7 @@ ena_netmap_fill_ctx(struct netmap_kring *kring, struct ena_netmap_ctx *ctx,
 {
 	ctx->kring = kring;
 	ctx->na = kring->na;
-	ctx->adapter = ctx->na->ifp->if_softc;
+	ctx->adapter = if_getsoftc(ctx->na->ifp);
 	ctx->lim = kring->nkr_num_slots - 1;
 	ctx->io_cq = &ctx->adapter->ena_dev->io_cq_queues[ena_qid];
 	ctx->io_sq = &ctx->adapter->ena_dev->io_sq_queues[ena_qid];

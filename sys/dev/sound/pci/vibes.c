@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Orion Hodson <O.Hodson@cs.ucl.ac.uk>
  * All rights reserved.
@@ -43,8 +43,6 @@
 #include <dev/pci/pcivar.h>
 
 #include "mixer_if.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 /* ------------------------------------------------------------------------- */
 /* Constants */
@@ -876,8 +874,9 @@ sv_attach(device_t dev) {
         pcm_addchan(dev, PCMDIR_PLAY, &svpchan_class, sc);
         pcm_addchan(dev, PCMDIR_REC,  &svrchan_class, sc);
 
-        snprintf(status, SND_STATUSLEN, "at io 0x%jx irq %jd %s",
-                 rman_get_start(sc->enh_reg),  rman_get_start(sc->irq),PCM_KLDSTRING(snd_vibes));
+        snprintf(status, SND_STATUSLEN, "port 0x%jx irq %jd on %s",
+                 rman_get_start(sc->enh_reg),  rman_get_start(sc->irq),
+		 device_get_nameunit(device_get_parent(dev)));
         pcm_setstatus(dev, status);
 
         DEB(printf("sv_attach: succeeded\n"));

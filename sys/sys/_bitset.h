@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008, Jeffrey Roberson <jeff@freebsd.org>
  * All rights reserved.
@@ -27,8 +27,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS__BITSET_H_
@@ -38,7 +36,7 @@
  * Macros addressing word and bit within it, tuned to make compiler
  * optimize cases when SETSIZE fits into single machine word.
  */
-#define	_BITSET_BITS		(sizeof(long) * 8)
+#define	_BITSET_BITS		(sizeof(unsigned long) * 8)
 
 #define	__howmany(x, y)	(((x) + ((y) - 1)) / (y))
 
@@ -46,7 +44,7 @@
 
 #define	__BITSET_DEFINE(_t, _s)						\
 struct _t {								\
-        long    __bits[__bitset_words((_s))];				\
+        unsigned long    __bits[__bitset_words((_s))];			\
 }
 
 /*

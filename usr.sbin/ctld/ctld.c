@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 The FreeBSD Foundation
  *
@@ -28,9 +28,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/time.h>
@@ -535,6 +532,7 @@ auth_group_find(const struct conf *conf, const char *name)
 {
 	struct auth_group *ag;
 
+	assert(name != NULL);
 	TAILQ_FOREACH(ag, &conf->conf_auth_groups, ag_next) {
 		if (ag->ag_name != NULL && strcmp(ag->ag_name, name) == 0)
 			return (ag);
@@ -2113,7 +2111,7 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 	/*
 	 * Now add new ports or modify existing ones.
 	 */
-	TAILQ_FOREACH(newport, &newconf->conf_ports, p_next) {
+	TAILQ_FOREACH_SAFE(newport, &newconf->conf_ports, p_next, tmpport) {
 		if (port_is_dummy(newport))
 			continue;
 		oldport = port_find(oldconf, newport->p_name);
@@ -2130,6 +2128,8 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 			log_warnx("failed to %s port %s",
 			    (oldport == NULL) ? "add" : "update",
 			    newport->p_name);
+			if (oldport == NULL || port_is_dummy(oldport))
+				port_delete(newport);
 			/*
 			 * XXX: Uncomment after fixing the root cause.
 			 *
@@ -2873,6 +2873,7 @@ main(int argc, char **argv)
 			error = conf_apply(oldconf, newconf);
 			if (error != 0)
 				log_warnx("failed to apply configuration");
+			conf_delete(newconf);
 			conf_delete(oldconf);
 			oldconf = NULL;
 

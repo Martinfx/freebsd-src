@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -120,12 +117,11 @@ vfs_optionisset(const vfs_t *vfsp, const char *opt, char **argp)
 
 int
 mount_snapshot(kthread_t *td, vnode_t **vpp, const char *fstype, char *fspath,
-    char *fspec, int fsflags)
+    char *fspec, int fsflags, vfs_t *parent_vfsp)
 {
 	struct vfsconf *vfsp;
 	struct mount *mp;
 	vnode_t *vp, *mvp;
-	struct ucred *pcr, *tcr;
 	int error;
 
 	ASSERT_VOP_ELOCKED(*vpp, "mount_snapshot");
@@ -195,18 +191,7 @@ mount_snapshot(kthread_t *td, vnode_t **vpp, const char *fstype, char *fspath,
 	 */
 	mp->mnt_flag |= MNT_IGNORE;
 
-	/*
-	 * XXX: This is evil, but we can't mount a snapshot as a regular user.
-	 * XXX: Is is safe when snapshot is mounted from within a jail?
-	 */
-	tcr = td->td_ucred;
-	pcr = td->td_proc->p_ucred;
-	td->td_ucred = kcred;
-	td->td_proc->p_ucred = kcred;
 	error = VFS_MOUNT(mp);
-	td->td_ucred = tcr;
-	td->td_proc->p_ucred = pcr;
-
 	if (error != 0) {
 		/*
 		 * Clear VI_MOUNT and decrement the use count "atomically",
@@ -231,6 +216,13 @@ mount_snapshot(kthread_t *td, vnode_t **vpp, const char *fstype, char *fspath,
 		vfs_freeopts(mp->mnt_opt);
 	mp->mnt_opt = mp->mnt_optnew;
 	(void) VFS_STATFS(mp, &mp->mnt_stat);
+
+#ifdef VFS_SUPPORTS_EXJAIL_CLONE
+	/*
+	 * Clone the mnt_exjail credentials of the parent, as required.
+	 */
+	vfs_exjail_clone(parent_vfsp, mp);
+#endif
 
 	/*
 	 * Prevent external consumers of mount options from reading

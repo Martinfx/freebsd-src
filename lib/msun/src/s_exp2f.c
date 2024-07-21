@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <float.h>
 
@@ -75,7 +72,7 @@ static const double exp2ft[TBLSIZE] = {
  * Method: (equally-spaced tables)
  *
  *   Reduce x:
- *     x = 2**k + y, for integer k and |y| <= 1/2.
+ *     x = k + y, for integer k and |y| <= 1/2.
  *     Thus we have exp2f(x) = 2**k * exp2(y).
  *
  *   Reduce y:

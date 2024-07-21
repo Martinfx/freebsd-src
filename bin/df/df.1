@@ -26,10 +26,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"     @(#)df.1	8.3 (Berkeley) 5/8/95
-.\" $FreeBSD$
-.\"
-.Dd March 11, 2022
+.Dd March 29, 2023
 .Dt DF 1
 .Os
 .Sh NAME
@@ -120,10 +117,10 @@ option and any
 .Ev BLOCKSIZE
 specification from the environment.
 .It Fl l
-Select locally-mounted file system for display.
+Select a locally-mounted file system for display.
 If used in combination with the
 .Fl t Ar type
-option, file system types will be added or excluded acccording to the
+option, file system types will be added or excluded according to the
 parameters of that option.
 .It Fl m
 Use 1048576 byte (1 Mebibyte) blocks rather than the default.
@@ -246,6 +243,17 @@ $ df -h /dev/ada1p2
 Filesystem     Size    Used   Avail Capacity  Mounted on
 /dev/ada1p2    213G    152G     44G    78%    /
 .Ed
+.Sh NOTES
+For non-Unix file systems, the reported values of used and free inodes
+may have a different meaning than that of used and available files and
+directories.
+An example is msdosfs, which in the case of FAT12 or FAT16 file systems
+reports the number of available and free root directory entries instead
+of inodes
+.Po
+where 1 to 21 such directory entries are required to store
+each file or directory name or disk label
+.Pc .
 .Sh SEE ALSO
 .Xr lsvfs 1 ,
 .Xr quota 1 ,

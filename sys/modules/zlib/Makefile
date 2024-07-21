@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/libkern
 .PATH: ${SRCTOP}/sys/dev/zlib
 .PATH: ${SRCTOP}/sys/contrib/zlib
@@ -26,3 +24,5 @@ CWARNFLAGS.trees.c+=${NO_WSTRICT_PROTOTYPES} # trees.c:232
 CWARNFLAGS.zutil.c+=${NO_WSTRICT_PROTOTYPES} # zutil.c:27,32
 
 .include <bsd.kmod.mk>
+
+CWARNFLAGS+=${NO_WDEPRECATED_NON_PROTOTYPE} # https://github.com/madler/zlib/issues/633

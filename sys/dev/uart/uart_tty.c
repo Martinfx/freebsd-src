@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Marcel Moolenaar
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -76,6 +73,9 @@ CONSOLE_DRIVER(
 );
 
 static struct uart_devinfo uart_console;
+
+/* TTY swi(9) event. Allows all uart soft handlers to share one ithread. */
+static struct intr_event *tty_intr_event;
 
 static void
 uart_cnprobe(struct consdev *cp)
@@ -388,9 +388,19 @@ uart_tty_busy(struct tty *tp)
 
 	sc = tty_softc(tp);
 	if (sc == NULL || sc->sc_leaving)
-                return (FALSE);
+                return (false);
 
-	return (sc->sc_txbusy);
+	/*
+	 * The tty locking is sufficient here; we may lose the race against
+	 * uart_bus_ihand()/uart_intr() clearing sc_txbusy underneath us, in
+	 * which case we will incorrectly but non-fatally report a busy Tx
+	 * path upward. However, tty locking ensures that no additional output
+	 * is enqueued before UART_TXBUSY() returns, which means that there
+	 * are no Tx interrupts to be lost.
+	 */
+	if (sc->sc_txbusy)
+		return (true);
+	return (UART_TXBUSY(sc));
 }
 
 static struct ttydevsw uart_tty_class = {

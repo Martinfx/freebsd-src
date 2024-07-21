@@ -24,16 +24,12 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>		/* to pick up __FreeBSD_version */
 #include <string.h>
 #include <stand.h>
 #include "bootstrap.h"
 #include "ficl.h"
 
-extern unsigned bootprog_rev;
 INTERP_DEFINE("4th");
 
 /* #define BFORTH_DEBUG */
@@ -341,12 +337,21 @@ bf_run(const char *line)
 	return (result);
 }
 
+static bool preinit_run = false;
+
+void
+interp_preinit(void)
+{
+	if (preinit_run)
+		return;
+	setenv("script.lang", "forth", 1);
+	bf_init();
+	preinit_run = true;
+}
+
 void
 interp_init(void)
 {
-
-	setenv("script.lang", "forth", 1);
-	bf_init();
 	/* Read our default configuration. */
 	interp_include("/boot/loader.rc");
 }

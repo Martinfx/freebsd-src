@@ -21,8 +21,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include "opt_rss.h"
@@ -87,21 +85,21 @@ mlx5_ib_port_link_layer(struct ib_device *device, u8 port_num)
 	return mlx5_port_type_cap_to_rdma_ll(port_type_cap);
 }
 
-static bool mlx5_netdev_match(struct ifnet *ndev,
+static bool mlx5_netdev_match(if_t ndev,
 			      struct mlx5_core_dev *mdev,
 			      const char *dname)
 {
-	return ndev->if_type == IFT_ETHER &&
-	  ndev->if_dname != NULL &&
-	  strcmp(ndev->if_dname, dname) == 0 &&
-	  ndev->if_softc != NULL &&
-	  *(struct mlx5_core_dev **)ndev->if_softc == mdev;
+	return if_gettype(ndev) == IFT_ETHER &&
+	  if_getdname(ndev) != NULL &&
+	  strcmp(if_getdname(ndev), dname) == 0 &&
+	  if_getsoftc(ndev) != NULL &&
+	  *(struct mlx5_core_dev **)if_getsoftc(ndev) == mdev;
 }
 
 static int mlx5_netdev_event(struct notifier_block *this,
 			     unsigned long event, void *ptr)
 {
-	struct ifnet *ndev = netdev_notifier_info_to_ifp(ptr);
+	if_t ndev = netdev_notifier_info_to_ifp(ptr);
 	struct mlx5_ib_dev *ibdev = container_of(this, struct mlx5_ib_dev,
 						 roce.nb);
 
@@ -118,7 +116,7 @@ static int mlx5_netdev_event(struct notifier_block *this,
 
 	case NETDEV_UP:
 	case NETDEV_DOWN: {
-		struct ifnet *upper = NULL;
+		if_t upper = NULL;
 
 		if ((upper == ndev || (!upper && ndev == ibdev->roce.netdev))
 		    && ibdev->ib_active) {
@@ -140,11 +138,11 @@ static int mlx5_netdev_event(struct notifier_block *this,
 	return NOTIFY_DONE;
 }
 
-static struct ifnet *mlx5_ib_get_netdev(struct ib_device *device,
+static if_t mlx5_ib_get_netdev(struct ib_device *device,
 					     u8 port_num)
 {
 	struct mlx5_ib_dev *ibdev = to_mdev(device);
-	struct ifnet *ndev;
+	if_t ndev;
 
 	/* Ensure ndev does not disappear before we invoke if_ref()
 	 */
@@ -289,7 +287,7 @@ static int mlx5_query_port_roce(struct ib_device *device, u8 port_num,
 {
 	struct mlx5_ib_dev *dev = to_mdev(device);
 	u32 out[MLX5_ST_SZ_DW(ptys_reg)] = {};
-	struct ifnet *ndev;
+	if_t ndev;
 	enum ib_mtu ndev_ib_mtu;
 	u16 qkey_viol_cntr;
 	u32 eth_prot_oper;
@@ -334,13 +332,13 @@ static int mlx5_query_port_roce(struct ib_device *device, u8 port_num,
 	if (!ndev)
 		return 0;
 
-	if (ndev->if_drv_flags & IFF_DRV_RUNNING &&
-	    ndev->if_link_state == LINK_STATE_UP) {
+	if (if_getdrvflags(ndev) & IFF_DRV_RUNNING &&
+	    if_getlinkstate(ndev) == LINK_STATE_UP) {
 		props->state      = IB_PORT_ACTIVE;
 		props->phys_state = IB_PORT_PHYS_STATE_LINK_UP;
 	}
 
-	ndev_ib_mtu = iboe_get_mtu(ndev->if_mtu);
+	ndev_ib_mtu = iboe_get_mtu(if_getmtu(ndev));
 
 	if_rele(ndev);
 
@@ -361,7 +359,7 @@ static void ib_gid_to_mlx5_roce_addr(const union ib_gid *gid,
 
 	if (!gid)
 		return;
-	ether_addr_copy(mlx5_addr_mac, IF_LLADDR(attr->ndev));
+	ether_addr_copy(mlx5_addr_mac, if_getlladdr(attr->ndev));
 
 	vlan_id = rdma_vlan_dev_vlan_id(attr->ndev);
 	if (vlan_id != 0xffff) {
@@ -681,7 +679,8 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	props->device_cap_flags    = IB_DEVICE_CHANGE_PHY_PORT |
 		IB_DEVICE_PORT_ACTIVE_EVENT		|
 		IB_DEVICE_SYS_IMAGE_GUID		|
-		IB_DEVICE_RC_RNR_NAK_GEN;
+		IB_DEVICE_RC_RNR_NAK_GEN		|
+		IB_DEVICE_KNOWSEPOCH;
 
 	if (MLX5_CAP_GEN(mdev, pkv))
 		props->device_cap_flags |= IB_DEVICE_BAD_PKEY_CNTR;
@@ -1926,7 +1925,7 @@ static int parse_flow_attr(u32 *match_c, u32 *match_v,
 		MLX5_SET(fte_match_set_lyr_2_4, outer_headers_c,
 			 ethertype, 0xffff);
 		MLX5_SET(fte_match_set_lyr_2_4, outer_headers_v,
-			 ethertype, IPPROTO_IPV6);
+			 ethertype, ETH_P_IPV6);
 
 		memcpy(MLX5_ADDR_OF(fte_match_set_lyr_2_4, outer_headers_c,
 				    src_ipv4_src_ipv6.ipv6_layout.ipv6),
@@ -2073,13 +2072,13 @@ static int mlx5_ib_destroy_flow(struct ib_flow *flow_id)
 	mutex_lock(&dev->flow_db.lock);
 
 	list_for_each_entry_safe(iter, tmp, &handler->list, list) {
-		mlx5_del_flow_rule(iter->rule);
+		mlx5_del_flow_rule(&iter->rule);
 		put_flow_table(dev, iter->prio, true);
 		list_del(&iter->list);
 		kfree(iter);
 	}
 
-	mlx5_del_flow_rule(handler->rule);
+	mlx5_del_flow_rule(&handler->rule);
 	put_flow_table(dev, handler->prio, true);
 	mutex_unlock(&dev->flow_db.lock);
 
@@ -2158,7 +2157,8 @@ static struct mlx5_ib_flow_prio *get_flow_table(struct mlx5_ib_dev *dev,
 	if (!ft) {
 		ft = mlx5_create_auto_grouped_flow_table(ns, priority, "bypass",
 							 num_entries,
-							 num_groups);
+							 num_groups,
+							 0);
 
 		if (!IS_ERR(ft)) {
 			prio->refcount = 0;
@@ -2181,6 +2181,10 @@ static struct mlx5_ib_flow_handler *create_flow_rule(struct mlx5_ib_dev *dev,
 	struct mlx5_flow_spec *spec;
 	const void *ib_flow = (const void *)flow_attr + sizeof(*flow_attr);
 	unsigned int spec_index;
+	struct mlx5_flow_act flow_act = {
+		.actions = MLX5_FLOW_ACT_ACTIONS_FLOW_TAG,
+		.flow_tag = MLX5_FS_DEFAULT_FLOW_TAG,
+	};
 	u32 action;
 	int err = 0;
 
@@ -2206,13 +2210,12 @@ static struct mlx5_ib_flow_handler *create_flow_rule(struct mlx5_ib_dev *dev,
 	}
 
 	spec->match_criteria_enable = get_match_criteria_enable(spec->match_criteria);
-	action = dst ? MLX5_FLOW_CONTEXT_ACTION_FWD_DEST :
-		MLX5_FLOW_CONTEXT_ACTION_FWD_NEXT_PRIO;
+	action = dst ? MLX5_FLOW_RULE_FWD_ACTION_DEST : 0;
 	handler->rule = mlx5_add_flow_rule(ft, spec->match_criteria_enable,
 					   spec->match_criteria,
 					   spec->match_value,
 					   action,
-					   MLX5_FS_DEFAULT_FLOW_TAG,
+					   &flow_act,
 					   dst);
 
 	if (IS_ERR(handler->rule)) {
@@ -2244,7 +2247,7 @@ static struct mlx5_ib_flow_handler *create_dont_trap_rule(struct mlx5_ib_dev *de
 		handler_dst = create_flow_rule(dev, ft_prio,
 					       flow_attr, dst);
 		if (IS_ERR(handler_dst)) {
-			mlx5_del_flow_rule(handler->rule);
+			mlx5_del_flow_rule(&handler->rule);
 			ft_prio->refcount--;
 			kfree(handler);
 			handler = handler_dst;
@@ -2307,7 +2310,7 @@ static struct mlx5_ib_flow_handler *create_leftovers_rule(struct mlx5_ib_dev *de
 						 &leftovers_specs[LEFTOVERS_UC].flow_attr,
 						 dst);
 		if (IS_ERR(handler_ucast)) {
-			mlx5_del_flow_rule(handler->rule);
+			mlx5_del_flow_rule(&handler->rule);
 			ft_prio->refcount--;
 			kfree(handler);
 			handler = handler_ucast;
@@ -2350,7 +2353,7 @@ static struct mlx5_ib_flow_handler *create_sniffer_rule(struct mlx5_ib_dev *dev,
 	return handler_rx;
 
 err_tx:
-	mlx5_del_flow_rule(handler_rx->rule);
+	mlx5_del_flow_rule(&handler_rx->rule);
 	ft_rx->refcount--;
 	kfree(handler_rx);
 err:
@@ -3132,28 +3135,37 @@ static void mlx5_remove_roce_notifier(struct mlx5_ib_dev *dev)
 	}
 }
 
+static int
+mlx5_enable_roce_if_cb(if_t ifp, void *arg)
+{
+	struct mlx5_ib_dev *dev = arg;
+
+	/* check if network interface belongs to mlx5en */
+	if (!mlx5_netdev_match(ifp, dev->mdev, "mce"))
+		return (0);
+
+	write_lock(&dev->roce.netdev_lock);
+	dev->roce.netdev = ifp;
+	write_unlock(&dev->roce.netdev_lock);
+
+	return (0);
+}
+
 static int mlx5_enable_roce(struct mlx5_ib_dev *dev)
 {
+	struct epoch_tracker et;
 	VNET_ITERATOR_DECL(vnet_iter);
-	struct ifnet *idev;
 	int err;
 
 	/* Check if mlx5en net device already exists */
 	VNET_LIST_RLOCK();
+	NET_EPOCH_ENTER(et);
 	VNET_FOREACH(vnet_iter) {
-		IFNET_RLOCK();
 		CURVNET_SET_QUIET(vnet_iter);
-		CK_STAILQ_FOREACH(idev, &V_ifnet, if_link) {
-			/* check if network interface belongs to mlx5en */
-			if (!mlx5_netdev_match(idev, dev->mdev, "mce"))
-				continue;
-			write_lock(&dev->roce.netdev_lock);
-			dev->roce.netdev = idev;
-			write_unlock(&dev->roce.netdev_lock);
-		}
+		if_foreach(mlx5_enable_roce_if_cb, dev);
 		CURVNET_RESTORE();
-		IFNET_RUNLOCK();
 	}
+	NET_EPOCH_EXIT(et);
 	VNET_LIST_RUNLOCK();
 
 	dev->roce.nb.notifier_call = mlx5_netdev_event;

@@ -23,9 +23,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <errno.h>
@@ -34,6 +31,8 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <ssp/ssp.h>
 
 #define TESTDOMAIN ".domain.example.com"
 #define TESTHOST "testhost"
@@ -48,7 +47,7 @@ int tests = 0;
  * oddly configured systems.
  */
 int
-gethostname(char *name, size_t namelen)
+__ssp_real(gethostname)(char *name, size_t namelen)
 {
 	if (strlcpy(name, TESTFQDN, namelen) > namelen) {
 		errno = ENAMETOOLONG;

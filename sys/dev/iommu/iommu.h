@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_IOMMU_IOMMU_H_
@@ -109,6 +107,7 @@ struct iommu_domain {
 	struct iommu_map_entries_tailq unload_entries; /* (d) Entries to
 							 unload */
 	struct iommu_gas_entries_tree rb_root; /* (d) */
+	struct iommu_map_entry *start_gap;     /* (d) */
 	iommu_gaddr_t end;		/* (c) Highest address + 1 in
 					   the guest AS */
 	struct iommu_map_entry *first_place, *last_place; /* (d) */

@@ -1,6 +1,5 @@
-/* $FreeBSD$ */
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008-2021 Hans Petter Selasky. All rights reserved.
  *
@@ -1590,7 +1589,7 @@ usbd_setup_ctrl_transfer(struct usb_xfer *xfer)
 		 * parts a time.
 		 */
 		DPRINTFN(0, "Too many frames: %u\n",
-		    (unsigned int)xfer->nframes);
+		    (unsigned)xfer->nframes);
 		goto error;
 	}
 

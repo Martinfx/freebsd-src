@@ -1,6 +1,4 @@
-# $FreeBSD$
-
-PACKAGE=	caroot
+PACKAGE=	certctl
 SCRIPTS=certctl.sh
 MAN=	certctl.8
 

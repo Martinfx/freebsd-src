@@ -55,7 +55,21 @@ der_copy_integer (const int *from, int *to)
 }
 
 int
+der_copy_integer64 (const int64_t *from, int64_t *to)
+{
+    *to = *from;
+    return 0;
+}
+
+int
 der_copy_unsigned (const unsigned *from, unsigned *to)
+{
+    *to = *from;
+    return 0;
+}
+
+int
+der_copy_unsigned64 (const uint64_t *from, uint64_t *to)
 {
     *to = *from;
     return 0;
@@ -135,8 +149,12 @@ int
 der_copy_octet_string (const heim_octet_string *from, heim_octet_string *to)
 {
     to->length = from->length;
-    to->data   = malloc(to->length);
-    if(to->length != 0 && to->data == NULL)
+    if (from->data == NULL) {
+        to->data = NULL;
+        return 0;
+    }
+    to->data = malloc(to->length);
+    if (to->length != 0 && to->data == NULL)
 	return ENOMEM;
     memcpy(to->data, from->data, to->length);
     return 0;

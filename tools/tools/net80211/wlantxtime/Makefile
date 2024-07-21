@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	wlantxtime
 BINDIR=	/usr/local/bin
 MAN=

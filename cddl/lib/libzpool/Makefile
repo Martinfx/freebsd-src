@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 ZFSTOP=	${SRCTOP}/sys/contrib/openzfs
 
 # ZFS_COMMON_SRCS
@@ -32,6 +30,7 @@ ATOMIC_SRCS=	opensolaris_atomic.c
 PICFLAG=	-fPIC
 .endif
 
+PACKAGE=	zfs
 LIB=		zpool
 
 USER_C = \
@@ -61,12 +60,14 @@ KERNEL_C = \
 	bplist.c \
 	bpobj.c \
 	bptree.c \
-	btree.c \
 	bqueue.c \
+	btree.c \
+	brt.c \
 	cityhash.c \
 	dbuf.c \
 	dbuf_stats.c \
 	ddt.c \
+	ddt_stats.c \
 	ddt_zap.c \
 	dmu.c \
 	dmu_diff.c \
@@ -116,10 +117,9 @@ KERNEL_C = \
 	refcount.c \
 	rrwlock.c \
 	sa.c \
-	sha256.c \
+	sha2_zfs.c \
 	skein_zfs.c \
 	spa.c \
-	spa_boot.c \
 	spa_checkpoint.c \
 	spa_config.c \
 	spa_errlog.c \
@@ -134,7 +134,6 @@ KERNEL_C = \
 	uberblock.c \
 	unique.c \
 	vdev.c \
-	vdev_cache.c \
 	vdev_draid.c \
 	vdev_draid_rand.c \
 	vdev_file.c \
@@ -143,6 +142,7 @@ KERNEL_C = \
 	vdev_indirect_mapping.c \
 	vdev_initialize.c \
 	vdev_label.c \
+	vdev_label_os.c \
 	vdev_mirror.c \
 	vdev_missing.c \
 	vdev_queue.c \
@@ -287,6 +287,12 @@ CSTD=	c99
 
 CFLAGS+=	-g -DDEBUG=1
 
+CFLAGS.gcc+=	-Wno-pointer-to-int-cast
+
+# Pointer values are used as debugging "tags" to mark reference count
+# ownerships and in some cases the tag reference is dropped after an
+# object is freed.
+CFLAGS.dbuf.c=			${NO_WUSE_AFTER_FREE}
 CFLAGS.entropy_common.c=	-fno-tree-vectorize
 CFLAGS.entropy_common.c+=	${NO_WBITWISE_INSTEAD_OF_LOGICAL}
 CFLAGS.error_private.c=		-fno-tree-vectorize

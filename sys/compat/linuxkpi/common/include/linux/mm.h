@@ -27,8 +27,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_MM_H_
 #define	_LINUXKPI_LINUX_MM_H_
@@ -37,9 +35,13 @@
 #include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/mm_types.h>
+#include <linux/mmzone.h>
 #include <linux/pfn.h>
 #include <linux/list.h>
 #include <linux/mmap_lock.h>
+#include <linux/overflow.h>
+#include <linux/shrinker.h>
+#include <linux/page.h>
 
 #include <asm/pgtable.h>
 
@@ -54,6 +56,8 @@ CTASSERT((VM_PROT_ALL & -(1 << 8)) == 0);
 #define	VM_READ			VM_PROT_READ
 #define	VM_WRITE		VM_PROT_WRITE
 #define	VM_EXEC			VM_PROT_EXECUTE
+
+#define	VM_ACCESS_FLAGS		(VM_READ | VM_WRITE | VM_EXEC)
 
 #define	VM_PFNINTERNAL		(1 << 8)	/* FreeBSD private flag to vm_insert_pfn() */
 #define	VM_MIXEDMAP		(1 << 9)
@@ -143,10 +147,19 @@ struct vm_operations_struct {
 };
 
 struct sysinfo {
-	uint64_t totalram;
-	uint64_t totalhigh;
-	uint32_t mem_unit;
+	uint64_t totalram;	/* Total usable main memory size */
+	uint64_t freeram;	/* Available memory size */
+	uint64_t totalhigh;	/* Total high memory size */
+	uint64_t freehigh;	/* Available high memory size */
+	uint32_t mem_unit;	/* Memory unit size in bytes */
 };
+
+static inline struct page *
+virt_to_head_page(const void *p)
+{
+
+	return (virt_to_page(p));
+}
 
 /*
  * Compute log2 of the power of two rounded up count of pages
@@ -165,6 +178,14 @@ get_order(unsigned long size)
 	}
 	return (order);
 }
+
+/*
+ * Resolve a page into a virtual address:
+ *
+ * NOTE: This function only works for pages allocated by the kernel.
+ */
+void *linux_page_address(struct page *);
+#define	page_address(page) linux_page_address(page)
 
 static inline void *
 lowmem_page_address(struct page *page)
@@ -217,11 +238,15 @@ apply_to_page_range(struct mm_struct *mm, unsigned long address,
 int zap_vma_ptes(struct vm_area_struct *vma, unsigned long address,
     unsigned long size);
 
+int lkpi_remap_pfn_range(struct vm_area_struct *vma,
+    unsigned long start_addr, unsigned long start_pfn, unsigned long size,
+    pgprot_t prot);
+
 static inline int
 remap_pfn_range(struct vm_area_struct *vma, unsigned long addr,
     unsigned long pfn, unsigned long size, pgprot_t prot)
 {
-	return (-ENOTSUP);
+	return (lkpi_remap_pfn_range(vma, addr, pfn, size, prot));
 }
 
 static inline unsigned long
@@ -233,43 +258,85 @@ vma_pages(struct vm_area_struct *vma)
 #define	offset_in_page(off)	((unsigned long)(off) & (PAGE_SIZE - 1))
 
 static inline void
-set_page_dirty(struct vm_page *page)
+set_page_dirty(struct page *page)
 {
 	vm_page_dirty(page);
 }
 
 static inline void
-mark_page_accessed(struct vm_page *page)
+mark_page_accessed(struct page *page)
 {
 	vm_page_reference(page);
 }
 
 static inline void
-get_page(struct vm_page *page)
+get_page(struct page *page)
 {
 	vm_page_wire(page);
 }
 
 extern long
 get_user_pages(unsigned long start, unsigned long nr_pages,
-    int gup_flags, struct page **,
+    unsigned int gup_flags, struct page **,
     struct vm_area_struct **);
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 60500
+#define	get_user_pages(start, nr_pages, gup_flags, pages)	\
+	get_user_pages(start, nr_pages, gup_flags, pages, NULL)
+#endif
+
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 60500
+static inline long
+pin_user_pages(unsigned long start, unsigned long nr_pages,
+    unsigned int gup_flags, struct page **pages)
+{
+	return (get_user_pages(start, nr_pages, gup_flags, pages));
+}
+#else
+static inline long
+pin_user_pages(unsigned long start, unsigned long nr_pages,
+    unsigned int gup_flags, struct page **pages,
+    struct vm_area_struct **vmas)
+{
+	return (get_user_pages(start, nr_pages, gup_flags, pages, vmas));
+}
+#endif
 
 extern int
 __get_user_pages_fast(unsigned long start, int nr_pages, int write,
     struct page **);
 
+static inline int
+pin_user_pages_fast(unsigned long start, int nr_pages,
+    unsigned int gup_flags, struct page **pages)
+{
+	return __get_user_pages_fast(
+	    start, nr_pages, !!(gup_flags & FOLL_WRITE), pages);
+}
+
 extern long
 get_user_pages_remote(struct task_struct *, struct mm_struct *,
     unsigned long start, unsigned long nr_pages,
-    int gup_flags, struct page **,
+    unsigned int gup_flags, struct page **,
     struct vm_area_struct **);
 
+static inline long
+pin_user_pages_remote(struct task_struct *task, struct mm_struct *mm,
+    unsigned long start, unsigned long nr_pages,
+    unsigned int gup_flags, struct page **pages,
+    struct vm_area_struct **vmas)
+{
+	return get_user_pages_remote(
+	    task, mm, start, nr_pages, gup_flags, pages, vmas);
+}
+
 static inline void
-put_page(struct vm_page *page)
+put_page(struct page *page)
 {
 	vm_page_unwire(page, PQ_ACTIVE);
 }
+
+#define	unpin_user_page(page) put_page(page)
+#define	unpin_user_pages(pages, npages) release_pages(pages, npages)
 
 #define	copy_highpage(to, from) pmap_copy_page(from, to)
 
@@ -279,7 +346,19 @@ vm_get_page_prot(unsigned long vm_flags)
 	return (vm_flags & VM_PROT_ALL);
 }
 
-static inline vm_page_t
+static inline void
+vm_flags_set(struct vm_area_struct *vma, unsigned long flags)
+{
+	vma->vm_flags |= flags;
+}
+
+static inline void
+vm_flags_clear(struct vm_area_struct *vma, unsigned long flags)
+{
+	vma->vm_flags &= ~flags;
+}
+
+static inline struct page *
 vmalloc_to_page(const void *addr)
 {
 	vm_paddr_t paddr;
@@ -304,10 +383,31 @@ unlock_page(struct page *page)
 extern int is_vmalloc_addr(const void *addr);
 void si_meminfo(struct sysinfo *si);
 
+static inline unsigned long
+totalram_pages(void)
+{
+	return ((unsigned long)physmem);
+}
+
 #define	unmap_mapping_range(...)	lkpi_unmap_mapping_range(__VA_ARGS__)
 void lkpi_unmap_mapping_range(void *obj, loff_t const holebegin __unused,
     loff_t const holelen, int even_cows __unused);
 
 #define PAGE_ALIGNED(p)	__is_aligned(p, PAGE_SIZE)
+
+void vma_set_file(struct vm_area_struct *vma, struct linux_file *file);
+
+static inline void
+might_alloc(gfp_t gfp_mask __unused)
+{
+}
+
+#define	is_cow_mapping(flags)	(false)
+
+static inline bool
+want_init_on_free(void)
+{
+	return (false);
+}
 
 #endif					/* _LINUXKPI_LINUX_MM_H_ */

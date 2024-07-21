@@ -28,10 +28,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)extern.h	8.3 (Berkeley) 4/2/94
- *
- * $FreeBSD$
- *
  */
 
 #define OK_EXIT		0
@@ -46,3 +42,7 @@ void	diffmsg(const char *, const char *, off_t, off_t, int, int);
 void	eofmsg(const char *);
 
 extern bool bflag, lflag, sflag, xflag, zflag;
+
+#ifdef SIGINFO
+extern volatile sig_atomic_t info;
+#endif

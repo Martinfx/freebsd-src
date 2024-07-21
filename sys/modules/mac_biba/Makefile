@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/security/mac_biba
 
 KMOD=	mac_biba

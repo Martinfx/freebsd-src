@@ -23,9 +23,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <stand.h>
 #include <bootstrap.h>
 #include <machine/cpufunc.h>
@@ -42,7 +39,7 @@ __FBSDID("$FreeBSD$");
 #define COMPORT		0x3f8
 #endif
 #ifndef	COMSPEED
-#define COMSPEED	9600
+#define COMSPEED	115200
 #endif
 
 static void	comc_probe(struct console *cp);
@@ -143,8 +140,8 @@ comc_init(int arg)
 
 	if ((comconsole.c_flags & (C_PRESENTIN | C_PRESENTOUT)) ==
 	    (C_PRESENTIN | C_PRESENTOUT))
-		return (CMD_OK);
-	return (CMD_ERROR);
+		return (0);
+	return (1);
 }
 
 static void
@@ -324,11 +321,12 @@ comc_setup(int speed, int port)
 	char intbuf[64];
 	int tries;
 
-	unsetenv("hw.uart.console");
 	comc_curspeed = speed;
 	comc_port = port;
 	if ((comconsole.c_flags & (C_ACTIVEIN | C_ACTIVEOUT)) == 0)
 		return;
+
+	unsetenv("hw.uart.console");
 
 #define	COMC_TEST	0xbb
 	/*

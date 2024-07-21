@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018, Matthew Macy <mmacy@freebsd.org>
  *
@@ -25,9 +25,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -55,6 +52,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_extern.h>
 #include <vm/vm_kern.h>
 #include <vm/uma.h>
+
+#include <machine/stack.h>
 
 #include <ck_epoch.h>
 
@@ -468,9 +467,7 @@ _epoch_enter_preempt(epoch_t epoch, epoch_tracker_t et EPOCH_FILE_LINE)
 
 	MPASS(cold || epoch != NULL);
 	td = curthread;
-	MPASS((vm_offset_t)et >= td->td_kstack &&
-	    (vm_offset_t)et + sizeof(struct epoch_tracker) <=
-	    td->td_kstack + td->td_kstack_pages * PAGE_SIZE);
+	MPASS(kstack_contains(td, (vm_offset_t)et, sizeof(*et)));
 
 	INIT_CHECK(epoch);
 	MPASS(epoch->e_flags & EPOCH_PREEMPT);

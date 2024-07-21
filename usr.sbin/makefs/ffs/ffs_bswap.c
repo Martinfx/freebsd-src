@@ -1,7 +1,7 @@
 /*	$NetBSD: ffs_bswap.c,v 1.28 2004/05/25 14:54:59 hannken Exp $	*/
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 Manuel Bouyer.
  *
@@ -26,9 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #if defined(_KERNEL)

@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)in_var.h	8.2 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef _NETINET_IN_VAR_H_
@@ -100,7 +97,10 @@ struct in_ifaddr {
 #define IN_LNAOF(in, ifa) \
 	((ntohl((in).s_addr) & ~((struct in_ifaddr *)(ifa)->ia_subnetmask))
 
-extern	u_char	inetctlerrmap[];
+#ifdef _KERNEL
+#define IN_ARE_MASKED_ADDR_EQUAL(d, a, m)	(		\
+	((((d).s_addr ^ (a).s_addr) & (m).s_addr)) == 0 )
+#endif
 
 #define LLTABLE(ifp)	\
 	((struct in_ifinfo *)(ifp)->if_afdata[AF_INET])->ii_llt
@@ -382,7 +382,21 @@ extern struct sx in_multi_sx;
 #define	IN_MULTI_UNLOCK_ASSERT() sx_assert(&in_multi_sx, SA_XUNLOCKED)
 
 void inm_disconnect(struct in_multi *inm);
-extern int ifma_restart;
+
+/*
+ * Get the in_multi pointer from a ifmultiaddr.
+ * Returns NULL if ifmultiaddr is no longer valid.
+ */
+static __inline struct in_multi *
+inm_ifmultiaddr_get_inm(struct ifmultiaddr *ifma)
+{
+
+	NET_EPOCH_ASSERT();
+
+	return ((ifma->ifma_addr->sa_family != AF_INET ||
+	    (ifma->ifma_flags & IFMA_F_ENQUEUED) == 0) ? NULL :
+	    ifma->ifma_protospec);
+}
 
 /* Acquire an in_multi record. */
 static __inline void
@@ -425,6 +439,7 @@ inm_rele_locked(struct in_multi_head *inmh, struct in_multi *inm)
 
 struct rib_head;
 struct	ip_moptions;
+struct ucred;
 
 struct in_multi *inm_lookup_locked(struct ifnet *, const struct in_addr);
 struct in_multi *inm_lookup(struct ifnet *, const struct in_addr);
@@ -446,6 +461,8 @@ int	in_leavegroup_locked(struct in_multi *,
 	    /*const*/ struct in_mfilter *);
 int	in_control(struct socket *, u_long, void *, struct ifnet *,
 	    struct thread *);
+int	in_control_ioctl(u_long, void *, struct ifnet *,
+	    struct ucred *);
 int	in_addprefix(struct in_ifaddr *);
 int	in_scrubprefix(struct in_ifaddr *, u_int);
 void	in_ifscrub_all(void);

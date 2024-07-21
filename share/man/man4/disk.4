@@ -22,8 +22,6 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
 .Dd November 20, 2020
 .Dt disk 4
 .Os
@@ -113,8 +111,6 @@ the case for multipathing for example,
 GEOM classes that consume a single provider and provide single
 provider, like
 .Xr geli 8 ,
-and
-.Xr gbde 8 ,
 the identifier should be formed by attaching that provider's class
 name to the ident of the underlying provider,
 .It

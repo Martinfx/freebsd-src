@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 VOLUME=	usd
 DOC=	contents
 SRCS=	contents.ms

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999-2002 Robert N. M. Watson
  * All rights reserved.
@@ -30,11 +30,8 @@
  * in it.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include <sys/types.h>
 #include "namespace.h"
+#include <sys/param.h>
 #include <sys/acl.h>
 #include "un-namespace.h"
 #include <sys/errno.h>

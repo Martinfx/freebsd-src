@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2012 Andrew Turner
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  *
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include "softfloat-for-gcc.h"
 #include "milieu.h"
@@ -57,7 +54,7 @@ float32 __aeabi_fsub_vfp(float32, float32);
 
 /*
  * Depending on the target these will:
- *  On armv6 with a vfp call the above function, or
+ *  On armv7 with a vfp call the above function, or
  *  Call the softfloat function in the 3rd argument.
  */
 int AEABI_FUNC2(fcmpeq, float32, float32_eq)

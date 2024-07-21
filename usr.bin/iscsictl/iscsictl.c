@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 The FreeBSD Foundation
  *
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/linker.h>
@@ -745,6 +743,9 @@ main(int argc, char **argv)
 	struct target *targ;
 
 	argc = xo_parse_args(argc, argv);
+        if (argc < 0)
+                exit(1);
+
 	xo_open_container("iscsictl");
 
 	while ((ch = getopt(argc, argv, "AMRLac:d:e:i:n:p:rt:u:s:vw:")) != -1) {

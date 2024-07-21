@@ -27,9 +27,6 @@
 
 #include "opt_platform.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/limits.h>
@@ -56,6 +53,13 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include <dev/psci/psci.h>
+
+/*
+ * psci.c is "default" in ARM64 kernel config files
+ * psci_reset will do nothing until/unless the psci device probes/attaches.
+ * Therefore, it is safe to default the cpu_reset_hook to psci_reset.
+ */
+cpu_reset_hook_t cpu_reset_hook = psci_reset;
 
 /*
  * Finish a fork operation, with process p2 nearly set up.
@@ -105,9 +109,9 @@ cpu_fork(struct thread *td1, struct proc *p2, struct thread *td2, int flags)
 	td2->td_frame = tf;
 
 	/* Set the return value registers for fork() */
-	td2->td_pcb->pcb_x[19] = (uintptr_t)fork_return;
-	td2->td_pcb->pcb_x[20] = (uintptr_t)td2;
-	td2->td_pcb->pcb_lr = (uintptr_t)fork_trampoline;
+	td2->td_pcb->pcb_x[PCB_X19] = (uintptr_t)fork_return;
+	td2->td_pcb->pcb_x[PCB_X20] = (uintptr_t)td2;
+	td2->td_pcb->pcb_x[PCB_LR] = (uintptr_t)fork_trampoline;
 	td2->td_pcb->pcb_sp = (uintptr_t)td2->td_frame;
 
 	vfp_new_thread(td2, td1, true);
@@ -126,7 +130,7 @@ void
 cpu_reset(void)
 {
 
-	psci_reset();
+	cpu_reset_hook();
 
 	printf("cpu_reset failed");
 	while(1)
@@ -183,9 +187,9 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
 	bcopy(td0->td_frame, td->td_frame, sizeof(struct trapframe));
 	bcopy(td0->td_pcb, td->td_pcb, sizeof(struct pcb));
 
-	td->td_pcb->pcb_x[19] = (uintptr_t)fork_return;
-	td->td_pcb->pcb_x[20] = (uintptr_t)td;
-	td->td_pcb->pcb_lr = (uintptr_t)fork_trampoline;
+	td->td_pcb->pcb_x[PCB_X19] = (uintptr_t)fork_return;
+	td->td_pcb->pcb_x[PCB_X20] = (uintptr_t)td;
+	td->td_pcb->pcb_x[PCB_LR] = (uintptr_t)fork_trampoline;
 	td->td_pcb->pcb_sp = (uintptr_t)td->td_frame;
 
 	/* Update VFP state for the new thread */
@@ -208,7 +212,7 @@ cpu_copy_thread(struct thread *td, struct thread *td0)
  * Set that machine state for performing an upcall that starts
  * the entry function with the given argument.
  */
-void
+int
 cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 	stack_t *stack)
 {
@@ -216,13 +220,18 @@ cpu_set_upcall(struct thread *td, void (*entry)(void *), void *arg,
 
 	/* 32bits processes use r13 for sp */
 	if (td->td_frame->tf_spsr & PSR_M_32) {
-		tf->tf_x[13] = STACKALIGN((uintptr_t)stack->ss_sp + stack->ss_size);
+		tf->tf_x[13] = STACKALIGN((uintptr_t)stack->ss_sp +
+		    stack->ss_size);
 		if ((register_t)entry & 1)
 			tf->tf_spsr |= PSR_T;
 	} else
-		tf->tf_sp = STACKALIGN((uintptr_t)stack->ss_sp + stack->ss_size);
+		tf->tf_sp = STACKALIGN((uintptr_t)stack->ss_sp +
+		    stack->ss_size);
 	tf->tf_elr = (register_t)entry;
 	tf->tf_x[0] = (register_t)arg;
+	tf->tf_x[29] = 0;
+	tf->tf_lr = 0;
+	return (0);
 }
 
 int
@@ -287,8 +296,8 @@ void
 cpu_fork_kthread_handler(struct thread *td, void (*func)(void *), void *arg)
 {
 
-	td->td_pcb->pcb_x[19] = (uintptr_t)func;
-	td->td_pcb->pcb_x[20] = (uintptr_t)arg;
+	td->td_pcb->pcb_x[PCB_X19] = (uintptr_t)func;
+	td->td_pcb->pcb_x[PCB_X20] = (uintptr_t)arg;
 }
 
 void
@@ -309,4 +318,15 @@ cpu_procctl(struct thread *td __unused, int idtype __unused, id_t id __unused,
 {
 
 	return (EINVAL);
+}
+
+void
+cpu_sync_core(void)
+{
+	/*
+	 * Do nothing. According to ARM ARMv8 D1.11 Exception return
+	 * If FEAT_ExS is not implemented, or if FEAT_ExS is
+	 * implemented and the SCTLR_ELx.EOS field is set, exception
+	 * return from ELx is a context synchronization event.
+	 */
 }

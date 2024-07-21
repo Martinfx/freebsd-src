@@ -26,8 +26,6 @@
  */
 
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/elf_common.h>
 
 #include "notes.h"
@@ -41,3 +39,10 @@ __FBSDID("$FreeBSD$");
 2:	.p2align	2
 3:	.4byte		0
 4:
+
+	.section .note.GNU-stack,"",%progbits
+
+#ifdef __aarch64__
+/* This is needed in all objects for BTI to be used in the linked elf file */
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)
+#endif

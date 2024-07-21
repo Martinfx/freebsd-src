@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * HDMI core module
  */
@@ -44,14 +42,14 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <dev/videomode/videomode.h>
 #include <dev/videomode/edidvar.h>
 
 #include <dev/hdmi/dwc_hdmi.h>
 
-#include "hdmi_if.h"
+#include "crtc_if.h"
 
 struct dwc_hdmi_fdt_softc {
 	struct dwc_hdmi_softc	base;

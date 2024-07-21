@@ -33,20 +33,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char const copyright[] =
-"@(#) Copyright (c) 1992, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)pax.c	8.2 (Berkeley) 4/18/94";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -83,7 +69,7 @@ int	nflag;			/* select first archive member match */
 int	tflag;			/* restore access time after read */
 int	uflag;			/* ignore older modification time files */
 int	vflag;			/* produce verbose output */
-int	Dflag;			/* same as uflag except inode change time */
+int	Dflag;			/* same as uflag except for inode change time */
 int	Hflag;			/* follow command line symlinks (write only) */
 int	Lflag;			/* follow symlinks when writing */
 int	Oflag;			/* limit to single volume */
@@ -392,7 +378,7 @@ gen_init(void)
 	/*
 	 * signal handling to reset stored directory times and modes. Since
 	 * we deal with broken pipes via failed writes we ignore it. We also
-	 * deal with any file size limit thorough failed writes. Cpu time
+	 * deal with any file size limit through failed writes. Cpu time
 	 * limits are caught and a cleanup is forced.
 	 */
 	if ((sigemptyset(&s_mask) < 0) || (sigaddset(&s_mask, SIGTERM) < 0) ||

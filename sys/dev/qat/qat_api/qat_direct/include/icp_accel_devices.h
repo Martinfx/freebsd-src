@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /*****************************************************************************
  * @file icp_accel_devices.h
  *
@@ -97,7 +96,11 @@ typedef enum device_type_e {
 	DEVICE_200XX,
 	DEVICE_200XXVF,
 	DEVICE_C4XXX,
-	DEVICE_C4XXXVF
+	DEVICE_C4XXXVF,
+	DEVICE_D15XX,
+	DEVICE_D15XXVF,
+	DEVICE_4XXX,
+	DEVICE_4XXXVF
 } device_type_t;
 
 /*

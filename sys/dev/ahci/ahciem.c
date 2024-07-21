@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 Alexander Motin <mav@FreeBSD.org>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/module.h>
@@ -66,7 +63,7 @@ static int
 ahci_em_probe(device_t dev)
 {
 
-	device_set_desc_copy(dev, "AHCI enclosure management bridge");
+	device_set_desc(dev, "AHCI enclosure management bridge");
 	return (BUS_PROBE_DEFAULT);
 }
 

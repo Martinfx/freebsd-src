@@ -1,4 +1,3 @@
-# $FreeBSD$
 #
 # Common code to marry kernel config(8) goo and module building goo.
 #
@@ -13,6 +12,13 @@ opt_global.h:
 	@echo "#define SMP 1" >> ${.TARGET}
 	@echo "#define MAC 1" >> ${.TARGET}
 	@echo "#define VIMAGE 1" >> ${.TARGET}
+# Note: Define 'options' in DEFAULTS to 1. For simplicity, no check if the
+# option is in opt_global.h. Nearly all the options in DEFAUlTS today are in
+# opt_global.h with GEOM_* being the main exceptions. Move any options from
+# GENERIC or std.* files to DEFAULTS to get this treatment for untied builds.
+	@awk '$$1 == "options" && $$2 !~ "GEOM_" { print "#define ", $$2, " 1"; }' \
+		< ${SYSDIR}/${MACHINE}/conf/DEFAULTS \
+		>>  ${.TARGET}
 .if ${MK_BHYVE_SNAPSHOT} != "no"
 opt_bhyve_snapshot.h:
 	@echo "#define BHYVE_SNAPSHOT 1" > ${.TARGET}
@@ -53,9 +59,9 @@ opt_sctp.h:
 opt_wlan.h:
 	echo "#define IEEE80211_DEBUG 1" > ${.TARGET}
 	echo "#define IEEE80211_SUPPORT_MESH 1" >> ${.TARGET}
-KERN_OPTS.i386=NEW_PCIB DEV_PCI
-KERN_OPTS.amd64=NEW_PCIB DEV_PCI
-KERN_OPTS.powerpc=NEW_PCIB DEV_PCI
+KERN_OPTS.i386=DEV_PCI
+KERN_OPTS.amd64=DEV_PCI
+KERN_OPTS.powerpc=DEV_PCI
 KERN_OPTS=MROUTING IEEE80211_DEBUG \
 	IEEE80211_SUPPORT_MESH DEV_BPF \
 	${KERN_OPTS.${MACHINE}} ${KERN_OPTS_EXTRA}

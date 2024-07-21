@@ -29,25 +29,18 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)C.c	8.4 (Berkeley) 4/2/94";
-#endif
-#endif
-
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "ctags.h"
 
-static int	func_entry(void);
+static bool	func_entry(void);
 static void	hash_entry(void);
 static void	skip_string(int);
-static int	str_entry(int);
+static bool	str_entry(int);
 
 /*
  * c_entries --
@@ -59,13 +52,13 @@ c_entries(void)
 	int	c;			/* current character */
 	int	level;			/* brace level */
 	int	token;			/* if reading a token */
-	int	t_def;			/* if reading a typedef */
+	bool	t_def;			/* if reading a typedef */
 	int	t_level;		/* typedef's brace level */
 	char	*sp;			/* buffer pointer */
 	char	tok[MAXTOKEN];		/* token buffer */
 
 	lineftell = ftell(inf);
-	sp = tok; token = t_def = NO; t_level = -1; level = 0; lineno = 1;
+	sp = tok; token = t_def = false; t_level = -1; level = 0; lineno = 1;
 	while (GETC(!=, EOF)) {
 		switch (c) {
 		/*
@@ -99,11 +92,11 @@ c_entries(void)
 			 */
 	endtok:			if (sp > tok) {
 				*sp = EOS;
-				token = YES;
+				token = true;
 				sp = tok;
 			}
 			else
-				token = NO;
+				token = false;
 			continue;
 
 		/*
@@ -181,7 +174,7 @@ c_entries(void)
 		 */
 		case ';':
 			if (t_def && level == t_level) {
-				t_def = NO;
+				t_def = false;
 				get_line();
 				if (sp != tok)
 					*sp = EOS;
@@ -214,7 +207,7 @@ c_entries(void)
 					/* no typedefs inside typedefs */
 					if (!t_def &&
 						   !memcmp(tok, "typedef",8)) {
-						t_def = YES;
+						t_def = true;
 						t_level = level;
 						break;
 					}
@@ -240,15 +233,15 @@ c_entries(void)
 				if (sp == tok + sizeof tok - 1)
 					/* Too long -- truncate it */
 					*sp = EOS;
-				else 
+				else
 					*sp++ = c;
-				token = YES;
+				token = true;
 			}
 			continue;
 		}
 
 		sp = tok;
-		token = NO;
+		token = false;
 	}
 }
 
@@ -256,11 +249,14 @@ c_entries(void)
  * func_entry --
  *	handle a function reference
  */
-static int
+static bool
 func_entry(void)
 {
 	int	c;			/* current character */
 	int	level = 0;		/* for matching '()' */
+	static char attribute[] = "__attribute__";
+	char	maybe_attribute[sizeof attribute + 1],
+		*anext;
 
 	/*
 	 * Find the end of the assumed function declaration.
@@ -291,29 +287,56 @@ func_entry(void)
 			SETLINE;
 		}
 	}
-	return (NO);
+	return (false);
 fnd:
 	/*
 	 * we assume that the character after a function's right paren
 	 * is a token character if it's a function and a non-token
 	 * character if it's a declaration.  Comments don't count...
 	 */
-	for (;;) {
+	for (anext = maybe_attribute;;) {
 		while (GETC(!=, EOF) && iswhite(c))
 			if (c == '\n')
 				SETLINE;
+		if (c == EOF)
+			return false;
+		/*
+		 * Recognize the gnu __attribute__ extension, which would
+		 * otherwise make the heuristic test DTWT
+		 */
+		if (anext == maybe_attribute) {
+			if (intoken(c)) {
+				*anext++ = c;
+				continue;
+			}
+		} else {
+			if (intoken(c)) {
+				if (anext - maybe_attribute
+				 < (ptrdiff_t)(sizeof attribute - 1))
+					*anext++ = c;
+				else	break;
+				continue;
+			} else {
+				*anext++ = '\0';
+				if (strcmp(maybe_attribute, attribute) == 0) {
+					(void)ungetc(c, inf);
+					return false;
+				}
+				break;
+			}
+		}
 		if (intoken(c) || c == '{')
 			break;
 		if (c == '/' && (GETC(==, '*') || c == '/'))
 			skip_comment(c);
 		else {				/* don't ever "read" '/' */
 			(void)ungetc(c, inf);
-			return (NO);
+			return (false);
 		}
 	}
 	if (c != '{')
 		(void)skip_key('{');
-	return (YES);
+	return (true);
 }
 
 /*
@@ -342,7 +365,7 @@ hash_entry(void)
 		if (sp == tok + sizeof tok - 1)
 			/* Too long -- truncate it */
 			*sp = EOS;
-		else 
+		else
 			*sp++ = c;
 	}
 	*sp = EOS;
@@ -358,7 +381,7 @@ hash_entry(void)
 		if (sp == tok + sizeof tok - 1)
 			/* Too long -- truncate it */
 			*sp = EOS;
-		else 
+		else
 			*sp++ = c;
 		if (GETC(==, EOF))
 			return;
@@ -386,7 +409,7 @@ skip:	if (c == '\n') {		/* get rid of rest of define */
  * str_entry --
  *	handle a struct, union or enum entry
  */
-static int
+static bool
 str_entry(int c) /* c is current character */
 {
 	int	curline;		/* line started on */
@@ -396,17 +419,17 @@ str_entry(int c) /* c is current character */
 	curline = lineno;
 	while (iswhite(c))
 		if (GETC(==, EOF))
-			return (NO);
+			return (false);
 	if (c == '{')		/* it was "struct {" */
-		return (YES);
+		return (true);
 	for (sp = tok;;) {		/* get next token */
 		if (sp == tok + sizeof tok - 1)
 			/* Too long -- truncate it */
 			*sp = EOS;
-		else 
+		else
 			*sp++ = c;
 		if (GETC(==, EOF))
-			return (NO);
+			return (false);
 		if (!intoken(c))
 			break;
 	}
@@ -423,12 +446,12 @@ str_entry(int c) /* c is current character */
 					break;
 			if (c != '{') {
 				(void)ungetc(c, inf);
-				return (NO);
+				return (false);
 			}
 	}
 	*sp = EOS;
 	pfnote(tok, curline);
-	return (YES);
+	return (true);
 }
 
 /*
@@ -445,19 +468,19 @@ skip_comment(int t) /* t is comment character */
 		switch(c) {
 		/* comments don't nest, nor can they be escaped. */
 		case '*':
-			star = YES;
+			star = true;
 			break;
 		case '/':
 			if (star && t == '*')
 				return;
 			break;
 		case '\n':
+			SETLINE;
 			if (t == '/')
 				return;
-			SETLINE;
 			/*FALLTHROUGH*/
 		default:
-			star = NO;
+			star = false;
 			break;
 		}
 }
@@ -472,7 +495,7 @@ skip_string(int key)
 	int	c,
 		skip;
 
-	for (skip = NO; GETC(!=, EOF); )
+	for (skip = false; GETC(!=, EOF); )
 		switch (c) {
 		case '\\':		/* a backslash escapes anything */
 			skip = !skip;	/* we toggle in case it's "\\" */
@@ -483,7 +506,7 @@ skip_string(int key)
 		default:
 			if (c == key && !skip)
 				return;
-			skip = NO;
+			skip = false;
 		}
 }
 
@@ -491,21 +514,21 @@ skip_string(int key)
  * skip_key --
  *	skip to next char "key"
  */
-int
+bool
 skip_key(int key)
 {
-	int	c,
-		skip,
-		retval;
+	int	c;
+	bool	skip;
+	bool	retval;
 
-	for (skip = retval = NO; GETC(!=, EOF);)
+	for (skip = retval = false; GETC(!=, EOF);)
 		switch(c) {
 		case '\\':		/* a backslash escapes anything */
 			skip = !skip;	/* we toggle in case it's "\\" */
 			break;
 		case ';':		/* special case for yacc; if one */
 		case '|':		/* of these chars occurs, we may */
-			retval = YES;	/* have moved out of the rule */
+			retval = true;	/* have moved out of the rule */
 			break;		/* not used by C */
 		case '\'':
 		case '"':
@@ -528,7 +551,7 @@ skip_key(int key)
 		norm:
 			if (c == key && !skip)
 				return (retval);
-			skip = NO;
+			skip = false;
 		}
 	return (retval);
 }

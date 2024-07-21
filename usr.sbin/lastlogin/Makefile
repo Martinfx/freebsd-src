@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	lastlogin
 PACKAGE=	acct
 MAN=	lastlogin.8

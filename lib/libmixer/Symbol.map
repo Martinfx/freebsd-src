@@ -1,5 +1,4 @@
 /*
- * $FreeBSD$
  */
 
 FBSD_1.7 {
@@ -19,4 +18,8 @@ FBSD_1.7 {
 	mixer_set_dunit;
 	mixer_get_mode;
 	mixer_get_nmixers;
+};
+
+FBSD_1.8 {
+	mixer_get_path;
 };

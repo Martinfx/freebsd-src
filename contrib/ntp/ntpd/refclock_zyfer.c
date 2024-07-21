@@ -138,7 +138,7 @@ zyfer_start(
 	 * Something like LDISC_ACTS that looked for ! would be nice...
 	 */
 	snprintf(device, sizeof(device), DEVICE, unit);
-	fd = refclock_open(device, SPEED232, LDISC_RAW);
+	fd = refclock_open(&peer->srcadr, device, SPEED232, LDISC_RAW);
 	if (fd <= 0)
 		return (0);
 
@@ -344,5 +344,5 @@ zyfer_poll(
 }
 
 #else
-int refclock_zyfer_bs;
+NONEMPTY_TRANSLATION_UNIT
 #endif /* REFCLOCK */

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	udps
 BINDIR=	/usr/local/bin
 LIBADD=	z

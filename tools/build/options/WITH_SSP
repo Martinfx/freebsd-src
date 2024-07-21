@@ -1,2 +1,4 @@
-.\" $FreeBSD$
-Build world with propolice stack smashing protection.
+Build world with stack smashing protection.
+See
+.Xr security 7
+for more information.

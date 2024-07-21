@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=ssh
 LIB=	cbor
 PRIVATELIB=
@@ -7,7 +5,8 @@ PRIVATELIB=
 DIST=${SRCTOP}/contrib/libcbor
 .PATH:	${DIST}/src
 
-SRCS=	cbor.c
+SRCS=	allocators.c
+SRCS+=	cbor.c
 SRCS+=	cbor/arrays.c
 SRCS+=	cbor/bytestrings.c
 SRCS+=	cbor/callbacks.c
@@ -30,6 +29,7 @@ SRCS+=	cbor/internal/unicode.c
 CFLAGS+= -I${DIST}/src -I${.CURDIR}
 
 WARNS?=	2
+IGNORE_PRAGMA=
 MAN=
 
 .include <bsd.lib.mk>

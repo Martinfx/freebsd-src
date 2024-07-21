@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
 
  * Copyright (c) 2015-2018 Tai-hwa Liang <avatar@FreeBSD.org>
  * All rights reserved
@@ -43,7 +43,6 @@
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
-#include <dev/sound/chip.h>
 #include <dev/sound/pcm/sound.h>
 
 #include <dev/sound/midi/midi.h>
@@ -53,8 +52,6 @@
 #include <dev/sound/pci/csavar.h>
 
 #include "mpufoi_if.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 /* pulled from mpu401.c */
 #define	MPU_DATAPORT	0

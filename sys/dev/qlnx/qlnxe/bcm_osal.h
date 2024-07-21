@@ -23,8 +23,6 @@
  *  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef __BCM_OSAL_ECORE_PACKAGE
@@ -35,16 +33,7 @@
 #include <sys/bitstring.h>
 
 #include <linux/types.h>
-
-#if __FreeBSD_version >= 1200032
 #include <linux/bitmap.h>
-#else
-#if __FreeBSD_version >= 1100090
-#include <compat/linuxkpi/common/include/linux/bitops.h>
-#else
-#include <ofed/include/linux/bitops.h>
-#endif
-#endif
 
 #define OSAL_NUM_CPUS()	mp_ncpus
 /*
@@ -83,7 +72,7 @@ extern void qlnx_dma_free_coherent(void *ecore_dev, void *v_addr,
                         bus_addr_t phys, uint32_t size);
 
 extern void qlnx_link_update(void *p_hwfn);
-extern void qlnx_barrier(void *p_hwfn);
+extern void qlnx_barrier(void *p_dev);
 
 extern void *qlnx_zalloc(uint32_t size);
 
@@ -102,7 +91,6 @@ extern int qlnx_pf_vf_msg(void *p_hwfn, uint16_t relative_vf_id);
 extern void qlnx_vf_flr_update(void *p_hwfn);
 
 #define nothing			do {} while(0)
-#ifdef ECORE_PACKAGE
 
 /* Memory Types */
 #define u8 uint8_t 
@@ -113,24 +101,6 @@ extern void qlnx_vf_flr_update(void *p_hwfn);
 #define s32 uint32_t
 
 #ifndef QLNX_RDMA
-
-static __inline unsigned long
-roundup_pow_of_two(unsigned long x)
-{
-	return (1UL << flsl(x - 1));
-}
-
-static __inline int
-is_power_of_2(unsigned long n)
-{
-	return (n == roundup_pow_of_two(n));
-}
-
-static __inline unsigned long
-rounddown_pow_of_two(unsigned long x)
-{
-	return (1UL << (flsl(x) - 1));
-}
 
 #define max_t(type, val1, val2) \
 	((type)(val1) > (type)(val2) ? (type)(val1) : (val2))
@@ -225,14 +195,14 @@ typedef struct osal_list_t
 #define OSAL_SPIN_LOCK_ALLOC(p_hwfn, mutex)
 #define OSAL_SPIN_LOCK_DEALLOC(mutex) mtx_destroy(mutex)
 #define OSAL_SPIN_LOCK_INIT(lock) {\
-		mtx_init(lock, __func__, MTX_NETWORK_LOCK, MTX_SPIN); \
+		mtx_init(lock, __func__, "OSAL spin lock", MTX_SPIN); \
 	}
 
 #define OSAL_SPIN_UNLOCK(lock) {\
-		mtx_unlock(lock); \
+		mtx_unlock_spin(lock); \
 	}
 #define OSAL_SPIN_LOCK(lock) {\
-		mtx_lock(lock); \
+		mtx_lock_spin(lock); \
 	}
 
 #define OSAL_MUTEX_ALLOC(p_hwfn, mutex)
@@ -481,39 +451,17 @@ qlnx_test_and_change_bit(long bit, volatile unsigned long *var)
 
 	val = *var;
 
-#if __FreeBSD_version >= 1100000
 	if (val & bit) 
 		return (test_and_clear_bit(bit, var));
 
 	return (test_and_set_bit(bit, var));
-#else
-	if (val & bit) 
-		return (test_and_clear_bit(bit, (long *)var));
-
-	return (test_and_set_bit(bit, (long *)var));
-
-#endif
 }
-
-#if __FreeBSD_version < 1100000
-static inline unsigned
-bitmap_weight(unsigned long *bitmap, unsigned nbits)
-{
-        unsigned bit;
-        unsigned retval = 0;
-
-        for_each_set_bit(bit, bitmap, nbits)
-                retval++;
-        return (retval);
-}
-
-#endif
 
 #define OSAL_TEST_AND_FLIP_BIT qlnx_test_and_change_bit
 #define OSAL_TEST_AND_CLEAR_BIT test_and_clear_bit
 #define OSAL_MEMCMP memcmp
-#define OSAL_SPIN_LOCK_IRQSAVE(x,y) {y=0; mtx_lock(x);}
-#define OSAL_SPIN_UNLOCK_IRQSAVE(x,y) {y= 0; mtx_unlock(x);}
+#define OSAL_SPIN_LOCK_IRQSAVE(x, y) { (void)y; mtx_lock(x); }
+#define OSAL_SPIN_UNLOCK_IRQSAVE(x, y) { (void)y; mtx_unlock(x); }
 
 static inline u32
 OSAL_CRC32(u32 crc, u8 *ptr, u32 length)
@@ -572,7 +520,5 @@ OSAL_CRC8(u8 * cdu_crc8_table, u8 * data_to_crc, int data_to_crc_len, u8 init_va
 
 #define OSAL_VF_FLR_UPDATE(p_hwfn) qlnx_vf_flr_update(p_hwfn)
 #define OSAL_IOV_VF_VPORT_STOP(p_hwfn, vf)
-
-#endif /* #ifdef ECORE_PACKAGE */
 
 #endif /* #ifdef __BCM_OSAL_ECORE_PACKAGE */

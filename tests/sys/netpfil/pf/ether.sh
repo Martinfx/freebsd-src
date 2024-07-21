@@ -1,6 +1,5 @@
-# $FreeBSD$
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright © 2021. Rubicon Communications, LLC (Netgate). All Rights Reserved.
 #
@@ -26,6 +25,8 @@
 # SUCH DAMAGE.
 
 . $(atf_get_srcdir)/utils.subr
+
+common_dir=$(atf_get_srcdir)/../common
 
 atf_test_case "mac" "cleanup"
 mac_head()
@@ -414,7 +415,7 @@ dummynet_body()
 	# Sanity check
 	atf_check -s exit:0 -o ignore ping -i .1 -c 3 -s 1200 192.0.2.2
 
-	jexec alcatraz dnctl pipe 1 config bw 30Byte/s
+	jexec alcatraz dnctl pipe 1 config bw 300Byte/s
 	jexec alcatraz pfctl -e
 	pft_set_rules alcatraz \
 		"ether pass in dnpipe 1"
@@ -429,14 +430,14 @@ dummynet_body()
 	ping -i .1 -c 5 -s 1200 192.0.2.2
 
 	# We should now be hitting the limits and get this packet dropped.
-	atf_check -s exit:2 -o ignore ping -c 1 -s 1200 192.0.2.2
+	atf_check -s exit:2 -o ignore ping -c 1 -t 1 -s 1200 192.0.2.2
 
 	# We can now also dummynet outbound traffic!
 	pft_set_rules alcatraz \
 		"ether pass out dnpipe 1"
 
 	# We should still be hitting the limits and get this packet dropped.
-	atf_check -s exit:2 -o ignore ping -c 1 -s 1200 192.0.2.2
+	atf_check -s exit:2 -o ignore ping -c 1 -t 1 -s 1200 192.0.2.2
 }
 
 dummynet_cleanup()
@@ -642,6 +643,7 @@ short_pkt_head()
 {
 	atf_set descr 'Test overly short Ethernet packets'
 	atf_set require.user root
+	atf_set require.progs scapy
 }
 
 short_pkt_body()
@@ -679,6 +681,54 @@ short_pkt_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "bridge_to" "cleanup"
+bridge_to_head()
+{
+	atf_set descr 'Test bridge-to keyword'
+	atf_set require.user root
+	atf_set require.progs scapy
+}
+
+bridge_to_body()
+{
+	pft_init
+
+	epair_in=$(vnet_mkepair)
+	epair_out=$(vnet_mkepair)
+
+	ifconfig ${epair_in}a 192.0.2.1/24 up
+	ifconfig ${epair_out}a up
+
+	vnet_mkjail alcatraz ${epair_in}b ${epair_out}b
+	jexec alcatraz ifconfig ${epair_in}b 192.0.2.2/24 up
+	jexec alcatraz ifconfig ${epair_out}b up
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.2
+	atf_check -s exit:1 -o ignore \
+		${common_dir}/pft_ping.py \
+		--sendif ${epair_in}a \
+		--to 192.0.2.2 \
+		--recvif ${epair_out}a
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+		"ether pass in on ${epair_in}b bridge-to ${epair_out}b"
+
+	# Now the packets go out epair_out rather than be processed locally
+	atf_check -s exit:2 -o ignore ping -c 1 192.0.2.2
+	atf_check -s exit:0 -o ignore \
+		${common_dir}/pft_ping.py \
+		--sendif ${epair_in}a \
+		--to 192.0.2.2 \
+		--recvif ${epair_out}a
+}
+
+bridge_to_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "mac"
@@ -692,4 +742,5 @@ atf_init_test_cases()
 	atf_add_test_case "tag"
 	atf_add_test_case "match_tag"
 	atf_add_test_case "short_pkt"
+	atf_add_test_case "bridge_to"
 }

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Adrian Chadd <adrian@FreeBSD.org>
  *
@@ -34,9 +34,6 @@
  * may change as I extend the driver to support multiple kinds of
  * qualcomm chipsets in the future.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003-2009 Silicon Graphics International Corp.
  * Copyright (c) 2012 The FreeBSD Foundation
@@ -28,9 +28,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -75,7 +72,7 @@ struct ctl_fe_ioctl_params {
 
 struct cfi_port {
 	TAILQ_ENTRY(cfi_port)	link;
-	uint32_t		cur_tag_num;
+	u_int			cur_tag_num;
 	struct cdev *		dev;
 	struct ctl_port		port;
 };
@@ -270,7 +267,7 @@ cfi_ioctl_port_remove(struct ctl_req *req)
 	if (port_id == -1) {
 		req->status = CTL_LUN_ERROR;
 		snprintf(req->error_str, sizeof(req->error_str),
-		    "port_id not provided");
+		    "Missing required argument: port_id");
 		return;
 	}
 
@@ -632,9 +629,10 @@ ctl_ioctl_io(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 	 */
 	io->io_hdr.nexus.targ_port = cfi->port.targ_port;
 	io->io_hdr.flags |= CTL_FLAG_USER_REQ;
-	if ((io->io_hdr.io_type == CTL_IO_SCSI) &&
-	    (io->scsiio.tag_type != CTL_TAG_UNTAGGED))
-		io->scsiio.tag_num = cfi->cur_tag_num++;
+	if ((io->io_hdr.flags & CTL_FLAG_USER_TAG) == 0 &&
+	    io->io_hdr.io_type == CTL_IO_SCSI &&
+	    io->scsiio.tag_type != CTL_TAG_UNTAGGED)
+		io->scsiio.tag_num = atomic_fetchadd_int(&cfi->cur_tag_num, 1);
 
 	retval = cfi_submit_wait(io);
 	if (retval == 0)

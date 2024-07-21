@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /*****************************************************************************
  * @file icp_adf_accel_mgr.h
  *
@@ -44,9 +43,19 @@ CpaStatus icp_adf_reset_dev(icp_accel_dev_t *accel_dev,
  *
  * Returns:
  *   CPA_TRUE   device is in reset state
- *   CPA_FALS   device is not in reset state
+ *   CPA_FALSE  device is not in reset state
  */
 CpaBoolean icp_adf_is_dev_in_reset(icp_accel_dev_t *accel_dev);
+
+/*
+ * icp_adf_is_dev_in_error
+ * Check if device is in error state.
+ *
+ * Returns:
+ *   CPA_TRUE   device is in error state
+ *   CPA_FALSE  device is not in error state
+ */
+CpaBoolean icp_adf_is_dev_in_error(icp_accel_dev_t *accel_dev);
 
 /*
  * icp_amgr_getNumInstances

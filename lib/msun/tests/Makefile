@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.own.mk>
 
 TESTSRC=	${SRCTOP}/contrib/netbsd-tests/lib/libm

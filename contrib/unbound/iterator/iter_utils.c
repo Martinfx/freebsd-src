@@ -71,6 +71,11 @@
 /** time when nameserver glue is said to be 'recent' */
 #define SUSPICION_RECENT_EXPIRY 86400
 
+/** if NAT64 is enabled and no NAT64 prefix is configured, first fall back to
+ * DNS64 prefix.  If that is not configured, fall back to this default value.
+ */
+static const char DEFAULT_NAT64_PREFIX[] = "64:ff9b::/96";
+
 /** fillup fetch policy array */
 static void
 fetch_fill(struct iter_env* ie, const char* str)
@@ -142,6 +147,7 @@ caps_white_apply_cfg(rbtree_type* ntree, struct config_file* cfg)
 int
 iter_apply_cfg(struct iter_env* iter_env, struct config_file* cfg)
 {
+	const char *nat64_prefix;
 	int i;
 	/* target fetch policy */
 	if(!read_fetch_policy(iter_env, cfg->target_fetch_policy))
@@ -172,9 +178,35 @@ iter_apply_cfg(struct iter_env* iter_env, struct config_file* cfg)
 		}
 
 	}
+
+	nat64_prefix = cfg->nat64_prefix;
+	if(!nat64_prefix)
+		nat64_prefix = cfg->dns64_prefix;
+	if(!nat64_prefix)
+		nat64_prefix = DEFAULT_NAT64_PREFIX;
+	if(!netblockstrtoaddr(nat64_prefix, 0, &iter_env->nat64_prefix_addr,
+		&iter_env->nat64_prefix_addrlen,
+		&iter_env->nat64_prefix_net)) {
+		log_err("cannot parse nat64-prefix netblock: %s", nat64_prefix);
+		return 0;
+	}
+	if(!addr_is_ip6(&iter_env->nat64_prefix_addr,
+		iter_env->nat64_prefix_addrlen)) {
+		log_err("nat64-prefix is not IPv6: %s", cfg->nat64_prefix);
+		return 0;
+	}
+	if(!prefixnet_is_nat64(iter_env->nat64_prefix_net)) {
+		log_err("nat64-prefix length it not 32, 40, 48, 56, 64 or 96: %s",
+			nat64_prefix);
+		return 0;
+	}
+
 	iter_env->supports_ipv6 = cfg->do_ip6;
 	iter_env->supports_ipv4 = cfg->do_ip4;
+	iter_env->use_nat64 = cfg->do_nat64;
 	iter_env->outbound_msg_retry = cfg->outbound_msg_retry;
+	iter_env->max_sent_count = cfg->max_sent_count;
+	iter_env->max_query_restarts = cfg->max_query_restarts;
 	return 1;
 }
 
@@ -238,7 +270,8 @@ iter_filter_unsuitable(struct iter_env* iter_env, struct module_env* env,
 	if(!iter_env->supports_ipv6 && addr_is_ip6(&a->addr, a->addrlen)) {
 		return -1; /* there is no ip6 available */
 	}
-	if(!iter_env->supports_ipv4 && !addr_is_ip6(&a->addr, a->addrlen)) {
+	if(!iter_env->supports_ipv4 && !iter_env->use_nat64 &&
+	   !addr_is_ip6(&a->addr, a->addrlen)) {
 		return -1; /* there is no ip4 available */
 	}
 	/* check lameness - need zone , class info */
@@ -745,10 +778,15 @@ iter_mark_pside_cycle_targets(struct module_qstate* qstate, struct delegpt* dp)
 
 int
 iter_dp_is_useless(struct query_info* qinfo, uint16_t qflags,
-	struct delegpt* dp, int supports_ipv4, int supports_ipv6)
+	struct delegpt* dp, int supports_ipv4, int supports_ipv6,
+	int use_nat64)
 {
 	struct delegpt_ns* ns;
 	struct delegpt_addr* a;
+
+	if(supports_ipv6 && use_nat64)
+		supports_ipv4 = 1;
+
 	/* check:
 	 *      o RD qflag is on.
 	 *      o no addresses are provided.
@@ -1209,6 +1247,9 @@ int iter_lookup_parent_glue_from_cache(struct module_env* env,
 	struct delegpt_ns* ns;
 	size_t num = delegpt_count_targets(dp);
 	for(ns = dp->nslist; ns; ns = ns->next) {
+		if(ns->cache_lookup_count > ITERATOR_NAME_CACHELOOKUP_MAX_PSIDE)
+			continue;
+		ns->cache_lookup_count++;
 		/* get cached parentside A */
 		akey = rrset_cache_lookup(env->rrset_cache, ns->name,
 			ns->namelen, LDNS_RR_TYPE_A, qinfo->qclass,
@@ -1243,8 +1284,17 @@ iter_get_next_root(struct iter_hints* hints, struct iter_forwards* fwd,
 	uint16_t* c)
 {
 	uint16_t c1 = *c, c2 = *c;
-	int r1 = hints_next_root(hints, &c1);
-	int r2 = forwards_next_root(fwd, &c2);
+	int r1, r2;
+	int nolock = 1;
+
+	/* prelock both forwards and hints for atomic read. */
+	lock_rw_rdlock(&fwd->lock);
+	lock_rw_rdlock(&hints->lock);
+	r1 = hints_next_root(hints, &c1, nolock);
+	r2 = forwards_next_root(fwd, &c2, nolock);
+	lock_rw_unlock(&fwd->lock);
+	lock_rw_unlock(&hints->lock);
+
 	if(!r1 && !r2) /* got none, end of list */
 		return 0;
 	else if(!r1) /* got one, return that */
@@ -1305,8 +1355,7 @@ void iter_dec_attempts(struct delegpt* dp, int d, int outbound_msg_retry)
 	for(a=dp->target_list; a; a = a->next_target) {
 		if(a->attempts >= outbound_msg_retry) {
 			/* add back to result list */
-			a->next_result = dp->result_list;
-			dp->result_list = a;
+			delegpt_add_to_result_list(dp, a);
 		}
 		if(a->attempts > d)
 			a->attempts -= d;
@@ -1410,15 +1459,21 @@ int iter_dp_cangodown(struct query_info* qinfo, struct delegpt* dp)
 
 int
 iter_stub_fwd_no_cache(struct module_qstate *qstate, struct query_info *qinf,
-	uint8_t** retdpname, size_t* retdpnamelen)
+	uint8_t** retdpname, size_t* retdpnamelen, uint8_t* dpname_storage,
+	size_t dpname_storage_len)
 {
 	struct iter_hints_stub *stub;
 	struct delegpt *dp;
+	int nolock = 1;
 
 	/* Check for stub. */
+	/* Lock both forwards and hints for atomic read. */
+	lock_rw_rdlock(&qstate->env->fwds->lock);
+	lock_rw_rdlock(&qstate->env->hints->lock);
 	stub = hints_lookup_stub(qstate->env->hints, qinf->qname,
-	    qinf->qclass, NULL);
-	dp = forwards_lookup(qstate->env->fwds, qinf->qname, qinf->qclass);
+	    qinf->qclass, NULL, nolock);
+	dp = forwards_lookup(qstate->env->fwds, qinf->qname, qinf->qclass,
+		nolock);
 
 	/* see if forward or stub is more pertinent */
 	if(stub && stub->dp && dp) {
@@ -1432,7 +1487,9 @@ iter_stub_fwd_no_cache(struct module_qstate *qstate, struct query_info *qinf,
 
 	/* check stub */
 	if (stub != NULL && stub->dp != NULL) {
-		if(stub->dp->no_cache) {
+		int stub_no_cache = stub->dp->no_cache;
+		lock_rw_unlock(&qstate->env->fwds->lock);
+		if(stub_no_cache) {
 			char qname[255+1];
 			char dpname[255+1];
 			dname_str(qinf->qname, qname);
@@ -1440,15 +1497,27 @@ iter_stub_fwd_no_cache(struct module_qstate *qstate, struct query_info *qinf,
 			verbose(VERB_ALGO, "stub for %s %s has no_cache", qname, dpname);
 		}
 		if(retdpname) {
-			*retdpname = stub->dp->name;
+			if(stub->dp->namelen > dpname_storage_len) {
+				verbose(VERB_ALGO, "no cache stub dpname too long");
+				lock_rw_unlock(&qstate->env->hints->lock);
+				*retdpname = NULL;
+				*retdpnamelen = 0;
+				return stub_no_cache;
+			}
+			memmove(dpname_storage, stub->dp->name,
+				stub->dp->namelen);
+			*retdpname = dpname_storage;
 			*retdpnamelen = stub->dp->namelen;
 		}
-		return (stub->dp->no_cache);
+		lock_rw_unlock(&qstate->env->hints->lock);
+		return stub_no_cache;
 	}
 
 	/* Check for forward. */
 	if (dp) {
-		if(dp->no_cache) {
+		int dp_no_cache = dp->no_cache;
+		lock_rw_unlock(&qstate->env->hints->lock);
+		if(dp_no_cache) {
 			char qname[255+1];
 			char dpname[255+1];
 			dname_str(qinf->qname, qname);
@@ -1456,11 +1525,22 @@ iter_stub_fwd_no_cache(struct module_qstate *qstate, struct query_info *qinf,
 			verbose(VERB_ALGO, "forward for %s %s has no_cache", qname, dpname);
 		}
 		if(retdpname) {
-			*retdpname = dp->name;
+			if(dp->namelen > dpname_storage_len) {
+				verbose(VERB_ALGO, "no cache dpname too long");
+				lock_rw_unlock(&qstate->env->fwds->lock);
+				*retdpname = NULL;
+				*retdpnamelen = 0;
+				return dp_no_cache;
+			}
+			memmove(dpname_storage, dp->name, dp->namelen);
+			*retdpname = dpname_storage;
 			*retdpnamelen = dp->namelen;
 		}
-		return (dp->no_cache);
+		lock_rw_unlock(&qstate->env->fwds->lock);
+		return dp_no_cache;
 	}
+	lock_rw_unlock(&qstate->env->fwds->lock);
+	lock_rw_unlock(&qstate->env->hints->lock);
 	if(retdpname) {
 		*retdpname = NULL;
 		*retdpnamelen = 0;

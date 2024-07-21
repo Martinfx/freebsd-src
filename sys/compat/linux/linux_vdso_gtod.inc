@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 Konstantin Belousov <kib@FreeBSD.org>
  * Copyright (c) 2021 Dmitry Chagin <dchagin@FreeBSD.org>
@@ -25,6 +25,14 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+
+#if defined(__aarch64__)
+#define	__VDSO_PREFIX		__kernel
+#else
+#define	__VDSO_PREFIX		__vdso
+#endif
+
+#define	__vdsoN(x)	__CONCAT(__CONCAT(__VDSO_PREFIX,_),x)
 
 static int
 fls(int mask)
@@ -295,7 +303,7 @@ freebsd_clock_gettime(clockid_t clock_id, struct timespec *ts)
  *
  */
 int
-__vdso_clock_gettime(clockid_t clock_id, struct l_timespec *lts)
+__vdsoN(clock_gettime)(clockid_t clock_id, struct l_timespec *lts)
 {
 	struct timespec ts;
 	clockid_t which;
@@ -312,7 +320,7 @@ __vdso_clock_gettime(clockid_t clock_id, struct l_timespec *lts)
 }
 
 int
-__vdso_gettimeofday(l_timeval *ltv, struct timezone *tz)
+__vdsoN(gettimeofday)(l_timeval *ltv, struct timezone *tz)
 {
 	struct timeval tv;
 	int error;
@@ -324,7 +332,7 @@ __vdso_gettimeofday(l_timeval *ltv, struct timezone *tz)
 }
 
 int
-__vdso_clock_getres(clockid_t clock_id, struct l_timespec *lts)
+__vdsoN(clock_getres)(clockid_t clock_id, struct l_timespec *lts)
 {
 
 	return (__vdso_clock_getres_fallback(clock_id, lts));

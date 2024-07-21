@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #define __ELF_WORD_SIZE 64
 
 #include <sys/param.h>
@@ -41,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include "bootstrap.h"
 #include "libofw.h"
 #include "openfirm.h"
+#include "modinfo.h"
 
 extern char		end[];
 extern vm_offset_t	reloc;	/* From <arch>/conf.c */

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001, 2002 Scott Long <scottl@freebsd.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /* udf_vfsops.c */
@@ -142,11 +140,6 @@ static int
 udf_init(struct vfsconf *foo)
 {
 
-	/*
-	 * This code used to pre-allocate a certain number of pages for each
-	 * pool, reducing the need to grow the zones later on.  UMA doesn't
-	 * advertise any such functionality, unfortunately =-<
-	 */
 	udf_zone_trans = uma_zcreate("UDF translation buffer, zone", MAXNAMLEN *
 	    sizeof(unicode_t), NULL, NULL, NULL, NULL, 0, 0);
 
@@ -155,12 +148,6 @@ udf_init(struct vfsconf *foo)
 
 	udf_zone_ds = uma_zcreate("UDF Dirstream zone",
 	    sizeof(struct udf_dirstream), NULL, NULL, NULL, NULL, 0, 0);
-
-	if ((udf_zone_node == NULL) || (udf_zone_trans == NULL) ||
-	    (udf_zone_ds == NULL)) {
-		printf("Cannot create allocation zones.\n");
-		return (ENOMEM);
-	}
 
 	return 0;
 }
@@ -413,6 +400,11 @@ udf_mountfs(struct vnode *devvp, struct mount *mp)
 		lvd = (struct logvol_desc *)bp->b_data;
 		if (!udf_checktag(&lvd->tag, TAGID_LOGVOL)) {
 			udfmp->bsize = le32toh(lvd->lb_size);
+			if (udfmp->bsize < 0 || udfmp->bsize > maxbcachebuf) {
+				printf("lvd block size %d\n", udfmp->bsize);
+				error = EINVAL;
+				goto bail;
+			}
 			udfmp->bmask = udfmp->bsize - 1;
 			udfmp->bshift = ffs(udfmp->bsize) - 1;
 			fsd_part = le16toh(lvd->_lvd_use.fsd_loc.loc.part_num);
@@ -477,6 +469,11 @@ udf_mountfs(struct vnode *devvp, struct mount *mp)
 	 */
 	sector = le32toh(udfmp->root_icb.loc.lb_num) + udfmp->part_start;
 	size = le32toh(udfmp->root_icb.len);
+	if (size < UDF_FENTRY_SIZE) {
+		printf("Invalid root directory file entry length %u\n",
+		    size);
+		goto bail;
+	}
 	if ((error = udf_readdevblks(udfmp, sector, size, &bp)) != 0) {
 		printf("Cannot read sector %d\n", sector);
 		goto bail;
@@ -542,10 +539,6 @@ udf_unmount(struct mount *mp, int mntflags)
 	free(udfmp, M_UDFMOUNT);
 
 	mp->mnt_data = NULL;
-	MNT_ILOCK(mp);
-	mp->mnt_flag &= ~MNT_LOCAL;
-	MNT_IUNLOCK(mp);
-
 	return (0);
 }
 
@@ -717,6 +710,7 @@ udf_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	if (ino == udf_getid(&udfmp->root_icb))
 		vp->v_vflag |= VV_ROOT;
 
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
 	*vpp = vp;
 
 	return (0);

@@ -37,17 +37,13 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)vsnprintf.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include "local.h"
 #include "xlocale_private.h"
+
+#undef vsnprintf	/* _FORTIFY_SOURCE */
 
 int
 vsnprintf_l(char * __restrict str, size_t n, locale_t locale, 

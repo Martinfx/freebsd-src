@@ -23,8 +23,6 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
 .Dd April 7, 2022
 .Dt PROCSTAT 1
 .Os
@@ -414,10 +412,6 @@ The following network protocols may be displayed (grouped by address family):
 .Dv IPPROTO_ICMP ;
 see
 .Xr icmp 4 .
-.It IPD
-.Dv IPPROTO_DIVERT ;
-see
-.Xr divert 4 .
 .It IP?
 unknown protocol.
 .It RAW
@@ -451,6 +445,14 @@ see
 .Xr tcp 4 .
 .It UD?
 unknown protocol.
+.El
+.Pp
+.Dv AF_DIVERT
+.Pp
+.Bl -tag -width indent -compact
+.It IPD
+.Dv Divert socket; see
+.Xr divert 4 .
 .El
 .Pp
 .Bl -tag -width indent -compact

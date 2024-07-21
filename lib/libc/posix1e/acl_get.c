@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999, 2000, 2001, 2002 Robert N. M. Watson
  * All rights reserved.
@@ -39,9 +39,6 @@
  * acl_get_qualifier() retrieves the qualifier of the tag from the ACL entry
  * acl_get_tag_type() returns the tag type for the ACL entry entry_d
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include "namespace.h"

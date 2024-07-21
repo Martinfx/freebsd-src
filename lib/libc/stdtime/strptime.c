@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 Gary Mills
  * Copyright 2011, Nexenta Systems, Inc.  All rights reserved.
@@ -37,16 +37,6 @@
  * official policies, either expressed or implied, of Powerdog Industries.
  */
 
-#include <sys/cdefs.h>
-#ifndef lint
-#ifndef NOID
-static char copyright[] __unused =
-"@(#) Copyright (c) 1994 Powerdog Industries.  All rights reserved.";
-static char sccsid[] __unused = "@(#)strptime.c	0.1 (Powerdog) 94/03/27";
-#endif /* !defined NOID */
-#endif /* not lint */
-__FBSDID("$FreeBSD$");
-
 #include "namespace.h"
 #include <time.h>
 #include <ctype.h>
@@ -54,6 +44,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include "private.h"
 #include "un-namespace.h"
 #include "libc_private.h"
 #include "timelocal.h"

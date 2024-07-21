@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007 Scott Long
  * All rights reserved.
@@ -30,9 +30,6 @@
  * scsi_sg peripheral driver.  This driver is meant to implement the Linux
  * SG passthrough interface for SCSI.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -885,7 +882,7 @@ sgsendccb(struct cam_periph *periph, union ccb *ccb)
 {
 	struct sg_softc *softc;
 	struct cam_periph_map_info mapinfo;
-	int error;
+	int error, error1;
 
 	softc = periph->softc;
 	bzero(&mapinfo, sizeof(mapinfo));
@@ -910,7 +907,9 @@ sgsendccb(struct cam_periph *periph, union ccb *ccb)
 				  softc->device_stats);
 
 	cam_periph_unlock(periph);
-	cam_periph_unmapmem(ccb, &mapinfo);
+	error1 = cam_periph_unmapmem(ccb, &mapinfo);
+	if (error == 0)
+		error = error1;
 	cam_periph_lock(periph);
 
 	return (error);

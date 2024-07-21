@@ -113,7 +113,9 @@ struct restrict_node_tag {
 	address_node *	addr;
 	address_node *	mask;
 	attr_val_fifo *	flag_tok_fifo;
+	int/*BOOL*/	remove;
 	int		line_no;
+	int		column;
 	short		ippeerlimit;
 	short		srvfuzrft;
 };
@@ -234,6 +236,7 @@ struct config_tree_tag {
 	restrict_fifo *	restrict_opts;
 
 	addr_opts_fifo *fudge;
+	addr_opts_fifo *device;
 	attr_val_fifo *	rlimit;
 	attr_val_fifo *	tinker;
 	attr_val_fifo *	enable_opts;
@@ -316,10 +319,13 @@ void	  destroy_attr_val(attr_val *node);
 filegen_node *create_filegen_node(int filegen_token,
 				  attr_val_fifo *options);
 string_node *create_string_node(char *str);
-restrict_node *create_restrict_node(address_node *addr,
-				    address_node *mask,
-				    short ippeerlimit,
-				    attr_val_fifo *flags, int line_no);
+restrict_node *create_restrict_node(address_node *	addr,
+				    address_node *	mask,
+				    short		ippeerlimit,
+				    attr_val_fifo *	flag_tok_fifo,
+				    int/*BOOL*/		remove,
+				    int			nline,
+				    int			ncol);
 int_node *create_int_node(int val);
 addr_opts_node *create_addr_opts_node(address_node *addr,
 				      attr_val_fifo *options);

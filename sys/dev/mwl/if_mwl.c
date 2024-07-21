@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007-2009 Sam Leffler, Errno Consulting
  * Copyright (c) 2007-2008 Marvell Semiconductor, Inc.
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Driver for the Marvell 88W8363 Wireless LAN controller.
  */
@@ -98,7 +96,7 @@ static void	mwl_start(struct mwl_softc *);
 static int	mwl_transmit(struct ieee80211com *, struct mbuf *);
 static int	mwl_raw_xmit(struct ieee80211_node *, struct mbuf *,
 			const struct ieee80211_bpf_params *);
-static int	mwl_media_change(struct ifnet *);
+static int	mwl_media_change(if_t);
 static void	mwl_watchdog(void *);
 static int	mwl_ioctl(struct ieee80211com *, u_long, void *);
 static void	mwl_radar_proc(void *, int);
@@ -1465,7 +1463,7 @@ mwl_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 }
 
 static int
-mwl_media_change(struct ifnet *ifp)
+mwl_media_change(if_t ifp)
 {
 	struct ieee80211vap *vap;
 	int error;
@@ -1475,7 +1473,7 @@ mwl_media_change(struct ifnet *ifp)
 	if (error != 0)
 		return (error);
 
-	vap = ifp->if_softc;
+	vap = if_getsoftc(ifp);
 	mwl_setrates(vap);
 	return (0);
 }
@@ -1521,8 +1519,7 @@ mwl_key_alloc(struct ieee80211vap *vap, struct ieee80211_key *k,
 
 	if (k->wk_keyix != IEEE80211_KEYIX_NONE ||
 	    (k->wk_flags & IEEE80211_KEY_GROUP)) {
-		if (!(&vap->iv_nw_keys[0] <= k &&
-		      k < &vap->iv_nw_keys[IEEE80211_WEP_NKID])) {
+		if (!ieee80211_is_key_global(vap, k)) {
 			/* should not happen */
 			DPRINTF(sc, MWL_DEBUG_KEYCACHE,
 				"%s: bogus group key\n", __func__);
@@ -1735,14 +1732,14 @@ mwl_setmcastfilter(struct mwl_softc *sc)
 		/* XXX Punt on ranges. */
 		if (nmc == MWL_HAL_MCAST_MAX ||
 		    !IEEE80211_ADDR_EQ(enm->enm_addrlo, enm->enm_addrhi)) {
-			ifp->if_flags |= IFF_ALLMULTI;
+			if_setflagsbit(ifp, IFF_ALLMULTI, 0);
 			return;
 		}
 		IEEE80211_ADDR_COPY(mp, enm->enm_addrlo);
 		mp += IEEE80211_ADDR_LEN, nmc++;
 		ETHER_NEXT_MULTI(estep, enm);
 	}
-	ifp->if_flags &= ~IFF_ALLMULTI;
+	if_setflagsbit(ifp, 0, IFF_ALLMULTI);
 	mwl_hal_setmcast(sc->sc_mh, nmc, macs);
 #endif
 }
@@ -2531,7 +2528,6 @@ mwl_ext_free(struct mbuf *m)
 	/*
 	 * If we were previously blocked by a lack of rx dma buffers
 	 * check if we now have enough to restart rx interrupt handling.
-	 * NB: we know we are called at splvm which is above splnet.
 	 */
 	if (sc->sc_rxblocked && sc->sc_nrxfree > mwl_rxdmalow) {
 		sc->sc_rxblocked = 0;
@@ -2606,7 +2602,6 @@ cvtrssi(uint8_t ssi)
 static void
 mwl_rx_proc(void *arg, int npending)
 {
-	struct epoch_tracker et;
 	struct mwl_softc *sc = arg;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct mwl_rxbuf *bf;
@@ -2795,8 +2790,6 @@ mwl_rx_proc(void *arg, int npending)
 		/* dispatch */
 		ni = ieee80211_find_rxnode(ic,
 		    (const struct ieee80211_frame_min *) wh);
-
-		NET_EPOCH_ENTER(et);
 		if (ni != NULL) {
 			mn = MWL_NODE(ni);
 #ifdef MWL_ANT_INFO_SUPPORT
@@ -2812,7 +2805,6 @@ mwl_rx_proc(void *arg, int npending)
 			ieee80211_free_node(ni);
 		} else
 			(void) ieee80211_input_all(ic, m, rssi, nf);
-		NET_EPOCH_EXIT(et);
 rx_next:
 		/* NB: ignore ENOMEM so we process more descriptors */
 		(void) mwl_rxbuf_init(sc, bf);
@@ -4088,7 +4080,7 @@ mwl_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 	int error;
 
 	DPRINTF(sc, MWL_DEBUG_STATE, "%s: %s: %s -> %s\n",
-	    vap->iv_ifp->if_xname, __func__,
+	    if_name(vap->iv_ifp), __func__,
 	    ieee80211_state_name[ostate], ieee80211_state_name[nstate]);
 
 	callout_stop(&sc->sc_timer);
@@ -4150,7 +4142,7 @@ mwl_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 		DPRINTF(sc, MWL_DEBUG_STATE,
 		    "%s: %s(RUN): iv_flags 0x%08x bintvl %d bssid %s "
 		    "capinfo 0x%04x chan %d\n",
-		    vap->iv_ifp->if_xname, __func__, vap->iv_flags,
+		    if_name(vap->iv_ifp), __func__, vap->iv_flags,
 		    ni->ni_intval, ether_sprintf(ni->ni_bssid), ni->ni_capinfo,
 		    ieee80211_chan2ieee(ic, ic->ic_curchan));
 
@@ -4183,7 +4175,7 @@ mwl_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 			break;
 		case IEEE80211_M_STA:
 			DPRINTF(sc, MWL_DEBUG_STATE, "%s: %s: aid 0x%x\n",
-			    vap->iv_ifp->if_xname, __func__, ni->ni_associd);
+			    if_name(vap->iv_ifp), __func__, ni->ni_associd);
 			/*
 			 * Set state now that we're associated.
 			 */
@@ -4196,7 +4188,7 @@ mwl_newstate(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 			break;
 		case IEEE80211_M_WDS:
 			DPRINTF(sc, MWL_DEBUG_STATE, "%s: %s: bssid %s\n",
-			    vap->iv_ifp->if_xname, __func__,
+			    if_name(vap->iv_ifp), __func__,
 			    ether_sprintf(ni->ni_bssid));
 			mwl_seteapolformat(vap);
 			break;
@@ -4729,9 +4721,9 @@ mwl_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
 #if 0
 		/* NB: embed these numbers to get a consistent view */
 		sc->sc_stats.mst_tx_packets =
-		    ifp->if_get_counter(ifp, IFCOUNTER_OPACKETS);
+		    if_get_counter(ifp, IFCOUNTER_OPACKETS);
 		sc->sc_stats.mst_rx_packets =
-		    ifp->if_get_counter(ifp, IFCOUNTER_IPACKETS);
+		    if_get_counter(ifp, IFCOUNTER_IPACKETS);
 #endif
 		/*
 		 * NB: Drop the softc lock in case of a page fault;

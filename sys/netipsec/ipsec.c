@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: ipsec.c,v 1.103 2001/05/24 07:14:18 sakane Exp $	*/
 
 /*-
@@ -86,6 +85,7 @@
 #ifdef INET6
 #include <netipsec/ipsec6.h>
 #endif
+#include <netipsec/ipsec_offload.h>
 #include <netipsec/ah_var.h>
 #include <netipsec/esp_var.h>
 #include <netipsec/ipcomp.h>		/*XXX*/
@@ -637,8 +637,16 @@ int
 ipsec4_in_reject(const struct mbuf *m, struct inpcb *inp)
 {
 	struct secpolicy *sp;
+#ifdef IPSEC_OFFLOAD
+	struct ipsec_accel_in_tag *tag;
+#endif
 	int result;
 
+#ifdef IPSEC_OFFLOAD
+	tag = ipsec_accel_input_tag_lookup(m);
+	if (tag != NULL)
+		return (0);
+#endif
 	sp = ipsec4_getpolicy(m, inp, IPSEC_DIR_INBOUND, 0);
 	result = ipsec_in_reject(sp, inp, m);
 	key_freesp(&sp);
@@ -666,10 +674,7 @@ ipsec4_capability(struct mbuf *m, u_int cap)
 		return (0);
 	case IPSEC_CAP_OPERABLE:
 		/* Do we have active security policies? */
-		if (key_havesp(IPSEC_DIR_INBOUND) != 0 ||
-		    key_havesp(IPSEC_DIR_OUTBOUND) != 0)
-			return (1);
-		return (0);
+		return (key_havesp_any());
 	};
 	return (EOPNOTSUPP);
 }
@@ -806,8 +811,16 @@ int
 ipsec6_in_reject(const struct mbuf *m, struct inpcb *inp)
 {
 	struct secpolicy *sp;
+#ifdef IPSEC_OFFLOAD
+	struct ipsec_accel_in_tag *tag;
+#endif
 	int result;
 
+#ifdef IPSEC_OFFLOAD
+	tag = ipsec_accel_input_tag_lookup(m);
+	if (tag != NULL)
+		return (0);
+#endif
 	sp = ipsec6_getpolicy(m, inp, IPSEC_DIR_INBOUND, 0);
 	result = ipsec_in_reject(sp, inp, m);
 	key_freesp(&sp);
@@ -835,10 +848,7 @@ ipsec6_capability(struct mbuf *m, u_int cap)
 		return (0);
 	case IPSEC_CAP_OPERABLE:
 		/* Do we have active security policies? */
-		if (key_havesp(IPSEC_DIR_INBOUND) != 0 ||
-		    key_havesp(IPSEC_DIR_OUTBOUND) != 0)
-			return (1);
-		return (0);
+		return (key_havesp_any());
 	};
 	return (EOPNOTSUPP);
 }
@@ -1017,7 +1027,7 @@ ipsec_check_history(const struct mbuf *m, struct secpolicy *sp, u_int idx)
 /*
  * Check security policy requirements against the actual
  * packet contents.  Return one if the packet should be
- * reject as "invalid"; otherwiser return zero to have the
+ * rejected as "invalid"; otherwise return zero to have the
  * packet treated as "valid".
  *
  * OUT:

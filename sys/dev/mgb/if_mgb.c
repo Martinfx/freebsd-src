@@ -28,8 +28,6 @@
  * SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Microchip LAN7430/LAN7431 PCIe to Gigabit Ethernet Controller driver.
  *
@@ -88,7 +86,7 @@ __FBSDID("$FreeBSD$");
 #include "ifdi_if.h"
 #include "miibus_if.h"
 
-static pci_vendor_info_t mgb_vendor_info_array[] = {
+static const pci_vendor_info_t mgb_vendor_info_array[] = {
 	PVID(MGB_MICROCHIP_VENDOR_ID, MGB_LAN7430_DEVICE_ID,
 	    "Microchip LAN7430 PCIe Gigabit Ethernet Controller"),
 	PVID(MGB_MICROCHIP_VENDOR_ID, MGB_LAN7431_DEVICE_ID,
@@ -253,6 +251,7 @@ static device_method_t mgb_iflib_methods[] = {
 	 */
 	DEVMETHOD(ifdi_vlan_register, mgb_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, mgb_vlan_unregister),
+	DEVMETHOD(ifdi_needs_restart, mgb_if_needs_restart),
 
 	/*
 	 * Needed for WOL support
@@ -513,7 +512,7 @@ mgb_media_change(if_t ifp)
 
 	needs_reset = mii_mediachg(miid);
 	if (needs_reset != 0)
-		ifp->if_init(ctx);
+		if_init(ifp, ctx);
 	return (needs_reset);
 }
 
@@ -619,7 +618,7 @@ mgb_init(if_ctx_t ctx)
 		    error);
 }
 
-#ifdef DEBUG
+#if 0
 static void
 mgb_dump_some_stats(struct mgb_softc *sc)
 {

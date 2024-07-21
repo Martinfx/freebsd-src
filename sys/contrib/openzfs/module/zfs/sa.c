@@ -23,6 +23,7 @@
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2013, 2017 by Delphix. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
+ * Copyright 2023 RackTop Systems, Inc.
  */
 
 #include <sys/zfs_context.h>
@@ -141,7 +142,7 @@ static int sa_modify_attrs(sa_handle_t *hdl, sa_attr_type_t newattr,
     sa_data_op_t action, sa_data_locator_t *locator, void *datastart,
     uint16_t buflen, dmu_tx_t *tx);
 
-static const arc_byteswap_func_t sa_bswap_table[] = {
+static arc_byteswap_func_t sa_bswap_table[] = {
 	byteswap_uint64_array,
 	byteswap_uint32_array,
 	byteswap_uint16_array,
@@ -369,7 +370,7 @@ sa_attr_op(sa_handle_t *hdl, sa_bulk_attr_t *bulk, int count,
 			if (bulk[i].sa_data) {
 				SA_COPY_DATA(bulk[i].sa_data_func,
 				    bulk[i].sa_addr, bulk[i].sa_data,
-				    bulk[i].sa_size);
+				    MIN(bulk[i].sa_size, bulk[i].sa_length));
 			}
 			continue;
 
@@ -1201,6 +1202,7 @@ sa_attr_iter(objset_t *os, sa_hdr_phys_t *hdr, dmu_object_type_t type,
 		uint8_t idx_len;
 
 		reg_length = sa->sa_attr_table[tb->lot_attrs[i]].sa_length;
+		IMPLY(reg_length == 0, IS_SA_BONUSTYPE(type));
 		if (reg_length) {
 			attr_length = reg_length;
 			idx_len = 0;
@@ -1917,7 +1919,7 @@ sa_modify_attrs(sa_handle_t *hdl, sa_attr_type_t newattr,
 	count = bonus_attr_count;
 	hdr = SA_GET_HDR(hdl, SA_BONUS);
 	idx_tab = SA_IDX_TAB_GET(hdl, SA_BONUS);
-	for (; k != 2; k++) {
+	for (; ; k++) {
 		/*
 		 * Iterate over each attribute in layout.  Fetch the
 		 * size of variable-length attributes needing rewrite

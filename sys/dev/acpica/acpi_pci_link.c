@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -104,8 +102,8 @@ struct link {
 	int	l_num_irqs;
 	int	*l_irqs;
 	int	l_references;
-	int	l_routed:1;
-	int	l_isa_irq:1;
+	bool	l_routed:1;
+	bool	l_isa_irq:1;
 	ACPI_RESOURCE l_prs_template;
 };
 
@@ -145,7 +143,7 @@ acpi_short_name(ACPI_HANDLE handle, char *buffer, size_t buflen)
 static int
 acpi_pci_link_probe(device_t dev)
 {
-	char descr[28], name[12];
+	char name[12];
 	int rv;
 
 	/*
@@ -159,10 +157,9 @@ acpi_pci_link_probe(device_t dev)
 	  return (rv);
 
 	if (ACPI_SUCCESS(acpi_short_name(acpi_get_handle(dev), name,
-	    sizeof(name)))) {
-		snprintf(descr, sizeof(descr), "ACPI PCI Link %s", name);
-		device_set_desc_copy(dev, descr);
-	} else
+	    sizeof(name))))
+		device_set_descf(dev, "ACPI PCI Link %s", name);
+	else
 		device_set_desc(dev, "ACPI PCI Link");
 	device_quiet(dev);
 	return (rv);
@@ -355,18 +352,18 @@ link_add_prs(ACPI_RESOURCE *res, void *context)
 		 * valid IRQs are ISA IRQs, then mark this link as
 		 * routed via an ISA interrupt.
 		 */
-		link->l_isa_irq = TRUE;
+		link->l_isa_irq = true;
 		link->l_irqs = malloc(sizeof(int) * link->l_num_irqs,
 		    M_PCI_LINK, M_WAITOK | M_ZERO);
 		for (i = 0; i < link->l_num_irqs; i++) {
 			if (is_ext_irq) {
 				link->l_irqs[i] = ext_irqs[i];
 				if (ext_irqs[i] >= NUM_ISA_INTERRUPTS)
-					link->l_isa_irq = FALSE;
+					link->l_isa_irq = false;
 			} else {
 				link->l_irqs[i] = irqs[i];
 				if (irqs[i] >= NUM_ISA_INTERRUPTS)
-					link->l_isa_irq = FALSE;
+					link->l_isa_irq = false;
 			}
 		}
 
@@ -376,7 +373,7 @@ link_add_prs(ACPI_RESOURCE *res, void *context)
 		 */
 		if (!req->sc->pl_crs_bad && !link->l_isa_irq &&
 		    link->l_crs_type == ACPI_RESOURCE_TYPE_IRQ)
-			req->sc->pl_crs_bad = TRUE;
+			req->sc->pl_crs_bad = true;
 		break;
 	default:
 		if (req->in_dpf == DPF_IGNORE)
@@ -390,7 +387,7 @@ link_add_prs(ACPI_RESOURCE *res, void *context)
 	return (AE_OK);
 }
 
-static int
+static bool
 link_valid_irq(struct link *link, int irq)
 {
 	int i;
@@ -399,12 +396,12 @@ link_valid_irq(struct link *link, int irq)
 
 	/* Invalid interrupts are never valid. */
 	if (!PCI_INTERRUPT_VALID(irq))
-		return (FALSE);
+		return (false);
 
 	/* Any interrupt in the list of possible interrupts is valid. */
 	for (i = 0; i < link->l_num_irqs; i++)
 		if (link->l_irqs[i] == irq)
-			 return (TRUE);
+			 return (true);
 
 	/*
 	 * For links routed via an ISA interrupt, if the SCI is routed via
@@ -412,10 +409,10 @@ link_valid_irq(struct link *link, int irq)
 	 */
 	if (link->l_isa_irq && AcpiGbl_FADT.SciInterrupt == irq &&
 	    irq < NUM_ISA_INTERRUPTS)
-		return (TRUE);
+		return (true);
 
 	/* If the interrupt wasn't found in the list it is not valid. */
-	return (FALSE);
+	return (false);
 }
 
 static void
@@ -493,7 +490,7 @@ acpi_pci_link_attach(device_t dev)
 		sc->pl_links[i].l_irq = PCI_INVALID_IRQ;
 		sc->pl_links[i].l_bios_irq = PCI_INVALID_IRQ;
 		sc->pl_links[i].l_sc = sc;
-		sc->pl_links[i].l_isa_irq = FALSE;
+		sc->pl_links[i].l_isa_irq = false;
 		sc->pl_links[i].l_res_index = -1;
 	}
 
@@ -558,7 +555,7 @@ acpi_pci_link_attach(device_t dev)
 	else
 		for (i = 0; i < sc->pl_num_links; i++)
 			if (PCI_INTERRUPT_VALID(sc->pl_links[i].l_irq))
-				sc->pl_links[i].l_routed = TRUE;
+				sc->pl_links[i].l_routed = true;
 	if (bootverbose)
 		acpi_pci_link_dump(sc, 0, "After Disable");
 	ACPI_SERIAL_END(pci_link);
@@ -574,16 +571,16 @@ fail:
 
 /* XXX: Note that this is identical to pci_pir_search_irq(). */
 static uint8_t
-acpi_pci_link_search_irq(int bus, int device, int pin)
+acpi_pci_link_search_irq(int domain, int bus, int device, int pin)
 {
 	uint32_t value;
 	uint8_t func, maxfunc;
 
 	/* See if we have a valid device at function 0. */
-	value = pci_cfgregread(bus, device, 0, PCIR_VENDOR, 2);
+	value = pci_cfgregread(domain, bus, device, 0, PCIR_VENDOR, 2);
 	if (value == PCIV_INVALID)
 		return (PCI_INVALID_IRQ);
-	value = pci_cfgregread(bus, device, 0, PCIR_HDRTYPE, 1);
+	value = pci_cfgregread(domain, bus, device, 0, PCIR_HDRTYPE, 1);
 	if ((value & PCIM_HDRTYPE) > PCI_MAXHDRTYPE)
 		return (PCI_INVALID_IRQ);
 	if (value & PCIM_MFDEV)
@@ -593,10 +590,12 @@ acpi_pci_link_search_irq(int bus, int device, int pin)
 
 	/* Scan all possible functions at this device. */
 	for (func = 0; func <= maxfunc; func++) {
-		value = pci_cfgregread(bus, device, func, PCIR_VENDOR, 2);
+		value = pci_cfgregread(domain, bus, device, func, PCIR_VENDOR,
+		    2);
 		if (value == PCIV_INVALID)
 			continue;
-		value = pci_cfgregread(bus, device, func, PCIR_INTPIN, 1);
+		value = pci_cfgregread(domain, bus, device, func, PCIR_INTPIN,
+		    1);
 
 		/*
 		 * See if it uses the pin in question.  Note that the passed
@@ -605,7 +604,8 @@ acpi_pci_link_search_irq(int bus, int device, int pin)
 		 */
 		if (value != pin + 1)
 			continue;
-		value = pci_cfgregread(bus, device, func, PCIR_INTLINE, 1);
+		value = pci_cfgregread(domain, bus, device, func, PCIR_INTLINE,
+		    1);
 		if (bootverbose)
 			printf(
 		"ACPI: Found matching pin for %d.%d.INT%c at func %d: %d\n",
@@ -640,17 +640,21 @@ acpi_pci_link_add_reference(device_t dev, int index, device_t pcib, int slot,
 {
 	struct link *link;
 	uint8_t bios_irq;
-	uintptr_t bus;
+	uintptr_t bus, domain;
 
 	/*
-	 * Look up the PCI bus for the specified PCI bridge device.  Note
-	 * that the PCI bridge device might not have any children yet.
-	 * However, looking up its bus number doesn't require a valid child
-	 * device, so we just pass NULL.
+	 * Look up the PCI domain and bus for the specified PCI bridge
+	 * device.  Note that the PCI bridge device might not have any
+	 * children yet.  However, looking up these IVARs doesn't
+	 * require a valid child device, so we just pass NULL.
 	 */
 	if (BUS_READ_IVAR(pcib, NULL, PCIB_IVAR_BUS, &bus) != 0) {
 		device_printf(pcib, "Unable to read PCI bus number");
 		panic("PCI bridge without a bus number");
+	}
+	if (BUS_READ_IVAR(pcib, NULL, PCIB_IVAR_DOMAIN, &domain) != 0) {
+		device_printf(pcib, "Unable to read PCI domain number");
+		panic("PCI bridge without a domain number");
 	}
 		
 	/* Bump the reference count. */
@@ -669,7 +673,7 @@ acpi_pci_link_add_reference(device_t dev, int index, device_t pcib, int slot,
 	 * The BIOS only routes interrupts via ISA IRQs using the ATPICs
 	 * (8259As).  Thus, if this link is routed via an ISA IRQ, go
 	 * look to see if the BIOS routed an IRQ for this link at the
-	 * indicated (bus, slot, pin).  If so, we prefer that IRQ for
+	 * indicated (domain, bus, slot, pin).  If so, we prefer that IRQ for
 	 * this link and add that IRQ to our list of known-good IRQs.
 	 * This provides a good work-around for link devices whose _CRS
 	 * method is either broken or bogus.  We only use the value
@@ -686,7 +690,7 @@ acpi_pci_link_add_reference(device_t dev, int index, device_t pcib, int slot,
 	}
 
 	/* Try to find a BIOS IRQ setting from any matching devices. */
-	bios_irq = acpi_pci_link_search_irq(bus, slot, pin);
+	bios_irq = acpi_pci_link_search_irq(domain, bus, slot, pin);
 	if (!PCI_INTERRUPT_VALID(bios_irq)) {
 		ACPI_SERIAL_END(pci_link);
 		return;
@@ -904,7 +908,7 @@ acpi_pci_link_route_irqs(device_t dev)
 			 */
 			if (!link->l_routed &&
 			    PCI_INTERRUPT_VALID(link->l_irq)) {
-				link->l_routed = TRUE;
+				link->l_routed = true;
 				acpi_config_intr(dev, resource);
 				pci_link_interrupt_weights[link->l_irq] +=
 				    link->l_references;

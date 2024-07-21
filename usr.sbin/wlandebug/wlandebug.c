@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002-2009 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -27,15 +27,13 @@
  * IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGES.
- *
- * $FreeBSD$
  */
 
 /*
  * wlandebug [-i interface] flags
  * (default interface is wlan.0).
  */
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/sysctl.h>
 
 #include <net/if.h>
@@ -49,13 +47,13 @@
 
 #include <libifconfig.h>
 
-#define	N(a)	(sizeof(a)/sizeof(a[0]))
+#define	N(a)	nitems(a)
 
 const char *progname;
 
 #define	IEEE80211_MSG_11N	0x80000000	/* 11n mode debug */
 #define	IEEE80211_MSG_DEBUG	0x40000000	/* IFF_DEBUG equivalent */
-#define	IEEE80211_MSG_DUMPPKTS	0x20000000	/* IFF_LINK2 equivalant */
+#define	IEEE80211_MSG_DUMPPKTS	0x20000000	/* IFF_LINK2 equivalent */
 #define	IEEE80211_MSG_CRYPTO	0x10000000	/* crypto work */
 #define	IEEE80211_MSG_INPUT	0x08000000	/* input handling */
 #define	IEEE80211_MSG_XRATE	0x04000000	/* rate set handling */

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012, 2015 Chelsio Communications, Inc.
  * All rights reserved.
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  *
  */
 
@@ -71,12 +69,13 @@ enum {
 	TPF_CPL_PENDING    = (1 << 7),	/* haven't received the last CPL */
 	TPF_SYNQE	   = (1 << 8),	/* synq_entry, not really a toepcb */
 	TPF_SYNQE_EXPANDED = (1 << 9),	/* toepcb ready, tid context updated */
-	TPF_FORCE_CREDITS  = (1 << 10), /* always send credits */
+	TPF_TLS_STARTING   = (1 << 10), /* starting TLS receive */
 	TPF_KTLS           = (1 << 11), /* send TLS records from KTLS */
 	TPF_INITIALIZED    = (1 << 12), /* init_toepcb has been called */
 	TPF_TLS_RECEIVE	   = (1 << 13), /* should receive TLS records */
-	TPF_TLS_ESTABLISHED = (1 << 14), /* TLS handshake timer initialized */
-	TPF_WAITING_FOR_FINAL = (1<< 15), /* waiting for wakeup on final CPL */
+	TPF_TLS_RX_QUIESCING = (1 << 14), /* RX quiesced for TLS RX startup */
+	TPF_TLS_RX_QUIESCED = (1 << 15), /* RX quiesced for TLS RX startup */
+	TPF_WAITING_FOR_FINAL = (1<< 16), /* waiting for wakeup on final CPL */
 };
 
 enum {
@@ -87,6 +86,8 @@ enum {
 	DDP_BUF1_ACTIVE	= (1 << 4),	/* buffer 1 in use (not invalidated) */
 	DDP_TASK_ACTIVE = (1 << 5),	/* requeue task is queued / running */
 	DDP_DEAD	= (1 << 6),	/* toepcb is shutting down */
+	DDP_AIO		= (1 << 7),	/* DDP used for AIO, not so_rcv */
+	DDP_RCVBUF	= (1 << 8),	/* DDP used for so_rcv, not AIO */
 };
 
 struct bio;
@@ -158,25 +159,51 @@ TAILQ_HEAD(pagesetq, pageset);
 
 #define	PS_PPODS_WRITTEN	0x0001	/* Page pods written to the card. */
 
-struct ddp_buffer {
-	struct pageset *ps;
-
-	struct kaiocb *job;
-	int cancel_pending;
+struct ddp_rcv_buffer {
+	TAILQ_ENTRY(ddp_rcv_buffer) link;
+	void	*buf;
+	struct ppod_reservation prsv;
+	size_t	len;
+	u_int	refs;
 };
 
+struct ddp_buffer {
+	union {
+		/* DDP_AIO fields */
+		struct {
+			struct pageset *ps;
+			struct kaiocb *job;
+			int	cancel_pending;
+		};
+
+		/* DDP_RCVBUF fields */
+		struct {
+			struct ddp_rcv_buffer *drb;
+			uint32_t placed;
+		};
+	};
+};
+
+/*
+ * (a) - DDP_AIO only
+ * (r) - DDP_RCVBUF only
+ */
 struct ddp_pcb {
+	struct mtx lock;
 	u_int flags;
+	int active_id;	/* the currently active DDP buffer */
 	struct ddp_buffer db[2];
-	TAILQ_HEAD(, pageset) cached_pagesets;
-	TAILQ_HEAD(, kaiocb) aiojobq;
-	u_int waiting_count;
+	union {
+		TAILQ_HEAD(, pageset) cached_pagesets;	/* (a) */
+		TAILQ_HEAD(, ddp_rcv_buffer) cached_buffers; /* (r) */
+	};
+	TAILQ_HEAD(, kaiocb) aiojobq;		/* (a) */
+	u_int waiting_count;			/* (a) */
 	u_int active_count;
 	u_int cached_count;
-	int active_id;	/* the currently active DDP buffer */
 	struct task requeue_task;
-	struct kaiocb *queueing;
-	struct mtx lock;
+	struct kaiocb *queueing;		/* (a) */
+	struct mtx cache_lock;			/* (r) */
 };
 
 struct toepcb {
@@ -232,6 +259,8 @@ ulp_mode(struct toepcb *toep)
 #define	DDP_LOCK(toep)		mtx_lock(&(toep)->ddp.lock)
 #define	DDP_UNLOCK(toep)	mtx_unlock(&(toep)->ddp.lock)
 #define	DDP_ASSERT_LOCKED(toep)	mtx_assert(&(toep)->ddp.lock, MA_OWNED)
+#define	DDP_CACHE_LOCK(toep)	mtx_lock(&(toep)->ddp.cache_lock)
+#define	DDP_CACHE_UNLOCK(toep)	mtx_unlock(&(toep)->ddp.cache_lock)
 
 /*
  * Compressed state for embryonic connections for a listener.
@@ -439,6 +468,7 @@ __be32 calc_options2(struct vi_info *, struct conn_params *);
 uint64_t select_ntuple(struct vi_info *, struct l2t_entry *);
 int negative_advice(int);
 int add_tid_to_history(struct adapter *, u_int);
+void t4_pcb_detach(struct toedev *, struct tcpcb *);
 
 /* t4_connect.c */
 void t4_init_connect_cpl_handlers(void);
@@ -471,7 +501,6 @@ void send_abort_rpl(struct adapter *, struct sge_ofld_txq *, int , int);
 void send_flowc_wr(struct toepcb *, struct tcpcb *);
 void send_reset(struct adapter *, struct toepcb *, uint32_t);
 int send_rx_credits(struct adapter *, struct toepcb *, int);
-void send_rx_modulate(struct adapter *, struct toepcb *);
 void make_established(struct toepcb *, uint32_t, uint32_t, uint16_t);
 int t4_close_conn(struct adapter *, struct toepcb *);
 void t4_rcvd(struct toedev *, struct tcpcb *);
@@ -504,13 +533,11 @@ int t4_write_page_pods_for_buf(struct adapter *, struct toepcb *,
 int t4_write_page_pods_for_sgl(struct adapter *, struct toepcb *,
     struct ppod_reservation *, struct ctl_sg_entry *, int, int, struct mbufq *);
 void t4_free_page_pods(struct ppod_reservation *);
-int t4_soreceive_ddp(struct socket *, struct sockaddr **, struct uio *,
-    struct mbuf **, struct mbuf **, int *);
 int t4_aio_queue_ddp(struct socket *, struct kaiocb *);
+int t4_enable_ddp_rcv(struct socket *, struct toepcb *);
 void t4_ddp_mod_load(void);
 void t4_ddp_mod_unload(void);
 void ddp_assert_empty(struct toepcb *);
-void ddp_init_toep(struct toepcb *);
 void ddp_uninit_toep(struct toepcb *);
 void ddp_queue_toep(struct toepcb *);
 void release_ddp_resources(struct toepcb *toep);
@@ -524,12 +551,11 @@ const struct offload_settings *lookup_offload_policy(struct adapter *, int,
 bool can_tls_offload(struct adapter *);
 void do_rx_data_tls(const struct cpl_rx_data *, struct toepcb *, struct mbuf *);
 void t4_push_ktls(struct adapter *, struct toepcb *, int);
+void tls_received_starting_data(struct adapter *, struct toepcb *,
+    struct sockbuf *, int);
 void t4_tls_mod_load(void);
 void t4_tls_mod_unload(void);
-void tls_detach(struct toepcb *);
-void tls_establish(struct toepcb *);
 void tls_init_toep(struct toepcb *);
-void tls_stop_handshake_timer(struct toepcb *);
 int tls_tx_key(struct toepcb *);
 void tls_uninit_toep(struct toepcb *);
 int tls_alloc_ktls(struct toepcb *, struct ktls_session *, int);

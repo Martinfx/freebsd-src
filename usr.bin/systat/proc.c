@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Yoshihiro Ota <ota@j.email.ne.jp>
  *
@@ -205,7 +205,7 @@ per_proc_swap_usage(struct kinfo_proc *kipp)
 			} while (vmobj != 0);
 		}
 	}
-	free(freep);
+	procstat_freevmmap(prstat, freep);
 	return (pages);
 }
 
@@ -272,6 +272,7 @@ procgetinfo(void)
 	}
 	if (nproc > 1)
 		qsort(pu, nproc, sizeof(*pu), proc_compar);
+	procstat_freeprocs(prstat, kipp);
 }
 
 void

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	enigma
 
 LINKS=	${BINDIR}/enigma ${BINDIR}/crypt

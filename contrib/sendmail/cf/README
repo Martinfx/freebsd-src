@@ -1120,9 +1120,8 @@ local_procmail	Use procmail or another delivery agent as the local mailer.
 		setreuid() call, you may need to add -f $f to the procmail
 		argument vector to pass the proper sender to procmail.
 
-		For example, this allows it to use the maildrop
-		(http://www.flounder.net/~mrsam/maildrop/) mailer instead
-		by specifying:
+		For example, this allows it to use the maildrop mailer
+		instead by specifying:
 
 		FEATURE(`local_procmail', `/usr/local/bin/maildrop',
 		 `maildrop -d $u')
@@ -1132,7 +1131,7 @@ local_procmail	Use procmail or another delivery agent as the local mailer.
 		FEATURE(`local_procmail', `/usr/local/bin/scanmails')
 
 		WARNING: This feature sets LOCAL_MAILER_FLAGS unconditionally,
-		i.e.,  without respecting any definitions in an OSTYPE setting.
+		i.e., without respecting any definitions in an OSTYPE setting.
 
 bestmx_is_local	Accept mail as though locally addressed for any host that
 		lists us as the best possible MX record.  This generates
@@ -1267,6 +1266,12 @@ delay_checks	The rulesets check_mail and check_relay will not be called
 		section.  Note: this feature is incompatible to the versions
 		in 8.10 and 8.11.
 
+check_other	Enable a default check_other ruleset which terminates
+		an SMTP session when it encounters a command which matches
+		a regular expression given as argument. If no argument
+		is given, then the default (to match potential headers) is:
+			^[[:print:]]+ *:
+
 use_client_ptr	If this feature is enabled then check_relay will override
 		its first argument with $&{client_ptr}.  This is useful for
 		rejections based on the unverified hostname of client,
@@ -1296,6 +1301,8 @@ dnsbl		Turns on rejection, discarding, or quarantining of hosts
 		definition from `host'.  Set the DNSBL_MAP_OPT mc option
 		to add additional options to the map specification used.
 
+		Note: currently only IPv4 addresses are checked.
+
 		Some DNS based rejection lists cause failures if asked
 		for AAAA records. If your sendmail version is compiled
 		with IPv6 support (NETINET6) and you experience this
@@ -1321,10 +1328,10 @@ enhdnsbl	Enhanced version of dnsbl (see above).  Further arguments
 		compared with the supplied argument(s), and only if a match
 		occurs an error is generated.  For example,
 
-		FEATURE(`enhdnsbl', `dnsbl.example.com', `', `t', `127.0.0.2.')
+		FEATURE(`enhdnsbl', `dnsbl.example.com', `', `t', `127.0.0.2')
 
 		will reject the e-mail if the lookup returns the value
-		``127.0.0.2.'', or generate a 451 response if the lookup
+		``127.0.0.2'', or generate a 451 response if the lookup
 		temporarily failed.  The arguments can contain metasymbols
 		as they are allowed in the LHS of rules.  As the example
 		shows, the default values are also used if an empty argument,
@@ -1578,9 +1585,9 @@ require_rdns	Reject mail from connecting SMTP clients without proper
 
 		Entries such as
 			Connect:1.2.3.4		OK
-			Connect:1.2		RELAY
-		will allowlist IP address 1.2.3.4, so that the rDNS
-		blocking does apply to that IP address
+			Connect:1.3		RELAY
+		will allowlist IP address 1.2.3.4 and IP net 1.3.*
+		so that the rDNS blocking does apply not to those IPs.
 
 		Entries such as
 			Connect:1.2.3.4		REJECT
@@ -1602,6 +1609,20 @@ badmx		Reject envelope sender addresses (MAIL) whose domain part
 		Note: this feature requires that the sendmail binary
 		has been compiled with the options MAP_REGEX and
 		DNSMAP.
+
+sts		Experimental support for Strict Transport Security
+		(MTA-STS, see RFC 8461).  It sets the option
+		StrictTransportSecurity and takes one optional
+		argument: the socket map specification to access
+		postfix-mta-sts-resolver (see feature/sts.m4
+		for the default value).
+		For more information see doc/op/op.me.
+
+fips3		Basic support for FIPS in OpenSSL 3 by setting
+		the environment variables OPENSSL_CONF and
+		OPENSSL_MODULES to the first and second argument,
+		respectively.  For details, see the file and
+		the OpenSSL documentation.
 
 +-------+
 | HACKS |
@@ -1674,6 +1695,7 @@ least in the same company).
 The macro LOCAL_UUCP can be used to add rules into the generated
 cf file at the place where MAILER(`uucp') inserts its rules.  This
 should only be used if really necessary.
+
 
 +--------------------+
 | USING UUCP MAILERS |
@@ -2581,7 +2603,7 @@ top level domain TLD, 192.168.212.* network, and the IPv6 address
 2002:c0a8:02c7::/48.
 
 Entries in the access map should be tagged according to their type.
-Three tags are available:
+These tags are applicable:
 
 	Connect:	connection information (${client_addr}, ${client_name})
 	From:		envelope sender
@@ -2818,7 +2840,7 @@ regex map:
 	# check address against various regex checks
 	R$*				$: $>Parse0 $>3 $1
 	R$+ < @ bigisp.com. > $*	$: $(allnumbers $1 $)
-	R@MATCH				$#error $: 553 Header Error
+	R@MATCH				$#error $: 553 Address Error
 
 These rules are called with the original arguments of the corresponding
 check_* ruleset.  If the local ruleset returns $#OK, no further checking
@@ -3081,8 +3103,8 @@ Darth+20Mail+20+28Cert+29/emailAddress=darth+2Bcert@endmail.org
 
 (line breaks have been inserted for readability).
 
-The  macros  which are subject to this encoding are ${cert_subject},
-${cert_issuer},  ${cn_subject},  and ${cn_issuer}.
+The macros which are subject to this encoding are ${cert_subject},
+${cert_issuer}, ${cn_subject}, and ${cn_issuer}.
 
 Examples:
 
@@ -3170,8 +3192,8 @@ VERIFY:bits	verification must have succeeded and ${cipher_bits} must
 ENCR:bits	${cipher_bits} must be greater than or equal bits.
 
 The RHS can optionally be prefixed by TEMP+ or PERM+ to select a temporary
-or permanent error.  The default is a temporary error code (403 4.7.0)
-unless the macro TLS_PERM_ERR is set during generation of the .cf file.
+or permanent error.  The default is a temporary error code unless
+the macro TLS_PERM_ERR is set during generation of the .cf file.
 
 If a certain level of encryption is required, then it might also be
 possible that this level is provided by the security layer from a SASL
@@ -3223,13 +3245,13 @@ options:
 - CertFile, KeyFile: {Server,Client}{Cert,Key}File
 - Flags: see doc/op/op.me for details.
 
-If FEATURE(`tls_session_features') is used, then default rulesets
-are activated which look up entries in the access map with the tags
-TLS_Srv_features and TLS_Clt_features, respectively.
-For example, these entries:
+If FEATURE(`tls_session_features') and FEATURE(`access_db') are
+used, then default rulesets are activated which look up entries in
+the access map with the tags TLS_Srv_features and TLS_Clt_features,
+respectively.  For example, these entries:
 
-	TLS_Srv_features:10.0.2.4	CipherList=MEDIUM+aRSA;
-	TLS_Clt_features:10.1.0.1	Options=SSL_OP_NO_TLSv1_2; CipherList=ALL:-EXPORT
+TLS_Srv_features:10.0.2.4	CipherList=MEDIUM+aRSA;
+TLS_Clt_features:10.1.0.1	Options=SSL_OP_NO_TLSv1_2; CipherList=ALL:-EXPORT
 
 specify a cipherlist with MEDIUM strength ciphers that use RSA
 certificates only for the client with the IP address 10.0.2.4,
@@ -3240,21 +3262,24 @@ their own rulesets which must return the appropriate data.
 If the rulesets are not defined or do not return a value, the
 default TLS options are not modified.
 
-About 2): the ruleset try_tls (srv_features) can be used together
-with the access map.  Entries for the access map must be tagged
-with Try_TLS (Srv_Features) and refer to the hostname or IP address
-of the connecting system.  A default case can be specified by using
-just the tag.  For example, the following entries in the access map:
+About 2): the rulesets try_tls, srv_features, and clt_features can
+be used together with the access map.  Entries for the access map
+must be tagged with Try_TLS, Srv_Features, Clt_Features and refer
+to the hostname or IP address of the connecting system (the latter
+is not available for clt_features).  A default case can be specified
+by using just the tag.  For example, the following entries in the
+access map:
 
 	Try_TLS:broken.server	NO
 	Srv_Features:my.domain	v
 	Srv_Features:		V
+	Clt_Features:broken.sts	M
 
 will turn off STARTTLS when sending to broken.server (or any host
-in that domain), and request a client certificate during the TLS
-handshake only for hosts in my.domain.  The valid entries on the RHS
-for Srv_Features are listed in the Sendmail Installation and
-Operations Guide.
+in that domain), request a client certificate during the TLS handshake
+only for hosts in my.domain, and disable MTA-STS for broken.sts.
+The valid entries on the RHS for Srv_Features and Clt_Features are
+listed in the Sendmail Installation and Operations Guide.
 
 
 Received: Header
@@ -3361,6 +3386,7 @@ or FEATURE(`authinfo') must be used which provides a separate map.
 Notice: It is not checked whether the map is actually
 group/world-unreadable, this is left to the user.
 
+
 +--------------------------------+
 | ADDING NEW MAILERS OR RULESETS |
 +--------------------------------+
@@ -3377,11 +3403,11 @@ LOCAL_RULESETS respectively.  For example:
 	Smyruleset
 	...
 
-Local additions for the rulesets srv_features, try_tls, tls_rcpt,
-tls_client, and tls_server can be made using LOCAL_SRV_FEATURES,
-LOCAL_TRY_TLS, LOCAL_TLS_RCPT, LOCAL_TLS_CLIENT, and LOCAL_TLS_SERVER,
-respectively.  For example, to add a local ruleset that decides
-whether to try STARTTLS in a sendmail client, use:
+Local additions for the rulesets srv_features, clt_features, try_tls,
+tls_rcpt, tls_client, and tls_server can be made using LOCAL_SRV_FEATURES,
+LOCAL_CLT_FEATURES, LOCAL_TRY_TLS, LOCAL_TLS_RCPT, LOCAL_TLS_CLIENT,
+and LOCAL_TLS_SERVER, respectively.  For example, to add a local
+ruleset that decides whether to try STARTTLS in a sendmail client, use:
 
 	LOCAL_TRY_TLS
 	R...
@@ -3445,6 +3471,7 @@ groups can be defined using the command:
 	QUEUE_GROUP(`name', `equates')
 
 For details about queue groups, please see doc/op/op.{me,ps,txt}.
+
 
 +-------------------------------+
 | NON-SMTP BASED CONFIGURATIONS |
@@ -4288,7 +4315,7 @@ confXF_BUFFER_SIZE	XScriptFileBufferSize
 					memory-buffered transcript (xf)
 					file before a disk-based file is
 					used.
-confAUTH_MECHANISMS	AuthMechanisms	[GSSAPI KERBEROS_V4 DIGEST-MD5
+confAUTH_MECHANISMS	AuthMechanisms	[EXTERNAL GSSAPI KERBEROS_V4 DIGEST-MD5
 					CRAM-MD5] List of authentication
 					mechanisms for AUTH (separated by
 					spaces).  The advertised list of
@@ -4391,6 +4418,9 @@ confCERT_FINGERPRINT_ALGORITHM	CertFingerprintAlgorithm
 confSSL_ENGINE		SSLEngine	[undefined] Name of SSLEngine.
 confSSL_ENGINE_PATH	SSLEnginePath	[undefined] Path to dynamic library
 					for SSLEngine.
+confOPENSSL_CNF				[/etc/mail/sendmail.ossl] Set the
+					environment variable OPENSSL_CONF.
+					An empty value disables setting it.
 confNICE_QUEUE_RUN	NiceQueueRun	[undefined]  If set, the priority of
 					queue runners is set the given value
 					(nice(3)).

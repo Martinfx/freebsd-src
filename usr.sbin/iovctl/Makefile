@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	iovctl
 SRCS=	iovctl.c parse.c validate.c
 LIBADD=	nv ucl m

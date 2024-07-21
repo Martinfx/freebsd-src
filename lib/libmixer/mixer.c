@@ -18,8 +18,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
- *
- * $FreeBSD$
  */
 
 #include <sys/types.h>
@@ -37,17 +35,17 @@
 
 #define	BASEPATH "/dev/mixer"
 
-static int _mixer_readvol(struct mixer *, struct mix_dev *);
+static int _mixer_readvol(struct mix_dev *);
 
 /*
  * Fetch volume from the device.
  */
 static int
-_mixer_readvol(struct mixer *m, struct mix_dev *dev)
+_mixer_readvol(struct mix_dev *dev)
 {
 	int v;
 
-	if (ioctl(m->fd, MIXER_READ(dev->devno), &v) < 0)
+	if (ioctl(dev->parent_mixer->fd, MIXER_READ(dev->devno), &v) < 0)
 		return (-1);
 	dev->vol.left = MIX_VOLNORM(v & 0x00ff);
 	dev->vol.right = MIX_VOLNORM((v >> 8) & 0x00ff);
@@ -89,7 +87,7 @@ mixer_open(const char *name)
 dunit:
 		if ((m->unit = mixer_get_dunit()) < 0)
 			goto fail;
-		(void)snprintf(m->name, sizeof(m->name), "/dev/mixer%d", m->unit);
+		(void)snprintf(m->name, sizeof(m->name), BASEPATH "%d", m->unit);
 	}
 
 	if ((m->fd = open(m->name, O_RDWR)) < 0)
@@ -122,7 +120,7 @@ dunit:
 		dp->parent_mixer = m;
 		dp->devno = i;
 		dp->nctl = 0;
-		if (_mixer_readvol(m, dp) < 0)
+		if (_mixer_readvol(dp) < 0)
 			goto fail;
 		(void)strlcpy(dp->name, names[i], sizeof(dp->name));
 		TAILQ_INIT(&dp->ctls);
@@ -336,7 +334,7 @@ mixer_set_vol(struct mixer *m, mix_volume_t vol)
 	v = MIX_VOLDENORM(vol.left) | MIX_VOLDENORM(vol.right) << 8;
 	if (ioctl(m->fd, MIXER_WRITE(m->dev->devno), &v) < 0)
 		return (-1);
-	if (_mixer_readvol(m, m->dev) < 0)
+	if (_mixer_readvol(m->dev) < 0)
 		return (-1);
 
 	return (0);
@@ -494,4 +492,29 @@ mixer_get_nmixers(void)
 	(void)mixer_close(m);
 
 	return (si.nummixers);
+}
+
+/*
+ * Get the full path to a mixer device.
+ */
+int
+mixer_get_path(char *buf, size_t size, int unit)
+{
+	size_t n;
+
+	if (!(unit == -1 || (unit >= 0 && unit < mixer_get_nmixers()))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (unit == -1)
+		n = strlcpy(buf, BASEPATH, size);
+	else
+		n = snprintf(buf, size, BASEPATH "%d", unit);
+
+	if (n >= size) {
+		errno = ENOMEM;
+		return (-1);
+	}
+
+	return (0);
 }

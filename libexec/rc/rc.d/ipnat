@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ipnat
@@ -18,6 +17,9 @@ reload_cmd="${ipnat_program} -F -C -f ${ipnat_rules}"
 extra_commands="reload"
 required_files="${ipnat_rules}"
 required_modules="ipl:ipfilter"
+
+# doesn't make sense to run in a svcj: config setting
+ipnat_svcj="NO"
 
 ipnat_start()
 {

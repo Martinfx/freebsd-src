@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 KMOD=	fdc
 
 .PATH:  ${SRCTOP}/sys/dev/fdc

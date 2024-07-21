@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2015-2017 Landon Fuller <landonf@landonf.org>
  * Copyright (c) 2017 The FreeBSD Foundation
@@ -32,9 +32,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGES.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -720,13 +717,13 @@ bcma_erom_seek_matching_core(struct bcma_erom *sc,
 		return (0);
 	}
 
-	/* Not found, or a parse error occured */
+	/* Not found, or a parse error occurred */
 	return (error);
 }
 
 /**
  * Read the next core descriptor from the EROM table.
- * 
+ *
  * @param erom EROM read state.
  * @param[out] core On success, will be populated with the parsed core
  * descriptor data.

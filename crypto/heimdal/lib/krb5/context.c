@@ -97,7 +97,7 @@ init_context_from_config_file(krb5_context context)
     krb5_error_code ret;
     const char * tmp;
     char **s;
-    krb5_enctype *tmptypes;
+    krb5_enctype *tmptypes = NULL;
 
     INIT_FIELD(context, time, max_skew, 5 * 60, "clockskew");
     INIT_FIELD(context, time, kdc_timeout, 3, "kdc_timeout");
@@ -391,6 +391,10 @@ krb5_init_context(krb5_context *context)
 	return ENOMEM;
     }
     HEIMDAL_MUTEX_init(p->mutex);
+
+    ret = fbsd_ossl_provider_load();
+    if(ret)
+	goto out;
 
     p->flags |= KRB5_CTX_F_HOMEDIR_ACCESS;
 

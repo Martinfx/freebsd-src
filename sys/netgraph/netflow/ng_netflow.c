@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010-2011 Alexander V. Chernikov <melifaro@ipfw.ru>
  * Copyright (c) 2004-2005 Gleb Smirnoff <glebius@FreeBSD.org>
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_route.h"
@@ -55,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <net/route.h>
 #include <net/if_arp.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_vlan_var.h>
 #include <net/bpf.h>
 #include <netinet/in.h>

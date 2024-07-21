@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * All rights reserved.
@@ -37,9 +37,6 @@
  * Author: Ken Merry <ken@FreeBSD.org>
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifdef _KERNEL
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -59,6 +56,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/callout.h>
 #include <cam/scsi/scsi_all.h>
 #include <cam/ctl/ctl_io.h>
+#include <cam/ctl/ctl_nvme_all.h>
 #include <cam/ctl/ctl_scsi_all.h>
 #include <cam/ctl/ctl_util.h>
 
@@ -734,13 +732,13 @@ ctl_io_sbuf(union ctl_io *io, struct sbuf *sb)
 	const char *task_desc;
 	char path_str[64];
 
-	ctl_scsi_path_string(io, path_str, sizeof(path_str));
+	ctl_scsi_path_string(&io->io_hdr, path_str, sizeof(path_str));
 
 	switch (io->io_hdr.io_type) {
 	case CTL_IO_SCSI:
 		sbuf_cat(sb, path_str);
 		ctl_scsi_command_string(&io->scsiio, NULL, sb);
-		sbuf_printf(sb, " Tag: %#x/%d, Prio: %d\n",
+		sbuf_printf(sb, " Tag: %#jx/%d, Prio: %d\n",
 			    io->scsiio.tag_num, io->scsiio.tag_type,
 			    io->scsiio.priority);
 		break;
@@ -754,13 +752,19 @@ ctl_io_sbuf(union ctl_io *io, struct sbuf *sb)
 			sbuf_printf(sb, "Task Action: %s", task_desc);
 		switch (io->taskio.task_action) {
 		case CTL_TASK_ABORT_TASK:
-			sbuf_printf(sb, " Tag: %#x/%d\n",
+			sbuf_printf(sb, " Tag: %#jx/%d\n",
 			    io->taskio.tag_num, io->taskio.tag_type);
 			break;
 		default:
-			sbuf_printf(sb, "\n");
+			sbuf_putc(sb, '\n');
 			break;
 		}
+		break;
+	case CTL_IO_NVME:
+	case CTL_IO_NVME_ADMIN:
+		sbuf_cat(sb, path_str);
+		ctl_nvme_command_string(&io->nvmeio, sb);
+		sbuf_printf(sb, " CID: 0x%x\n", le16toh(io->nvmeio.cmd.cid));
 		break;
 	default:
 		break;
@@ -787,7 +791,7 @@ ctl_io_error_sbuf(union ctl_io *io, struct scsi_inquiry_data *inq_data,
 		}
 	}
 
-	ctl_scsi_path_string(io, path_str, sizeof(path_str));
+	ctl_scsi_path_string(&io->io_hdr, path_str, sizeof(path_str));
 
 	sbuf_cat(sb, path_str);
 	if (status_desc == NULL)
@@ -796,15 +800,29 @@ ctl_io_error_sbuf(union ctl_io *io, struct scsi_inquiry_data *inq_data,
 	else
 		sbuf_printf(sb, "CTL Status: %s\n", status_desc->description);
 
-	if ((io->io_hdr.io_type == CTL_IO_SCSI)
-	 && ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_SCSI_ERROR)) {
-		sbuf_cat(sb, path_str);
-		sbuf_printf(sb, "SCSI Status: %s\n",
+	switch (io->io_hdr.io_type) {
+	case CTL_IO_SCSI:
+		if ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_SCSI_ERROR) {
+			sbuf_cat(sb, path_str);
+			sbuf_printf(sb, "SCSI Status: %s\n",
 			    ctl_scsi_status_string(&io->scsiio));
 
-		if (io->scsiio.scsi_status == SCSI_STATUS_CHECK_COND)
-			ctl_scsi_sense_sbuf(&io->scsiio, inq_data,
-					    sb, SSS_FLAG_NONE);
+			if (io->scsiio.scsi_status == SCSI_STATUS_CHECK_COND)
+				ctl_scsi_sense_sbuf(&io->scsiio, inq_data,
+				    sb, SSS_FLAG_NONE);
+		}
+		break;
+	case CTL_IO_NVME:
+	case CTL_IO_NVME_ADMIN:
+		if ((io->io_hdr.status & CTL_STATUS_MASK) == CTL_NVME_ERROR) {
+			sbuf_cat(sb, path_str);
+			sbuf_printf(sb, "NVMe Status: ");
+			ctl_nvme_status_string(&io->nvmeio, sb);
+			sbuf_printf(sb, "\n");
+		}
+		break;
+	default:
+		break;
 	}
 }
 
@@ -856,24 +874,34 @@ ctl_data_print(union ctl_io *io)
 	char str[128];
 	char path_str[64];
 	struct sbuf sb;
+	uintmax_t tag_num;
 	int i, j, len;
 
-	if (io->io_hdr.io_type != CTL_IO_SCSI)
+	switch (io->io_hdr.io_type) {
+	case CTL_IO_SCSI:
+		tag_num = io->scsiio.tag_num;
+		break;
+	case CTL_IO_NVME:
+	case CTL_IO_NVME_ADMIN:
+		tag_num = le16toh(io->nvmeio.cmd.cid);
+		break;
+	default:
 		return;
+	}
 	if (io->io_hdr.flags & CTL_FLAG_BUS_ADDR)
 		return;
-	if (io->scsiio.kern_sg_entries > 0)	/* XXX: Implement */
+	if (ctl_kern_sg_entries(io) > 0)	/* XXX: Implement */
 		return;
-	ctl_scsi_path_string(io, path_str, sizeof(path_str));
-	len = min(io->scsiio.kern_data_len, 4096);
+	ctl_scsi_path_string(&io->io_hdr, path_str, sizeof(path_str));
+	len = min(ctl_kern_data_len(io), 4096);
 	for (i = 0; i < len; ) {
 		sbuf_new(&sb, str, sizeof(str), SBUF_FIXEDLEN);
 		sbuf_cat(&sb, path_str);
-		sbuf_printf(&sb, " %#6x:%04x:", io->scsiio.tag_num, i);
+		sbuf_printf(&sb, " %#jx:%04x:", tag_num, i);
 		for (j = 0; j < 16 && i < len; i++, j++) {
 			if (j == 8)
 				sbuf_cat(&sb, " ");
-			sbuf_printf(&sb, " %02x", io->scsiio.kern_data_ptr[i]);
+			sbuf_printf(&sb, " %02x", ctl_kern_data_ptr(io)[i]);
 		}
 		sbuf_cat(&sb, "\n");
 		sbuf_finish(&sb);

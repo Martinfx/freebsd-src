@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <../Makefile.inc>
 
 PROG=	redir

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 # Options used when building app-specific efi components
 # See conf/kern.mk for the correct set of these
 CFLAGS+=	-Wformat
@@ -21,8 +19,6 @@ CFLAGS+=	-fPIC
 
 .if ${MACHINE_CPUARCH} == "amd64"
 EFI_TARGET=	efi-app-x86_64
-.elif ${MACHINE_CPUARCH} == "i386"
-EFI_TARGET=	efi-app-ia32
 .else
 EFI_TARGET=	binary
 .endif

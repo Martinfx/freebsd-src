@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
  *
- * Copyright (c) 2015 - 2021 Intel Corporation
+ * Copyright (c) 2015 - 2023 Intel Corporation
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,7 +31,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-/*$FreeBSD$*/
 
 #ifndef IRDMA_CM_H
 #define IRDMA_CM_H
@@ -74,7 +73,7 @@
 #define TCP_OPTIONS_PADDING	3
 
 #define IRDMA_DEFAULT_RETRYS	64
-#define IRDMA_DEFAULT_RETRANS	8
+#define IRDMA_DEFAULT_RETRANS	32
 #define IRDMA_DEFAULT_TTL		0x40
 #define IRDMA_DEFAULT_RTT_VAR		6
 #define IRDMA_DEFAULT_SS_THRESH		0x3fffffff
@@ -192,14 +191,6 @@ enum irdma_cm_event_type {
 	IRDMA_CM_EVENT_ABORTED,
 };
 
-struct irdma_bth { /* Base Trasnport Header */
-	u8 opcode;
-	u8 flags;
-	__be16 pkey;
-	__be32 qpn;
-	__be32 apsn;
-};
-
 struct ietf_mpa_v1 {
 	u8 key[IETF_MPA_KEY_SIZE];
 	u8 flags;
@@ -296,7 +287,7 @@ struct irdma_cm_listener {
 	int backlog;
 	u16 loc_port;
 	u16 vlan_id;
-	u8 loc_mac[ETH_ALEN];
+	u8 loc_mac[ETHER_ADDR_LEN];
 	u8 user_pri;
 	u8 tos;
 	bool qhash_set:1;
@@ -349,8 +340,8 @@ struct irdma_cm_node {
 	u16 mpav2_ird_ord;
 	u16 lsmm_size;
 	u8 pdata_buf[IETF_MAX_PRIV_DATA_LEN];
-	u8 loc_mac[ETH_ALEN];
-	u8 rem_mac[ETH_ALEN];
+	u8 loc_mac[ETHER_ADDR_LEN];
+	u8 rem_mac[ETHER_ADDR_LEN];
 	u8 user_pri;
 	u8 tos;
 	bool ack_rcvd:1;
@@ -366,6 +357,7 @@ struct irdma_cm_node {
 /* Used by internal CM APIs to pass CM information*/
 struct irdma_cm_info {
 	struct iw_cm_id *cm_id;
+	struct irdma_cqp_request *cqp_request;
 	u16 loc_port;
 	u16 rem_port;
 	u32 loc_addr[4];
@@ -418,6 +410,12 @@ struct irdma_cm_core {
 	void (*cm_free_ah)(struct irdma_cm_node *cm_node);
 };
 
+struct irdma_add_mqh_cbs {
+	struct irdma_device *iwdev;
+	struct irdma_cm_info *cm_info;
+	struct irdma_cm_listener *cm_listen_node;
+};
+
 int irdma_schedule_cm_timer(struct irdma_cm_node *cm_node,
 			    struct irdma_puda_buf *sqbuf,
 			    enum irdma_timer_type type, int send_retrans,
@@ -426,8 +424,8 @@ int irdma_schedule_cm_timer(struct irdma_cm_node *cm_node,
 static inline u8 irdma_tos2dscp(u8 tos)
 {
 #define IRDMA_DSCP_S 2
-#define IRDMA_DSCP_M (0x3f << IRDMA_DSCP_S)
-	return RS_32(tos, IRDMA_DSCP);
+#define IRDMA_DSCP GENMASK(7, 2)
+	return FIELD_GET(IRDMA_DSCP, tos);
 }
 
 int irdma_accept(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param);
@@ -435,16 +433,13 @@ int irdma_reject(struct iw_cm_id *cm_id, const void *pdata, u8 pdata_len);
 int irdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param);
 int irdma_create_listen(struct iw_cm_id *cm_id, int backlog);
 int irdma_destroy_listen(struct iw_cm_id *cm_id);
-int irdma_add_arp(struct irdma_pci_f *rf, u32 *ip, u8 *mac);
-void irdma_cm_teardown_connections(struct irdma_device *iwdev, u32 *ipaddr,
-				   struct irdma_cm_info *nfo,
-				   bool disconnect_all);
+int irdma_add_arp(struct irdma_pci_f *rf, u32 *ip, const u8 *mac);
 int irdma_cm_start(struct irdma_device *dev);
 int irdma_cm_stop(struct irdma_device *dev);
 bool irdma_ipv4_is_lpb(u32 loc_addr, u32 rem_addr);
 bool irdma_ipv6_is_lpb(u32 *loc_addr, u32 *rem_addr);
 int irdma_arp_table(struct irdma_pci_f *rf, u32 *ip_addr,
-		    u8 *mac_addr, u32 action);
+		    const u8 *mac_addr, u32 action);
 bool irdma_port_in_use(struct irdma_cm_core *cm_core, u16 port);
 void irdma_send_ack(struct irdma_cm_node *cm_node);
 void irdma_lpb_nop(struct irdma_sc_qp *qp);

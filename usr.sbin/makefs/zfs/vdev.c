@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 The FreeBSD Foundation
  *
@@ -38,11 +38,11 @@
 
 #include "zfs.h"
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "zfs/fletcher.c"
 #include "zfs/sha256.c"
-#pragma clang diagnostic pop
+#pragma GCC diagnostic pop
 
 static void
 blkptr_set(blkptr_t *bp, off_t off, off_t size, uint8_t dntype, uint8_t level,

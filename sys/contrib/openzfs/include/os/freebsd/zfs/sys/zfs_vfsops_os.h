@@ -93,7 +93,6 @@ struct zfsvfs {
 	zfs_teardown_lock_t z_teardown_lock;
 	zfs_teardown_inactive_lock_t z_teardown_inactive_lock;
 	list_t		z_all_znodes;	/* all vnodes in the fs */
-	uint64_t	z_nr_znodes;	/* number of znodes in the fs */
 	kmutex_t	z_znodes_lock;	/* lock for z_all_znodes */
 	struct zfsctl_root	*z_ctldir;	/* .zfs directory pointer */
 	boolean_t	z_show_ctldir;	/* expose .zfs in the root dir */
@@ -128,9 +127,6 @@ struct zfsvfs {
 #define	ZFS_TEARDOWN_DESTROY(zfsvfs)		\
 	rms_destroy(&(zfsvfs)->z_teardown_lock)
 
-#define	ZFS_TEARDOWN_TRY_ENTER_READ(zfsvfs)	\
-	rms_try_rlock(&(zfsvfs)->z_teardown_lock)
-
 #define	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag)	\
 	rms_rlock(&(zfsvfs)->z_teardown_lock);
 
@@ -160,9 +156,6 @@ struct zfsvfs {
 
 #define	ZFS_TEARDOWN_DESTROY(zfsvfs)		\
 	rrm_destroy(&(zfsvfs)->z_teardown_lock)
-
-#define	ZFS_TEARDOWN_TRY_ENTER_READ(zfsvfs)	\
-	rw_tryenter(&(zfsvfs)->z_teardown_lock, RW_READER)
 
 #define	ZFS_TEARDOWN_ENTER_READ(zfsvfs, tag)	\
 	rrm_enter_read(&(zfsvfs)->z_teardown_lock, tag);
@@ -291,7 +284,6 @@ typedef struct zfid_long {
 #define	SHORT_FID_LEN	(sizeof (zfid_short_t) - sizeof (uint16_t))
 #define	LONG_FID_LEN	(sizeof (zfid_long_t) - sizeof (uint16_t))
 
-extern uint_t zfs_fsyncer_key;
 extern int zfs_super_owner;
 
 extern void zfs_init(void);

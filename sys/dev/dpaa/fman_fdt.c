@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -71,6 +68,9 @@ EARLY_DRIVER_MODULE(fman, simplebus, fman_driver, 0, 0,
 static int
 fman_fdt_probe(device_t dev)
 {
+
+	if (!ofw_bus_status_okay(dev))
+		return (ENXIO);
 
 	if (!ofw_bus_is_compatible(dev, "fsl,fman"))
 		return (ENXIO);

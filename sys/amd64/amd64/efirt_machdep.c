@@ -29,9 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/efi.h>
 #include <sys/kernel.h>
@@ -47,11 +44,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/systm.h>
 #include <sys/vmmeter.h>
 #include <isa/rtc.h>
-#include <machine/fpu.h>
 #include <machine/efi.h>
-#include <machine/metadata.h>
 #include <machine/md_var.h>
-#include <machine/smp.h>
 #include <machine/vmparam.h>
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -241,7 +235,7 @@ efi_create_1t1_map(struct efi_md *map, int ndesc, int descsz)
 				    "attributes unsupported\n", i);
 			mode = VM_MEMATTR_UNCACHEABLE;
 		}
-		bits = pmap_cache_bits(kernel_pmap, mode, FALSE) | X86_PG_RW |
+		bits = pmap_cache_bits(kernel_pmap, mode, false) | X86_PG_RW |
 		    X86_PG_V;
 		VM_OBJECT_WLOCK(obj_1t1_pt);
 		for (va = p->md_phys, idx = 0; idx < p->md_pages; idx++,
@@ -251,7 +245,8 @@ efi_create_1t1_map(struct efi_md *map, int ndesc, int descsz)
 
 			m = PHYS_TO_VM_PAGE(va);
 			if (m != NULL && VM_PAGE_TO_PHYS(m) == 0) {
-				vm_page_init_page(m, va, -1);
+				vm_page_init_page(m, va, -1,
+				    VM_FREEPOOL_DEFAULT);
 				m->order = VM_NFREEORDER + 1; /* invalid */
 				m->pool = VM_NFREEPOOL + 1; /* invalid */
 				pmap_page_set_memattr_noflush(m, mode);
@@ -282,11 +277,6 @@ fail:
  * reason to bother with the virtual map, and no need to add a
  * complexity into loader.
  *
- * The fpu_kern_enter() call allows firmware to use FPU, as mandated
- * by the specification.  In particular, CR0.TS bit is cleared.  Also
- * it enters critical section, giving us neccessary protection against
- * context switch.
- *
  * There is no need to disable interrupts around the change of %cr3,
  * the kernel mappings are correct, while we only grabbed the
  * userspace portion of VA.  Interrupts handlers must not access
@@ -298,6 +288,7 @@ int
 efi_arch_enter(void)
 {
 	pmap_t curpmap;
+	uint64_t cr3;
 
 	curpmap = PCPU_GET(curpmap);
 	PMAP_LOCK_ASSERT(curpmap, MA_OWNED);
@@ -313,8 +304,10 @@ efi_arch_enter(void)
 	if (pmap_pcid_enabled && !invpcid_works)
 		PCPU_SET(curpmap, NULL);
 
-	load_cr3(VM_PAGE_TO_PHYS(efi_pmltop_page) | (pmap_pcid_enabled ?
-	    curpmap->pm_pcids[PCPU_GET(cpuid)].pm_pcid : 0));
+	cr3 = VM_PAGE_TO_PHYS(efi_pmltop_page);
+	if (pmap_pcid_enabled)
+		cr3 |= pmap_get_pcid(curpmap);
+	load_cr3(cr3);
 	/*
 	 * If PCID is enabled, the clear CR3_PCID_SAVE bit in the loaded %cr3
 	 * causes TLB invalidation.
@@ -328,12 +321,16 @@ void
 efi_arch_leave(void)
 {
 	pmap_t curpmap;
+	uint64_t cr3;
 
 	curpmap = &curproc->p_vmspace->vm_pmap;
-	if (pmap_pcid_enabled && !invpcid_works)
-		PCPU_SET(curpmap, curpmap);
-	load_cr3(curpmap->pm_cr3 | (pmap_pcid_enabled ?
-	    curpmap->pm_pcids[PCPU_GET(cpuid)].pm_pcid : 0));
+	cr3 = curpmap->pm_cr3;
+	if (pmap_pcid_enabled) {
+		cr3 |= pmap_get_pcid(curpmap);
+		if (!invpcid_works)
+			PCPU_SET(curpmap, curpmap);
+	}
+	load_cr3(cr3);
 	if (!pmap_pcid_enabled)
 		invltlb();
 	vm_fault_enable_pagefaults(curthread->td_md.md_efirt_dis_pf);

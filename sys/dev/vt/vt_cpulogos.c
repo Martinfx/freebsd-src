@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/callout.h>
 #include <sys/cons.h>
@@ -35,7 +32,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/mutex.h>
 #include <sys/smp.h>
 #include <sys/systm.h>
-#include <sys/taskqueue.h>
 #include <sys/terminal.h>
 
 #include <dev/vt/vt.h>

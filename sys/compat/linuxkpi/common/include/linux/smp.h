@@ -22,12 +22,12 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _LINUXKPI_LINUX_SMP_H_
 #define	_LINUXKPI_LINUX_SMP_H_
+
+#include <asm/smp.h>
 
 /*
  * Important note about the use of the function provided below:

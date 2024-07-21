@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 Brian Somers <brian@Awfulhak.org>
  * All rights reserved.
@@ -24,9 +24,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
+
+#include <sys/param.h>
 
 #define CHAT_EXPECT 0
 #define CHAT_SEND   1
@@ -76,7 +76,7 @@ struct chat {
 
 #define descriptor2chat(d) \
   ((d)->type == CHAT_DESCRIPTOR ? (struct chat *)(d) : NULL)
-#define	VECSIZE(v)	(sizeof(v) / sizeof(v[0]))
+#define	VECSIZE(v)	nitems(v)
 
 extern void chat_Init(struct chat *, struct physical *);
 extern int chat_Setup(struct chat *, const char *, const char *);

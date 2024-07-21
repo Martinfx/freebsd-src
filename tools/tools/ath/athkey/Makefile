@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	athkey
 
 SRCS=	athkey.c

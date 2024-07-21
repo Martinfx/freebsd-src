@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 Adrian Chadd <adrian@FreeBSD.org>.
  *
@@ -51,8 +51,8 @@
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 #include <dev/mdio/mdio.h>
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>

@@ -1,14 +1,9 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
  *
  * See the IPFILTER.LICENCE file for details on licencing.
  */
-#if !defined(lint)
-static const char sccsid[] = "@(#)ip_fil.c	2.41 6/5/96 (C) 1993-2000 Darren Reed";
-static const char rcsid[] = "@(#)$Id$";
-#endif
 
 #if defined(KERNEL) || defined(_KERNEL)
 # undef KERNEL
@@ -39,7 +34,6 @@ static const char rcsid[] = "@(#)$Id$";
 #include <sys/sockopt.h>
 #include <sys/socket.h>
 #include <sys/selinfo.h>
-#include <netinet/tcp_var.h>
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/netisr.h>
@@ -53,6 +47,7 @@ static const char rcsid[] = "@(#)$Id$";
 #include <netinet/ip.h>
 #include <netinet/ip_var.h>
 #include <netinet/tcp.h>
+#include <netinet/tcp_var.h>
 #include <net/vnet.h>
 #include <netinet/udp.h>
 #include <netinet/tcpip.h>
@@ -138,6 +133,8 @@ ipf_check_wrapper(struct mbuf **mp, struct ifnet *ifp, int flags,
 	rv = ipf_check(&V_ipfmain, ip, ip->ip_hl << 2, ifp,
 	    !!(flags & PFIL_OUT), mp);
 	CURVNET_RESTORE();
+	if (rv == 0 && *mp == NULL)
+		return (PFIL_CONSUMED);
 	return (rv == 0 ? PFIL_PASS : PFIL_DROPPED);
 }
 
@@ -152,6 +149,8 @@ ipf_check_wrapper6(struct mbuf **mp, struct ifnet *ifp, int flags,
 	rv = ipf_check(&V_ipfmain, mtod(*mp, struct ip *),
 	    sizeof(struct ip6_hdr), ifp, !!(flags & PFIL_OUT), mp);
 	CURVNET_RESTORE();
+	if (rv == 0 && *mp == NULL)
+		return (PFIL_CONSUMED);
 
 	return (rv == 0 ? PFIL_PASS : PFIL_DROPPED);
 }
@@ -384,18 +383,17 @@ ipf_send_reset(fr_info_t *fin)
 	tcp2->th_sport = tcp->th_dport;
 	tcp2->th_dport = tcp->th_sport;
 
-	if (tcp->th_flags & TH_ACK) {
+	if (tcp_get_flags(tcp) & TH_ACK) {
 		tcp2->th_seq = tcp->th_ack;
-		tcp2->th_flags = TH_RST;
+		tcp_set_flags(tcp2, TH_RST);
 		tcp2->th_ack = 0;
 	} else {
 		tcp2->th_seq = 0;
 		tcp2->th_ack = ntohl(tcp->th_seq);
 		tcp2->th_ack += tlen;
 		tcp2->th_ack = htonl(tcp2->th_ack);
-		tcp2->th_flags = TH_RST|TH_ACK;
+		tcp_set_flags(tcp2, TH_RST|TH_ACK);
 	}
-	TCP_X2_A(tcp2, 0);
 	TCP_OFF_A(tcp2, sizeof(*tcp2) >> 2);
 	tcp2->th_win = tcp->th_win;
 	tcp2->th_sum = 0;
@@ -924,8 +922,7 @@ bad:
 
 
 int
-ipf_verifysrc(fin)
-	fr_info_t *fin;
+ipf_verifysrc(fr_info_t *fin)
 {
 	struct nhop_object *nh;
 
@@ -1010,8 +1007,7 @@ ipf_ifpaddr(ipf_main_softc_t *softc, int v, int atype, void *ifptr,
 
 
 u_32_t
-ipf_newisn(fin)
-	fr_info_t *fin;
+ipf_newisn(fr_info_t *fin)
 {
 	u_32_t newiss;
 	newiss = arc4random();
@@ -1178,17 +1174,17 @@ mbufchainlen(struct mbuf *m0)
 /* We assume that 'xmin' is a pointer to a buffer that is part of the chain */
 /* of buffers that starts at *fin->fin_mp.                                  */
 /* ------------------------------------------------------------------------ */
-void *
+ip_t *
 ipf_pullup(mb_t *xmin, fr_info_t *fin, int len)
 {
 	int dpoff, ipoff;
 	mb_t *m = xmin;
-	char *ip;
+	ip_t *ip;
 
 	if (m == NULL)
 		return (NULL);
 
-	ip = (char *)fin->fin_ip;
+	ip = fin->fin_ip;
 	if ((fin->fin_flx & FI_COALESCE) != 0)
 		return (ip);
 
@@ -1233,6 +1229,7 @@ ipf_pullup(mb_t *xmin, fr_info_t *fin, int len)
 #endif
 		} else
 		{
+
 			m = m_pullup(m, len);
 		}
 		if (n != NULL)
@@ -1259,9 +1256,9 @@ ipf_pullup(mb_t *xmin, fr_info_t *fin, int len)
 			m = m->m_next;
 		}
 		fin->fin_m = m;
-		ip = MTOD(m, char *) + ipoff;
+		ip = MTOD(m, ip_t *) + ipoff;
 
-		fin->fin_ip = (ip_t *)ip;
+		fin->fin_ip = ip;
 		if (fin->fin_dp != NULL)
 			fin->fin_dp = (char *)fin->fin_ip + dpoff;
 		if (fin->fin_fraghdr != NULL)
@@ -1312,31 +1309,31 @@ int ipf_pfil_unhook(void) {
 }
 
 int ipf_pfil_hook(void) {
-	struct pfil_hook_args pha;
-	struct pfil_link_args pla;
 	int error, error6;
 
-	pha.pa_version = PFIL_VERSION;
-	pha.pa_flags = PFIL_IN | PFIL_OUT;
-	pha.pa_modname = "ipfilter";
-	pha.pa_rulname = "default-ip4";
-	pha.pa_func = ipf_check_wrapper;
-	pha.pa_ruleset = NULL;
-	pha.pa_type = PFIL_TYPE_IP4;
+	struct pfil_hook_args pha = {
+		.pa_version = PFIL_VERSION,
+		.pa_flags = PFIL_IN | PFIL_OUT,
+		.pa_modname = "ipfilter",
+		.pa_rulname = "default-ip4",
+		.pa_mbuf_chk = ipf_check_wrapper,
+		.pa_type = PFIL_TYPE_IP4,
+	};
 	V_ipf_inet_hook = pfil_add_hook(&pha);
 
 #ifdef USE_INET6
 	pha.pa_rulname = "default-ip6";
-	pha.pa_func = ipf_check_wrapper6;
+	pha.pa_mbuf_chk = ipf_check_wrapper6;
 	pha.pa_type = PFIL_TYPE_IP6;
 	V_ipf_inet6_hook = pfil_add_hook(&pha);
 #endif
 
-	pla.pa_version = PFIL_VERSION;
-	pla.pa_flags = PFIL_IN | PFIL_OUT |
-	    PFIL_HEADPTR | PFIL_HOOKPTR;
-	pla.pa_head = V_inet_pfil_head;
-	pla.pa_hook = V_ipf_inet_hook;
+	struct pfil_link_args pla = {
+		.pa_version = PFIL_VERSION,
+		.pa_flags = PFIL_IN | PFIL_OUT | PFIL_HEADPTR | PFIL_HOOKPTR,
+		.pa_head = V_inet_pfil_head,
+		.pa_hook = V_ipf_inet_hook,
+	};
 	error = pfil_link(&pla);
 
 	error6 = 0;

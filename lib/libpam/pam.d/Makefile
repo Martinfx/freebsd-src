@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=	runtime
@@ -8,7 +6,6 @@ NO_OBJ=
 
 CONFGROUPS=	CONFS
 CONFS=	README \
-	cron \
 	imap \
 	login \
 	other \
@@ -18,6 +15,10 @@ CONFS=	README \
 
 CONFDIR=	/etc/pam.d
 CONFSMODE_README=	444
+
+CONFGROUPS+=	CRON
+CRON+=		cron
+CRONPACKAGE=	cron
 
 .if ${MK_AT} != "no"
 CONFGROUPS+=	AT
@@ -30,14 +31,9 @@ CONFGROUPS+=	FTP
 FTP+=	ftpd
 FTPPACKAGE=	ftp
 
+LINKMODE=	${CONFMODE}
 afterinstallconfig:
 	${INSTALL_LINK} ${TAG_ARGS} ${DESTDIR}${CONFDIR}/ftpd ${DESTDIR}${CONFDIR}/ftp
-.endif
-
-.if ${MK_TELNET} != "no"
-CONFGROUPS+=	TELNET
-TELNET+=	telnetd
-TELNETPACKAGE=	telnet
 .endif
 
 .include <bsd.prog.mk>

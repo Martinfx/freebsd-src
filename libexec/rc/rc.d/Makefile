@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 CONFDIR=	/etc/rc.d
@@ -18,23 +16,18 @@ CONFS=	DAEMON \
 	cfumass \
 	cleanvar \
 	cleartmp \
-	cron \
 	ctld \
 	ddb \
 	defaultroute \
-	devd \
 	devfs \
-	devmatch \
-	dhclient \
 	dmesg \
 	dumpon \
 	fsck \
-	gbde \
 	geli \
 	geli2 \
-	ggated \
 	gptboot \
 	growfs \
+	growfs_fstab \
 	hostid \
 	hostid_save \
 	hostname \
@@ -72,7 +65,6 @@ CONFS=	DAEMON \
 	nfsuserd \
 	nisdomain \
 	${_nscd} \
-	ntpdate \
 	${_opensm} \
 	os-release \
 	pf \
@@ -86,7 +78,6 @@ CONFS=	DAEMON \
 	random \
 	rarpd \
 	rctl \
-	resolv \
 	root \
 	route6d \
 	routing \
@@ -111,7 +102,32 @@ CONFS=	DAEMON \
 	ugidfw \
 	${_utx} \
 	var \
+	var_run \
 	watchdogd
+
+CONFGROUPS+=		DEVD
+DEVD=			devd
+DEVDPACKAGE=		devd
+
+CONFGROUPS+=		DEVMATCH
+DEVMATCH=		devmatch
+DEVMATCHPACKAGE=	devmatch
+
+CONFGROUPS+=		DHCLIENT
+DHCLIENT=		dhclient
+DHCLIENTPACKAGE=	dhclient
+
+CONFGROUPS+=		GGATED
+GGATED=			ggated
+GGATEDPACKAGE=		ggate
+
+CONFGROUPS+=		RESOLVCONF
+RESOLVCONF=		resolv
+RESOLVCONFPACKAGE=	resolvconf
+
+CONFGROUPS+=		CRON
+CRON+=			cron
+CRONPACKAGE=		cron
 
 .if ${MK_NIS} != "no"
 CONFS+=	ypbind \
@@ -148,7 +164,7 @@ APMPACKAGE=	apm
 CONFGROUPS+=	AUDIT
 AUDIT+=		auditd
 AUDIT+=		auditdistd
-AUDITPACKAGE=	rc
+AUDITPACKAGE=	audit
 .endif
 
 .if ${MK_AUTOFS} != "no"
@@ -215,7 +231,8 @@ CONFS+=	ipfilter \
 .endif
 
 .if ${MK_IPFW} != "no"
-CONFS+=		ipfw
+CONFS+=		ipfw \
+		dnctl
 .if ${MK_NETGRAPH} != "no"
 CONFS+=		ipfw_netflow
 .endif
@@ -233,12 +250,16 @@ JAILPACKAGE=	jail
 .endif
 
 .if ${MK_LEGACY_CONSOLE} != "no"
-CONFS+=		moused
-CONFS+=		syscons
+CONFGROUPS+=	CONSOLE
+CONSOLE+=	moused
+CONSOLE+=	syscons
+CONSOLEPACKAGE=	console-tools
 .endif
 
 .if ${MK_LPR} != "no"
-CONFS+=		lpd
+CONFGROUPS+=	LP
+LP+=		lpd
+LPPACKAGE=	lp
 .endif
 
 .if ${MK_KERBEROS} != "no"
@@ -254,16 +275,15 @@ VAR_HEMIDAL=	/var/heimdal
 VAR_HEMIDAL_MODE=	700
 .endif
 
-.if ${MK_MAIL} != "no"
-CONFS+=		othermta
-.endif
-
 .if ${MK_NS_CACHING} != "no"
 _nscd=		nscd
 .endif
 
 .if ${MK_NTP} != "no"
-CONFS+=		ntpd
+CONFGROUPS+=	NTP
+NTP+=		ntpd \
+		ntpdate
+NTPPACKAGE=	ntp
 .endif
 
 .if ${MK_OFED} != "no"
@@ -298,6 +318,12 @@ SMRCD=		sendmail
 SMRCDPACKAGE=	sendmail
 .endif
 
+.if ${MK_NUAGEINIT} != "no"
+CONFGROUPS+=	NIUAGEINIT
+NIUAGEINIT=		nuageinit
+NIUAGEINITPACKAGE=	nuageinit
+.endif
+
 .if ${MK_UNBOUND} != "no"
 CONFGROUPS+=	UNBOUND
 UNBOUND+=	local_unbound
@@ -327,6 +353,7 @@ ZFS+=		zfsd
 ZFS+=		zfskeys
 ZFS+=		zpool
 ZFS+=		zpoolreguid
+ZFS+=		zpoolupgrade
 ZFS+=		zvol
 ZFSPACKAGE=	rc
 .endif

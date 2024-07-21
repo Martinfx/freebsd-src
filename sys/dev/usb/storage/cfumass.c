@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016 The FreeBSD Foundation
  *
@@ -36,9 +36,6 @@
  * This code implements the USB Mass Storage frontend driver for the CAM
  * Target Layer (ctl(4)) subsystem.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>

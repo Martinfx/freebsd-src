@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004-2006
  *      Damien Bergamini <damien.bergamini@free.fr>. All rights reserved.
@@ -30,8 +30,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*-
  * Intel(R) PRO/Wireless 2100 MiniPCI driver
  * http://www.intel.com/network/connectivity/products/wireless/prowireless_mobile.htm
@@ -115,7 +113,7 @@ static struct ieee80211vap *ipw_vap_create(struct ieee80211com *,
 static void	ipw_vap_delete(struct ieee80211vap *);
 static int	ipw_dma_alloc(struct ipw_softc *);
 static void	ipw_release(struct ipw_softc *);
-static void	ipw_media_status(struct ifnet *, struct ifmediareq *);
+static void	ipw_media_status(if_t, struct ifmediareq *);
 static int	ipw_newstate(struct ieee80211vap *, enum ieee80211_state, int);
 static uint16_t	ipw_read_prom_word(struct ipw_softc *, uint8_t);
 static uint16_t	ipw_read_chanmask(struct ipw_softc *);
@@ -833,9 +831,9 @@ ipw_cvtrate(int ipwrate)
  * value here.
  */
 static void
-ipw_media_status(struct ifnet *ifp, struct ifmediareq *imr)
+ipw_media_status(if_t ifp, struct ifmediareq *imr)
 {
-	struct ieee80211vap *vap = ifp->if_softc;
+	struct ieee80211vap *vap = if_getsoftc(ifp);
 	struct ieee80211com *ic = vap->iv_ic;
 	struct ipw_softc *sc = ic->ic_softc;
 
@@ -1158,7 +1156,6 @@ static void
 ipw_rx_data_intr(struct ipw_softc *sc, struct ipw_status *status,
     struct ipw_soft_bd *sbd, struct ipw_soft_buf *sbuf)
 {
-	struct epoch_tracker et;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct mbuf *mnew, *m;
 	struct ieee80211_node *ni;
@@ -1230,13 +1227,11 @@ ipw_rx_data_intr(struct ipw_softc *sc, struct ipw_status *status,
 
 	IPW_UNLOCK(sc);
 	ni = ieee80211_find_rxnode(ic, mtod(m, struct ieee80211_frame_min *));
-	NET_EPOCH_ENTER(et);
 	if (ni != NULL) {
 		(void) ieee80211_input(ni, m, rssi - nf, nf);
 		ieee80211_free_node(ni);
 	} else
 		(void) ieee80211_input_all(ic, m, rssi - nf, nf);
-	NET_EPOCH_EXIT(et);
 	IPW_LOCK(sc);
 
 	bus_dmamap_sync(sc->rbd_dmat, sc->rbd_map, BUS_DMASYNC_PREWRITE);

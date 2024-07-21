@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013-2015 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef __X86_IOMMU_INTEL_DMAR_H
@@ -125,7 +123,6 @@ struct dmar_msi_data {
 
 struct dmar_unit {
 	struct iommu_unit iommu;
-	device_t dev;
 	uint16_t segment;
 	uint64_t base;
 
@@ -158,7 +155,7 @@ struct dmar_unit {
 
 	/* QI */
 	int qi_enabled;
-	vm_offset_t inv_queue;
+	char *inv_queue;
 	vm_size_t inv_queue_size;
 	uint32_t inv_queue_avail;
 	uint32_t inv_queue_tail;
@@ -240,16 +237,11 @@ iommu_gaddr_t pglvl_page_size(int total_pglvl, int lvl);
 iommu_gaddr_t domain_page_size(struct dmar_domain *domain, int lvl);
 int calc_am(struct dmar_unit *unit, iommu_gaddr_t base, iommu_gaddr_t size,
     iommu_gaddr_t *isizep);
-struct vm_page *dmar_pgalloc(vm_object_t obj, vm_pindex_t idx, int flags);
-void dmar_pgfree(vm_object_t obj, vm_pindex_t idx, int flags);
-void *dmar_map_pgtbl(vm_object_t obj, vm_pindex_t idx, int flags,
-    struct sf_buf **sf);
-void dmar_unmap_pgtbl(struct sf_buf *sf);
 int dmar_load_root_entry_ptr(struct dmar_unit *unit);
 int dmar_inv_ctx_glob(struct dmar_unit *unit);
 int dmar_inv_iotlb_glob(struct dmar_unit *unit);
 int dmar_flush_write_bufs(struct dmar_unit *unit);
-void dmar_flush_pte_to_ram(struct dmar_unit *unit, dmar_pte_t *dst);
+void dmar_flush_pte_to_ram(struct dmar_unit *unit, iommu_pte_t *dst);
 void dmar_flush_ctx_to_ram(struct dmar_unit *unit, dmar_ctx_entry_t *dst);
 void dmar_flush_root_to_ram(struct dmar_unit *unit, dmar_root_entry_t *dst);
 int dmar_disable_protected_regions(struct dmar_unit *unit);
@@ -317,10 +309,9 @@ void dmar_quirks_pre_use(struct iommu_unit *dmar);
 int dmar_init_irt(struct dmar_unit *unit);
 void dmar_fini_irt(struct dmar_unit *unit);
 
-extern iommu_haddr_t dmar_high;
 extern int haw;
-extern int dmar_tbl_pagecnt;
 extern int dmar_batch_coalesce;
+extern int dmar_rmrr_enable;
 
 static inline uint32_t
 dmar_read4(const struct dmar_unit *unit, int reg)

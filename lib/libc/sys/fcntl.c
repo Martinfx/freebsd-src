@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Isilon Inc http://www.isilon.com/
  * Authors: Doug Rabson <dfr@rabson.org>
@@ -32,9 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/types.h>
@@ -52,6 +49,5 @@ fcntl(int fd, int cmd, ...)
 	arg = va_arg(args, long);
 	va_end(args);
 
-	return (((int (*)(int, int, ...))
-	    __libc_interposing[INTERPOS_fcntl])(fd, cmd, arg));
+	return (INTERPOS_SYS(fcntl, fd, cmd, arg));
 }

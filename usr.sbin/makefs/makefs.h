@@ -35,8 +35,6 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_MAKEFS_H
@@ -58,7 +56,7 @@
  *
  *	name	"."		"bin"		"netbsd"
  *	type	S_IFDIR		S_IFDIR		S_IFREG
- *	next 	  >		  >		NULL
+ *	next	  >		  >		NULL
  *	parent	NULL		NULL		NULL
  *	child	NULL		  v
  *

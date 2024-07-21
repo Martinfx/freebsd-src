@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/libexec/ypxfr ${SRCTOP}/usr.sbin/ypserv
 
 PACKAGE=	yp

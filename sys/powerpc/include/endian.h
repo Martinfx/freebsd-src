@@ -27,27 +27,12 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)endian.h	8.1 (Berkeley) 6/10/93
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_ENDIAN_H_
 #define	_MACHINE_ENDIAN_H_
 
 #include <sys/_types.h>
-
-/*
- * GCC defines _BIG_ENDIAN and _LITTLE_ENDIAN equal to __BIG_ENDIAN__
- * and __LITTLE_ENDIAN__ (resp).
- */
-#ifdef _BIG_ENDIAN
-#undef _BIG_ENDIAN
-#endif
-#ifdef _LITTLE_ENDIAN
-#undef _LITTLE_ENDIAN
-#endif
-
 #include <sys/_endian.h>
 
 #endif /* !_MACHINE_ENDIAN_H_ */

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	daemon
 MAN=	daemon.8
 

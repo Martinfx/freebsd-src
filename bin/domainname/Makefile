@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=yp
 PROG=	domainname
 

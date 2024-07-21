@@ -38,15 +38,7 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)common.c	8.5 (Berkeley) 4/28/95";
-#endif /* not lint */
-#endif
-
 #include "lp.cdefs.h"		/* A cross-platform version of <sys/cdefs.h> */
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -554,8 +546,6 @@ trstat_init(struct printer *pp, const char *fname, int filenum)
 	 * save those away along with the file-number */
 	pp->jobdfnum = filenum;
 	lpd_gettime(&pp->tr_start, pp->tr_timestr, (size_t)TIMESTR_SIZE);
-
-	return;
 }
 
 void

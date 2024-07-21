@@ -2,7 +2,6 @@
  * System call switch table.
  *
  * DO NOT EDIT-- this file is automatically @generated.
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -127,11 +126,11 @@ struct sysent sysent[] = {
 	{ compat(AS(ogetkerninfo_args),getkerninfo), .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 63 = old getkerninfo */
 	{ compat(0,getpagesize), .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 64 = old getpagesize */
 	{ .sy_narg = AS(msync_args), .sy_call = (sy_call_t *)sys_msync, .sy_auevent = AUE_MSYNC, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 65 = msync */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_vfork, .sy_auevent = AUE_VFORK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 66 = vfork */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_vfork, .sy_auevent = AUE_VFORK, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 66 = vfork */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 67 = obsolete vread */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 68 = obsolete vwrite */
-	{ .sy_narg = AS(sbrk_args), .sy_call = (sy_call_t *)sys_sbrk, .sy_auevent = AUE_SBRK, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 69 = sbrk */
-	{ .sy_narg = AS(sstk_args), .sy_call = (sy_call_t *)sys_sstk, .sy_auevent = AUE_SSTK, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 70 = sstk */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 69 = obsolete sbrk */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 70 = obsolete sstk */
 	{ compat(AS(ommap_args),mmap), .sy_auevent = AUE_MMAP, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 71 = old mmap */
 	{ compat11(AS(freebsd11_vadvise_args),vadvise), .sy_auevent = AUE_O_VADVISE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 72 = freebsd11 vadvise */
 	{ .sy_narg = AS(munmap_args), .sy_call = (sy_call_t *)sys_munmap, .sy_auevent = AUE_MUNMAP, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 73 = munmap */
@@ -200,7 +199,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(mkdir_args), .sy_call = (sy_call_t *)sys_mkdir, .sy_auevent = AUE_MKDIR, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 136 = mkdir */
 	{ .sy_narg = AS(rmdir_args), .sy_call = (sy_call_t *)sys_rmdir, .sy_auevent = AUE_RMDIR, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 137 = rmdir */
 	{ .sy_narg = AS(utimes_args), .sy_call = (sy_call_t *)sys_utimes, .sy_auevent = AUE_UTIMES, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 138 = utimes */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 139 = obsolete 4.2 sigreturn */
+	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 139 = obsolete sigreturn */
 	{ .sy_narg = AS(adjtime_args), .sy_call = (sy_call_t *)sys_adjtime, .sy_auevent = AUE_ADJTIME, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 140 = adjtime */
 	{ compat(AS(ogetpeername_args),getpeername), .sy_auevent = AUE_GETPEERNAME, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 141 = old getpeername */
 	{ compat(0,gethostid), .sy_auevent = AUE_SYSCTL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 142 = old gethostid */
@@ -312,7 +311,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(ntp_gettime_args), .sy_call = (sy_call_t *)sys_ntp_gettime, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 248 = ntp_gettime */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 249 = reserved for local use */
 	{ .sy_narg = AS(minherit_args), .sy_call = (sy_call_t *)sys_minherit, .sy_auevent = AUE_MINHERIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 250 = minherit */
-	{ .sy_narg = AS(rfork_args), .sy_call = (sy_call_t *)sys_rfork, .sy_auevent = AUE_RFORK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 251 = rfork */
+	{ .sy_narg = AS(rfork_args), .sy_call = (sy_call_t *)sys_rfork, .sy_auevent = AUE_RFORK, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 251 = rfork */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },			/* 252 = obsolete openbsd_poll */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_issetugid, .sy_auevent = AUE_ISSETUGID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 253 = issetugid */
 	{ .sy_narg = AS(lchown_args), .sy_call = (sy_call_t *)sys_lchown, .sy_auevent = AUE_LCHOWN, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 254 = lchown */
@@ -644,4 +643,10 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(fspacectl_args), .sy_call = (sy_call_t *)sys_fspacectl, .sy_auevent = AUE_FSPACECTL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 580 = fspacectl */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)sys_sched_getcpu, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 581 = sched_getcpu */
 	{ .sy_narg = AS(swapoff_args), .sy_call = (sy_call_t *)sys_swapoff, .sy_auevent = AUE_SWAPOFF, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 582 = swapoff */
+	{ .sy_narg = AS(kqueuex_args), .sy_call = (sy_call_t *)sys_kqueuex, .sy_auevent = AUE_KQUEUE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 583 = kqueuex */
+	{ .sy_narg = AS(membarrier_args), .sy_call = (sy_call_t *)sys_membarrier, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 584 = membarrier */
+	{ .sy_narg = AS(timerfd_create_args), .sy_call = (sy_call_t *)sys_timerfd_create, .sy_auevent = AUE_TIMERFD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 585 = timerfd_create */
+	{ .sy_narg = AS(timerfd_gettime_args), .sy_call = (sy_call_t *)sys_timerfd_gettime, .sy_auevent = AUE_TIMERFD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 586 = timerfd_gettime */
+	{ .sy_narg = AS(timerfd_settime_args), .sy_call = (sy_call_t *)sys_timerfd_settime, .sy_auevent = AUE_TIMERFD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 587 = timerfd_settime */
+	{ .sy_narg = AS(kcmp_args), .sy_call = (sy_call_t *)sys_kcmp, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 588 = kcmp */
 };

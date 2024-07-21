@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 - 2008 Søren Schmidt <sos@FreeBSD.org>
  * Copyright (c) 2009-2012 Alexander Motin <mav@FreeBSD.org>
@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /* ATA register defines */
@@ -621,6 +619,7 @@ enum ahci_err_type {
 #define AHCI_Q_NOCCS		0x00400000
 #define AHCI_Q_NOAUX		0x00800000
 #define AHCI_Q_IOMMU_BUSWIDE	0x01000000
+#define AHCI_Q_SLOWDEV		0x02000000
 
 #define AHCI_Q_BIT_STRING	\
 	"\020"			\
@@ -648,7 +647,8 @@ enum ahci_err_type {
 	"\026MRVL_SR_DEL"	\
 	"\027NOCCS"		\
 	"\030NOAUX"		\
-	"\031IOMMU_BUSWIDE"
+	"\031IOMMU_BUSWIDE"	\
+	"\032SLOWDEV"
 
 int ahci_attach(device_t dev);
 int ahci_detach(device_t dev);
@@ -656,8 +656,7 @@ int ahci_setup_interrupt(device_t dev);
 int ahci_print_child(device_t dev, device_t child);
 struct resource *ahci_alloc_resource(device_t dev, device_t child, int type, int *rid,
     rman_res_t start, rman_res_t end, rman_res_t count, u_int flags);
-int ahci_release_resource(device_t dev, device_t child, int type, int rid,
-    struct resource *r);
+int ahci_release_resource(device_t dev, device_t child, struct resource *r);
 int ahci_setup_intr(device_t dev, device_t child, struct resource *irq, 
     int flags, driver_filter_t *filter, driver_intr_t *function, 
     void *argument, void **cookiep);

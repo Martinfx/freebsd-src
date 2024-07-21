@@ -31,8 +31,6 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _HAMMER2_DISK_H_
@@ -621,7 +619,7 @@ typedef struct hammer2_dirent_head hammer2_dirent_head_t;
  *
  * Simple check codes are not sufficient for unverified dedup.  Even with
  * a maximally-sized check code unverified dedup should only be used in
- * in subdirectory trees where you do not need 100% data integrity.
+ * subdirectory trees where you do not need 100% data integrity.
  *
  * Unverified dedup is deduping based on meta-data only without verifying
  * that the data blocks are actually identical.  Verified dedup guarantees

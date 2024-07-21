@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/usr.bin/sed/regress.multitest.out

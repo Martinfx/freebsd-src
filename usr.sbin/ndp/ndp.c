@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: ndp.c,v 1.104 2003/06/27 07:48:39 itojun Exp $	*/
 
 /*-
@@ -65,10 +64,7 @@
 
 /*
  * Based on:
- * "@(#) Copyright (c) 1984, 1993\n\
  *	The Regents of the University of California.  All rights reserved.\n";
- *
- * "@(#)arp.c	8.2 (Berkeley) 1/2/94";
  */
 
 /*
@@ -98,19 +94,24 @@
 
 #include <arpa/inet.h>
 
+#include <assert.h>
 #include <ctype.h>
 #include <netdb.h>
 #include <errno.h>
 #include <nlist.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <paths.h>
 #include <err.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <libxo/xo.h>
-#include "gmt2local.h"
+#include <time.h>
+
+#include "ndp.h"
 
 #define	NEXTADDR(w, s)					\
 	if (rtm->rtm_addrs & (w)) {			\
@@ -119,8 +120,6 @@
 	}
 
 static pid_t pid;
-static int nflag;
-static int tflag;
 static int32_t thiszone;	/* time difference with gmt */
 static int s = -1;
 static int repeat = 0;
@@ -129,16 +128,13 @@ static char host_buf[NI_MAXHOST];	/* getnameinfo() */
 static char ifix_buf[IFNAMSIZ];		/* if_indextoname() */
 
 static int file(char *);
-static void getsocket(void);
 static int set(int, char **);
 static void get(char *);
 static int delete(char *);
-static void dump(struct sockaddr_in6 *, int);
+static int dump(struct sockaddr_in6 *, int);
 static struct in6_nbrinfo *getnbrinfo(struct in6_addr *, int, int);
-static char *ether_str(struct sockaddr_dl *);
 static int ndp_ether_aton(char *, u_char *);
-static void usage(void);
-static int rtmsg(int);
+static void usage(void) __dead2;
 static void ifinfo(char *, int, char **);
 static void rtrlist(void);
 static void plist(void);
@@ -149,8 +145,11 @@ static void harmonize_rtr(void);
 static void getdefif(void);
 static void setdefif(char *);
 #endif
-static char *sec2str(time_t);
-static void ts_print(const struct timeval *);
+
+#ifdef WITHOUT_NETLINK
+static void getsocket(void);
+static int rtmsg(int);
+#endif
 
 static const char *rtpref_str[] = {
 	"medium",		/* 00 */
@@ -159,16 +158,50 @@ static const char *rtpref_str[] = {
 	"low"			/* 11 */
 };
 
+struct ndp_opts opts = {};
+
 #define NDP_XO_VERSION	"1"
+
+bool
+valid_type(int if_type)
+{
+	switch (if_type) {
+	case IFT_ETHER:
+	case IFT_FDDI:
+	case IFT_ISO88023:
+	case IFT_ISO88024:
+	case IFT_ISO88025:
+	case IFT_L2VLAN:
+	case IFT_BRIDGE:
+		return (true);
+		break;
+	}
+	return (false);
+}
+
+static int32_t
+utc_offset(void)
+{
+	time_t t;
+	struct tm *tm;
+
+	t = time(NULL);
+	tm = localtime(&t);
+
+	assert(tm->tm_gmtoff > INT32_MIN && tm->tm_gmtoff < INT32_MAX);
+
+	return (tm->tm_gmtoff);
+}
 
 int
 main(int argc, char **argv)
 {
 	int ch, mode = 0;
 	char *arg = NULL;
+	int ret = 0;
 
 	pid = getpid();
-	thiszone = gmt2local(0);
+	thiszone = utc_offset();
 
 	argc = xo_parse_args(argc, argv);
 	if (argc < 0)
@@ -206,10 +239,10 @@ main(int argc, char **argv)
 			arg = optarg;
 			break;
 		case 'n':
-			nflag = 1;
+			opts.nflag = true;
 			break;
 		case 't':
-			tflag = 1;
+			opts.tflag = true;
 			break;
 		case 'A':
 			if (mode) {
@@ -245,7 +278,7 @@ main(int argc, char **argv)
 			/*NOTREACHED*/
 		}
 		xo_open_list("neighbor-cache");
-		delete(arg);
+		ret = delete(arg);
 		xo_close_list("neighbor-cache");
 		break;
 	case 'I':
@@ -318,7 +351,8 @@ main(int argc, char **argv)
 	}
 	xo_close_container("ndp");
 	xo_finish();
-	exit(0);
+
+	return (ret);
 }
 
 /*
@@ -360,7 +394,7 @@ file(char *name)
 }
 
 static void
-getsocket()
+getsocket(void)
 {
 	if (s < 0) {
 		s = socket(PF_ROUTE, SOCK_RAW, 0);
@@ -385,12 +419,12 @@ static struct sockaddr_dl blank_sdl = {
 	.sdl_family = AF_LINK
 };
 static struct sockaddr_dl sdl_m;
-static time_t expire_time;
-static int flags, found_entry;
+#ifdef WITHOUT_NETLINK
 static struct {
 	struct	rt_msghdr m_rtm;
 	char	m_space[512];
 } m_rtmsg;
+#endif
 
 /*
  * Set an individual neighbor cache entry
@@ -398,44 +432,44 @@ static struct {
 static int
 set(int argc, char **argv)
 {
-	register struct sockaddr_in6 *sin = &sin_m;
-	register struct sockaddr_dl *sdl;
-	register struct rt_msghdr *rtm = &(m_rtmsg.m_rtm);
-	struct addrinfo hints, *res;
+	struct sockaddr_in6 *sin = &sin_m;
 	int gai_error;
 	u_char *ea;
 	char *host = argv[0], *eaddr = argv[1];
 
-	getsocket();
 	argc -= 2;
 	argv += 2;
 	sdl_m = blank_sdl;
 	sin_m = blank_sin;
 
-	bzero(&hints, sizeof(hints));
-	hints.ai_family = AF_INET6;
-	gai_error = getaddrinfo(host, NULL, &hints, &res);
+	gai_error = getaddr(host, sin);
 	if (gai_error) {
 		xo_warnx("%s: %s", host, gai_strerror(gai_error));
 		return 1;
 	}
-	sin->sin6_addr = ((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
-	sin->sin6_scope_id =
-	    ((struct sockaddr_in6 *)res->ai_addr)->sin6_scope_id;
+
 	ea = (u_char *)LLADDR(&sdl_m);
 	if (ndp_ether_aton(eaddr, ea) == 0)
 		sdl_m.sdl_alen = 6;
-	flags = expire_time = 0;
 	while (argc-- > 0) {
 		if (strncmp(argv[0], "temp", 4) == 0) {
 			struct timeval now;
 
 			gettimeofday(&now, 0);
-			expire_time = now.tv_sec + 20 * 60;
+			opts.expire_time = now.tv_sec + 20 * 60;
 		} else if (strncmp(argv[0], "proxy", 5) == 0)
-			flags |= RTF_ANNOUNCE;
+			opts.flags |= RTF_ANNOUNCE;
 		argv++;
 	}
+
+#ifndef WITHOUT_NETLINK
+	return (set_nl(0, sin, &sdl_m, host));
+#else
+	struct rt_msghdr *rtm = &(m_rtmsg.m_rtm);
+	struct sockaddr_dl *sdl;
+
+	getsocket();
+
 	if (rtmsg(RTM_GET) < 0) {
 		xo_errx(1, "RTM_GET(%s) failed", host);
 		/* NOTREACHED */
@@ -445,12 +479,8 @@ set(int argc, char **argv)
 	if (IN6_ARE_ADDR_EQUAL(&sin->sin6_addr, &sin_m.sin6_addr)) {
 		if (sdl->sdl_family == AF_LINK &&
 		    !(rtm->rtm_flags & RTF_GATEWAY)) {
-			switch (sdl->sdl_type) {
-			case IFT_ETHER: case IFT_FDDI: case IFT_ISO88023:
-			case IFT_ISO88024: case IFT_ISO88025:
-			case IFT_L2VLAN: case IFT_BRIDGE:
+			if (valid_type(sdl->sdl_type))
 				goto overwrite;
-			}
 		}
 		xo_warnx("cannot configure a new entry");
 		return 1;
@@ -464,6 +494,24 @@ overwrite:
 	sdl_m.sdl_type = sdl->sdl_type;
 	sdl_m.sdl_index = sdl->sdl_index;
 	return (rtmsg(RTM_ADD));
+#endif
+}
+
+int
+getaddr(char *host, struct sockaddr_in6 *sin6)
+{
+	struct addrinfo hints = { .ai_family = AF_INET6 };
+	struct addrinfo *res;
+
+	int gai_error = getaddrinfo(host, NULL, &hints, &res);
+	if (gai_error != 0)
+		return (gai_error);
+	sin6->sin6_family = AF_INET6;
+	sin6->sin6_len = sizeof(*sin6);
+	sin6->sin6_addr = ((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+	sin6->sin6_scope_id =
+	    ((struct sockaddr_in6 *)res->ai_addr)->sin6_scope_id;
+	return (0);
 }
 
 /*
@@ -473,55 +521,45 @@ static void
 get(char *host)
 {
 	struct sockaddr_in6 *sin = &sin_m;
-	struct addrinfo hints, *res;
 	int gai_error;
 
 	sin_m = blank_sin;
-	bzero(&hints, sizeof(hints));
-	hints.ai_family = AF_INET6;
-	gai_error = getaddrinfo(host, NULL, &hints, &res);
+
+	gai_error = getaddr(host, sin);
 	if (gai_error) {
 		xo_warnx("%s: %s", host, gai_strerror(gai_error));
 		return;
 	}
-	sin->sin6_addr = ((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
-	sin->sin6_scope_id =
-	    ((struct sockaddr_in6 *)res->ai_addr)->sin6_scope_id;
-	dump(sin, 0);
-	if (found_entry == 0) {
+	if (dump(sin, 0) == 0) {
 		getnameinfo((struct sockaddr *)sin, sin->sin6_len, host_buf,
 		    sizeof(host_buf), NULL ,0,
-		    (nflag ? NI_NUMERICHOST : 0));
+		    (opts.nflag ? NI_NUMERICHOST : 0));
 		xo_errx(1, "%s (%s) -- no entry", host, host_buf);
 	}
 }
 
+#ifdef WITHOUT_NETLINK
 /*
  * Delete a neighbor cache entry
  */
 static int
-delete(char *host)
+delete_rtsock(char *host)
 {
 	struct sockaddr_in6 *sin = &sin_m;
 	register struct rt_msghdr *rtm = &m_rtmsg.m_rtm;
 	register char *cp = m_rtmsg.m_space;
 	struct sockaddr_dl *sdl;
-	struct addrinfo hints, *res;
 	int gai_error;
 
 	getsocket();
 	sin_m = blank_sin;
 
-	bzero(&hints, sizeof(hints));
-	hints.ai_family = AF_INET6;
-	gai_error = getaddrinfo(host, NULL, &hints, &res);
+	gai_error = getaddr(host, sin);
 	if (gai_error) {
 		xo_warnx("%s: %s", host, gai_strerror(gai_error));
 		return 1;
 	}
-	sin->sin6_addr = ((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
-	sin->sin6_scope_id =
-	    ((struct sockaddr_in6 *)res->ai_addr)->sin6_scope_id;
+
 	if (rtmsg(RTM_GET) < 0) {
 		xo_errx(1, "RTM_GET(%s) failed", host);
 		/* NOTREACHED */
@@ -552,7 +590,7 @@ delete:
 		getnameinfo((struct sockaddr *)sin,
 		    sin->sin6_len, host_buf,
 		    sizeof(host_buf), NULL, 0,
-		    (nflag ? NI_NUMERICHOST : 0));
+		    (opts.nflag ? NI_NUMERICHOST : 0));
 		xo_open_instance("neighbor-cache");
 
 		char *ifname = if_indextoname(sdl->sdl_index, ifix_buf);
@@ -571,15 +609,11 @@ delete:
 	return 0;
 }
 
-#define W_ADDR	36
-#define W_LL	17
-#define W_IF	6
-
 /*
  * Dump the entire neighbor cache
  */
-static void
-dump(struct sockaddr_in6 *addr, int cflag)
+static int
+dump_rtsock(struct sockaddr_in6 *addr, int cflag)
 {
 	int mib[6];
 	size_t needed;
@@ -596,7 +630,7 @@ dump(struct sockaddr_in6 *addr, int cflag)
 	char *ifname;
 
 	/* Print header */
-	if (!tflag && !cflag) {
+	if (!opts.tflag && !cflag) {
 		char xobuf[200];
 		snprintf(xobuf, sizeof(xobuf),
 		    "{T:/%%-%d.%ds} {T:/%%-%d.%ds} {T:/%%%d.%ds} {T:/%%-9.9s} {T:%%1s} {T:%%5s}\n",
@@ -618,6 +652,12 @@ again:;
 	if (sysctl(mib, 6, NULL, &needed, NULL, 0) < 0)
 		xo_err(1, "sysctl(PF_ROUTE estimate)");
 	if (needed > 0) {
+		/*
+		 * Add ~2% additional space in case some records
+		 * will appear between sysctl() calls.
+		 * Round it up so it can fit 4 additional messages at least.
+		 */
+		needed += ((needed >> 6) | (sizeof(m_rtmsg) * 4));
 		if ((buf = malloc(needed)) == NULL)
 			xo_err(1, "malloc");
 		if (sysctl(mib, 6, buf, &needed, NULL, 0) < 0)
@@ -626,6 +666,7 @@ again:;
 	} else
 		buf = lim = NULL;
 
+	int count = 0;
 	for (next = buf; next && next < lim; next += rtm->rtm_msglen) {
 		int isrouter = 0, prbs = 0;
 
@@ -658,9 +699,9 @@ again:;
 			    &sin->sin6_addr) == 0 ||
 			    addr->sin6_scope_id != sin->sin6_scope_id)
 				continue;
-			found_entry = 1;
 		} else if (IN6_IS_ADDR_MULTICAST(&sin->sin6_addr))
 			continue;
+		count++;
 		if (IN6_IS_ADDR_LINKLOCAL(&sin->sin6_addr) ||
 		    IN6_IS_ADDR_MC_LINKLOCAL(&sin->sin6_addr)) {
 			/* XXX: should scope id be filled in the kernel? */
@@ -668,7 +709,7 @@ again:;
 				sin->sin6_scope_id = sdl->sdl_index;
 		}
 		getnameinfo((struct sockaddr *)sin, sin->sin6_len, host_buf,
-		    sizeof(host_buf), NULL, 0, (nflag ? NI_NUMERICHOST : 0));
+		    sizeof(host_buf), NULL, 0, (opts.nflag ? NI_NUMERICHOST : 0));
 		if (cflag) {
 #ifdef RTF_WASCLONED
 			if (rtm->rtm_flags & RTF_WASCLONED)
@@ -684,7 +725,7 @@ again:;
 			continue;
 		}
 		gettimeofday(&now, 0);
-		if (tflag)
+		if (opts.tflag)
 			ts_print(&now);
 
 		addrwidth = strlen(host_buf);
@@ -795,6 +836,30 @@ again:;
 	}
 
 	xo_close_list("neighbor-cache");
+
+	return (count);
+}
+#endif
+
+
+static int
+delete(char *host)
+{
+#ifndef WITHOUT_NETLINK
+	return (delete_nl(0, host, true)); /* do warn */
+#else
+	return (delete_rtsock(host));
+#endif
+}
+
+static int
+dump(struct sockaddr_in6 *addr, int cflag)
+{
+#ifndef WITHOUT_NETLINK
+	return (print_entries_nl(0, addr, cflag));
+#else
+	return (dump_rtsock(addr, cflag));
+#endif
 }
 
 static struct in6_nbrinfo *
@@ -820,7 +885,7 @@ getnbrinfo(struct in6_addr *addr, int ifindex, int warning)
 	return(&nbi);
 }
 
-static char *
+char *
 ether_str(struct sockaddr_dl *sdl)
 {
 	static char hbuf[NI_MAXHOST];
@@ -854,7 +919,7 @@ ndp_ether_aton(char *a, u_char *n)
 }
 
 static void
-usage()
+usage(void)
 {
 	printf("usage: ndp [-nt] hostname\n");
 	printf("       ndp [-nt] -a | -c | -p | -r | -H | -P | -R\n");
@@ -869,6 +934,7 @@ usage()
 	exit(1);
 }
 
+#ifdef WITHOUT_NETLINK
 static int
 rtmsg(int cmd)
 {
@@ -882,7 +948,7 @@ rtmsg(int cmd)
 	if (cmd == RTM_DELETE)
 		goto doit;
 	bzero((char *)&m_rtmsg, sizeof(m_rtmsg));
-	rtm->rtm_flags = flags;
+	rtm->rtm_flags = opts.flags;
 	rtm->rtm_version = RTM_VERSION;
 
 	switch (cmd) {
@@ -890,8 +956,8 @@ rtmsg(int cmd)
 		xo_errx(1, "internal wrong cmd");
 	case RTM_ADD:
 		rtm->rtm_addrs |= RTA_GATEWAY;
-		if (expire_time) {
-			rtm->rtm_rmx.rmx_expire = expire_time;
+		if (opts.expire_time) {
+			rtm->rtm_rmx.rmx_expire = opts.expire_time;
 			rtm->rtm_inits = RTV_EXPIRE;
 		}
 		rtm->rtm_flags |= (RTF_HOST | RTF_STATIC | RTF_LLDATA);
@@ -922,6 +988,7 @@ doit:
 		xo_warn("read from routing socket");
 	return (0);
 }
+#endif
 
 static void
 ifinfo(char *ifname, int argc, char **argv)
@@ -1096,7 +1163,7 @@ ifinfo(char *ifname, int argc, char **argv)
 #endif
 
 static void
-rtrlist()
+rtrlist(void)
 {
 	int mib[] = { CTL_NET, PF_INET6, IPPROTO_ICMPV6, ICMPV6CTL_ND6_DRLIST };
 	char *buf;
@@ -1104,7 +1171,7 @@ rtrlist()
 	size_t l;
 	struct timeval now;
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), NULL, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1115,7 +1182,7 @@ rtrlist()
 		xo_err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), buf, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1129,9 +1196,9 @@ rtrlist()
 
 		if (getnameinfo((struct sockaddr *)&p->rtaddr,
 		    p->rtaddr.sin6_len, host_buf, sizeof(host_buf), NULL, 0,
-		    (nflag ? NI_NUMERICHOST : 0)) != 0)
+		    (opts.nflag ? NI_NUMERICHOST : 0)) != 0)
 			strlcpy(host_buf, "?", sizeof(host_buf));
-		if (nflag)
+		if (opts.nflag)
 			paddr = host_buf;
 		else {
 			inet_ntop(AF_INET6, &p->rtaddr.sin6_addr, abuf, sizeof(abuf));
@@ -1178,7 +1245,7 @@ rtrlist()
 }
 
 static void
-plist()
+plist(void)
 {
 	int mib[] = { CTL_NET, PF_INET6, IPPROTO_ICMPV6, ICMPV6CTL_ND6_PRLIST };
 	char *buf;
@@ -1187,10 +1254,10 @@ plist()
 	size_t l;
 	struct timeval now;
 	const int niflags = NI_NUMERICHOST;
-	int ninflags = nflag ? NI_NUMERICHOST : 0;
+	int ninflags = opts.nflag ? NI_NUMERICHOST : 0;
 	char namebuf[NI_MAXHOST];
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), NULL, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1199,7 +1266,7 @@ plist()
 		xo_err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), buf, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1267,7 +1334,7 @@ plist()
 		if (p->expire == 0)
 			xo_emit(", expire=Never{en:permanent/true}");
 		else if (p->expire >= now.tv_sec)
-			xo_emit(", expire=%s{e:expires_sec/%d}",
+			xo_emit(", expire={:expires/%s}{e:expires_sec/%d}",
 			    sec2str(expire_in), expire_in);
 		else
 			xo_emit(", expired{e:expires_sec/%d}", expire_in);
@@ -1330,7 +1397,7 @@ plist()
 }
 
 static void
-pfx_flush()
+pfx_flush(void)
 {
 	char dummyif[IFNAMSIZ+8];
 	int sock;
@@ -1345,7 +1412,7 @@ pfx_flush()
 }
 
 static void
-rtr_flush()
+rtr_flush(void)
 {
 	char dummyif[IFNAMSIZ+8];
 	int sock;
@@ -1360,7 +1427,7 @@ rtr_flush()
 }
 
 static void
-harmonize_rtr()
+harmonize_rtr(void)
 {
 	char dummyif[IFNAMSIZ+8];
 	int sock;
@@ -1402,7 +1469,7 @@ setdefif(char *ifname)
 }
 
 static void
-getdefif()
+getdefif(void)
 {
 	struct in6_ndifreq ndifreq;
 	char ifname[IFNAMSIZ+8];
@@ -1430,7 +1497,7 @@ getdefif()
 }
 #endif /* SIOCSDEFIFACE_IN6 */
 
-static char *
+char *
 sec2str(time_t total)
 {
 	static char result[256];
@@ -1475,14 +1542,14 @@ sec2str(time_t total)
  * Print the timestamp
  * from tcpdump/util.c
  */
-static void
+void
 ts_print(const struct timeval *tvp)
 {
 	int sec;
 
 	/* Default */
 	sec = (tvp->tv_sec + thiszone) % 86400;
-	xo_emit("{:tv_sec/%lld}{:tv_usec/%lld}%02d:%02d:%02d.%06u ",
+	xo_emit("{e:tv_sec/%lld}{e:tv_usec/%lld}{d:/%02d:%02d:%02d.%06u} ",
 	    tvp->tv_sec, tvp->tv_usec,
 	    sec / 3600, (sec % 3600) / 60, sec % 60, (u_int32_t)tvp->tv_usec);
 }

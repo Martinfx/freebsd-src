@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTSDIR=	${TESTSBASE}/sys/file
 
 BINDIR=		${TESTSDIR}

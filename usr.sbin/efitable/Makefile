@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	efi-tools
 
 PROG=	efitable

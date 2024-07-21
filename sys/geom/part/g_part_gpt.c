@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002, 2005-2007, 2011 Marcel Moolenaar
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bio.h>
@@ -85,6 +82,7 @@ enum gpt_state {
 	GPT_STATE_MISSING,	/* No signature found. */
 	GPT_STATE_CORRUPT,	/* Checksum mismatch. */
 	GPT_STATE_INVALID,	/* Nonconformant/invalid. */
+	GPT_STATE_UNSUPPORTED,  /* Not supported. */
 	GPT_STATE_OK		/* Perfectly fine. */
 };
 
@@ -104,7 +102,8 @@ struct g_part_gpt_entry {
 
 static void g_gpt_printf_utf16(struct sbuf *, uint16_t *, size_t);
 static void g_gpt_utf8_to_utf16(const uint8_t *, uint16_t *, size_t);
-static void g_gpt_set_defaults(struct g_part_table *, struct g_provider *);
+static void g_gpt_set_defaults(struct g_part_table *, struct g_provider *,
+    struct g_part_parms *);
 
 static int g_part_gpt_add(struct g_part_table *, struct g_part_entry *,
     struct g_part_parms *);
@@ -147,6 +146,8 @@ static kobj_method_t g_part_gpt_methods[] = {
 	KOBJMETHOD(g_part_write,	g_part_gpt_write),
 	{ 0, 0 }
 };
+
+#define MAXENTSIZE 1024
 
 static struct g_part_scheme g_part_gpt_scheme = {
 	"GPT",
@@ -512,7 +513,8 @@ gpt_read_hdr(struct g_part_gpt_table *table, struct g_consumer *cp,
 	    hdr->hdr_lba_table <= hdr->hdr_lba_end)
 		goto fail;
 	lba = hdr->hdr_lba_table +
-	    howmany(hdr->hdr_entries * hdr->hdr_entsz, pp->sectorsize) - 1;
+	    howmany((uint64_t)hdr->hdr_entries * hdr->hdr_entsz,
+	        pp->sectorsize) - 1;
 	if (lba >= last)
 		goto fail;
 	if (lba >= hdr->hdr_lba_start && lba <= hdr->hdr_lba_end)
@@ -530,8 +532,7 @@ gpt_read_hdr(struct g_part_gpt_table *table, struct g_consumer *cp,
 	return (hdr);
 
  fail:
-	if (hdr != NULL)
-		g_free(hdr);
+	g_free(hdr);
 	g_free(buf);
 	return (NULL);
 }
@@ -548,6 +549,11 @@ gpt_read_tbl(struct g_part_gpt_table *table, struct g_consumer *cp,
 
 	if (hdr == NULL)
 		return (NULL);
+	if (hdr->hdr_entries > g_part_gpt_scheme.gps_maxent ||
+	    hdr->hdr_entsz > MAXENTSIZE) {
+		table->state[elt] = GPT_STATE_UNSUPPORTED;
+		return (NULL);
+	}
 
 	pp = cp->provider;
 	table->lba[elt] = hdr->hdr_lba_table;
@@ -711,7 +717,7 @@ g_part_gpt_create(struct g_part_table *basetable, struct g_part_parms *gpp)
 	table->hdr->hdr_entries = basetable->gpt_entries;
 	table->hdr->hdr_entsz = sizeof(struct gpt_ent);
 
-	g_gpt_set_defaults(basetable, pp);
+	g_gpt_set_defaults(basetable, pp, gpp);
 	return (0);
 }
 
@@ -961,18 +967,29 @@ g_part_gpt_read(struct g_part_table *basetable, struct g_consumer *cp)
 	/* Fail if we haven't got any good tables at all. */
 	if (table->state[GPT_ELT_PRITBL] != GPT_STATE_OK &&
 	    table->state[GPT_ELT_SECTBL] != GPT_STATE_OK) {
-		printf("GEOM: %s: corrupt or invalid GPT detected.\n",
-		    pp->name);
-		printf("GEOM: %s: GPT rejected -- may not be recoverable.\n",
-		    pp->name);
-		if (prihdr != NULL)
-			g_free(prihdr);
-		if (pritbl != NULL)
-			g_free(pritbl);
-		if (sechdr != NULL)
-			g_free(sechdr);
-		if (sectbl != NULL)
-			g_free(sectbl);
+		if (table->state[GPT_ELT_PRITBL] == GPT_STATE_UNSUPPORTED &&
+		    table->state[GPT_ELT_SECTBL] == GPT_STATE_UNSUPPORTED &&
+		    gpt_matched_hdrs(prihdr, sechdr)) {
+			printf("GEOM: %s: unsupported GPT detected.\n",
+			    pp->name);
+			printf(
+		    "GEOM: %s: number of GPT entries: %u, entry size: %uB.\n",
+			    pp->name, prihdr->hdr_entries, prihdr->hdr_entsz);
+			printf(
+    "GEOM: %s: maximum supported number of GPT entries: %u, entry size: %uB.\n",
+			    pp->name, g_part_gpt_scheme.gps_maxent, MAXENTSIZE);
+			printf("GEOM: %s: GPT rejected.\n", pp->name);
+		} else {
+			printf("GEOM: %s: corrupt or invalid GPT detected.\n",
+			    pp->name);
+			printf(
+		    "GEOM: %s: GPT rejected -- may not be recoverable.\n",
+			    pp->name);
+		}
+		g_free(prihdr);
+		g_free(pritbl);
+		g_free(sechdr);
+		g_free(sectbl);
 		return (EINVAL);
 	}
 
@@ -1004,11 +1021,9 @@ g_part_gpt_read(struct g_part_table *basetable, struct g_consumer *cp)
 		    "strongly advised.\n", pp->name);
 		table->hdr = sechdr;
 		basetable->gpt_corrupt = 1;
-		if (prihdr != NULL)
-			g_free(prihdr);
+		g_free(prihdr);
 		tbl = sectbl;
-		if (pritbl != NULL)
-			g_free(pritbl);
+		g_free(pritbl);
 	} else {
 		if (table->state[GPT_ELT_SECTBL] != GPT_STATE_OK) {
 			printf("GEOM: %s: the secondary GPT table is corrupt "
@@ -1022,11 +1037,9 @@ g_part_gpt_read(struct g_part_table *basetable, struct g_consumer *cp)
 			basetable->gpt_corrupt = 1;
 		}
 		table->hdr = prihdr;
-		if (sechdr != NULL)
-			g_free(sechdr);
+		g_free(sechdr);
 		tbl = pritbl;
-		if (sectbl != NULL)
-			g_free(sectbl);
+		g_free(sectbl);
 	}
 
 	basetable->gpt_first = table->hdr->hdr_lba_start;
@@ -1070,7 +1083,7 @@ g_part_gpt_recover(struct g_part_table *basetable)
 	table = (struct g_part_gpt_table *)basetable;
 	pp = LIST_FIRST(&basetable->gpt_gp->consumer)->provider;
 	gpt_create_pmbr(table, pp);
-	g_gpt_set_defaults(basetable, pp);
+	g_gpt_set_defaults(basetable, pp, NULL);
 	basetable->gpt_corrupt = 0;
 	return (0);
 }
@@ -1287,7 +1300,8 @@ g_part_gpt_write(struct g_part_table *basetable, struct g_consumer *cp)
 }
 
 static void
-g_gpt_set_defaults(struct g_part_table *basetable, struct g_provider *pp)
+g_gpt_set_defaults(struct g_part_table *basetable, struct g_provider *pp,
+	struct g_part_parms *gpp)
 {
 	struct g_part_entry *baseentry;
 	struct g_part_gpt_entry *entry;
@@ -1321,14 +1335,29 @@ g_gpt_set_defaults(struct g_part_table *basetable, struct g_provider *pp)
 		if (entry->ent.ent_lba_end > max)
 			max = entry->ent.ent_lba_end;
 	}
-	spb = 4096 / pp->sectorsize;
-	if (spb > 1) {
-		lba = start + ((start % spb) ? spb - start % spb : 0);
-		if (lba <= min)
-			start = lba;
-		lba = end - (end + 1) % spb;
-		if (max <= lba)
-			end = lba;
+	/*
+	 * Don't force alignment of any kind whatsoever on resize, restore or
+	 * recover. resize doesn't go through this path, recover has a NULL gpp
+	 * and restore has flags == restore (maybe with an appended 'C' to
+	 * commit the operation). For these operations, we have to trust the
+	 * user knows what they are doing.
+	 *
+	 * Otherwise it some flavor of creation of a new partition, so we align
+	 * to a 4k offset on the drive, to make 512e/4kn drives more performant
+	 * by default.
+	 */
+	if (gpp == NULL ||
+	    (gpp->gpp_parms & G_PART_PARM_FLAGS) == 0 ||
+	    strstr(gpp->gpp_flags, "restore") == NULL) {
+		spb = 4096 / pp->sectorsize;
+		if (spb > 1) {
+			lba = start + ((start % spb) ? spb - start % spb : 0);
+			if (lba <= min)
+				start = lba;
+			lba = end - (end + 1) % spb;
+			if (max <= lba)
+				end = lba;
+		}
 	}
 	table->hdr->hdr_lba_start = start;
 	table->hdr->hdr_lba_end = end;

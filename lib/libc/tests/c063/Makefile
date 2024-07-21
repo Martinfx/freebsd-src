@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 NETBSD_ATF_TESTS_C=	faccessat_test
 NETBSD_ATF_TESTS_C+=	fchmodat_test
 NETBSD_ATF_TESTS_C+=	fchownat_test

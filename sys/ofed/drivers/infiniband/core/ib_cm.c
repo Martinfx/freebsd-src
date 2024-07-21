@@ -36,8 +36,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
 #include <linux/device.h>
@@ -503,7 +501,7 @@ static int cm_init_av_by_path(struct ib_sa_path_rec *path, struct cm_av *av,
 	unsigned long flags;
 	int ret;
 	u8 p;
-	struct ifnet *ndev = ib_get_ndev_from_path(path);
+	if_t ndev = ib_get_ndev_from_path(path);
 
 	read_lock_irqsave(&cm.device_lock, flags);
 	list_for_each_entry(cm_dev, &cm.device_list, list) {
@@ -1819,7 +1817,7 @@ static int cm_req_handler(struct cm_work *work)
 				&gid, &gid_attr);
 	if (!ret) {
 		if (gid_attr.ndev) {
-			work->path[0].ifindex = gid_attr.ndev->if_index;
+			work->path[0].ifindex = if_getindex(gid_attr.ndev);
 			work->path[0].net = dev_net(gid_attr.ndev);
 			dev_put(gid_attr.ndev);
 		}
@@ -1833,7 +1831,7 @@ static int cm_req_handler(struct cm_work *work)
 					    &work->path[0].sgid,
 					    &gid_attr);
 		if (!err && gid_attr.ndev) {
-			work->path[0].ifindex = gid_attr.ndev->if_index;
+			work->path[0].ifindex = if_getindex(gid_attr.ndev);
 			work->path[0].net = dev_net(gid_attr.ndev);
 			dev_put(gid_attr.ndev);
 		}
@@ -4059,7 +4057,7 @@ static void cm_add_one(struct ib_device *ib_device)
 	struct ib_port_modify port_modify = {
 		.set_port_cap_mask = IB_PORT_CM_SUP
 	};
-	unsigned long flags;
+	unsigned long flags __writeonly;
 	int ret;
 	int count = 0;
 	u8 i;
@@ -4152,7 +4150,7 @@ static void cm_remove_one(struct ib_device *ib_device, void *client_data)
 	struct ib_port_modify port_modify = {
 		.clr_port_cap_mask = IB_PORT_CM_SUP
 	};
-	unsigned long flags;
+	unsigned long flags __writeonly;
 	int i;
 
 	if (!cm_dev)

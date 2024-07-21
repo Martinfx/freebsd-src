@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: bthidd
@@ -50,5 +49,8 @@ if evdev_enabled; then
 	command_args="$command_args -u"
 fi
 required_files="${config}"
+
+# doesn't make sense to run in a svcj: nojail keyword
+bthidd_svcj="NO"
 
 run_rc_command "$1"

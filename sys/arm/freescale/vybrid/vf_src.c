@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Ruslan Bukin <br@bsdpad.com>
  * All rights reserved.
@@ -30,9 +30,6 @@
  * Vybrid Family System Reset Controller (SRC)
  * Chapter 18, Vybrid Reference Manual, Rev. 5, 07/2013
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

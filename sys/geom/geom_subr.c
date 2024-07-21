@@ -36,8 +36,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 
 #include <sys/param.h>
@@ -46,7 +44,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/bio.h>
-#include <sys/sysctl.h>
 #include <sys/proc.h>
 #include <sys/kthread.h>
 #include <sys/lock.h>
@@ -477,7 +474,7 @@ g_wither_geom_close(struct g_geom *gp, int error)
 }
 
 /*
- * This function is called (repeatedly) until we cant wash away more
+ * This function is called (repeatedly) until we can't wash away more
  * withered bits at present.
  */
 void

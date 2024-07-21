@@ -28,13 +28,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)raw_ip.c	8.7 (Berkeley) 5/15/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
@@ -97,7 +93,6 @@ VNET_DEFINE(struct inpcbinfo, ripcbinfo);
  * The data hooks are not used here but it is convenient
  * to keep them all in one place.
  */
-VNET_DEFINE(ip_fw_chk_ptr_t, ip_fw_chk_ptr) = NULL;
 VNET_DEFINE(ip_fw_ctl_ptr_t, ip_fw_ctl_ptr) = NULL;
 
 int	(*ip_dn_ctl_ptr)(struct sockopt *);
@@ -167,8 +162,8 @@ rip_inshash(struct inpcb *inp)
 		    inp->inp_faddr.s_addr, pcbinfo->ipi_hashmask);
 	} else
 		hash = 0;
-	pcbhash = &pcbinfo->ipi_hashbase[hash];
-	CK_LIST_INSERT_HEAD(pcbhash, inp, inp_hash);
+	pcbhash = &pcbinfo->ipi_hash_exact[hash];
+	CK_LIST_INSERT_HEAD(pcbhash, inp, inp_hash_exact);
 }
 
 static void
@@ -178,11 +173,11 @@ rip_delhash(struct inpcb *inp)
 	INP_HASH_WLOCK_ASSERT(inp->inp_pcbinfo);
 	INP_WLOCK_ASSERT(inp);
 
-	CK_LIST_REMOVE(inp, inp_hash);
+	CK_LIST_REMOVE(inp, inp_hash_exact);
 }
 #endif /* INET */
 
-INPCBSTORAGE_DEFINE(ripcbstor, "rawinp", "ripcb", "rip", "riphash");
+INPCBSTORAGE_DEFINE(ripcbstor, inpcb, "rawinp", "ripcb", "rip", "riphash");
 
 static void
 rip_init(void *arg __unused)
@@ -693,6 +688,8 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = priv_check(curthread, PRIV_NETINET_MROUTE);
 			if (error != 0)
 				return (error);
+			if (inp->inp_ip_p != IPPROTO_IGMP)
+				return (EOPNOTSUPP);
 			error = ip_mrouter_get ? ip_mrouter_get(so, sopt) :
 				EOPNOTSUPP;
 			break;
@@ -747,6 +744,8 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = priv_check(curthread, PRIV_NETINET_MROUTE);
 			if (error != 0)
 				return (error);
+			if (inp->inp_ip_p != IPPROTO_RSVP)
+				return (EOPNOTSUPP);
 			error = ip_rsvp_init(so);
 			break;
 
@@ -762,6 +761,8 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = priv_check(curthread, PRIV_NETINET_MROUTE);
 			if (error != 0)
 				return (error);
+			if (inp->inp_ip_p != IPPROTO_RSVP)
+				return (EOPNOTSUPP);
 			error = ip_rsvp_vif ?
 				ip_rsvp_vif(so, sopt) : EINVAL;
 			break;
@@ -781,6 +782,8 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 			error = priv_check(curthread, PRIV_NETINET_MROUTE);
 			if (error != 0)
 				return (error);
+			if (inp->inp_ip_p != IPPROTO_IGMP)
+				return (EOPNOTSUPP);
 			error = ip_mrouter_set ? ip_mrouter_set(so, sopt) :
 					EOPNOTSUPP;
 			break;
@@ -796,17 +799,12 @@ rip_ctloutput(struct socket *so, struct sockopt *sopt)
 }
 
 void
-rip_ctlinput(int cmd, struct sockaddr *sa, void *vip)
+rip_ctlinput(struct icmp *icmp)
 {
-
-	switch (cmd) {
 #if defined(IPSEC) || defined(IPSEC_SUPPORT)
-	case PRC_MSGSIZE:
-		if (IPSEC_ENABLED(ipv4))
-			IPSEC_CTLINPUT(ipv4, cmd, sa, vip);
-		break;
+	if (IPSEC_ENABLED(ipv4))
+		IPSEC_CTLINPUT(ipv4, icmp);
 #endif
-	}
 }
 
 static int
@@ -862,7 +860,6 @@ rip_detach(struct socket *so)
 		ip_rsvp_force_done(so);
 	if (so == V_ip_rsvpd)
 		ip_rsvp_done();
-	in_pcbdetach(inp);
 	in_pcbfree(inp);
 }
 
@@ -985,16 +982,27 @@ rip_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 }
 
 static int
-rip_shutdown(struct socket *so)
+rip_shutdown(struct socket *so, enum shutdown_how how)
 {
-	struct inpcb *inp;
 
-	inp = sotoinpcb(so);
-	KASSERT(inp != NULL, ("rip_shutdown: inp == NULL"));
+	SOCK_LOCK(so);
+	if (!(so->so_state & SS_ISCONNECTED)) {
+		SOCK_UNLOCK(so);
+		return (ENOTCONN);
+	}
+	SOCK_UNLOCK(so);
 
-	INP_WLOCK(inp);
-	socantsendmore(so);
-	INP_WUNLOCK(inp);
+	switch (how) {
+	case SHUT_RD:
+		sorflush(so);
+		break;
+	case SHUT_RDWR:
+		sorflush(so);
+		/* FALLTHROUGH */
+	case SHUT_WR:
+		socantsendmore(so);
+	}
+
 	return (0);
 }
 #endif /* INET */
@@ -1068,70 +1076,22 @@ SYSCTL_PROC(_net_inet_raw, OID_AUTO/*XXX*/, pcblist,
     "List of active raw IP sockets");
 
 #ifdef INET
-/*
- * See comment in in_proto.c containing "protosw definitions are not needed".
- */
-#define	RAW_PROTOSW							\
-	.pr_type =		SOCK_RAW,				\
-	.pr_flags =		PR_ATOMIC|PR_ADDR,			\
-	.pr_ctloutput =		rip_ctloutput,				\
-	.pr_abort =		rip_abort,				\
-	.pr_attach =		rip_attach,				\
-	.pr_bind =		rip_bind,				\
-	.pr_connect =		rip_connect,				\
-	.pr_control =		in_control,				\
-	.pr_detach =		rip_detach,				\
-	.pr_disconnect =	rip_disconnect,				\
-	.pr_peeraddr =		in_getpeeraddr,				\
-	.pr_send =		rip_send,				\
-	.pr_shutdown =		rip_shutdown,				\
-	.pr_sockaddr =		in_getsockaddr,				\
-	.pr_sosetlabel =	in_pcbsosetlabel,			\
-	.pr_close =		rip_close
-
 struct protosw rip_protosw = {
-	.pr_protocol = IPPROTO_RAW,
-	RAW_PROTOSW
-};
-struct protosw icmp_protosw = {
-	.pr_protocol =	IPPROTO_ICMP,
-	RAW_PROTOSW
-};
-struct protosw igmp_protosw = {
-	.pr_protocol =	IPPROTO_IGMP,
-	RAW_PROTOSW
-};
-struct protosw rsvp_protosw = {
-	.pr_protocol =	IPPROTO_RSVP,
-	RAW_PROTOSW
-};
-struct protosw rawipv4_protosw = {
-	.pr_protocol =	IPPROTO_IPV4,
-	RAW_PROTOSW
-};
-struct protosw mobile_protosw = {
-	.pr_protocol =	IPPROTO_MOBILE,
-	RAW_PROTOSW
-};
-struct protosw etherip_protosw = {
-	.pr_protocol =	IPPROTO_ETHERIP,
-	RAW_PROTOSW
-};
-struct protosw gre_protosw = {
-	.pr_protocol =	IPPROTO_GRE,
-	RAW_PROTOSW
-};
-#ifdef INET6
-struct protosw rawipv6_protosw = {
-	.pr_protocol =	IPPROTO_IPV6,
-	RAW_PROTOSW
-};
-#endif
-struct protosw pim_protosw = {
-	.pr_protocol =	IPPROTO_PIM,
-	RAW_PROTOSW
-};
-struct protosw ripwild_protosw = {
-	RAW_PROTOSW
+	.pr_type =		SOCK_RAW,
+	.pr_flags =		PR_ATOMIC|PR_ADDR,
+	.pr_ctloutput =		rip_ctloutput,
+	.pr_abort =		rip_abort,
+	.pr_attach =		rip_attach,
+	.pr_bind =		rip_bind,
+	.pr_connect =		rip_connect,
+	.pr_control =		in_control,
+	.pr_detach =		rip_detach,
+	.pr_disconnect =	rip_disconnect,
+	.pr_peeraddr =		in_getpeeraddr,
+	.pr_send =		rip_send,
+	.pr_shutdown =		rip_shutdown,
+	.pr_sockaddr =		in_getsockaddr,
+	.pr_sosetlabel =	in_pcbsosetlabel,
+	.pr_close =		rip_close
 };
 #endif /* INET */

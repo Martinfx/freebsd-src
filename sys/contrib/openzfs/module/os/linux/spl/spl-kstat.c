@@ -32,6 +32,7 @@
 #include <sys/vmem.h>
 #include <sys/cmn_err.h>
 #include <sys/sysmacros.h>
+#include <sys/string.h>
 
 static kmutex_t kstat_module_lock;
 static struct list_head kstat_module_list;
@@ -390,7 +391,7 @@ kstat_create_module(char *name)
 
 	module = kmem_alloc(sizeof (kstat_module_t), KM_SLEEP);
 	module->ksm_proc = pde;
-	strlcpy(module->ksm_name, name, KSTAT_STRLEN+1);
+	strlcpy(module->ksm_name, name, KSTAT_STRLEN);
 	INIT_LIST_HEAD(&module->ksm_kstat_list);
 	list_add_tail(&module->ksm_module_list, &kstat_module_list);
 
@@ -479,8 +480,8 @@ kstat_proc_entry_init(kstat_proc_entry_t *kpep, const char *module,
 	kpep->kpe_owner = NULL;
 	kpep->kpe_proc = NULL;
 	INIT_LIST_HEAD(&kpep->kpe_list);
-	strncpy(kpep->kpe_module, module, KSTAT_STRLEN);
-	strncpy(kpep->kpe_name, name, KSTAT_STRLEN);
+	strlcpy(kpep->kpe_module, module, sizeof (kpep->kpe_module));
+	strlcpy(kpep->kpe_name, name, sizeof (kpep->kpe_name));
 }
 EXPORT_SYMBOL(kstat_proc_entry_init);
 
@@ -514,7 +515,7 @@ __kstat_create(const char *ks_module, int ks_instance, const char *ks_name,
 	ksp->ks_crtime = gethrtime();
 	ksp->ks_snaptime = ksp->ks_crtime;
 	ksp->ks_instance = ks_instance;
-	strncpy(ksp->ks_class, ks_class, KSTAT_STRLEN);
+	strlcpy(ksp->ks_class, ks_class, sizeof (ksp->ks_class));
 	ksp->ks_type = ks_type;
 	ksp->ks_flags = ks_flags;
 	ksp->ks_update = kstat_default_update;

@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)filedesc.h	8.1 (Berkeley) 6/2/93
- * $FreeBSD$
  */
 
 #ifndef _SYS_FILEDESC_H_
@@ -89,6 +86,8 @@ struct fdescenttbl {
 /*
  * This struct is copy-on-write and allocated from an SMR zone.
  * All fields are constant after initialization apart from the reference count.
+ * The ABI root directory is initialized as the root directory and changed
+ * during process transiting to or from non-native ABI.
  *
  * Check pwd_* routines for usage.
  */
@@ -97,6 +96,7 @@ struct pwd {
 	struct	vnode	*pwd_cdir;	/* current directory */
 	struct	vnode	*pwd_rdir;	/* root directory */
 	struct	vnode	*pwd_jdir;	/* jail root directory */
+	struct	vnode	*pwd_adir;	/* abi root directory */
 };
 typedef SMR_POINTER(struct pwd *) smrpwd_t;
 
@@ -225,6 +225,7 @@ enum {
 #define	falloc(td, resultfp, resultfd, flags) \
 	falloc_caps(td, resultfp, resultfd, flags, NULL)
 
+struct mount;
 struct thread;
 
 static __inline void
@@ -241,6 +242,7 @@ void	filecaps_free(struct filecaps *fcaps);
 
 int	closef(struct file *fp, struct thread *td);
 void	closef_nothread(struct file *fp);
+int	descrip_check_write_mp(struct filedesc *fdp, struct mount *mp);
 int	dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 	    int openerror, int *indxp);
 int	falloc_caps(struct thread *td, struct file **resultfp, int *resultfd,
@@ -301,7 +303,7 @@ fget_noref(struct filedesc *fdp, int fd)
 
 	FILEDESC_LOCK_ASSERT(fdp);
 
-	if (__predict_false((u_int)fd >= fdp->fd_nfiles))
+	if (__predict_false((u_int)fd >= (u_int)fdp->fd_nfiles))
 		return (NULL);
 
 	return (fdp->fd_ofiles[fd].fde_file);
@@ -314,7 +316,7 @@ fdeget_noref(struct filedesc *fdp, int fd)
 
 	FILEDESC_LOCK_ASSERT(fdp);
 
-	if (__predict_false((u_int)fd >= fdp->fd_nfiles))
+	if (__predict_false((u_int)fd >= (u_int)fdp->fd_nfiles))
 		return (NULL);
 
 	fde = &fdp->fd_ofiles[fd];
@@ -340,6 +342,7 @@ struct pwddesc *pdinit(struct pwddesc *pdp, bool keeplock);
 struct pwddesc *pdshare(struct pwddesc *pdp);
 void	pdunshare(struct thread *td);
 
+void	pwd_altroot(struct thread *td, struct vnode *altroot_vp);
 void	pwd_chdir(struct thread *td, struct vnode *vp);
 int	pwd_chroot(struct thread *td, struct vnode *vp);
 int	pwd_chroot_chdir(struct thread *td, struct vnode *vp);

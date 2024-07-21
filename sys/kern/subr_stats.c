@@ -22,16 +22,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
  * Author: Lawrence Stewart <lstewart@netflix.com>
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/arb.h>
@@ -300,7 +295,7 @@ static const bool vsd_compoundtype[VSD_NUM_DTYPES] = {
 
 const struct voistatdata_numeric numeric_limits[2][VSD_DTYPE_Q_U64 + 1] = {
 	[LIM_MIN] = {
-		[VSD_DTYPE_VOISTATE] = {0},
+		[VSD_DTYPE_VOISTATE] = {},
 		[VSD_DTYPE_INT_S32] = {.int32 = {.s32 = INT32_MIN}},
 		[VSD_DTYPE_INT_U32] = {.int32 = {.u32 = 0}},
 		[VSD_DTYPE_INT_S64] = {.int64 = {.s64 = INT64_MIN}},
@@ -313,7 +308,7 @@ const struct voistatdata_numeric numeric_limits[2][VSD_DTYPE_Q_U64 + 1] = {
 		[VSD_DTYPE_Q_U64] = {.q64 = {.uq64 = 0}},
 	},
 	[LIM_MAX] = {
-		[VSD_DTYPE_VOISTATE] = {0},
+		[VSD_DTYPE_VOISTATE] = {},
 		[VSD_DTYPE_INT_S32] = {.int32 = {.s32 = INT32_MAX}},
 		[VSD_DTYPE_INT_U32] = {.int32 = {.u32 = UINT32_MAX}},
 		[VSD_DTYPE_INT_S64] = {.int64 = {.s64 = INT64_MAX}},
@@ -1083,9 +1078,9 @@ int
 stats_v1_blob_clone(struct statsblobv1 **dst, size_t dstmaxsz,
     struct statsblobv1 *src, uint32_t flags)
 {
-	int error;
+	int error, tmperror;
 
-	error = 0;
+	error = tmperror = 0;
 
 	if (src == NULL || dst == NULL ||
 	    src->cursz < sizeof(struct statsblob) ||
@@ -1112,13 +1107,19 @@ stats_v1_blob_clone(struct statsblobv1 **dst, size_t dstmaxsz,
 		 */
 #ifdef _KERNEL
 		if (flags & SB_CLONE_USRDSTNOFAULT)
-			copyout_nofault(src, *dst,
+			error = copyout_nofault(src, *dst,
 			    offsetof(struct statsblob, maxsz));
 		else if (flags & SB_CLONE_USRDST)
-			copyout(src, *dst, offsetof(struct statsblob, maxsz));
+			error = copyout(src, *dst,
+			    offsetof(struct statsblob, maxsz));
 		else
 #endif
 			memcpy(*dst, src, offsetof(struct statsblob, maxsz));
+#ifdef _KERNEL
+		if (error != 0)
+			goto out;
+#endif
+
 
 		if (dstmaxsz >= src->cursz) {
 			postcurszlen = src->cursz -
@@ -1130,14 +1131,20 @@ stats_v1_blob_clone(struct statsblobv1 **dst, size_t dstmaxsz,
 		}
 #ifdef _KERNEL
 		if (flags & SB_CLONE_USRDSTNOFAULT)
-			copyout_nofault(&(src->cursz), &((*dst)->cursz),
+			tmperror = copyout_nofault(&(src->cursz), &((*dst)->cursz),
 			    postcurszlen);
 		else if (flags & SB_CLONE_USRDST)
-			copyout(&(src->cursz), &((*dst)->cursz), postcurszlen);
+			tmperror = copyout(&(src->cursz), &((*dst)->cursz),
+			    postcurszlen);
 		else
 #endif
 			memcpy(&((*dst)->cursz), &(src->cursz), postcurszlen);
+
+		error = error ? error : tmperror;
 	}
+#ifdef _KERNEL
+out:
+#endif
 
 	return (error);
 }
@@ -2081,7 +2088,7 @@ stats_v1_itercb_tostr_freeform(struct statsblobv1 *sb, struct voi *v,
 		    "data_off=%hu", vs->flags, vsd_dtype2name[vs->dtype],
 		    vs->dsz, vs->data_off);
 
-	sbuf_printf(buf, "\n\t\t\tvoistatdata: ");
+	sbuf_cat(buf, "\n\t\t\tvoistatdata: ");
 	stats_voistatdata_tostr(vsd, v->dtype, vs->dtype, vs->dsz,
 	    sctx->fmt, buf, dump);
 }
@@ -2128,7 +2135,7 @@ stats_v1_itercb_tostr_json(struct statsblobv1 *sb, struct voi *v, struct voistat
 			sbuf_printf(buf, "\"[%d]\":{\"id\":%d", ctx->vslot,
 			    v->id);
 			if (v->id < 0) {
-				sbuf_printf(buf, "},");
+				sbuf_cat(buf, "},");
 				return;
 			}
 			
@@ -2160,7 +2167,7 @@ stats_v1_itercb_tostr_json(struct statsblobv1 *sb, struct voi *v, struct voistat
 	if (dump) {
 		sbuf_printf(buf, "\"[%hhd]\":", ctx->vsslot);
 		if (vs->stype < 0) {
-			sbuf_printf(buf, "{\"stype\":-1},");
+			sbuf_cat(buf, "{\"stype\":-1},");
 			return;
 		}
 		sbuf_printf(buf, "{\"stype\":\"%s\",\"errs\":%hu,\"flags\":%hu,"
@@ -3406,6 +3413,13 @@ stats_v1_vsd_tdgst_add(enum vsd_dtype vs_dtype, struct voistatdata_tdgst *tdgst,
 
 				Q_TOSTR(rbctd64->mu, -1, 10, qstr,
 				    sizeof(qstr));
+				struct voistatdata_tdgstctd64 *parent;
+				parent = RB_PARENT(rbctd64, rblnk);
+				int rb_color =
+					parent == NULL ? 0 :
+					RB_LEFT(parent, rblnk) == rbctd64 ?
+					(_RB_BITSUP(parent, rblnk) & _RB_L) != 0 :
+ 					(_RB_BITSUP(parent, rblnk) & _RB_R) != 0;
 				printf(" RB ctd=%3d p=%3d l=%3d r=%3d c=%2d "
 				    "mu=%s\n",
 				    (int)ARB_SELFIDX(ctd64tree, rbctd64),
@@ -3415,7 +3429,7 @@ stats_v1_vsd_tdgst_add(enum vsd_dtype vs_dtype, struct voistatdata_tdgst *tdgst,
 				      RB_LEFT(rbctd64, rblnk)),
 				    (int)ARB_SELFIDX(ctd64tree,
 				      RB_RIGHT(rbctd64, rblnk)),
-				    RB_COLOR(rbctd64, rblnk),
+				    rb_color,
 				    qstr);
 
 				panic("RB@%p and ARB@%p trees differ\n",

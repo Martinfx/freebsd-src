@@ -41,8 +41,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_platform.h"
 
 #include <sys/param.h>
@@ -62,7 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <arm/ti/ti_sysc.h>
 #include <arm/ti/ti_pinmux.h>
@@ -385,7 +383,6 @@ static struct cdevsw dmtpps_cdevsw = {
 static int
 dmtpps_probe(device_t dev)
 {
-	char strbuf[64];
 	int tmr_num;
 	uint64_t rev_address;
 
@@ -437,9 +434,7 @@ dmtpps_probe(device_t dev)
 	if (dmtpps_tmr_num != tmr_num)
 		return (ENXIO);
 
-	snprintf(strbuf, sizeof(strbuf), "AM335x PPS-Capture DMTimer%d",
-	    tmr_num);
-	device_set_desc_copy(dev, strbuf);
+	device_set_descf(dev, "AM335x PPS-Capture DMTimer%d", tmr_num);
 
 	return(BUS_PROBE_DEFAULT);
 }

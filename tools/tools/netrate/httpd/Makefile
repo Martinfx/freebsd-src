@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	httpd
 MAN=
 WARNS?=	3

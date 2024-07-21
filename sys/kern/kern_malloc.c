@@ -30,8 +30,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_malloc.c	8.3 (Berkeley) 1/4/94
  */
 
 /*
@@ -46,8 +44,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_vm.h"
 
@@ -494,7 +490,7 @@ void
 contigfree(void *addr, unsigned long size, struct malloc_type *type)
 {
 
-	kmem_free((vm_offset_t)addr, size);
+	kmem_free(addr, size);
 	malloc_type_freed(type, round_page(size));
 }
 
@@ -588,17 +584,15 @@ static caddr_t __noinline
 malloc_large(size_t size, struct malloc_type *mtp, struct domainset *policy,
     int flags DEBUG_REDZONE_ARG_DEF)
 {
-	vm_offset_t kva;
-	caddr_t va;
+	void *va;
 
 	size = roundup(size, PAGE_SIZE);
-	kva = kmem_malloc_domainset(policy, size, flags);
-	if (kva != 0) {
+	va = kmem_malloc_domainset(policy, size, flags);
+	if (va != NULL) {
 		/* The low bit is unused for slab pointers. */
-		vsetzoneslab(kva, NULL, (void *)((size << 1) | 1));
+		vsetzoneslab((uintptr_t)va, NULL, (void *)((size << 1) | 1));
 		uma_total_inc(size);
 	}
-	va = (caddr_t)kva;
 	malloc_type_allocated(mtp, va == NULL ? 0 : size);
 	if (__predict_false(va == NULL)) {
 		KASSERT((flags & M_WAITOK) == 0,
@@ -607,7 +601,7 @@ malloc_large(size_t size, struct malloc_type *mtp, struct domainset *policy,
 #ifdef DEBUG_REDZONE
 		va = redzone_setup(va, osize);
 #endif
-		kasan_mark((void *)va, osize, size, KASAN_MALLOC_REDZONE);
+		kasan_mark(va, osize, size, KASAN_MALLOC_REDZONE);
 	}
 	return (va);
 }
@@ -616,7 +610,7 @@ static void
 free_large(void *addr, size_t size)
 {
 
-	kmem_free((vm_offset_t)addr, size);
+	kmem_free(addr, size);
 	uma_total_dec(size);
 }
 
@@ -654,7 +648,7 @@ void *
 		size = (size & ~KMEM_ZMASK) + KMEM_ZBASE;
 	indx = kmemsize[size >> KMEM_ZSHIFT];
 	zone = kmemzones[indx].kz_zone[mtp_get_subzone(mtp)];
-	va = uma_zalloc(zone, flags);
+	va = uma_zalloc_arg(zone, zone, flags);
 	if (va != NULL) {
 		size = zone->uz_size;
 		if ((flags & M_ZERO) == 0) {
@@ -694,7 +688,7 @@ malloc_domain(size_t *sizep, int *indxp, struct malloc_type *mtp, int domain,
 		size = (size & ~KMEM_ZMASK) + KMEM_ZBASE;
 	indx = kmemsize[size >> KMEM_ZSHIFT];
 	zone = kmemzones[indx].kz_zone[mtp_get_subzone(mtp)];
-	va = uma_zalloc_domain(zone, NULL, domain, flags);
+	va = uma_zalloc_domain(zone, zone, domain, flags);
 	if (va != NULL)
 		*sizep = zone->uz_size;
 	*indxp = indx;
@@ -1272,7 +1266,8 @@ malloc_init(void *data)
 	struct malloc_type_internal *mtip;
 	struct malloc_type *mtp;
 
-	KASSERT(vm_cnt.v_page_count != 0, ("malloc_register before vm_init"));
+	KASSERT(vm_cnt.v_page_count != 0,
+	    ("malloc_init() called before vm_mem_init()"));
 
 	mtp = data;
 	if (mtp->ks_version != M_VERSION)

@@ -1,7 +1,7 @@
 /*	$NetBSD: usage.c,v 1.8 2000/10/10 19:23:58 is Exp $	*/
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999 Lennart Augustsson <augustss@netbsd.org>
  * All rights reserved.
@@ -27,9 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <assert.h>

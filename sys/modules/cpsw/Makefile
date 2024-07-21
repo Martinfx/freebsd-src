@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/arm/ti/cpsw
 
 KMOD=   if_cpsw

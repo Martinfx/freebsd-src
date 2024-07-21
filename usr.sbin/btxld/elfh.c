@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 Robert Nordier
  * All rights reserved.
@@ -24,11 +24,9 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/endian.h>
 
 #include <stddef.h>
@@ -55,9 +53,9 @@ const struct elfh elfhdr = {
 	0,					    /* e_flags */
 	htole16(sizeof(elfhdr.e)),		    /* e_ehsize */
 	htole16(sizeof(elfhdr.p[0])),		    /* e_phentsize */
-	htole16(sizeof(elfhdr.p) / sizeof(elfhdr.p[0])), /* e_phnum */
+	htole16(nitems(elfhdr.p)),		    /* e_phnum */
 	htole16(sizeof(elfhdr.sh[0])),		    /* e_shentsize */
-	htole16(sizeof(elfhdr.sh) / sizeof(elfhdr.sh[0])), /* e_shnum */
+	htole16(nitems(elfhdr.sh)),		    /* e_shnum */
 	htole16(1)				    /* e_shstrndx */
     },
     {

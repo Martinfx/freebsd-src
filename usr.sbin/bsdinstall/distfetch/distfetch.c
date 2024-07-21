@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Nathan Whitehorn
  * Copyright (c) 2014 Devin Teske <dteske@FreeBSD.org>
@@ -26,9 +26,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 
@@ -133,8 +130,8 @@ fetch_files(int nfiles, char **urls)
 	struct bsddialog_conf mgconf;
 
 	/* Make the transfer list for mixedgauge */
-	minilabel = calloc(sizeof(char *), nfiles);
-	miniperc = calloc(sizeof(int), nfiles);
+	minilabel = calloc(nfiles, sizeof(char *));
+	miniperc = calloc(nfiles, sizeof(int));
 	if (minilabel == NULL || miniperc == NULL)
 		errx(EXIT_FAILURE, "Error: distfetch minibars out of memory!");
 

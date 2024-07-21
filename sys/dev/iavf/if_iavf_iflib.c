@@ -28,7 +28,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-/*$FreeBSD$*/
 
 /**
  * @file if_iavf_iflib.c
@@ -75,6 +74,7 @@ static void	 iavf_if_vlan_unregister(if_ctx_t ctx, u16 vtag);
 static uint64_t	 iavf_if_get_counter(if_ctx_t ctx, ift_counter cnt);
 static void	 iavf_if_init(if_ctx_t ctx);
 static void	 iavf_if_stop(if_ctx_t ctx);
+static bool	 iavf_if_needs_restart(if_ctx_t, enum iflib_restart_event);
 
 static int	iavf_allocate_pci_resources(struct iavf_sc *);
 static void	iavf_free_pci_resources(struct iavf_sc *);
@@ -170,6 +170,7 @@ static device_method_t iavf_if_methods[] = {
 	DEVMETHOD(ifdi_vlan_register, iavf_if_vlan_register),
 	DEVMETHOD(ifdi_vlan_unregister, iavf_if_vlan_unregister),
 	DEVMETHOD(ifdi_get_counter, iavf_if_get_counter),
+	DEVMETHOD(ifdi_needs_restart, iavf_if_needs_restart),
 	DEVMETHOD_END
 };
 
@@ -729,7 +730,7 @@ iavf_if_init(if_ctx_t ctx)
 
 	INIT_DBG_IF(ifp, "begin");
 
-	IFLIB_CTX_ASSERT(ctx);
+	sx_assert(iflib_ctx_lock_get(ctx), SA_XLOCKED);
 
 	error = iavf_reset_complete(hw);
 	if (error) {
@@ -761,7 +762,7 @@ iavf_if_init(if_ctx_t ctx)
 	/* Make sure queues are disabled */
 	iavf_disable_queues_with_retries(sc);
 
-	bcopy(IF_LLADDR(ifp), tmpaddr, ETHER_ADDR_LEN);
+	bcopy(if_getlladdr(ifp), tmpaddr, ETHER_ADDR_LEN);
 	if (!cmp_etheraddr(hw->mac.addr, tmpaddr) &&
 	    (iavf_validate_mac_addr(tmpaddr) == IAVF_SUCCESS)) {
 		error = iavf_del_mac_filter(sc, hw->mac.addr);
@@ -871,7 +872,7 @@ iavf_if_msix_intr_assign(if_ctx_t ctx, int msix __unused)
 fail:
 	iflib_irq_free(ctx, &vsi->irq);
 	rx_que = vsi->rx_queues;
-	for (int i = 0; i < vsi->num_rx_queues; i++, rx_que++)
+	for (i = 0; i < vsi->num_rx_queues; i++, rx_que++)
 		iflib_irq_free(ctx, &rx_que->que_irq);
 	return (err);
 }
@@ -1498,6 +1499,25 @@ iavf_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 	}
 }
 
+/* iavf_if_needs_restart - Tell iflib when the driver needs to be reinitialized
+ * @ctx: iflib context
+ * @event: event code to check
+ *
+ * Defaults to returning false for unknown events.
+ *
+ * @returns true if iflib needs to reinit the interface
+ */
+static bool
+iavf_if_needs_restart(if_ctx_t ctx __unused, enum iflib_restart_event event)
+{
+	switch (event) {
+	case IFLIB_RESTART_VLAN_CONFIG:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 /**
  * iavf_free_pci_resources - Free PCI resources
  * @sc: device softc
@@ -1540,12 +1560,12 @@ iavf_setup_interface(struct iavf_sc *sc)
 {
 	struct iavf_vsi *vsi = &sc->vsi;
 	if_ctx_t ctx = vsi->ctx;
-	struct ifnet *ifp = iflib_get_ifp(ctx);
+	if_t ifp = iflib_get_ifp(ctx);
 
 	iavf_dbg_init(sc, "begin\n");
 
 	vsi->shared->isc_max_frame_size =
-	    ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
+	    if_getmtu(ifp) + ETHER_HDR_LEN + ETHER_CRC_LEN
 	    + ETHER_VLAN_ENCAP_LEN;
 
 	iavf_set_initial_baudrate(ifp);

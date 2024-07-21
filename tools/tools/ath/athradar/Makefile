@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	athradar
 
 .include <../Makefile.inc>

@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$OpenBSD: ip_ah.c,v 1.63 2001/06/26 06:18:58 angelos Exp $ */
 /*-
  * The authors of this code are John Ioannidis (ji@tla.org),
@@ -131,6 +130,7 @@ xform_ah_authsize(const struct auth_hash *esph)
 		alen = esph->hashsize / 2;	/* RFC4868 2.3 */
 		break;
 
+	case CRYPTO_POLY1305:
 	case CRYPTO_AES_NIST_GMAC:
 		alen = esph->hashsize;
 		break;

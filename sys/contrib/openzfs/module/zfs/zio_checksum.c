@@ -160,15 +160,15 @@ abd_fletcher_4_byteswap(abd_t *abd, uint64_t size,
 	abd_fletcher_4_impl(abd, size, &acd);
 }
 
-const zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS] = {
+zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS] = {
 	{{NULL, NULL}, NULL, NULL, 0, "inherit"},
 	{{NULL, NULL}, NULL, NULL, 0, "on"},
 	{{abd_checksum_off,		abd_checksum_off},
 	    NULL, NULL, 0, "off"},
-	{{abd_checksum_SHA256,		abd_checksum_SHA256},
+	{{abd_checksum_sha256,		abd_checksum_sha256},
 	    NULL, NULL, ZCHECKSUM_FLAG_METADATA | ZCHECKSUM_FLAG_EMBEDDED,
 	    "label"},
-	{{abd_checksum_SHA256,		abd_checksum_SHA256},
+	{{abd_checksum_sha256,		abd_checksum_sha256},
 	    NULL, NULL, ZCHECKSUM_FLAG_METADATA | ZCHECKSUM_FLAG_EMBEDDED,
 	    "gang_header"},
 	{{abd_fletcher_2_native,	abd_fletcher_2_byteswap},
@@ -177,14 +177,14 @@ const zio_checksum_info_t zio_checksum_table[ZIO_CHECKSUM_FUNCTIONS] = {
 	    NULL, NULL, 0, "fletcher2"},
 	{{abd_fletcher_4_native,	abd_fletcher_4_byteswap},
 	    NULL, NULL, ZCHECKSUM_FLAG_METADATA, "fletcher4"},
-	{{abd_checksum_SHA256,		abd_checksum_SHA256},
+	{{abd_checksum_sha256,		abd_checksum_sha256},
 	    NULL, NULL, ZCHECKSUM_FLAG_METADATA | ZCHECKSUM_FLAG_DEDUP |
 	    ZCHECKSUM_FLAG_NOPWRITE, "sha256"},
 	{{abd_fletcher_4_native,	abd_fletcher_4_byteswap},
 	    NULL, NULL, ZCHECKSUM_FLAG_EMBEDDED, "zilog2"},
 	{{abd_checksum_off,		abd_checksum_off},
 	    NULL, NULL, 0, "noparity"},
-	{{abd_checksum_SHA512_native,	abd_checksum_SHA512_byteswap},
+	{{abd_checksum_sha512_native,	abd_checksum_sha512_byteswap},
 	    NULL, NULL, ZCHECKSUM_FLAG_METADATA | ZCHECKSUM_FLAG_DEDUP |
 	    ZCHECKSUM_FLAG_NOPWRITE, "sha512"},
 	{{abd_checksum_skein_native,	abd_checksum_skein_byteswap},
@@ -272,7 +272,7 @@ static void
 zio_checksum_gang_verifier(zio_cksum_t *zcp, const blkptr_t *bp)
 {
 	const dva_t *dva = BP_IDENTITY(bp);
-	uint64_t txg = BP_PHYSICAL_BIRTH(bp);
+	uint64_t txg = BP_GET_BIRTH(bp);
 
 	ASSERT(BP_IS_GANG(bp));
 
@@ -363,11 +363,14 @@ zio_checksum_compute(zio_t *zio, enum zio_checksum checksum,
 			zil_chain_t zilc;
 			abd_copy_to_buf(&zilc, abd, sizeof (zil_chain_t));
 
-			size = P2ROUNDUP_TYPED(zilc.zc_nused, ZIL_MIN_BLKSZ,
-			    uint64_t);
+			uint64_t nused = P2ROUNDUP_TYPED(zilc.zc_nused,
+			    ZIL_MIN_BLKSZ, uint64_t);
+			ASSERT3U(size, >=, nused);
+			size = nused;
 			eck = zilc.zc_eck;
 			eck_offset = offsetof(zil_chain_t, zc_eck);
 		} else {
+			ASSERT3U(size, >=, sizeof (zio_eck_t));
 			eck_offset = size - sizeof (zio_eck_t);
 			abd_copy_to_buf_off(&eck, abd, eck_offset,
 			    sizeof (zio_eck_t));
@@ -423,6 +426,9 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 
 	zio_checksum_template_init(checksum, spa);
 
+	IMPLY(bp == NULL, ci->ci_flags & ZCHECKSUM_FLAG_EMBEDDED);
+	IMPLY(bp == NULL, checksum == ZIO_CHECKSUM_LABEL);
+
 	if (ci->ci_flags & ZCHECKSUM_FLAG_EMBEDDED) {
 		zio_cksum_t verifier;
 		size_t eck_offset;
@@ -445,12 +451,13 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 				return (SET_ERROR(ECKSUM));
 			}
 
-			if (nused > size) {
+			nused = P2ROUNDUP_TYPED(nused, ZIL_MIN_BLKSZ, uint64_t);
+			if (size < nused)
 				return (SET_ERROR(ECKSUM));
-			}
-
-			size = P2ROUNDUP_TYPED(nused, ZIL_MIN_BLKSZ, uint64_t);
+			size = nused;
 		} else {
+			if (size < sizeof (zio_eck_t))
+				return (SET_ERROR(ECKSUM));
 			eck_offset = size - sizeof (zio_eck_t);
 			abd_copy_to_buf_off(&eck, abd, eck_offset,
 			    sizeof (zio_eck_t));
@@ -512,8 +519,6 @@ zio_checksum_error_impl(spa_t *spa, const blkptr_t *bp,
 	}
 
 	if (info != NULL) {
-		info->zbc_expected = expected_cksum;
-		info->zbc_actual = actual_cksum;
 		info->zbc_checksum_name = ci->ci_name;
 		info->zbc_byteswapped = byteswap;
 		info->zbc_injected = 0;

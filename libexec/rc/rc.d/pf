@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: pf
@@ -22,6 +21,9 @@ status_cmd="pf_status"
 extra_commands="check reload resync"
 required_files="$pf_rules"
 required_modules="pf"
+
+# doesn't make sense to run in a svcj: config setting
+pf_svcj="NO"
 
 pf_fallback()
 {

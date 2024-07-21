@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Marcel Moolenaar
  * All rights reserved.
@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_UART_BUS_H_
@@ -72,6 +70,9 @@ struct uart_class {
 	u_int	uc_riowidth;		/* Default reg io width for this device. */
 };
 
+#define	UART_CLASS(class)						\
+    DATA_SET(uart_class_set, class)
+
 struct uart_softc {
 	KOBJ_FIELDS;
 	struct uart_class *sc_class;
@@ -89,16 +90,16 @@ struct uart_softc {
 	int		sc_irid;
 	struct callout	sc_timer;
 
-	int		sc_callout:1;	/* This UART is opened for callout. */
-	int		sc_fastintr:1;	/* This UART uses fast interrupts. */
-	int		sc_hwiflow:1;	/* This UART has HW input flow ctl. */
-	int		sc_hwoflow:1;	/* This UART has HW output flow ctl. */
-	int		sc_leaving:1;	/* This UART is going away. */
-	int		sc_opened:1;	/* This UART is open for business. */
-	int		sc_polled:1;	/* This UART has no interrupts. */
-	int		sc_txbusy:1;	/* This UART is transmitting. */
-	int		sc_isquelch:1;	/* This UART has input squelched. */
-	int		sc_testintr:1;	/* This UART is under int. testing. */
+	bool		sc_callout:1;	/* This UART is opened for callout. */
+	bool		sc_fastintr:1;	/* This UART uses fast interrupts. */
+	bool		sc_hwiflow:1;	/* This UART has HW input flow ctl. */
+	bool		sc_hwoflow:1;	/* This UART has HW output flow ctl. */
+	bool		sc_leaving:1;	/* This UART is going away. */
+	bool		sc_opened:1;	/* This UART is open for business. */
+	bool		sc_polled:1;	/* This UART has no interrupts. */
+	bool		sc_txbusy:1;	/* This UART is transmitting. */
+	bool		sc_isquelch:1;	/* This UART has input squelched. */
+	bool		sc_testintr:1;	/* This UART is under int. testing. */
 
 	struct uart_devinfo *sc_sysdev;	/* System device (or NULL). */
 

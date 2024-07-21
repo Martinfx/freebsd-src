@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	tcpconnect
 MAN=
 WARNS?=	3

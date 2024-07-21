@@ -31,7 +31,6 @@
 #define	SAN_RUNTIME
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 #if 0
 __KERNEL_RCSID(0, "$NetBSD: subr_asan.c,v 1.26 2020/09/10 14:10:46 maxv Exp $");
 #endif
@@ -40,10 +39,12 @@ __KERNEL_RCSID(0, "$NetBSD: subr_asan.c,v 1.26 2020/09/10 14:10:46 maxv Exp $");
 #include <sys/systm.h>
 #include <sys/asan.h>
 #include <sys/kernel.h>
+#include <sys/proc.h>
 #include <sys/stack.h>
 #include <sys/sysctl.h>
 
 #include <machine/asan.h>
+#include <machine/bus.h>
 
 /* ASAN constants. Part of the compiler ABI. */
 #define KASAN_SHADOW_MASK		(KASAN_SHADOW_SCALE - 1)
@@ -92,7 +93,10 @@ SYSCTL_INT(_debug_kasan, OID_AUTO, panic_on_violation, CTLFLAG_RDTUN,
     &panic_on_violation, 0,
     "Panic if an invalid access is detected");
 
-static bool kasan_enabled __read_mostly = false;
+#define kasan_enabled (!kasan_disabled)
+static bool kasan_disabled __read_mostly = true;
+SYSCTL_BOOL(_debug_kasan, OID_AUTO, disabled, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
+    &kasan_disabled, 0, "KASAN is disabled");
 
 /* -------------------------------------------------------------------------- */
 
@@ -136,7 +140,7 @@ kasan_init(void)
 	kasan_md_init();
 
 	/* Now officially enabled. */
-	kasan_enabled = true;
+	kasan_disabled = false;
 }
 
 void
@@ -180,7 +184,7 @@ kasan_code_name(uint8_t code)
 
 #define	REPORT(f, ...) do {				\
 	if (panic_on_violation) {			\
-		kasan_enabled = false;			\
+		kasan_disabled = true;			\
 		panic(f, __VA_ARGS__);			\
 	} else {					\
 		struct stack st;			\
@@ -256,6 +260,9 @@ kasan_mark(const void *addr, size_t size, size_t redzsize, uint8_t code)
 	size_t i, n, redz;
 	int8_t *shad;
 
+	if (__predict_false(!kasan_enabled))
+		return;
+
 	if ((vm_offset_t)addr >= DMAP_MIN_ADDRESS &&
 	    (vm_offset_t)addr < DMAP_MAX_ADDRESS)
 		return;
@@ -285,6 +292,15 @@ kasan_mark(const void *addr, size_t size, size_t redzsize, uint8_t code)
 	n = redz / KASAN_SHADOW_SCALE;
 	for (i = 0; i < n; i++) {
 		*shad++ = code;
+	}
+}
+
+void
+kasan_thread_alloc(struct thread *td)
+{
+	if (td->td_kstack != 0) {
+		kasan_mark((void *)td->td_kstack, ptoa(td->td_kstack_pages),
+		    ptoa(td->td_kstack_pages), 0);
 	}
 }
 
@@ -839,6 +855,7 @@ ASAN_ATOMIC_FUNC_FCMPSET(int, u_int);
 ASAN_ATOMIC_FUNC_FCMPSET(long, u_long);
 ASAN_ATOMIC_FUNC_FCMPSET(ptr, uintptr_t);
 
+_ASAN_ATOMIC_FUNC_LOAD(bool, bool);
 ASAN_ATOMIC_FUNC_LOAD(8, uint8_t);
 ASAN_ATOMIC_FUNC_LOAD(16, uint16_t);
 ASAN_ATOMIC_FUNC_LOAD(32, uint32_t);
@@ -849,6 +866,7 @@ ASAN_ATOMIC_FUNC_LOAD(int, u_int);
 ASAN_ATOMIC_FUNC_LOAD(long, u_long);
 ASAN_ATOMIC_FUNC_LOAD(ptr, uintptr_t);
 
+_ASAN_ATOMIC_FUNC_STORE(bool, bool);
 ASAN_ATOMIC_FUNC_STORE(8, uint8_t);
 ASAN_ATOMIC_FUNC_STORE(16, uint16_t);
 ASAN_ATOMIC_FUNC_STORE(32, uint32_t);
@@ -951,6 +969,13 @@ ASAN_BUS_READ_PTR_FUNC(region, 4, uint32_t)
 ASAN_BUS_READ_PTR_FUNC(region_stream, 4, uint32_t)
 
 ASAN_BUS_READ_FUNC(, 8, uint64_t)
+#if defined(__aarch64__)
+ASAN_BUS_READ_FUNC(_stream, 8, uint64_t)
+ASAN_BUS_READ_PTR_FUNC(multi, 8, uint64_t)
+ASAN_BUS_READ_PTR_FUNC(multi_stream, 8, uint64_t)
+ASAN_BUS_READ_PTR_FUNC(region, 8, uint64_t)
+ASAN_BUS_READ_PTR_FUNC(region_stream, 8, uint64_t)
+#endif
 
 #define	ASAN_BUS_WRITE_FUNC(func, width, type)				\
 	void kasan_bus_space_write##func##_##width(bus_space_tag_t tag,	\
@@ -1016,6 +1041,32 @@ ASAN_BUS_SET_FUNC(multi, 4, uint32_t)
 ASAN_BUS_SET_FUNC(region, 4, uint32_t)
 ASAN_BUS_SET_FUNC(multi_stream, 4, uint32_t)
 ASAN_BUS_SET_FUNC(region_stream, 4, uint32_t)
+
+#define	ASAN_BUS_PEEK_FUNC(width, type)					\
+	int kasan_bus_space_peek_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type *valuep)	\
+	{								\
+		return (bus_space_peek_##width(tag, hnd, offset,	\
+		    valuep));						\
+	}
+
+ASAN_BUS_PEEK_FUNC(1, uint8_t)
+ASAN_BUS_PEEK_FUNC(2, uint16_t)
+ASAN_BUS_PEEK_FUNC(4, uint32_t)
+ASAN_BUS_PEEK_FUNC(8, uint64_t)
+
+#define	ASAN_BUS_POKE_FUNC(width, type)					\
+	int kasan_bus_space_poke_##width(bus_space_tag_t tag,		\
+	    bus_space_handle_t hnd, bus_size_t offset, type value)	\
+	{								\
+		return (bus_space_poke_##width(tag, hnd, offset,	\
+		    value));						\
+	}
+
+ASAN_BUS_POKE_FUNC(1, uint8_t)
+ASAN_BUS_POKE_FUNC(2, uint16_t)
+ASAN_BUS_POKE_FUNC(4, uint32_t)
+ASAN_BUS_POKE_FUNC(8, uint64_t)
 
 /* -------------------------------------------------------------------------- */
 

@@ -1,6 +1,5 @@
 #!/bin/sh
 # This file is in the public domain
-# $FreeBSD$
 
 set -ex
 
@@ -118,7 +117,7 @@ trap "umount ${MNT} || true; mdconfig -d -u $MDUNIT" 1 2 15 EXIT
 
 umount $MNT || true
 mdconfig -d -u $MDUNIT || true
-dd if=/dev/zero of=${ODIR}/imgfile bs=1m count=4096
+dd if=/dev/zero of=${ODIR}/imgfile bs=1m count=5120
 mdconfig -a -t vnode -f ${ODIR}/imgfile -u $MDUNIT
 
 # Build & install the reference world

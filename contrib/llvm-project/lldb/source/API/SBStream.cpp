@@ -9,9 +9,10 @@
 #include "lldb/API/SBStream.h"
 
 #include "lldb/API/SBFile.h"
-#include "lldb/Core/StreamFile.h"
 #include "lldb/Host/FileSystem.h"
+#include "lldb/Host/StreamFile.h"
 #include "lldb/Utility/Instrumentation.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StreamString.h"
@@ -46,7 +47,8 @@ const char *SBStream::GetData() {
   if (m_is_file || m_opaque_up == nullptr)
     return nullptr;
 
-  return static_cast<StreamString *>(m_opaque_up.get())->GetData();
+  return ConstString(static_cast<StreamString *>(m_opaque_up.get())->GetData())
+      .GetCString();
 }
 
 // If this stream is not redirected to a file, it will maintain a local cache
@@ -98,7 +100,7 @@ void SBStream::RedirectToFile(const char *path, bool append) {
   llvm::Expected<FileUP> file =
       FileSystem::Instance().Open(FileSpec(path), open_options);
   if (!file) {
-    LLDB_LOG_ERROR(GetLogIfAllCategoriesSet(LIBLLDB_LOG_API), file.takeError(),
+    LLDB_LOG_ERROR(GetLog(LLDBLog::API), file.takeError(),
                    "Cannot open {1}: {0}", path);
     return;
   }

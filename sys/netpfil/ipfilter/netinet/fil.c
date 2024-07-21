@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
@@ -102,11 +101,6 @@ extern struct callout ipf_slowtimer_ch;
 #endif
 /* END OF INCLUDES */
 
-#if !defined(lint)
-static const char sccsid[] = "@(#)fil.c	1.36 6/5/96 (C) 1993-2000 Darren Reed";
-static const char rcsid[] = "@(#)$FreeBSD$";
-/* static const char rcsid[] = "@(#)$Id: fil.c,v 2.243.2.125 2007/10/10 09:27:20 darrenr Exp $"; */
-#endif
 
 #ifndef	_KERNEL
 # include "ipf.h"
@@ -1113,8 +1107,10 @@ ipf_pr_pullup(fr_info_t *fin, int plen)
 		if (M_LEN(fin->fin_m) < plen + fin->fin_ipoff) {
 #if defined(_KERNEL)
 			if (ipf_pullup(fin->fin_m, fin, plen) == NULL) {
-				DT(ipf_pullup_fail);
+				DT1(ipf_pullup_fail, fr_info_t *, fin);
 				LBUMP(ipf_stats[fin->fin_out].fr_pull[1]);
+				fin->fin_reason = FRB_PULLUP;
+				fin->fin_flx |= FI_BAD;
 				return (-1);
 			}
 			LBUMP(ipf_stats[fin->fin_out].fr_pull[0]);
@@ -1127,6 +1123,7 @@ ipf_pr_pullup(fr_info_t *fin, int plen)
 			*fin->fin_mp = NULL;
 			fin->fin_m = NULL;
 			fin->fin_ip = NULL;
+			fin->fin_flx |= FI_BAD;
 			return (-1);
 #endif
 		}
@@ -3179,6 +3176,14 @@ finished:
 	}
 
 	SPL_X(s);
+
+	if (fin->fin_m == NULL && fin->fin_flx & FI_BAD &&
+	    fin->fin_reason == FRB_PULLUP) {
+		/* m_pullup() has freed the mbuf */
+		LBUMP(ipf_stats[out].fr_blocked[fin->fin_reason]);
+		return (-1);
+	}
+
 
 #ifdef _KERNEL
 	if (FR_ISPASS(pass))
@@ -7121,7 +7126,7 @@ ipf_ipftune(ipf_main_softc_t *softc, ioctlcmd_t cmd, void *data)
 	case SIOCIPFSET :
 		/*
 		 * Search by name or by cookie value for a particular entry
-		 * in the tuning paramter table.
+		 * in the tuning parameter table.
 		 */
 		IPFERROR(77);
 		error = ESRCH;
@@ -7360,7 +7365,7 @@ ipf_token_expire(ipf_main_softc_t *softc)
 /* Loop through all of the existing tokens and call deref to see if they    */
 /* can be freed. Normally a function like this might just loop on           */
 /* ipf_token_head but there is a chance that a token might have a ref count */
-/* of greater than one and in that case the the reference would drop twice  */
+/* of greater than one and in that case the reference would drop twice      */
 /* by code that is only entitled to drop it once.                           */
 /* ------------------------------------------------------------------------ */
 static void
@@ -7450,10 +7455,6 @@ ipf_token_find(ipf_main_softc_t *softc, int type, int uid, void *ptr)
 {
 	ipftoken_t *it, *new;
 
-	KMALLOC(new, ipftoken_t *);
-	if (new != NULL)
-		bzero((char *)new, sizeof(*new));
-
 	WRITE_ENTER(&softc->ipf_tokens);
 	for (it = softc->ipf_token_head; it != NULL; it = it->ipt_next) {
 		if ((ptr == it->ipt_ctx) && (type == it->ipt_type) &&
@@ -7462,6 +7463,10 @@ ipf_token_find(ipf_main_softc_t *softc, int type, int uid, void *ptr)
 	}
 
 	if (it == NULL) {
+		KMALLOC(new, ipftoken_t *);
+		if (new != NULL)
+			bzero((char *)new, sizeof(*new));
+
 		it = new;
 		new = NULL;
 		if (it == NULL) {
@@ -7473,11 +7478,6 @@ ipf_token_find(ipf_main_softc_t *softc, int type, int uid, void *ptr)
 		it->ipt_type = type;
 		it->ipt_ref = 1;
 	} else {
-		if (new != NULL) {
-			KFREE(new);
-			new = NULL;
-		}
-
 		if (it->ipt_complete > 0)
 			it = NULL;
 		else
@@ -7890,14 +7890,14 @@ ipf_genericiter(ipf_main_softc_t *softc, void *data, int uid, void *ctx)
 /* ------------------------------------------------------------------------ */
 /* Function:    ipf_ipf_ioctl                                               */
 /* Returns:     int - 0 = success, else error                               */
-/* Parameters:  softc(I)- pointer to soft context main structure           */
+/* Parameters:  softc(I)- pointer to soft context main structure            */
 /*              data(I) - the token type to match                           */
 /*              cmd(I)  - the ioctl command number                          */
 /*              mode(I) - mode flags for the ioctl                          */
 /*              uid(I)  - uid owning the token                              */
 /*              ptr(I)  - context pointer for the token                     */
 /*                                                                          */
-/* This function handles all of the ioctl command that are actually isssued */
+/* This function handles all of the ioctl command that are actually issued  */
 /* to the /dev/ipl device.                                                  */
 /* ------------------------------------------------------------------------ */
 int

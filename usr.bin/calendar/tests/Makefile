@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TAP_TESTS_SH=	comment_test cond_test legacy_test

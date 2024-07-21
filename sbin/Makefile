@@ -1,6 +1,3 @@
-#	@(#)Makefile	8.5 (Berkeley) 3/31/94
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 SUBDIR=adjkerntz \
@@ -9,6 +6,7 @@ SUBDIR=adjkerntz \
 	comcontrol \
 	conscontrol \
 	ddb \
+	devd \
 	devfs \
 	devmatch \
 	dhclient \
@@ -23,7 +21,6 @@ SUBDIR=adjkerntz \
 	fsck_msdosfs \
 	fsdb \
 	fsirand \
-	gbde \
 	geom \
 	ggate \
 	growfs \
@@ -52,6 +49,7 @@ SUBDIR=adjkerntz \
 	newfs_msdos \
 	nfsiod \
 	nos-tun \
+	nvmecontrol \
 	pfilctl \
 	rcorder \
 	reboot \
@@ -72,17 +70,16 @@ SUBDIR+=	ping
 .endif
 
 SUBDIR.${MK_CCD}+=	ccdconfig
-SUBDIR.${MK_CXX}+=	devd
 SUBDIR.${MK_HAST}+=	hastctl
 SUBDIR.${MK_HAST}+=	hastd
 SUBDIR.${MK_INET6}+=	rtsol
 SUBDIR.${MK_IPFILTER}+=	ipf
 SUBDIR.${MK_IPFW}+=	ipfw
 SUBDIR.${MK_IPFW}+=	natd
-SUBDIR.${MK_NVME}+=	nvmecontrol
 SUBDIR.${MK_OPENSSL}+=	decryptcore
 SUBDIR.${MK_PF}+=	pfctl
 SUBDIR.${MK_PF}+=	pflogd
+SUBDIR.${MK_PF}+=	pflowctl
 SUBDIR.${MK_QUOTAS}+=	quotacheck
 SUBDIR.${MK_ROUTED}+=	routed
 SUBDIR.${MK_VERIEXEC}+=	veriexec

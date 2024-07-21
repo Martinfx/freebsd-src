@@ -25,9 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/disk.h>
 #include <sys/queue.h>
 #include <stand.h>
@@ -413,13 +410,14 @@ disk_fmtdev(struct devdesc *vdev)
 }
 
 int
-disk_parsedev(struct disk_devdesc *dev, const char *devspec, const char **path)
+disk_parsedev(struct devdesc **idev, const char *devspec, const char **path)
 {
 	int unit, slice, partition;
 	const char *np;
 	char *cp;
+	struct disk_devdesc *dev;
 
-	np = devspec;
+	np = devspec + 4;	/* Skip the leading 'disk' */
 	unit = -1;
 	/*
 	 * If there is path/file info after the device info, then any missing
@@ -470,9 +468,13 @@ disk_parsedev(struct disk_devdesc *dev, const char *devspec, const char **path)
 
 	if (*cp != '\0' && *cp != ':')
 		return (EINVAL);
+	dev = malloc(sizeof(*dev));
+	if (dev == NULL)
+		return (ENOMEM);
 	dev->dd.d_unit = unit;
 	dev->d_slice = slice;
 	dev->d_partition = partition;
+	*idev = &dev->dd;
 	if (path != NULL)
 		*path = (*cp == '\0') ? cp: cp + 1;
 	return (0);

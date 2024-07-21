@@ -27,14 +27,10 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)extern.h	8.1 (Berkeley) 6/6/93
- * $FreeBSD$
  */
 
-void	recvfile(int peer, char *port, int fd, char *name, char *mode);
-void	xmitfile(int peer, char *port, int fd, char *name, char *mode);
+int	recvfile(int peer, char *port, int fd, char *name, char *mode);
+int	xmitfile(int peer, char *port, int fd, char *name, char *mode);
 
 extern int	verbose;
 extern int	maxtimeout;
-extern volatile int txrx_error;

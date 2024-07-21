@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	zonectl
 SRCS=	zonectl.c
 SDIR=	${SRCTOP}/sys

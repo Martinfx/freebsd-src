@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Texas A&M University
  * All rights reserved.
@@ -57,9 +57,6 @@
  * ICH6/7/8 support by Takeharu KATO <takeharu1219@ybb.ne.jp>
  * SoC PMC support by Denir Li <denir.li@cas-well.com>
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/eventhandler.h>
@@ -701,12 +698,12 @@ ichwd_identify(driver_t *driver, device_t parent)
 		 * Space via the bridge's BAR.
 		 * Then hide back the bridge.
 		 */
-		pci_cfgregwrite(0, 31, 1, 0xe1, 0, 1);
-		base_address64 = pci_cfgregread(0, 31, 1, SBREG_BAR + 4, 4);
+		pci_cfgregwrite(0, 0, 31, 1, 0xe1, 0, 1);
+		base_address64 = pci_cfgregread(0, 0, 31, 1, SBREG_BAR + 4, 4);
 		base_address64 <<= 32;
-		base_address64 |= pci_cfgregread(0, 31, 1, SBREG_BAR, 4);
+		base_address64 |= pci_cfgregread(0, 0, 31, 1, SBREG_BAR, 4);
 		base_address64 &= ~0xfull;
-		pci_cfgregwrite(0, 31, 1, 0xe1, 1, 1);
+		pci_cfgregwrite(0, 0, 31, 1, 0xe1, 1, 1);
 
 		/*
 		 * No Reboot bit is in General Control register, offset 0xc,

@@ -23,12 +23,7 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -50,7 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include <arm/ti/ti_sysc.h>
 #include <arm/ti/clk/clock_common.h>
@@ -306,6 +301,9 @@ parse_regfields(struct ti_sysc_softc *sc) {
 
 	/* Grab the content of reg properties */
 	nreg = OF_getproplen(node, "reg");
+	if (nreg <= 0)
+		return (ENXIO);
+
 	reg = malloc(nreg, M_DEVBUF, M_WAITOK);
 	OF_getencprop(node, "reg", reg, nreg);
 
@@ -340,7 +338,7 @@ parse_regfields(struct ti_sysc_softc *sc) {
 			sc->offset_reg[prop_idx] = sc->reg[prop_idx].address -
 			    sc->sc.ranges[REG_REV].host;
 
-		DPRINTF(sc->dev, "reg[%s] adress %#jx size %#jx\n",
+		DPRINTF(sc->dev, "reg[%s] address %#jx size %#jx\n",
 			reg_names[idx],
 			sc->reg[prop_idx].address,
 			sc->reg[prop_idx].size);

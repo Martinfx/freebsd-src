@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Joseph Koshy
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/pmc.h>
@@ -70,10 +67,9 @@ struct tsc_cpu {
 static struct tsc_cpu **tsc_pcpu;
 
 static int
-tsc_allocate_pmc(int cpu, int ri, struct pmc *pm,
+tsc_allocate_pmc(int cpu __diagused, int ri __diagused, struct pmc *pm __unused,
     const struct pmc_op_pmcallocate *a)
 {
-	(void) cpu;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
@@ -115,8 +111,6 @@ tsc_config_pmc(int cpu, int ri, struct pmc *pm)
 static int
 tsc_describe(int cpu, int ri, struct pmc_info *pi, struct pmc **ppmc)
 {
-	int error;
-	size_t copied;
 	const struct tsc_descr *pd;
 	struct pmc_hw *phw;
 
@@ -127,10 +121,7 @@ tsc_describe(int cpu, int ri, struct pmc_info *pi, struct pmc **ppmc)
 	phw = &tsc_pcpu[cpu]->tc_hw;
 	pd  = &tsc_pmcdesc[ri];
 
-	if ((error = copystr(pd->pm_descr.pd_name, pi->pm_name,
-	    PMC_NAME_MAX, &copied)) != 0)
-		return (error);
-
+	strlcpy(pi->pm_name, pd->pm_descr.pd_name, sizeof(pi->pm_name));
 	pi->pm_class = pd->pm_descr.pd_class;
 
 	if (phw->phw_state & PMC_PHW_FLAG_IS_ENABLED) {
@@ -145,9 +136,8 @@ tsc_describe(int cpu, int ri, struct pmc_info *pi, struct pmc **ppmc)
 }
 
 static int
-tsc_get_config(int cpu, int ri, struct pmc **ppm)
+tsc_get_config(int cpu, int ri __diagused, struct pmc **ppm)
 {
-	(void) ri;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU %d", __LINE__, cpu));
@@ -159,9 +149,8 @@ tsc_get_config(int cpu, int ri, struct pmc **ppm)
 }
 
 static int
-tsc_get_msr(int ri, uint32_t *msr)
+tsc_get_msr(int ri __diagused, uint32_t *msr)
 {
-	(void) ri;
 
 	KASSERT(ri >= 0 && ri < TSC_NPMCS,
 	    ("[tsc,%d] ri %d out of range", __LINE__, ri));
@@ -228,21 +217,13 @@ tsc_pcpu_init(struct pmc_mdep *md, int cpu)
 }
 
 static int
-tsc_read_pmc(int cpu, int ri, pmc_value_t *v)
+tsc_read_pmc(int cpu, int ri, struct pmc *pm, pmc_value_t *v)
 {
-	struct pmc *pm;
 	enum pmc_mode mode __diagused;
-	const struct pmc_hw *phw;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
 	KASSERT(ri == 0, ("[tsc,%d] illegal ri %d", __LINE__, ri));
-
-	phw = &tsc_pcpu[cpu]->tc_hw;
-	pm  = phw->phw_pmc;
-
-	KASSERT(pm != NULL,
-	    ("[tsc,%d] no owner for PHW [cpu%d,pmc%d]", __LINE__, cpu, ri));
 
 	mode = PMC_TO_MODE(pm);
 
@@ -257,11 +238,9 @@ tsc_read_pmc(int cpu, int ri, pmc_value_t *v)
 }
 
 static int
-tsc_release_pmc(int cpu, int ri, struct pmc *pmc)
+tsc_release_pmc(int cpu, int ri __diagused, struct pmc *pmc __unused)
 {
 	struct pmc_hw *phw __diagused;
-
-	(void) pmc;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
@@ -280,9 +259,8 @@ tsc_release_pmc(int cpu, int ri, struct pmc *pmc)
 }
 
 static int
-tsc_start_pmc(int cpu, int ri)
+tsc_start_pmc(int cpu __diagused, int ri __diagused, struct pmc *pm __unused)
 {
-	(void) cpu;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
@@ -292,9 +270,8 @@ tsc_start_pmc(int cpu, int ri)
 }
 
 static int
-tsc_stop_pmc(int cpu, int ri)
+tsc_stop_pmc(int cpu __diagused, int ri __diagused, struct pmc *pm __unused)
 {
-	(void) cpu; (void) ri;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
@@ -304,9 +281,9 @@ tsc_stop_pmc(int cpu, int ri)
 }
 
 static int
-tsc_write_pmc(int cpu, int ri, pmc_value_t v)
+tsc_write_pmc(int cpu __diagused, int ri __diagused, struct pmc *pm __unused,
+    pmc_value_t v __unused)
 {
-	(void) cpu; (void) ri; (void) v;
 
 	KASSERT(cpu >= 0 && cpu < pmc_cpu_max(),
 	    ("[tsc,%d] illegal CPU value %d", __LINE__, cpu));
@@ -359,22 +336,13 @@ pmc_tsc_initialize(struct pmc_mdep *md, int maxcpu)
 }
 
 void
-pmc_tsc_finalize(struct pmc_mdep *md)
+pmc_tsc_finalize(struct pmc_mdep *md __diagused)
 {
-#ifdef	INVARIANTS
-	int i, ncpus;
+	PMCDBG0(MDP, INI, 1, "tsc-finalize");
 
-	ncpus = pmc_cpu_max();
-	for (i = 0; i < ncpus; i++)
+	for (int i = 0; i < pmc_cpu_max(); i++)
 		KASSERT(tsc_pcpu[i] == NULL, ("[tsc,%d] non-null pcpu cpu %d",
 		    __LINE__, i));
-
-	KASSERT(md->pmd_classdep[PMC_MDEP_CLASS_INDEX_TSC].pcd_class ==
-	    PMC_CLASS_TSC, ("[tsc,%d] class mismatch", __LINE__));
-
-#else
-	(void) md;
-#endif
 
 	free(tsc_pcpu, M_PMC);
 	tsc_pcpu = NULL;

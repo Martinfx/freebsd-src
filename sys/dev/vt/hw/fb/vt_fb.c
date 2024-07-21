@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -28,9 +28,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/malloc.h>
@@ -52,6 +49,7 @@ static struct vt_driver vt_fb_driver = {
 	.vd_bitblt_text = vt_fb_bitblt_text,
 	.vd_invalidate_text = vt_fb_invalidate_text,
 	.vd_bitblt_bmp = vt_fb_bitblt_bitmap,
+	.vd_bitblt_argb = vt_fb_bitblt_argb,
 	.vd_drawrect = vt_fb_drawrect,
 	.vd_setpixel = vt_fb_setpixel,
 	.vd_postswitch = vt_fb_postswitch,
@@ -335,6 +333,52 @@ vt_fb_bitblt_bitmap(struct vt_device *vd, const struct vt_window *vw,
 	}
 }
 
+int
+vt_fb_bitblt_argb(struct vt_device *vd, const struct vt_window *vw,
+    const uint8_t *argb,
+    unsigned int width, unsigned int height,
+  unsigned int x, unsigned int y)
+{
+	struct fb_info *info;
+	uint32_t o, cc;
+	int bpp, xi, yi;
+
+	info = vd->vd_softc;
+	bpp = FBTYPE_GET_BYTESPP(info);
+	if (bpp != 4)
+		return (EOPNOTSUPP);
+
+	if (info->fb_flags & FB_FLAG_NOWRITE)
+		return (0);
+
+	KASSERT((info->fb_vbase != 0), ("Unmapped framebuffer"));
+
+	/* Bound by right and bottom edges. */
+	if (y + height > vw->vw_draw_area.tr_end.tp_row) {
+		if (y >= vw->vw_draw_area.tr_end.tp_row)
+			return (EINVAL);
+		height = vw->vw_draw_area.tr_end.tp_row - y;
+	}
+	if (x + width > vw->vw_draw_area.tr_end.tp_col) {
+		if (x >= vw->vw_draw_area.tr_end.tp_col)
+			return (EINVAL);
+		width = vw->vw_draw_area.tr_end.tp_col - x;
+	}
+	for (yi = 0; yi < height; yi++) {
+		for (xi = 0; xi < (width * 4); xi += 4) {
+			o = (y + yi) * info->fb_stride + (x + (xi / 4)) * bpp;
+			o += vd->vd_transpose;
+			cc = (argb[yi * width * 4 + xi] << 16) |
+				(argb[yi * width * 4 + xi + 1] << 8) |
+				(argb[yi * width * 4 + xi + 2]) |
+				(argb[yi * width * 4 + xi + 3] << 24);
+			vt_fb_mem_wr4(info, o, cc);
+		}
+	}
+
+	return (0);
+}
+
 void
 vt_fb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
     const term_rect_t *area)
@@ -517,19 +561,21 @@ vt_fb_fini(struct vt_device *vd, void *softc)
 int
 vt_fb_attach(struct fb_info *info)
 {
+	int ret;
 
-	vt_allocate(&vt_fb_driver, info);
+	ret = vt_allocate(&vt_fb_driver, info);
 
-	return (0);
+	return (ret);
 }
 
 int
 vt_fb_detach(struct fb_info *info)
 {
+	int ret;
 
-	vt_deallocate(&vt_fb_driver, info);
+	ret = vt_deallocate(&vt_fb_driver, info);
 
-	return (0);
+	return (ret);
 }
 
 void

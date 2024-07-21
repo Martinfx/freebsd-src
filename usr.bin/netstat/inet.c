@@ -27,15 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)inet.c	8.5 (Berkeley) 5/24/95";
-#endif /* not lint */
-#endif
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/domain.h>
@@ -58,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp_var.h>
 #include <netinet/igmp_var.h>
+#include <netinet/ip_divert.h>
 #include <netinet/ip_var.h>
 #include <netinet/pim_var.h>
 #include <netinet/tcp.h>
@@ -109,15 +101,14 @@ pcblist_sysctl(int proto, const char *name, char **bufp)
 	case IPPROTO_UDP:
 		mibvar = "net.inet.udp.pcblist";
 		break;
-	case IPPROTO_DIVERT:
-		mibvar = "net.inet.divert.pcblist";
-		break;
 	default:
 		mibvar = "net.inet.raw.pcblist";
 		break;
 	}
 	if (strncmp(name, "sdp", 3) == 0)
 		mibvar = "net.inet.sdp.pcblist";
+	else if (strncmp(name, "divert", 6) == 0)
+		mibvar = "net.inet.divert.pcblist";
 	len = 0;
 	if (sysctlbyname(mibvar, 0, &len, 0, 0) < 0) {
 		if (errno != ENOENT)
@@ -237,22 +228,19 @@ protopr(u_long off, const char *name, int af1, int proto)
 	if (!pcblist_sysctl(proto, name, &buf))
 		return;
 
-	if (cflag || Cflag) {
+	if (istcp && (cflag || Cflag)) {
 		fnamelen = strlen("Stack");
 		cnamelen = strlen("CC");
 		oxig = xig = (struct xinpgen *)buf;
 		for (xig = (struct xinpgen*)((char *)xig + xig->xig_len);
 		    xig->xig_len > sizeof(struct xinpgen);
 		    xig = (struct xinpgen *)((char *)xig + xig->xig_len)) {
-			if (istcp) {
-				tp = (struct xtcpcb *)xig;
-				inp = &tp->xt_inp;
-			} else {
-				continue;
-			}
-			if (so->xso_protocol != proto)
-				continue;
+			tp = (struct xtcpcb *)xig;
+			inp = &tp->xt_inp;
 			if (inp->inp_gencnt > oxig->xig_gen)
+				continue;
+			so = &inp->xi_socket;
+			if (so->xso_protocol != proto)
 				continue;
 			fnamelen = max(fnamelen, (int)strlen(tp->xt_stack));
 			cnamelen = max(cnamelen, (int)strlen(tp->xt_cc));
@@ -272,7 +260,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 		so = &inp->xi_socket;
 
 		/* Ignore sockets for protocols other than the desired one. */
-		if (so->xso_protocol != proto)
+		if (proto != 0 && so->xso_protocol != proto)
 			continue;
 
 		/* Ignore PCBs which were freed during copyout. */
@@ -383,16 +371,9 @@ protopr(u_long off, const char *name, int af1, int proto)
 		if (Lflag && so->so_qlimit == 0)
 			continue;
 		xo_open_instance("socket");
-		if (Aflag) {
-			if (istcp)
-				xo_emit("{q:address/%*lx} ",
-				    2 * (int)sizeof(void *),
-				    (u_long)inp->inp_ppcb);
-			else
-				xo_emit("{q:address/%*lx} ",
-				    2 * (int)sizeof(void *),
-				    (u_long)so->so_pcb);
-		}
+		if (Aflag)
+			xo_emit("{q:address/%*lx} ", 2 * (int)sizeof(void *),
+			    (u_long)so->so_pcb);
 #ifdef INET6
 		if ((inp->inp_vflag & INP_IPV6) != 0)
 			vchar = ((inp->inp_vflag & INP_IPV4) != 0) ?
@@ -757,6 +738,8 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	    "{N:/keepalive probe%s sent}\n");
 	p(tcps_keepdrops, "\t\t{:connections-dropped-by-keepalives/%ju} "
 	    "{N:/connection%s dropped by keepalive}\n");
+	p(tcps_progdrops, "\t{:connections-dropped-due-to-progress-time/%ju} "
+	    "{N:/connection%s dropped due to exceeding progress time}\n");
 	p(tcps_predack, "\t{:ack-header-predictions/%ju} "
 	    "{N:/correct ACK header prediction%s}\n");
 	p(tcps_preddat, "\t{:data-packet-header-predictions/%ju} "
@@ -800,11 +783,13 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 
 	p(tcps_sack_recovery_episode, "\t{:recovery-episodes/%ju} "
 	    "{N:/SACK recovery episode%s}\n");
- 	p(tcps_sack_rexmits, "\t{:segment-retransmits/%ju} "
+	p(tcps_sack_rexmits, "\t{:segment-retransmits/%ju} "
 	    "{N:/segment rexmit%s in SACK recovery episodes}\n");
- 	p(tcps_sack_rexmit_bytes, "\t{:byte-retransmits/%ju} "
+	p(tcps_sack_rexmits_tso, "\t{:tso-chunk-retransmits/%ju} "
+	    "{N:/tso chunk rexmit%s in SACK recovery episodes}\n");
+	p(tcps_sack_rexmit_bytes, "\t{:byte-retransmits/%ju} "
 	    "{N:/byte rexmit%s in SACK recovery episodes}\n");
- 	p(tcps_sack_rcv_blocks, "\t{:received-blocks/%ju} "
+	p(tcps_sack_rcv_blocks, "\t{:received-blocks/%ju} "
 	    "{N:/SACK option%s (SACK blocks) received}\n");
 	p(tcps_sack_send_blocks, "\t{:sent-option-blocks/%ju} "
 	    "{N:/SACK option%s (SACK blocks) sent}\n");
@@ -816,12 +801,16 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	xo_close_container("sack");
 	xo_open_container("ecn");
 
-	p(tcps_ecn_ce, "\t{:ce-packets/%ju} "
-	    "{N:/packet%s with ECN CE bit set}\n");
-	p(tcps_ecn_ect0, "\t{:ect0-packets/%ju} "
-	    "{N:/packet%s with ECN ECT(0) bit set}\n");
-	p(tcps_ecn_ect1, "\t{:ect1-packets/%ju} "
-	    "{N:/packet%s with ECN ECT(1) bit set}\n");
+	p(tcps_ecn_rcvce, "\t{:received-ce-packets/%ju} "
+	    "{N:/packet%s received with ECN CE bit set}\n");
+	p(tcps_ecn_rcvect0, "\t{:received-ect0-packets/%ju} "
+	    "{N:/packet%s received with ECN ECT(0) bit set}\n");
+	p(tcps_ecn_rcvect1, "\t{:received-ect1-packets/%ju} "
+	    "{N:/packet%s received with ECN ECT(1) bit set}\n");
+	p(tcps_ecn_sndect0, "\t{:sent-ect0-packets/%ju} "
+	    "{N:/packet%s sent with ECN ECT(0) bit set}\n");
+	p(tcps_ecn_sndect1, "\t{:sent-ect1-packets/%ju} "
+	    "{N:/packet%s sent with ECN ECT(1) bit set}\n");
 	p(tcps_ecn_shs, "\t{:handshakes/%ju} "
 	    "{N:/successful ECN handshake%s}\n");
 	p(tcps_ecn_rcwnd, "\t{:congestion-reductions/%ju} "
@@ -1430,6 +1419,36 @@ pim_stats(u_long off __unused, const char *name, int af1 __unused,
 	    "{N:/data register byte%s sent}\n");
 #undef p
 #undef py
+	xo_close_container(name);
+}
+
+/*
+ * Dump divert(4) statistics structure.
+ */
+void
+divert_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
+{
+	struct divstat divstat;
+
+	if (fetch_stats("net.inet.divert.stats", off, &divstat,
+	    sizeof(divstat), kread_counters) != 0)
+		return;
+
+	xo_open_container(name);
+	xo_emit("{T:/%s}:\n", name);
+
+#define	p(f, m) if (divstat.f || sflag <= 1) \
+	xo_emit(m, (uintmax_t)divstat.f, plural(divstat.f))
+
+	p(div_diverted, "\t{:diverted-packets/%ju} "
+	    "{N:/packet%s successfully diverted to userland}\n");
+	p(div_noport, "\t{:noport-fails/%ju} "
+	    "{N:/packet%s failed to divert due to no socket bound at port}\n");
+	p(div_outbound, "\t{:outbound-packets/%ju} "
+	    "{N:/packet%s successfully re-injected as outbound}\n");
+	p(div_inbound, "\t{:inbound-packets/%ju} "
+	    "{N:/packet%s successfully re-injected as inbound}\n");
+#undef p
 	xo_close_container(name);
 }
 

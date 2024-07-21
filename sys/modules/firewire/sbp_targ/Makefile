@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 # Makefile for the SBP-II Target mode
 
 .PATH: ${SRCTOP}/sys/dev/firewire

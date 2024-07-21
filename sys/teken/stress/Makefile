@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	teken_stress
 LDADD=	-lteken
 MAN=

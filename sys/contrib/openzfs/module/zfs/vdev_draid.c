@@ -541,7 +541,7 @@ vdev_draid_generate_perms(const draid_map_t *map, uint8_t **permsp)
 int
 vdev_draid_lookup_map(uint64_t children, const draid_map_t **mapp)
 {
-	for (int i = 0; i <= VDEV_DRAID_MAX_MAPS; i++) {
+	for (int i = 0; i < VDEV_DRAID_MAX_MAPS; i++) {
 		if (draid_maps[i].dm_children == children) {
 			*mapp = &draid_maps[i];
 			return (0);
@@ -577,8 +577,9 @@ vdev_draid_permute_id(vdev_draid_config_t *vdc,
  * i.e. vdev_draid_psize_to_asize().
  */
 static uint64_t
-vdev_draid_asize(vdev_t *vd, uint64_t psize)
+vdev_draid_asize(vdev_t *vd, uint64_t psize, uint64_t txg)
 {
+	(void) txg;
 	vdev_draid_config_t *vdc = vd->vdev_tsd;
 	uint64_t ashift = vd->vdev_ashift;
 
@@ -960,7 +961,7 @@ vdev_draid_map_alloc_row(zio_t *zio, raidz_row_t **rrp, uint64_t io_offset,
 	vdev_draid_config_t *vdc = vd->vdev_tsd;
 	uint64_t ashift = vd->vdev_top->vdev_ashift;
 	uint64_t io_size = abd_size;
-	uint64_t io_asize = vdev_draid_asize(vd, io_size);
+	uint64_t io_asize = vdev_draid_asize(vd, io_size, 0);
 	uint64_t group = vdev_draid_offset_to_group(vd, io_offset);
 	uint64_t start_offset = vdev_draid_group_to_offset(vd, group + 1);
 
@@ -1023,15 +1024,11 @@ vdev_draid_map_alloc_row(zio_t *zio, raidz_row_t **rrp, uint64_t io_offset,
 	/* The total number of data and parity sectors for this I/O. */
 	uint64_t tot = psize + (vdc->vdc_nparity * (q + (r == 0 ? 0 : 1)));
 
-	raidz_row_t *rr;
-	rr = kmem_alloc(offsetof(raidz_row_t, rr_col[groupwidth]), KM_SLEEP);
-	rr->rr_cols = groupwidth;
-	rr->rr_scols = groupwidth;
+	ASSERT3U(vdc->vdc_nparity, >, 0);
+
+	raidz_row_t *rr = vdev_raidz_row_alloc(groupwidth);
 	rr->rr_bigcols = bc;
-	rr->rr_missingdata = 0;
-	rr->rr_missingparity = 0;
 	rr->rr_firstdatacol = vdc->vdc_nparity;
-	rr->rr_abd_empty = NULL;
 #ifdef ZFS_DEBUG
 	rr->rr_offset = io_offset;
 	rr->rr_size = io_size;
@@ -1051,14 +1048,6 @@ vdev_draid_map_alloc_row(zio_t *zio, raidz_row_t **rrp, uint64_t io_offset,
 
 		rc->rc_devidx = vdev_draid_permute_id(vdc, base, iter, c);
 		rc->rc_offset = physical_offset;
-		rc->rc_abd = NULL;
-		rc->rc_orig_data = NULL;
-		rc->rc_error = 0;
-		rc->rc_tried = 0;
-		rc->rc_skipped = 0;
-		rc->rc_force_repair = 0;
-		rc->rc_allow_repair = 1;
-		rc->rc_need_orig_restore = B_FALSE;
 
 		if (q == 0 && i >= bc)
 			rc->rc_size = 0;
@@ -1127,7 +1116,7 @@ vdev_draid_map_alloc(zio_t *zio)
 	if (size < abd_size) {
 		vdev_t *vd = zio->io_vd;
 
-		io_offset += vdev_draid_asize(vd, size);
+		io_offset += vdev_draid_asize(vd, size, 0);
 		abd_offset += size;
 		abd_size -= size;
 		nrows++;
@@ -1149,7 +1138,6 @@ vdev_draid_map_alloc(zio_t *zio)
 	rm->rm_row[0] = rr[0];
 	if (nrows == 2)
 		rm->rm_row[1] = rr[1];
-
 	return (rm);
 }
 
@@ -1496,8 +1484,14 @@ vdev_draid_calculate_asize(vdev_t *vd, uint64_t *asizep, uint64_t *max_asizep,
 		asize = MIN(asize - 1, cvd->vdev_asize - 1) + 1;
 		max_asize = MIN(max_asize - 1, cvd->vdev_max_asize - 1) + 1;
 		logical_ashift = MAX(logical_ashift, cvd->vdev_ashift);
-		physical_ashift = MAX(physical_ashift,
-		    cvd->vdev_physical_ashift);
+	}
+	for (int c = 0; c < vd->vdev_children; c++) {
+		vdev_t *cvd = vd->vdev_child[c];
+
+		if (cvd->vdev_ops == &vdev_draid_spare_ops)
+			continue;
+		physical_ashift = vdev_best_ashift(logical_ashift,
+		    physical_ashift, cvd->vdev_physical_ashift);
 	}
 
 	*asizep = asize;
@@ -1775,7 +1769,7 @@ vdev_draid_need_resilver(vdev_t *vd, const dva_t *dva, size_t psize,
     uint64_t phys_birth)
 {
 	uint64_t offset = DVA_GET_OFFSET(dva);
-	uint64_t asize = vdev_draid_asize(vd, psize);
+	uint64_t asize = vdev_draid_asize(vd, psize, 0);
 
 	if (phys_birth == TXG_UNKNOWN) {
 		/*
@@ -1832,7 +1826,7 @@ vdev_draid_io_verify(vdev_t *vd, raidz_row_t *rr, int col)
 	range_seg64_t logical_rs, physical_rs, remain_rs;
 	logical_rs.rs_start = rr->rr_offset;
 	logical_rs.rs_end = logical_rs.rs_start +
-	    vdev_draid_asize(vd, rr->rr_size);
+	    vdev_draid_asize(vd, rr->rr_size, 0);
 
 	raidz_col_t *rc = &rr->rr_col[col];
 	vdev_t *cvd = vd->vdev_child[rc->rc_devidx];
@@ -2554,24 +2548,20 @@ vdev_draid_read_config_spare(vdev_t *vd)
 }
 
 /*
- * Handle any ioctl requested of the distributed spare.  Only flushes
- * are supported in which case all children must be flushed.
+ * Handle any flush requested of the distributed spare. All children must be
+ * flushed.
  */
 static int
-vdev_draid_spare_ioctl(zio_t *zio)
+vdev_draid_spare_flush(zio_t *zio)
 {
 	vdev_t *vd = zio->io_vd;
 	int error = 0;
 
-	if (zio->io_cmd == DKIOCFLUSHWRITECACHE) {
-		for (int c = 0; c < vd->vdev_children; c++) {
-			zio_nowait(zio_vdev_child_io(zio, NULL,
-			    vd->vdev_child[c], zio->io_offset, zio->io_abd,
-			    zio->io_size, zio->io_type, zio->io_priority, 0,
-			    vdev_draid_spare_child_done, zio));
-		}
-	} else {
-		error = SET_ERROR(ENOTSUP);
+	for (int c = 0; c < vd->vdev_children; c++) {
+		zio_nowait(zio_vdev_child_io(zio, NULL,
+		    vd->vdev_child[c], zio->io_offset, zio->io_abd,
+		    zio->io_size, zio->io_type, zio->io_priority, 0,
+		    vdev_draid_spare_child_done, zio));
 	}
 
 	return (error);
@@ -2602,8 +2592,8 @@ vdev_draid_spare_io_start(zio_t *zio)
 	}
 
 	switch (zio->io_type) {
-	case ZIO_TYPE_IOCTL:
-		zio->io_error = vdev_draid_spare_ioctl(zio);
+	case ZIO_TYPE_FLUSH:
+		zio->io_error = vdev_draid_spare_flush(zio);
 		break;
 
 	case ZIO_TYPE_WRITE:
@@ -2712,7 +2702,7 @@ vdev_draid_spare_lookup(spa_t *spa, nvlist_t *nv, uint64_t *top_guidp,
 		return (SET_ERROR(ENOENT));
 	}
 
-	char *spare_name;
+	const char *spare_name;
 	error = nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &spare_name);
 	if (error != 0)
 		return (SET_ERROR(EINVAL));
@@ -2720,7 +2710,7 @@ vdev_draid_spare_lookup(spa_t *spa, nvlist_t *nv, uint64_t *top_guidp,
 	for (int i = 0; i < nspares; i++) {
 		nvlist_t *spare = spares[i];
 		uint64_t top_guid, spare_id;
-		char *type, *path;
+		const char *type, *path;
 
 		/* Skip non-distributed spares */
 		error = nvlist_lookup_string(spare, ZPOOL_CONFIG_TYPE, &type);

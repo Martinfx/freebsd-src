@@ -31,8 +31,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	from: @(#)vm_object.c	8.5 (Berkeley) 3/22/94
- *
  *
  * Copyright (c) 1987, 1990 Carnegie-Mellon University.
  * All rights reserved.
@@ -64,33 +62,29 @@
  *	Virtual memory object module.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_vm.h"
 
-#include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/blockcount.h>
 #include <sys/cpuset.h>
+#include <sys/jail.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/kernel.h>
-#include <sys/pctrie.h>
-#include <sys/sysctl.h>
 #include <sys/mutex.h>
-#include <sys/proc.h>		/* for curproc, pageproc */
+#include <sys/pctrie.h>
+#include <sys/proc.h>
 #include <sys/refcount.h>
-#include <sys/socket.h>
+#include <sys/sx.h>
+#include <sys/sysctl.h>
 #include <sys/resourcevar.h>
 #include <sys/refcount.h>
 #include <sys/rwlock.h>
 #include <sys/user.h>
 #include <sys/vnode.h>
 #include <sys/vmmeter.h>
-#include <sys/sx.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -216,7 +210,7 @@ vm_object_zinit(void *mem, int size, int flags)
 	vm_object_t object;
 
 	object = (vm_object_t)mem;
-	rw_init_flags(&object->lock, "vm object", RW_DUPOK | RW_NEW);
+	rw_init_flags(&object->lock, "vmobject", RW_DUPOK | RW_NEW);
 
 	/* These are true for any object that has been freed */
 	object->type = OBJT_DEAD;
@@ -286,6 +280,7 @@ vm_object_init(void)
 	mtx_init(&vm_object_list_mtx, "vm object_list", NULL, MTX_DEF);
 
 	rw_init(&kernel_object->lock, "kernel vm object");
+	vm_radix_init(&kernel_object->rtree);
 	_vm_object_allocate(OBJT_PHYS, atop(VM_MAX_KERNEL_ADDRESS -
 	    VM_MIN_KERNEL_ADDRESS), OBJ_UNMANAGED, kernel_object, NULL);
 #if VM_NRESERVLEVEL > 0
@@ -1212,7 +1207,7 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 	    vm_object_mightbedirty(object) != 0 &&
 	    ((vp = object->handle)->v_vflag & VV_NOSYNC) == 0) {
 		VM_OBJECT_WUNLOCK(object);
-		(void) vn_start_write(vp, &mp, V_WAIT);
+		(void)vn_start_write(vp, &mp, V_WAIT);
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		if (syncio && !invalidate && offset == 0 &&
 		    atop(size) == object->size) {
@@ -1233,8 +1228,23 @@ vm_object_sync(vm_object_t object, vm_ooffset_t offset, vm_size_t size,
 		res = vm_object_page_clean(object, offset, offset + size,
 		    flags);
 		VM_OBJECT_WUNLOCK(object);
-		if (fsync_after)
-			error = VOP_FSYNC(vp, MNT_WAIT, curthread);
+		if (fsync_after) {
+			for (;;) {
+				error = VOP_FSYNC(vp, MNT_WAIT, curthread);
+				if (error != ERELOOKUP)
+					break;
+
+				/*
+				 * Allow SU/bufdaemon to handle more
+				 * dependencies in the meantime.
+				 */
+				VOP_UNLOCK(vp);
+				vn_finished_write(mp);
+
+				(void)vn_start_write(vp, &mp, V_WAIT);
+				vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+			}
+		}
 		VOP_UNLOCK(vp);
 		vn_finished_write(mp);
 		if (error != 0)
@@ -1943,14 +1953,6 @@ vm_object_collapse(vm_object_t object)
 			 */
 			vm_object_collapse_scan(object);
 
-#if VM_NRESERVLEVEL > 0
-			/*
-			 * Break any reservations from backing_object.
-			 */
-			if (__predict_false(!LIST_EMPTY(&backing_object->rvq)))
-				vm_reserv_break_all(backing_object);
-#endif
-
 			/*
 			 * Move the pager from backing_object to object.
 			 *
@@ -1983,6 +1985,7 @@ vm_object_collapse(vm_object_t object)
 			    backing_object));
 			vm_object_pip_wakeup(backing_object);
 			(void)refcount_release(&backing_object->ref_count);
+			umtx_shm_object_terminated(backing_object);
 			vm_object_terminate(backing_object);
 			counter_u64_add(object_collapses, 1);
 			VM_OBJECT_WLOCK(object);
@@ -2505,6 +2508,7 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 	vm_page_t m;
 	u_long sp;
 	int count, error;
+	bool want_path;
 
 	if (req->oldptr == NULL) {
 		/*
@@ -2523,7 +2527,8 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 		    count * 11 / 10));
 	}
 
-	kvo = malloc(sizeof(*kvo), M_TEMP, M_WAITOK);
+	want_path = !(swap_only || jailed(curthread->td_ucred));
+	kvo = malloc(sizeof(*kvo), M_TEMP, M_WAITOK | M_ZERO);
 	error = 0;
 
 	/*
@@ -2574,7 +2579,8 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 		freepath = NULL;
 		fullpath = "";
 		vp = NULL;
-		kvo->kvo_type = vm_object_kvme_type(obj, swap_only ? NULL : &vp);
+		kvo->kvo_type = vm_object_kvme_type(obj, want_path ? &vp :
+		    NULL);
 		if (vp != NULL) {
 			vref(vp);
 		} else if ((obj->flags & OBJ_ANON) != 0) {
@@ -2599,8 +2605,7 @@ vm_object_list_handler(struct sysctl_req *req, bool swap_only)
 		}
 
 		strlcpy(kvo->kvo_path, fullpath, sizeof(kvo->kvo_path));
-		if (freepath != NULL)
-			free(freepath, M_TEMP);
+		free(freepath, M_TEMP);
 
 		/* Pack record size down */
 		kvo->kvo_structsize = offsetof(struct kinfo_vmobject, kvo_path)
@@ -2821,8 +2826,6 @@ DB_SHOW_COMMAND_FLAGS(vmopag, vm_object_print_pages, DB_CMD_MEMSAFE)
 		fidx = 0;
 		pa = -1;
 		TAILQ_FOREACH(m, &object->memq, listq) {
-			if (m->pindex > 128)
-				break;
 			if ((prev_m = TAILQ_PREV(m, pglist, listq)) != NULL &&
 			    prev_m->pindex + 1 != m->pindex) {
 				if (rcount) {

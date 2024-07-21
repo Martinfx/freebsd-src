@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2010 Ana Kukec <anchie@FreeBSD.org>
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
@@ -46,6 +43,7 @@ __FBSDID("$FreeBSD$");
 #include <net/route.h>
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/vnet.h>
 
 #include <netinet/in.h>

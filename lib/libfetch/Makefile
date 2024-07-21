@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=	fetch
@@ -18,6 +16,7 @@ CFLAGS+=	-DINET6
 
 .if ${MK_OPENSSL} != "no"
 CFLAGS+=	-DWITH_SSL
+CFLAGS+=	-DOPENSSL_API_COMPAT=0x10100000L
 LIBADD+=	ssl crypto
 .else
 LIBADD+=	md

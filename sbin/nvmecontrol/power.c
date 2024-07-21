@@ -23,9 +23,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/ioccom.h>
 
@@ -65,14 +62,10 @@ power_list_one(int i, struct nvme_power_state *nps)
 	int mpower, apower, ipower;
 	uint8_t mps, nops, aps, apw;
 
-	mps = (nps->mps_nops >> NVME_PWR_ST_MPS_SHIFT) &
-		NVME_PWR_ST_MPS_MASK;
-	nops = (nps->mps_nops >> NVME_PWR_ST_NOPS_SHIFT) &
-		NVME_PWR_ST_NOPS_MASK;
-	apw = (nps->apw_aps >> NVME_PWR_ST_APW_SHIFT) &
-		NVME_PWR_ST_APW_MASK;
-	aps = (nps->apw_aps >> NVME_PWR_ST_APS_SHIFT) &
-		NVME_PWR_ST_APS_MASK;
+	mps = NVMEV(NVME_PWR_ST_MPS, nps->mps_nops);
+	nops = NVMEV(NVME_PWR_ST_NOPS, nps->mps_nops);
+	apw = NVMEV(NVME_PWR_ST_APW, nps->apw_aps);
+	aps = NVMEV(NVME_PWR_ST_APS, nps->apw_aps);
 
 	mpower = nps->mp;
 	if (mps == 0)
@@ -97,7 +90,7 @@ power_list(struct nvme_controller_data *cdata)
 	int i;
 
 	printf("\nPower States Supported: %d\n\n", cdata->npss + 1);
-	printf(" #   Max pwr  Enter Lat  Exit Lat RT RL WT WL Idle Pwr  Act Pwr Workloadd\n");
+	printf(" #   Max pwr  Enter Lat  Exit Lat RT RL WT WL Idle Pwr  Act Pwr Workload\n");
 	printf("--  --------  --------- --------- -- -- -- -- -------- -------- --\n");
 	for (i = 0; i <= cdata->npss; i++)
 		power_list_one(i, &cdata->power_state[i]);
@@ -137,7 +130,8 @@ power_show(int fd)
 	if (nvme_completion_is_error(&pt.cpl))
 		errx(EX_IOERR, "set feature power mgmt request returned error");
 
-	printf("Current Power Mode is %d\n", pt.cpl.cdw0);
+	printf("Current Power State is %d\n", pt.cpl.cdw0 & 0x1F);
+	printf("Current Workload Hint is %d\n", pt.cpl.cdw0 >> 5);
 }
 
 static void
@@ -189,7 +183,7 @@ static const struct opts power_opts[] = {
 	OPT("power", 'p', arg_uint32, opt, power,
 	    "Set the power state"),
 	OPT("workload", 'w', arg_uint32, opt, workload,
-	    "Set the workload"),
+	    "Set the workload hint"),
 	{ NULL, 0, arg_none, NULL, NULL }
 };
 #undef OPT

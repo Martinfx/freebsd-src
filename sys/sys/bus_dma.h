@@ -1,7 +1,7 @@
 /*	$NetBSD: bus.h,v 1.12 1997/10/01 08:25:15 fvdl Exp $	*/
 
 /*-
- * SPDX-License-Identifier: (BSD-2-Clause-NetBSD AND BSD-4-Clause)
+ * SPDX-License-Identifier: (BSD-2-Clause AND BSD-4-Clause)
  *
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -62,7 +62,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/* $FreeBSD$ */
 
 #ifndef _BUS_DMA_H_
 #define _BUS_DMA_H_
@@ -162,11 +161,8 @@ void _busdma_dflt_lock(void *arg, bus_dma_lock_op_t op);
  *	boundary:	Boundary that segments cannot cross.
  *	lowaddr:	Low restricted address that cannot appear in a mapping.
  *	highaddr:	High restricted address that cannot appear in a mapping.
- *	filtfunc:	An optional function to further test if an address
- *			within the range of lowaddr and highaddr cannot appear
- *			in a mapping.
- *	filtfuncarg:	An argument that will be passed to filtfunc in addition
- *			to the address to test.
+ *	filtfunc:	(deprecated, must be NULL)
+ *	filtfuncarg:	(deprecated, must be NULL)
  *	maxsize:	Maximum mapping size supported by this tag.
  *	nsegments:	Number of discontinuities allowed in maps.
  *	maxsegsz:	Maximum size of a segment in the map.

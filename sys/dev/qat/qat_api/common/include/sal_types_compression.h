@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /**
  ***************************************************************************
  * @file sal_types_compression.h
@@ -23,6 +22,7 @@
 #include "icp_adf_transport.h"
 
 #define DC_NUM_RX_RINGS (1)
+#define DC_NUM_COMPRESSION_LEVELS (CPA_DC_L12)
 
 /**
  *****************************************************************************
@@ -36,6 +36,9 @@
 typedef struct sal_compression_device_data {
 	/* Device specific minimum output buffer size for static compression */
 	Cpa32U minOutputBuffSize;
+
+	/* Device specific minimum output buffer size for dynamic compression */
+	Cpa32U minOutputBuffSizeDynamic;
 
 	/* Enable/disable secureRam/acceleratorRam for intermediate buffers*/
 	Cpa8U useDevRam;
@@ -62,8 +65,16 @@ typedef struct sal_compression_device_data {
 	/* Mask that reports supported window sizes for comp/decomp */
 	Cpa8U windowSizeMask;
 
+	/* List representing compression levels that are the first to have
+	   a unique search depth. */
+	CpaBoolean uniqueCompressionLevels[DC_NUM_COMPRESSION_LEVELS + 1];
+	Cpa8U numCompressionLevels;
+
 	/* Flag to indicate CompressAndVerifyAndRecover feature support */
 	CpaBoolean cnvnrSupported;
+
+	/* When set, implies device supports ASB_ENABLE */
+	CpaBoolean asbEnableSupport;
 } sal_compression_device_data_t;
 
 /**

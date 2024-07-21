@@ -1,5 +1,4 @@
-# $FreeBSD$
-
+.include <bsd.init.mk>
 .include "../llvm.pre.mk"
 
 LIB=		llvmminimal
@@ -10,7 +9,6 @@ SRCS+=		Demangle/ItaniumDemangle.cpp
 SRCS+=		Support/ABIBreak.cpp
 SRCS+=		Support/APFloat.cpp
 SRCS+=		Support/APInt.cpp
-SRCS+=		Support/ARMTargetParser.cpp
 SRCS+=		Support/Atomic.cpp
 SRCS+=		Support/CodeGenCoverage.cpp
 SRCS+=		Support/CommandLine.cpp
@@ -27,12 +25,10 @@ SRCS+=		Support/FormatVariadic.cpp
 SRCS+=		Support/FormattedStream.cpp
 SRCS+=		Support/GraphWriter.cpp
 SRCS+=		Support/Hashing.cpp
-SRCS+=		Support/Host.cpp
 SRCS+=		Support/InitLLVM.cpp
 SRCS+=		Support/IntEqClasses.cpp
 SRCS+=		Support/JSON.cpp
 SRCS+=		Support/Locale.cpp
-SRCS+=		Support/LowLevelType.cpp
 SRCS+=		Support/MD5.cpp
 SRCS+=		Support/ManagedStatic.cpp
 SRCS+=		Support/MemAlloc.cpp
@@ -42,6 +38,7 @@ SRCS+=		Support/Path.cpp
 SRCS+=		Support/PrettyStackTrace.cpp
 SRCS+=		Support/Process.cpp
 SRCS+=		Support/Program.cpp
+SRCS+=		Support/RISCVISAInfo.cpp
 SRCS+=		Support/RandomNumberGenerator.cpp
 SRCS+=		Support/Regex.cpp
 SRCS+=		Support/Signals.cpp
@@ -54,11 +51,9 @@ SRCS+=		Support/StringExtras.cpp
 SRCS+=		Support/StringMap.cpp
 SRCS+=		Support/StringRef.cpp
 SRCS+=		Support/StringSaver.cpp
-SRCS+=		Support/ThreadLocal.cpp
 SRCS+=		Support/Threading.cpp
 SRCS+=		Support/Timer.cpp
 SRCS+=		Support/ToolOutputFile.cpp
-SRCS+=		Support/Triple.cpp
 SRCS+=		Support/Twine.cpp
 SRCS+=		Support/TypeSize.cpp
 SRCS+=		Support/Unicode.cpp
@@ -69,11 +64,13 @@ SRCS+=		Support/WithColor.cpp
 SRCS+=		Support/YAMLParser.cpp
 SRCS+=		Support/circular_raw_ostream.cpp
 SRCS+=		Support/raw_ostream.cpp
+SRCS+=		Support/raw_socket_stream.cpp
 SRCS+=		Support/regcomp.c
 SRCS+=		Support/regerror.c
 SRCS+=		Support/regexec.c
 SRCS+=		Support/regfree.c
 SRCS+=		Support/regstrlcpy.c
+SRCS+=		Support/xxhash.cpp
 SRCS+=		TableGen/DetailedRecordsBackend.cpp
 SRCS+=		TableGen/Error.cpp
 SRCS+=		TableGen/JSONBackend.cpp

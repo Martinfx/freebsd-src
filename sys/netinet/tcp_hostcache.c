@@ -66,8 +66,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet6.h"
 
 #include <sys/param.h>
@@ -82,7 +80,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/sbuf.h>
 #include <sys/smr.h>
 #include <sys/socket.h>
-#include <sys/socketvar.h>
 #include <sys/sysctl.h>
 
 #include <net/vnet.h>

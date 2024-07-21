@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #ifndef ADF_CFG_STRINGS_H_
 #define ADF_CFG_STRINGS_H_
 
 #define ADF_GENERAL_SEC "GENERAL"
 #define ADF_KERNEL_SEC "KERNEL"
 #define ADF_ACCEL_SEC "Accelerator"
+#define ADF_SAL_SEC "SSL"
 #define ADF_NUM_CY "NumberCyInstances"
 #define ADF_NUM_DC "NumberDcInstances"
 #define ADF_RING_SYM_SIZE "NumConcurrentSymRequests"
@@ -22,6 +22,8 @@
 #define ADF_RING_DC_RX "RingRx"
 #define ADF_ETRMGR_BANK "Bank"
 #define ADF_RING_BANK_NUM "BankNumber"
+#define ADF_RING_BANK_NUM_ASYM "BankNumberAsym"
+#define ADF_RING_BANK_NUM_SYM "BankNumberSym"
 #define ADF_CY "Cy"
 #define ADF_DC "Dc"
 #define ADF_DC_EXTENDED_FEATURES "Device_DcExtendedFeatures"
@@ -53,6 +55,11 @@
 #define ADF_CFG_DC "dc"
 #define ADF_CFG_ASYM "asym"
 #define ADF_CFG_SYM "sym"
+#define ADF_CFG_SYM_ASYM "sym;asym"
+#define ADF_CFG_SYM_DC "sym;dc"
+#define ADF_CFG_KERNEL_USER "ks;us"
+#define ADF_CFG_KERNEL "ks"
+#define ADF_CFG_USER "us"
 #define ADF_SERVICE_INLINE "inline"
 #define ADF_SERVICES_ENABLED "ServicesEnabled"
 #define ADF_SERVICES_SEPARATOR ";"
@@ -112,6 +119,8 @@
 #define ADF_CY_CORE_AFFINITY_FORMAT ADF_CY "%d" ADF_ETRMGR_CORE_AFFINITY
 #define ADF_DC_CORE_AFFINITY_FORMAT ADF_DC "%d" ADF_ETRMGR_CORE_AFFINITY
 #define ADF_CY_BANK_NUM_FORMAT ADF_CY "%d" ADF_RING_BANK_NUM
+#define ADF_CY_ASYM_BANK_NUM_FORMAT ADF_CY "%d" ADF_RING_BANK_NUM_ASYM
+#define ADF_CY_SYM_BANK_NUM_FORMAT ADF_CY "%d" ADF_RING_BANK_NUM_SYM
 #define ADF_DC_BANK_NUM_FORMAT ADF_DC "%d" ADF_RING_BANK_NUM
 #define ADF_CY_ASYM_TX_FORMAT ADF_CY "%d" ADF_RING_ASYM_TX
 #define ADF_CY_SYM_TX_FORMAT ADF_CY "%d" ADF_RING_SYM_TX

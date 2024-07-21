@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 SUBDIR.${MK_DTRACE}+= \
@@ -12,8 +10,7 @@ SUBDIR.${MK_TESTS}+= tests
 
 SUBDIR.${MK_ZFS}+= \
 	zdb \
-	zhack
-SUBDIR.${MK_ZFS}.${MK_CXX}+= \
+	zhack \
 	zfsd
 
 .if ${MACHINE_ARCH} == "amd64" || ${MACHINE_ARCH} == "i386"

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 # Makefile for the fwe(4) module (Ethernet over IEEE1394)
 
 .PATH: ${SRCTOP}/sys/dev/firewire

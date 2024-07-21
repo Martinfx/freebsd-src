@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1997, Stefan Esser <se@freebsd.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_INTERRUPT_H_
@@ -123,7 +121,7 @@ struct intr_event {
 	int		ie_count;	/* Loop counter. */
 	int		ie_warncnt;	/* Rate-check interrupt storm warns. */
 	struct timeval	ie_warntm;
-	int		ie_irq;		/* Physical irq number if !SOFT. */
+	u_int		ie_irq;		/* Physical irq number if !SOFT. */
 	int		ie_cpu;		/* CPU this event is bound to. */
 	volatile int	ie_phase;	/* Switched to establish a barrier. */
 	volatile int	ie_active[2];	/* Filters in ISR context. */
@@ -150,11 +148,12 @@ struct intr_event {
 #define	SWI_TQ		6
 #define	SWI_TQ_GIANT	6
 
+/* Maximum number of stray interrupts to log */
+#define	INTR_STRAY_LOG_MAX	5
+
 struct proc;
 
 extern struct	intr_event *clk_intr_event;
-extern struct	intr_event *tty_intr_event;
-extern void	*vm_ih;
 
 /* Counts and names for statistics (defined in MD code). */
 extern u_long 	*intrcnt;	/* counts for each device and stray */
@@ -176,7 +175,7 @@ struct _cpuset;
 int	intr_event_bind_ithread_cpuset(struct intr_event *ie,
 	    struct _cpuset *mask);
 int	intr_event_create(struct intr_event **event, void *source,
-	    int flags, int irq, void (*pre_ithread)(void *),
+	    int flags, u_int irq, void (*pre_ithread)(void *),
 	    void (*post_ithread)(void *), void (*post_filter)(void *),
 	    int (*assign_cpu)(void *, int), const char *fmt, ...)
 	    __printflike(9, 10);
@@ -189,7 +188,7 @@ int	intr_event_suspend_handler(void *cookie);
 int	intr_event_resume_handler(void *cookie);
 int	intr_getaffinity(int irq, int mode, void *mask);
 void	*intr_handler_source(void *cookie);
-int	intr_setaffinity(int irq, int mode, void *mask);
+int	intr_setaffinity(int irq, int mode, const void *mask);
 void	_intr_drain(int irq);  /* LinuxKPI only. */
 int	swi_add(struct intr_event **eventp, const char *name,
 	    driver_intr_t handler, void *arg, int pri, enum intr_type flags,

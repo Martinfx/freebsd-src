@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Mikolaj Golub
  * Copyright (c) 2015 Allan Jude <allanjude@freebsd.org>
@@ -27,9 +27,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/elf.h>
 #include <sys/sysctl.h>
@@ -55,16 +52,16 @@ procstat_auxv(struct procstat *procstat, struct kinfo_proc *kipp)
 	static char prefix[256];
 
 	if ((procstat_opts & PS_OPT_NOHEADER) == 0)
-		xo_emit("{T:/%5s %-16s %-16s %-16s}\n", "PID", "COMM", "AUXV",
+		xo_emit("{T:/%5s %-19s %-16s %-16s}\n", "PID", "COMM", "AUXV",
 		    "VALUE");
 
 	auxv = procstat_getauxv(procstat, kipp, &count);
 	if (auxv == NULL)
 		return;
-        snprintf(prefix, sizeof(prefix), "%5d %-16s", kipp->ki_pid,
-            kipp->ki_comm);
+	snprintf(prefix, sizeof(prefix), "%5d %-19s", kipp->ki_pid,
+	    kipp->ki_comm);
 
-	xo_emit("{e:process_id/%5d/%d}{e:command/%-16s/%s}", kipp->ki_pid,
+	xo_emit("{e:process_id/%5d/%d}{e:command/%-19s/%s}", kipp->ki_pid,
 	    kipp->ki_comm);
 
 	for (i = 0; i < count; i++) {
@@ -244,6 +241,20 @@ procstat_auxv(struct procstat *procstat, struct kinfo_proc *kipp)
 		case AT_KPRELOAD:
 			xo_emit("{dw:/%s}{Lw:/%-16s/%s}{:AT_KPRELOAD/%p}\n",
 			    prefix, "AT_KPRELOAD", auxv[i].a_un.a_ptr);
+			break;
+#endif
+#ifdef AT_USRSTACKBASE
+		case AT_USRSTACKBASE:
+			xo_emit("{dw:/%s}{Lw:/%-16s/%s}"
+			    "{:AT_USRSTACKBASE/%#lx}\n",
+			    prefix, "AT_USRSTACKBASE", auxv[i].a_un.a_val);
+			break;
+#endif
+#ifdef AT_USRSTACKLIM
+		case AT_USRSTACKLIM:
+			xo_emit("{dw:/%s}{Lw:/%-16s/%s}"
+			    "{:AT_USRSTACKLIM/%#lx}\n",
+			    prefix, "AT_USRSTACKLIM", auxv[i].a_un.a_val);
 			break;
 #endif
 		default:

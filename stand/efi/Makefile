@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 NO_OBJ=t
 
 .include <bsd.init.mk>

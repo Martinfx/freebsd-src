@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/usr.bin/bmake/syntax/directive-t0

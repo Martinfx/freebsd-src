@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 by Thomas Moestl <tmm@FreeBSD.org>.
  * All rights reserved.
@@ -23,14 +23,11 @@
  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
  * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _MACHINE_OFW_MACHDEP_H_
 #define _MACHINE_OFW_MACHDEP_H_
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/rman.h>
 #include <sys/bus.h>
@@ -45,7 +42,7 @@ typedef	uint32_t	cell_t;
 void OF_getetheraddr(device_t dev, u_char *addr);
 
 void OF_initial_setup(void *fdt_ptr, void *junk, int (*openfirm)(void *));
-boolean_t OF_bootstrap(void);
+bool OF_bootstrap(void);
 
 void OF_reboot(void);
 

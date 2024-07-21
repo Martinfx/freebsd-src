@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2022, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2023, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -149,6 +149,7 @@
  *
  *****************************************************************************/
 
+#include <wchar.h>
 #include <contrib/dev/acpica/include/acpi.h>
 #include <contrib/dev/acpica/include/accommon.h>
 #include <contrib/dev/acpica/include/acdisasm.h>
@@ -989,6 +990,61 @@ AcpiDmDumpMadt (
             InfoTable = AcpiDmTableInfoMadt16;
             break;
 
+        case ACPI_MADT_TYPE_CORE_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt17;
+            break;
+
+        case ACPI_MADT_TYPE_LIO_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt18;
+            break;
+
+        case ACPI_MADT_TYPE_HT_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt19;
+            break;
+
+        case ACPI_MADT_TYPE_EIO_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt20;
+            break;
+
+        case ACPI_MADT_TYPE_MSI_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt21;
+            break;
+
+        case ACPI_MADT_TYPE_BIO_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt22;
+            break;
+
+        case ACPI_MADT_TYPE_LPC_PIC:
+
+            InfoTable = AcpiDmTableInfoMadt23;
+            break;
+
+        case ACPI_MADT_TYPE_RINTC:
+
+            InfoTable = AcpiDmTableInfoMadt24;
+            break;
+
+        case ACPI_MADT_TYPE_IMSIC:
+
+            InfoTable = AcpiDmTableInfoMadt25;
+            break;
+
+        case ACPI_MADT_TYPE_APLIC:
+
+            InfoTable = AcpiDmTableInfoMadt26;
+            break;
+
+        case ACPI_MADT_TYPE_PLIC:
+
+            InfoTable = AcpiDmTableInfoMadt27;
+            break;
+
         default:
 
             if ((Subtable->Type >= ACPI_MADT_TYPE_RESERVED) &&
@@ -1020,7 +1076,7 @@ AcpiDmDumpMadt (
             /* Dump the OEM data */
 
             Status = AcpiDmDumpTable (Length, Offset, ACPI_CAST_PTR (UINT8, Table) + Offset,
-                Subtable->Length - sizeof (ACPI_SUBTABLE_HEADER), AcpiDmTableInfoMadt17);
+                Subtable->Length - sizeof (ACPI_SUBTABLE_HEADER), AcpiDmTableInfoMadt128);
             if (ACPI_FAILURE (Status))
             {
                 return;
@@ -1057,16 +1113,16 @@ NextSubtable:
         Subtable = ACPI_ADD_PTR (ACPI_SUBTABLE_HEADER, Subtable,
             Subtable->Length);
 
-        DbgPrint (ASL_PARSE_OUTPUT, "//[5) Next Subtable %p, length %X]\n",
-            Subtable, Subtable->Length);
-        DbgPrint (ASL_PARSE_OUTPUT, "//[5B) Offset from table start: 0x%8.8X%8.8X (%p)]\n",
-            ACPI_FORMAT_UINT64 (ACPI_CAST_PTR (char, Subtable) - ACPI_CAST_PTR (char, Table)), Subtable);
-
         Offset = ACPI_CAST_PTR (char, Subtable) - ACPI_CAST_PTR (char, Table);
         if (Offset >= Table->Length)
         {
             return;
         }
+
+        DbgPrint (ASL_PARSE_OUTPUT, "//[5) Next Subtable %p, length %X]\n",
+            Subtable, Subtable->Length);
+        DbgPrint (ASL_PARSE_OUTPUT, "//[5B) Offset from table start: 0x%8.8X%8.8X (%p)]\n",
+            ACPI_FORMAT_UINT64 (ACPI_CAST_PTR (char, Subtable) - ACPI_CAST_PTR (char, Table)), Subtable);
     }
 }
 
@@ -1128,6 +1184,124 @@ AcpiDmDumpMcfg (
     }
 }
 
+/*******************************************************************************
+ *
+ * FUNCTION:    AcpiDmDumpMpam
+ *
+ * PARAMETERS:  Table               - A MPAM table
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Format the contents of a MPAM table
+ *
+ ******************************************************************************/
+
+void
+AcpiDmDumpMpam (
+    ACPI_TABLE_HEADER          *Table)
+{
+    ACPI_STATUS                Status;
+    ACPI_MPAM_MSC_NODE         *MpamMscNode;
+    ACPI_MPAM_RESOURCE_NODE    *MpamResourceNode;
+    ACPI_DMTABLE_INFO          *InfoTable;
+    UINT32                     Offset = sizeof(ACPI_TABLE_HEADER);
+    UINT32                     MpamResourceNodeLength = 0;
+
+    while (Offset < Table->Length)
+    {
+        MpamMscNode = ACPI_ADD_PTR (ACPI_MPAM_MSC_NODE, Table, Offset);
+
+        /* Subtable: MSC */
+        Status = AcpiDmDumpTable (MpamMscNode->Length, 0, MpamMscNode, 0,
+            AcpiDmTableInfoMpam0);
+        if (ACPI_FAILURE (Status))
+        {
+            return;
+        }
+
+        /* Offset the start of the array of resources */
+        Offset += sizeof(ACPI_MPAM_MSC_NODE);
+
+        /* Subtable: MSC RIS(es) */
+        for (UINT32 ResourceIdx = 0; ResourceIdx < MpamMscNode->NumResouceNodes; ResourceIdx++)
+        {
+            MpamResourceNode = ACPI_ADD_PTR (ACPI_MPAM_RESOURCE_NODE, Table, Offset);
+
+            MpamResourceNodeLength = sizeof(ACPI_MPAM_RESOURCE_NODE) +
+                MpamResourceNode->NumFunctionalDeps * sizeof(ACPI_MPAM_FUNC_DEPS);
+
+            Offset += MpamResourceNodeLength;
+
+            /* Subtable: MSC RIS */
+            Status = AcpiDmDumpTable (MpamResourceNodeLength, 0, MpamResourceNode, 0,
+                AcpiDmTableInfoMpam1);
+            if (ACPI_FAILURE (Status))
+            {
+                return;
+            }
+
+            switch (MpamResourceNode->LocatorType)
+            {
+                case ACPI_MPAM_LOCATION_TYPE_PROCESSOR_CACHE:
+                    InfoTable = AcpiDmTableInfoMpam1A;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_MEMORY:
+                    InfoTable = AcpiDmTableInfoMpam1B;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_SMMU:
+                    InfoTable = AcpiDmTableInfoMpam1C;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_MEMORY_CACHE:
+                    InfoTable = AcpiDmTableInfoMpam1D;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_ACPI_DEVICE:
+                    InfoTable = AcpiDmTableInfoMpam1E;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_INTERCONNECT:
+                    InfoTable = AcpiDmTableInfoMpam1F;
+                    break;
+                case ACPI_MPAM_LOCATION_TYPE_UNKNOWN:
+                    InfoTable = AcpiDmTableInfoMpam1G;
+                default:
+                    AcpiOsPrintf ("\n**** Unknown MPAM locator type 0x%X\n",
+                        MpamResourceNode->LocatorType);
+                    return;
+            }
+
+            /* Subtable: MSC Resource Locator(s) */
+            Status = AcpiDmDumpTable (sizeof(ACPI_MPAM_RESOURCE_LOCATOR), 0,
+                &MpamResourceNode->Locator, 0, InfoTable);
+            if (ACPI_FAILURE (Status))
+            {
+                return;
+            }
+
+            /* Get the number of functional dependencies of an RIS */
+            Status = AcpiDmDumpTable (sizeof(UINT32), 0, &MpamResourceNode->NumFunctionalDeps, 0,
+                AcpiDmTableInfoMpam1Deps);
+            if (ACPI_FAILURE (Status))
+            {
+                return;
+            }
+
+            /* Subtable: MSC functional dependencies */
+            for (UINT32 funcDep = 0; funcDep < MpamResourceNode->NumFunctionalDeps; funcDep++)
+            {
+                Status = AcpiDmDumpTable (sizeof(ACPI_MPAM_FUNC_DEPS), 0,
+                    &MpamResourceNode->NumFunctionalDeps, 0, AcpiDmTableInfoMpam2);
+                if (ACPI_FAILURE (Status))
+                {
+                    return;
+                }
+            }
+
+            AcpiOsPrintf ("\n\n");
+        }
+
+    }
+
+    return;
+}
 
 /*******************************************************************************
  *
@@ -1419,7 +1593,7 @@ AcpiDmDumpNfit (
             /* Has a variable number of 64-bit addresses at the end */
 
             InfoTable = AcpiDmTableInfoNfit6;
-            FieldOffset = sizeof (ACPI_NFIT_FLUSH_ADDRESS) - sizeof (UINT64);
+            FieldOffset = sizeof (ACPI_NFIT_FLUSH_ADDRESS);
             break;
 
         case ACPI_NFIT_TYPE_CAPABILITIES:    /* ACPI 6.0A */
@@ -1473,12 +1647,12 @@ AcpiDmDumpNfit (
         case ACPI_NFIT_TYPE_SMBIOS:
 
             Length = Subtable->Length -
-                sizeof (ACPI_NFIT_SMBIOS) + sizeof (UINT8);
+                sizeof (ACPI_NFIT_SMBIOS);
 
             if (Length)
             {
                 Status = AcpiDmDumpTable (Table->Length,
-                    sizeof (ACPI_NFIT_SMBIOS) - sizeof (UINT8),
+                    sizeof (ACPI_NFIT_SMBIOS),
                     SmbiosInfo,
                     Length, AcpiDmTableInfoNfit3a);
                 if (ACPI_FAILURE (Status))
@@ -2104,9 +2278,12 @@ AcpiDmDumpPhat (
     UINT32                  RecordCount;
     UINT32                  Length = Table->Length;
     UINT32                  Offset = sizeof (ACPI_TABLE_PHAT);
+    UINT32                  OriginalOffset;
     UINT32                  SubtableLength;
     UINT32                  PathLength;
     UINT32                  VendorLength;
+    UINT16                  RecordType;
+    const wchar_t           *WideString;
 
 
     Subtable = ACPI_ADD_PTR (ACPI_PHAT_HEADER, Table, sizeof (ACPI_TABLE_PHAT));
@@ -2116,58 +2293,93 @@ AcpiDmDumpPhat (
         /* Common subtable header */
 
         AcpiOsPrintf ("\n");
-        Status = AcpiDmDumpTable (Length, 0, Subtable,
+        Status = AcpiDmDumpTable (Length, Offset, Subtable,
             sizeof (ACPI_PHAT_HEADER), AcpiDmTableInfoPhatHdr);
         if (ACPI_FAILURE (Status))
         {
             return;
         }
 
+        DbgPrint (ASL_DEBUG_OUTPUT, "\n/* %u, Subtable->Type %X */\n",
+            __LINE__, Subtable->Type);
+
         switch (Subtable->Type)
         {
         case ACPI_PHAT_TYPE_FW_VERSION_DATA:
 
             InfoTable = AcpiDmTableInfoPhat0;
-            SubtableLength = sizeof (ACPI_PHAT_VERSION_DATA);
+            SubtableLength = Offset += sizeof (ACPI_PHAT_VERSION_DATA);
             break;
 
         case ACPI_PHAT_TYPE_FW_HEALTH_DATA:
 
             InfoTable = AcpiDmTableInfoPhat1;
-            SubtableLength = sizeof (ACPI_PHAT_HEALTH_DATA);
+            SubtableLength = Offset += sizeof (ACPI_PHAT_TYPE_FW_HEALTH_DATA);
             break;
 
         default:
 
-            AcpiOsPrintf ("\n**** Unknown PHAT subtable type 0x%X\n\n",
+            DbgPrint (ASL_DEBUG_OUTPUT, "\n**** Unknown PHAT subtable type 0x%X\n\n",
                 Subtable->Type);
 
             return;
         }
 
-        Status = AcpiDmDumpTable (Length, 0, Subtable,
+        Status = AcpiDmDumpTable (Length, SubtableLength, Subtable,
             SubtableLength, InfoTable);
         if (ACPI_FAILURE (Status))
         {
             return;
         }
 
+        OriginalOffset = Offset;
         switch (Subtable->Type)
         {
         case ACPI_PHAT_TYPE_FW_VERSION_DATA:
 
             VersionData = ACPI_CAST_PTR (ACPI_PHAT_VERSION_DATA, Subtable);
             RecordCount = VersionData->ElementCount;
-            while (RecordCount)
+            RecordType = *ACPI_CAST_PTR (UINT8, Subtable);
+
+            /*
+             * Skip past a zero-valued block (not part of the ACPI PHAT specification).
+             * First, check for a zero length record and a zero element count
+             */
+            if (!VersionData->Header.Length && !VersionData->ElementCount)
             {
-                Status = AcpiDmDumpTable (Length, Offset,
-                    ACPI_ADD_PTR (ACPI_PHAT_HEADER, Subtable, sizeof (ACPI_PHAT_VERSION_DATA)),
+                while (RecordType == 0)
+                {
+                    Subtable = ACPI_ADD_PTR (ACPI_PHAT_HEADER, Table, Offset);
+                    RecordType = *ACPI_CAST_PTR (UINT8, Subtable);
+                    RecordCount = VersionData->ElementCount;
+                    Offset += 1;
+                }
+
+                Offset -= 1;
+                AcpiOsPrintf ("\n/* Warning: Block of zeros found above starting at Offset %X Length %X */\n"
+                    "/* (not compliant to PHAT specification -- ignoring block) */\n",
+                    OriginalOffset - 12, Offset - OriginalOffset + 12);
+            }
+
+            DbgPrint (ASL_DEBUG_OUTPUT, "/* %u, RecordCount: %X, Offset %X, SubtableLength %X */\n",
+                __LINE__, RecordCount, Offset, SubtableLength);
+
+            /* Emit each of the version elements */
+
+            while (RecordCount && VersionData->Header.Length)
+            {
+                AcpiOsPrintf ("\n/* Version Element #%Xh Offset %Xh */\n\n",
+                    VersionData->ElementCount - RecordCount + 1, Offset);
+
+                Subtable = ACPI_ADD_PTR (ACPI_PHAT_HEADER, Table, Offset);
+                Status = AcpiDmDumpTable (Length, Offset, Subtable,
                     sizeof (ACPI_PHAT_VERSION_ELEMENT), AcpiDmTableInfoPhat0a);
                 if (ACPI_FAILURE (Status))
                 {
                     return;
                 }
 
+                Offset += sizeof (ACPI_PHAT_VERSION_ELEMENT);
                 RecordCount--;
             }
 
@@ -2175,24 +2387,48 @@ AcpiDmDumpPhat (
 
         case ACPI_PHAT_TYPE_FW_HEALTH_DATA:
 
-            /* account for the null terminator */
+            /*
+             * Get the length of the Device Path (UEFI wide string).
+             * Include the wide null terminator (+2),
+             */
+            WideString = ACPI_ADD_PTR (wchar_t, Subtable,
+                sizeof (ACPI_PHAT_HEALTH_DATA));
 
-            PathLength = strlen (ACPI_ADD_PTR (char, Subtable, sizeof (ACPI_PHAT_HEALTH_DATA))) + 1;
+            PathLength = (wcslen (WideString) * 2) + 2;
+            DbgPrint (ASL_DEBUG_OUTPUT, "/* %u, PathLength %X, Offset %X, Table->Length %X */\n",
+                __LINE__, PathLength, Offset, Length);
+
             Status = AcpiDmDumpTable (Length, Offset,
                 ACPI_ADD_PTR (ACPI_PHAT_HEADER, Subtable, sizeof (ACPI_PHAT_HEALTH_DATA)),
                 PathLength, AcpiDmTableInfoPhat1a);
+            Offset += PathLength;
             if (ACPI_FAILURE (Status))
             {
                 return;
             }
 
-            /* Get vendor data - data length is the remaining subtable length */
+            /* Get Device-Specific Data - length of which is the remaining subtable length. */
 
             VendorLength =
                 Subtable->Length - sizeof (ACPI_PHAT_HEALTH_DATA) - PathLength;
-            Status = AcpiDmDumpTable (Length, 0,
-                ACPI_ADD_PTR (ACPI_PHAT_HEADER, Subtable, sizeof (ACPI_PHAT_HEALTH_DATA) + PathLength),
-                VendorLength, AcpiDmTableInfoPhat1b);
+            DbgPrint (ASL_DEBUG_OUTPUT, "%u, Subtable->Length %X, VendorLength %X, Offset %X PathLength: %X\n",
+                __LINE__, Subtable->Length, VendorLength, Offset, PathLength);
+
+            if (VendorLength)
+            {
+                /* Point past the Device Path, Compile the Device-Specific Data */
+
+                Status = AcpiDmDumpTable (Length, Offset,
+                    ACPI_ADD_PTR (ACPI_PHAT_HEADER, Subtable, sizeof (ACPI_PHAT_HEALTH_DATA) + PathLength),
+                    VendorLength, AcpiDmTableInfoPhat1b);
+                if (ACPI_FAILURE (Status))
+                {
+                    return;
+                }
+
+                Offset += VendorLength;
+            }
+
             if (ACPI_FAILURE (Status))
             {
                 return;
@@ -2208,9 +2444,12 @@ AcpiDmDumpPhat (
 
         /* Next subtable */
 
-        Offset += Subtable->Length;
-        Subtable = ACPI_ADD_PTR (ACPI_PHAT_HEADER, Subtable,
-            Subtable->Length);
+        DbgPrint (ASL_DEBUG_OUTPUT, "/* %u, Bottom of main loop: Offset %X, "
+            "Subtable->Length %X, Table->Length %X */\n",
+            __LINE__, Offset, Subtable->Length, Table->Length);
+
+        Subtable = ACPI_ADD_PTR (ACPI_PHAT_HEADER, Table,
+            Offset);
     }
 }
 
@@ -2557,6 +2796,138 @@ AcpiDmDumpRgrt (
     if (ACPI_FAILURE (Status))
     {
         return;
+    }
+}
+
+
+/*******************************************************************************
+ *
+ * FUNCTION:    AcpiDmDumpRhct
+ *
+ * PARAMETERS:  Table               - A RHCT table
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Format the contents of a RHCT.
+ *
+ ******************************************************************************/
+
+void
+AcpiDmDumpRhct (
+    ACPI_TABLE_HEADER       *Table)
+{
+    ACPI_STATUS             Status;
+    ACPI_RHCT_NODE_HEADER   *Subtable;
+    ACPI_RHCT_HART_INFO     *RhctHartInfo;
+    ACPI_RHCT_ISA_STRING    *RhctIsaString;
+    ACPI_RHCT_CMO_NODE      *RhctCmoNode;
+    ACPI_RHCT_MMU_NODE      *RhctMmuNode;
+    UINT32                  Length = Table->Length;
+    UINT8                   SubtableOffset, IsaPadOffset;
+    UINT32                  Offset = sizeof (ACPI_TABLE_RHCT);
+    UINT32                  i;
+
+    /* Main table */
+
+    Status = AcpiDmDumpTable (Length, 0, Table, 0, AcpiDmTableInfoRhct);
+    if (ACPI_FAILURE (Status))
+    {
+        return;
+    }
+
+    /* Subtables */
+
+    while (Offset < Table->Length)
+    {
+        AcpiOsPrintf ("\n");
+
+        /* Common subtable header */
+
+        Subtable = ACPI_ADD_PTR (ACPI_RHCT_NODE_HEADER, Table, Offset);
+        if (Subtable->Length < sizeof (ACPI_RHCT_NODE_HEADER))
+        {
+            AcpiOsPrintf ("Invalid subtable length\n");
+            return;
+        }
+        Status = AcpiDmDumpTable (Table->Length, Offset, Subtable,
+            Subtable->Length, AcpiDmTableInfoRhctNodeHdr);
+        if (ACPI_FAILURE (Status))
+        {
+            return;
+        }
+
+        Length = sizeof (ACPI_RHCT_NODE_HEADER);
+
+        if (Subtable->Length < Length)
+        {
+            AcpiOsPrintf ("Invalid subtable length\n");
+            return;
+        }
+        SubtableOffset = (UINT8) Length;
+
+        switch (Subtable->Type)
+        {
+        case ACPI_RHCT_NODE_TYPE_HART_INFO:
+            Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                    ACPI_ADD_PTR (ACPI_RHCT_HART_INFO, Subtable, SubtableOffset),
+                    sizeof (ACPI_RHCT_HART_INFO), AcpiDmTableInfoRhctHartInfo1);
+
+            RhctHartInfo = ACPI_ADD_PTR (ACPI_RHCT_HART_INFO, Subtable, SubtableOffset);
+
+            if ((UINT16)(Subtable->Length - SubtableOffset) <
+                (UINT16)(RhctHartInfo->NumOffsets * 4))
+            {
+                AcpiOsPrintf ("Invalid number of offsets\n");
+                return;
+            }
+            SubtableOffset += sizeof (ACPI_RHCT_HART_INFO);
+            for (i = 0; i < RhctHartInfo->NumOffsets; i++)
+            {
+                Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                    ACPI_ADD_PTR (UINT32, Subtable, SubtableOffset),
+                    4, AcpiDmTableInfoRhctHartInfo2);
+                if (ACPI_FAILURE (Status))
+                {
+                    return;
+                }
+
+                SubtableOffset += 4;
+            }
+            break;
+
+        case ACPI_RHCT_NODE_TYPE_ISA_STRING:
+            RhctIsaString = ACPI_ADD_PTR (ACPI_RHCT_ISA_STRING, Subtable, SubtableOffset);
+            IsaPadOffset = (UINT8) (SubtableOffset + 2 + RhctIsaString->IsaLength);
+            Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                    RhctIsaString, RhctIsaString->IsaLength, AcpiDmTableInfoRhctIsa1);
+            if (Subtable->Length > IsaPadOffset)
+            {
+                Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                         ACPI_ADD_PTR (UINT8, Subtable, IsaPadOffset),
+                         (Subtable->Length - IsaPadOffset), AcpiDmTableInfoRhctIsaPad);
+            }
+
+            break;
+
+        case ACPI_RHCT_NODE_TYPE_CMO:
+            RhctCmoNode = ACPI_ADD_PTR (ACPI_RHCT_CMO_NODE, Subtable, SubtableOffset);
+            Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                                      RhctCmoNode, 4, AcpiDmTableInfoRhctCmo1);
+            break;
+
+        case ACPI_RHCT_NODE_TYPE_MMU:
+            RhctMmuNode = ACPI_ADD_PTR (ACPI_RHCT_MMU_NODE, Subtable, SubtableOffset);
+            Status = AcpiDmDumpTable (Table->Length, Offset + SubtableOffset,
+                                      RhctMmuNode, 2, AcpiDmTableInfoRhctMmu1);
+            break;
+
+        default:
+            break;
+        }
+
+        /* Point to next subtable */
+
+        Offset += Subtable->Length;
     }
 }
 

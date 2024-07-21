@@ -33,13 +33,6 @@
  * Copyright (c) 1986-1991 by Sun Microsystems Inc. 
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-#ident	"@(#)svc_auth.c	1.16	94/04/24 SMI"
-static char sccsid[] = "@(#)svc_auth.c 1.26 89/02/07 Copyr 1984 Sun Micro";
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * svc_auth.c, Server-side rpc authenticator interface.
  *
@@ -48,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/param.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/systm.h>
 #include <sys/jail.h>
 #include <sys/ucred.h>
@@ -197,7 +191,7 @@ svc_getcred(struct svc_req *rqst, struct ucred **crp, int *flavorp)
 		cr->cr_uid = cr->cr_ruid = cr->cr_svuid = xprt->xp_uid;
 		crsetgroups(cr, xprt->xp_ngrps, xprt->xp_gidp);
 		cr->cr_rgid = cr->cr_svgid = xprt->xp_gidp[0];
-		cr->cr_prison = &prison0;
+		cr->cr_prison = curthread->td_ucred->cr_prison;
 		prison_hold(cr->cr_prison);
 		*crp = cr;
 		return (TRUE);
@@ -210,7 +204,7 @@ svc_getcred(struct svc_req *rqst, struct ucred **crp, int *flavorp)
 		cr->cr_uid = cr->cr_ruid = cr->cr_svuid = xcr->cr_uid;
 		crsetgroups(cr, xcr->cr_ngroups, xcr->cr_groups);
 		cr->cr_rgid = cr->cr_svgid = cr->cr_groups[0];
-		cr->cr_prison = &prison0;
+		cr->cr_prison = curthread->td_ucred->cr_prison;
 		prison_hold(cr->cr_prison);
 		*crp = cr;
 		return (TRUE);

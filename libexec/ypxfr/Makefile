@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	yp
 PROG=	ypxfr
 SRCS=	yp_dblookup.c yp_dbwrite.c yp_error.c \

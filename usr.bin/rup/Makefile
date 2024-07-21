@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	rup
 
 LIBADD=	rpcsvc

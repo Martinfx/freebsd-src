@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Semihalf.
  * All rights reserved.
@@ -27,9 +27,6 @@
  *
  * From: FreeBSD: src/sys/arm/mv/kirkwood/sheevaplug.c,v 1.2 2010/06/13 13:28:53
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

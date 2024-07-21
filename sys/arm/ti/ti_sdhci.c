@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Ian Lepore <ian@freebsd.org>
  * Copyright (c) 2011 Ben Gray <ben.r.gray@gmail.com>.
@@ -27,8 +27,6 @@
  * SUCH DAMAGE.
  *
  */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -48,7 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <arm/ti/ti_sysc.h>
 #include "gpio_if.h"
 
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 

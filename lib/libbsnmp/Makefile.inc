@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 INCSDIR=	${INCLUDEDIR}/bsnmp
 PACKAGE=	bsnmp
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999, 2000 John D. Polstra.
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef RTLD_MACHDEP_H
@@ -37,9 +35,17 @@
 
 struct Struct_Obj_Entry;
 
+#define	MD_OBJ_ENTRY
+
 /* Return the address of the .dynamic section in the dynamic linker. */
 Elf_Dyn *rtld_dynamic_addr(void);
 #define	rtld_dynamic(obj)	rtld_dynamic_addr()
+
+/* No arch-specific dynamic tags */
+#define	arch_digest_dynamic(obj, dynp)	false
+
+/* No architecture specific notes */
+#define	arch_digest_note(obj, note)	false
 
 Elf_Addr reloc_jmpslot(Elf_Addr *where, Elf_Addr target,
     const struct Struct_Obj_Entry *obj, const struct Struct_Obj_Entry *refobj,
@@ -68,9 +74,6 @@ typedef struct {
 } tls_index;
 
 void *__tls_get_addr(tls_index *ti) __exported;
-
-#define	RTLD_DEFAULT_STACK_PF_EXEC	PF_X
-#define	RTLD_DEFAULT_STACK_EXEC		PROT_EXEC
 
 #define md_abi_variant_hook(x)
 

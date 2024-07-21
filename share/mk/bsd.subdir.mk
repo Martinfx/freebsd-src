@@ -1,6 +1,3 @@
-#	from: @(#)bsd.subdir.mk	5.9 (Berkeley) 2/1/91
-# $FreeBSD$
-#
 # The include file <bsd.subdir.mk> contains the default targets
 # for building subdirectories.
 #
@@ -57,12 +54,12 @@ STANDALONE_SUBDIR_TARGETS+= \
 		installconfig installdirs installincludes installfiles print-dir \
 		maninstall manlint obj objlink
 
-# It is safe to install in parallel when staging.
-.if defined(NO_ROOT) || !empty(SYSROOT)
-STANDALONE_SUBDIR_TARGETS+= realinstall
-.endif
-
 .include <bsd.init.mk>
+
+.if ${MK_META_MODE} == "yes"
+.MAKE.JOB.PREFIX=
+ECHODIR=	:
+.endif
 
 .if make(print-dir)
 NEED_SUBDIR=	1
@@ -128,8 +125,8 @@ SUBDIR:=${SUBDIR:u}
 .endif
 
 .if defined(SUBDIR.)
-.error ${.CURDIR}: Found variable SUBDIR. with value "${SUBDIR.}". This was \
-        probably caused by using SUBDIR.$${MK_FOO} without including \
+.error ${.CURDIR}: Found variable 'SUBDIR.' with value "${SUBDIR.}". This was\
+        probably caused by using SUBDIR.$${MK_FOO} without including\
         <src.opts.mk> or by using an invalid $${MK_FOO} option.
 .endif
 

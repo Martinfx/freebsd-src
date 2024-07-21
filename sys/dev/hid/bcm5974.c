@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2012 Huang Wen Hui
  * Copyright (c) 2021 Vladimir Kondratyev <wulf@FreeBSD.org>
@@ -27,8 +27,7 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#include "opt_hid.h"
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -54,7 +53,7 @@ __FBSDID("$FreeBSD$");
 
 #include "usbdevs.h"
 
-#define	BCM5974_BUFFER_MAX	(248 * 4)	/* 4 Type4 SPI frames */
+#define	BCM5974_BUFFER_MAX	(246 * 2)	/* 2 Type4 SPI frames */
 #define	BCM5974_TLC_PAGE	HUP_GENERIC_DESKTOP
 #define	BCM5974_TLC_USAGE	HUG_MOUSE
 
@@ -114,11 +113,13 @@ enum tp_type {
 	TYPE2,			/* button integrated in trackpad */
 	TYPE3,			/* additional header fields since June 2013 */
 	TYPE4,                  /* additional header field for pressure data */
+	TYPE_MT2U,			/* Magic Trackpad 2 USB */
 	TYPE_CNT
 };
 
 /* list of device capability bits */
 #define	HAS_INTEGRATED_BUTTON	1
+#define	USES_COMPACT_REPORT	2
 
 struct tp_type_params {
 	uint8_t	caps;		/* device capability bitmask */
@@ -150,7 +151,25 @@ struct tp_type_params {
 		.offset = 23 * 2,
 		.delta = 2,
 	},
+	[TYPE_MT2U] = {
+		.caps = HAS_INTEGRATED_BUTTON | USES_COMPACT_REPORT,
+		.button = 1,
+		.offset = 12,
+		.delta = 0,
+	},
 };
+
+/* trackpad finger structure - compact version for external "Magic" devices */
+struct tp_finger_compact {
+	uint32_t coords; /* not struct directly due to endian conversion */
+	uint8_t touch_major;
+	uint8_t touch_minor;
+	uint8_t size;
+	uint8_t pressure;
+	uint8_t id_ori;
+} __packed;
+
+_Static_assert((sizeof(struct tp_finger_compact) == 9), "tp_finger struct size must be 9");
 
 /* trackpad finger structure - little endian */
 struct tp_finger {
@@ -190,7 +209,12 @@ enum {
 	BCM5974_FLAG_WELLSPRING7,
 	BCM5974_FLAG_WELLSPRING7A,
 	BCM5974_FLAG_WELLSPRING8,
-	BCM5974_FLAG_WELLSPRING9,
+	BCM5974_FLAG_WELLSPRING9_MODEL3,
+	BCM5974_FLAG_WELLSPRING9_MODEL4,
+#define	BCM5974_FLAG_WELLSPRING9_MODEL_SPI	BCM5974_FLAG_WELLSPRING9_MODEL4
+	BCM5974_FLAG_WELLSPRING9_MODEL5,
+	BCM5974_FLAG_WELLSPRING9_MODEL6,
+	BCM5974_FLAG_MAGIC_TRACKPAD2_USB,
 	BCM5974_FLAG_MAX,
 };
 
@@ -327,19 +351,66 @@ static const struct bcm5974_dev_params bcm5974_dev_params[BCM5974_FLAG_MAX] = {
 		.o = { SN_ORIENT,
 		    -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION, 0 },
 	},
-	[BCM5974_FLAG_WELLSPRING9] = {
+	/*
+	 * NOTE: Actually force-sensitive. Pressure has a "size" equal to the max
+	 * so that the "resolution" is 1 (i.e. values will be interpreted as grams).
+	 * No scientific measurements have been done :) but a really hard press
+	 * results in a value around 3500 on model 4.
+	 */
+	[BCM5974_FLAG_WELLSPRING9_MODEL3] = {
 		.tp = tp + TYPE4,
-		.p = { SN_PRESSURE, 0, 300, 0 },
+		.p = { SN_PRESSURE, 0, 4096, 4096 },
 		.w = { SN_WIDTH, 0, 2048, 0 },
 		.x = { SN_COORD, -4828, 5345, 105 },
 		.y = { SN_COORD, -203, 6803, 75 },
 		.o = { SN_ORIENT,
 		    -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION, 0 },
 	},
+	[BCM5974_FLAG_WELLSPRING9_MODEL4] = {
+		.tp = tp + TYPE4,
+		.p = { SN_PRESSURE, 0, 4096, 4096 },
+		.w = { SN_WIDTH, 0, 2048, 0 },
+		.x = { SN_COORD, -5087, 5579, 105 },
+		.y = { SN_COORD, -182, 6089, 75 },
+		.o = { SN_ORIENT,
+		    -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION, 0 },
+	},
+	[BCM5974_FLAG_WELLSPRING9_MODEL5] = {
+		.tp = tp + TYPE4,
+		.p = { SN_PRESSURE, 0, 4096, 4096 },
+		.w = { SN_WIDTH, 0, 2048, 0 },
+		.x = { SN_COORD, -6243, 6749, 105 },
+		.y = { SN_COORD, -170, 7685, 75 },
+		.o = { SN_ORIENT,
+		    -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION, 0 },
+	},
+	[BCM5974_FLAG_WELLSPRING9_MODEL6] = {
+		.tp = tp + TYPE4,
+		.p = { SN_PRESSURE, 0, 4096, 4096 },
+		.w = { SN_WIDTH, 0, 2048, 0 },
+		.x = { SN_COORD, -7456, 7976, 105 },
+		.y = { SN_COORD, -163, 9283, 75 },
+		.o = { SN_ORIENT,
+		    -MAX_FINGER_ORIENTATION, MAX_FINGER_ORIENTATION, 0 },
+	},
+	[BCM5974_FLAG_MAGIC_TRACKPAD2_USB] = {
+		.tp = tp + TYPE_MT2U,
+		.p = { SN_PRESSURE, 0, 256, 256 },
+		.w = { SN_WIDTH, 0, 2048, 0 },
+		.x = { SN_COORD, -3678, 3934, 157 },
+		.y = { SN_COORD, -2478, 2587, 107 },
+		.o = { SN_ORIENT, -3, 4, 0 },
+	},
 };
 
 #define	BCM5974_DEV(v,p,i)	{					\
 	HID_BVPI(BUS_USB, USB_VENDOR_##v, USB_PRODUCT_##v##_##p, i),	\
+	HID_TLC(BCM5974_TLC_PAGE, BCM5974_TLC_USAGE),			\
+}
+
+#define	APPLE_HID	"APP000D"
+#define	BCM5974_DEV_SPI(hid, i)	{					\
+	HID_BUS(BUS_SPI), HID_PNP(hid), HID_DRIVER_INFO(i),		\
 	HID_TLC(BCM5974_TLC_PAGE, BCM5974_TLC_USAGE),			\
 }
 
@@ -406,10 +477,19 @@ static const struct hid_device_id bcm5974_devs[] = {
 	BCM5974_DEV(APPLE, WELLSPRING8_JIS, BCM5974_FLAG_WELLSPRING8),
 
 	/* MacbookPro12,1 MacbookPro11,4 */
-	BCM5974_DEV(APPLE, WELLSPRING9_ANSI, BCM5974_FLAG_WELLSPRING9),
-	BCM5974_DEV(APPLE, WELLSPRING9_ISO, BCM5974_FLAG_WELLSPRING9),
-	BCM5974_DEV(APPLE, WELLSPRING9_JIS, BCM5974_FLAG_WELLSPRING9),
+	BCM5974_DEV(APPLE, WELLSPRING9_ANSI, BCM5974_FLAG_WELLSPRING9_MODEL3),
+	BCM5974_DEV(APPLE, WELLSPRING9_ISO, BCM5974_FLAG_WELLSPRING9_MODEL3),
+	BCM5974_DEV(APPLE, WELLSPRING9_JIS, BCM5974_FLAG_WELLSPRING9_MODEL3),
+
+	/* Generic SPI device */
+	BCM5974_DEV_SPI(APPLE_HID, BCM5974_FLAG_WELLSPRING9_MODEL_SPI),
+
+	/* External "Magic" devices */
+	BCM5974_DEV(APPLE, MAGIC_TRACKPAD2, BCM5974_FLAG_MAGIC_TRACKPAD2_USB),
 };
+
+#define	BCM5974_WELLSPRING9_RDESC_SIZE		110
+#define	BCM5974_WELLSPRING9_MODEL_OFFSET	106
 
 struct bcm5974_softc {
 	device_t sc_dev;
@@ -544,6 +624,7 @@ bcm5974_set_device_mode(struct bcm5974_softc *sc, bool on)
 	case TYPE3:	/* Type 3 does not require a mode switch */
 		break;
 	case TYPE4:
+	case TYPE_MT2U:
 		err = bcm5974_set_device_mode_hid(sc, on);
 		break;
 	default:
@@ -554,6 +635,44 @@ bcm5974_set_device_mode(struct bcm5974_softc *sc, bool on)
 		sc->sc_saved_mode = on;
 
 	return (err);
+}
+
+static uintptr_t
+bcm5974_get_wsp9_model(device_t dev)
+{
+	const struct hid_device_info *hw = hid_get_device_info(dev);
+	static uint8_t rdesc[BCM5974_WELLSPRING9_RDESC_SIZE];
+	uint8_t model_byte = 0;
+
+	bus_topo_assert();
+
+	if (hw->rdescsize == sizeof(rdesc) &&
+	    hid_get_rdesc(dev, rdesc, sizeof(rdesc)) == 0) {
+		model_byte = rdesc[BCM5974_WELLSPRING9_MODEL_OFFSET];
+		switch (model_byte) {
+		case 3:
+			/* MacbookPro12,1 MacbookPro11,4 */
+			return (BCM5974_FLAG_WELLSPRING9_MODEL3);
+		case 4:
+			/* Macbook8,1 Macbook9,1 Macbook10,1 */
+			return (BCM5974_FLAG_WELLSPRING9_MODEL4);
+		case 5:
+			/*
+			 * MacbookPro13,1 MacbookPro13,2
+			 * MacbookPro14,1 MacbookPro14,2
+			 */
+			return (BCM5974_FLAG_WELLSPRING9_MODEL5);
+		case 6:
+			/* MacbookPro13,3 MacbookPro14,3 */
+			return (BCM5974_FLAG_WELLSPRING9_MODEL6);
+		}
+	}
+
+	device_printf(dev, "Unexpected trackpad descriptor len=%u model_byte="
+	    "%u, not extracting model\n", hw->rdescsize, model_byte);
+
+	/* Fallback for unknown SPI versions */
+	return (BCM5974_FLAG_WELLSPRING9_MODEL_SPI);
 }
 
 static void
@@ -594,6 +713,7 @@ bcm5974_attach(device_t dev)
 {
 	struct bcm5974_softc *sc = device_get_softc(dev);
 	const struct hid_device_info *hw = hid_get_device_info(dev);
+	uintptr_t drv_info;
 	int err;
 
 	DPRINTFN(BCM5974_LLEVEL_INFO, "sc=%p\n", sc);
@@ -601,7 +721,10 @@ bcm5974_attach(device_t dev)
 	sc->sc_dev = dev;
 
 	/* get device specific configuration */
-	sc->sc_params = bcm5974_dev_params + hidbus_get_driver_info(dev);
+	drv_info = hidbus_get_driver_info(dev);
+	if (drv_info == BCM5974_FLAG_WELLSPRING9_MODEL_SPI)
+		drv_info = bcm5974_get_wsp9_model(dev);
+	sc->sc_params = bcm5974_dev_params + drv_info;
 
 	sc->sc_evdev = evdev_alloc();
 	evdev_set_name(sc->sc_evdev, device_get_desc(dev));
@@ -630,8 +753,10 @@ bcm5974_attach(device_t dev)
 	BCM5974_ABS(sc->sc_evdev, ABS_MT_TOUCH_MAJOR, sc->sc_params->w);
 	BCM5974_ABS(sc->sc_evdev, ABS_MT_TOUCH_MINOR, sc->sc_params->w);
 	/* finger approach area */
-	BCM5974_ABS(sc->sc_evdev, ABS_MT_WIDTH_MAJOR, sc->sc_params->w);
-	BCM5974_ABS(sc->sc_evdev, ABS_MT_WIDTH_MINOR, sc->sc_params->w);
+	if ((sc->sc_params->tp->caps & USES_COMPACT_REPORT) == 0) {
+		BCM5974_ABS(sc->sc_evdev, ABS_MT_WIDTH_MAJOR, sc->sc_params->w);
+		BCM5974_ABS(sc->sc_evdev, ABS_MT_WIDTH_MINOR, sc->sc_params->w);
+	}
 	/* finger orientation */
 	BCM5974_ABS(sc->sc_evdev, ABS_MT_ORIENTATION, sc->sc_params->o);
 	/* button properties */
@@ -643,7 +768,8 @@ bcm5974_attach(device_t dev)
 	    0, MAX_FINGERS - 1, 0, 0, 0);
 	evdev_support_abs(sc->sc_evdev, ABS_MT_TRACKING_ID,
 	    -1, MAX_FINGERS - 1, 0, 0, 0);
-	evdev_set_flag(sc->sc_evdev, EVDEV_FLAG_MT_TRACK);
+	if ((sc->sc_params->tp->caps & USES_COMPACT_REPORT) == 0)
+		evdev_set_flag(sc->sc_evdev, EVDEV_FLAG_MT_TRACK);
 	evdev_set_flag(sc->sc_evdev, EVDEV_FLAG_MT_AUTOREL);
 	/* Synaptics compatibility events */
 	evdev_set_flag(sc->sc_evdev, EVDEV_FLAG_MT_STCOMPAT);
@@ -688,16 +814,22 @@ bcm5974_intr(void *context, void *data, hid_size_t len)
 	const struct bcm5974_dev_params *params = sc->sc_params;
 	union evdev_mt_slot slot_data;
 	struct tp_finger *f;
+	struct tp_finger_compact *fc;
+	int coords;
 	int ntouch;			/* the finger number in touch */
 	int ibt;			/* button status */
 	int i;
 	int slot;
+	uint8_t id;
 	uint8_t fsize = sizeof(struct tp_finger) + params->tp->delta;
+
+	if ((params->tp->caps & USES_COMPACT_REPORT) != 0)
+		fsize = sizeof(struct tp_finger_compact) + params->tp->delta;
 
 	if ((len < params->tp->offset + fsize) ||
 	    ((len - params->tp->offset) % fsize) != 0) {
 		DPRINTFN(BCM5974_LLEVEL_INFO, "Invalid length: %d, %x, %x\n",
-		    len, sc->tp_data[0], sc->tp_data[1]);
+		    len, params->tp->offset, fsize);
 		return;
 	}
 
@@ -705,6 +837,35 @@ bcm5974_intr(void *context, void *data, hid_size_t len)
 	ntouch = (len - params->tp->offset) / fsize;
 
 	for (i = 0, slot = 0; i != ntouch; i++) {
+		if ((params->tp->caps & USES_COMPACT_REPORT) != 0) {
+			fc = (struct tp_finger_compact *)(((uint8_t *)data) +
+			     params->tp->offset + params->tp->delta + i * fsize);
+			coords = (int)le32toh(fc->coords);
+			id = fc->id_ori & 0x0f;
+			slot = evdev_mt_id_to_slot(sc->sc_evdev, id);
+			DPRINTFN(BCM5974_LLEVEL_INFO,
+			    "[%d]ibt=%d, taps=%d, x=%5d, y=%5d, state=%4d, "
+			    "tchmaj=%4d, tchmin=%4d, size=%4d, pressure=%4d, "
+			    "ot=%4x, id=%4x, slot=%d\n",
+			    i, ibt, ntouch, coords << 19 >> 19,
+			    coords << 6 >> 19, (u_int)coords >> 30,
+			    fc->touch_major, fc->touch_minor, fc->size,
+			    fc->pressure, fc->id_ori >> 5, id, slot);
+			if (fc->touch_major == 0 || slot == -1)
+				continue;
+			slot_data = (union evdev_mt_slot) {
+				.id = id,
+				.x = coords << 19 >> 19,
+				.y = params->y.min + params->y.max -
+				    ((coords << 6) >> 19),
+				.p = fc->pressure,
+				.maj = fc->touch_major << 2,
+				.min = fc->touch_minor << 2,
+				.ori = (int)(fc->id_ori >> 5) - 4,
+			};
+			evdev_mt_push_slot(sc->sc_evdev, slot, &slot_data);
+			continue;
+		}
 		f = (struct tp_finger *)(((uint8_t *)data) +
 		    params->tp->offset + params->tp->delta + i * fsize);
 		DPRINTFN(BCM5974_LLEVEL_INFO,
@@ -762,7 +923,7 @@ bcm5974_ev_open(struct evdev_dev *evdev)
 		return (err);
 	}
 
-	return (hidbus_intr_start(sc->sc_dev));
+	return (hid_intr_start(sc->sc_dev));
 }
 
 static int
@@ -771,7 +932,7 @@ bcm5974_ev_close(struct evdev_dev *evdev)
 	struct bcm5974_softc *sc = evdev_get_softc(evdev);
 	int err;
 
-	err = hidbus_intr_stop(sc->sc_dev);
+	err = hid_intr_stop(sc->sc_dev);
 	if (err != 0)
 		return (err);
 

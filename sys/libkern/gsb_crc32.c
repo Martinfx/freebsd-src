@@ -42,9 +42,6 @@
  * CRC32 code derived from work by Gary S. Brown.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/gsb_crc32.h>
 
@@ -62,7 +59,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/armreg.h>
 #include <machine/ifunc.h>
 #endif
-#endif /* _KERNEL */
 
 const uint32_t crc32_tab[] = {
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
@@ -128,6 +124,7 @@ const uint32_t crc32_tab[] = {
  *		return crc ^ ~0U;
  *	}
  */
+#endif /* _KERNEL */
 
 /* CRC32C routines, these use a different polynomial */
 /*****************************************************************/

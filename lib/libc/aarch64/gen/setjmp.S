@@ -29,9 +29,8 @@
  */
 
 #include <machine/asm.h>
-__FBSDID("$FreeBSD$");
-
 #include <machine/setjmp.h>
+#include <sys/elf_common.h>
 
 ENTRY(setjmp)
 	sub	sp, sp, #16
@@ -113,10 +112,13 @@ ENTRY(longjmp)
 	ldp	d14, d15, [x0]
 
 	/* Load the return value */
-	mov	x0, x1
+	cmp	x1, #0
+	csinc	x0, x1, xzr, ne
 	ret
 
 botch:
 	bl	_C_LABEL(longjmperror)
 	bl	_C_LABEL(abort)
 END(longjmp)
+
+GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)

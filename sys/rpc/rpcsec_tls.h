@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Rick Macklem
  *
@@ -23,8 +23,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_RPC_RPCSEC_TLS_H_
@@ -85,6 +83,21 @@ bool		rpctls_getinfo(u_int *maxlen, bool rpctlscd_run,
 
 /* ssl refno value to indicate TLS handshake being done. */
 #define	RPCTLS_REFNO_HANDSHAKE	0xFFFFFFFFFFFFFFFFULL
+
+/* Macros for VIMAGE. */
+/* Just define the KRPC_VNETxxx() macros as VNETxxx() macros. */
+#define	KRPC_VNET_NAME(n)		VNET_NAME(n)
+#define	KRPC_VNET_DECLARE(t, n)		VNET_DECLARE(t, n)
+#define	KRPC_VNET_DEFINE(t, n)		VNET_DEFINE(t, n)
+#define	KRPC_VNET_DEFINE_STATIC(t, n)	VNET_DEFINE_STATIC(t, n)
+#define	KRPC_VNET(n)			VNET(n)
+
+#define	CTLFLAG_KRPC_VNET		CTLFLAG_VNET
+
+#define	KRPC_CURVNET_SET(n)		CURVNET_SET(n)
+#define	KRPC_CURVNET_SET_QUIET(n)	CURVNET_SET_QUIET(n)
+#define	KRPC_CURVNET_RESTORE()		CURVNET_RESTORE()
+#define	KRPC_TD_TO_VNET(n)		TD_TO_VNET(n)
 
 #endif	/* _KERNEL */
 

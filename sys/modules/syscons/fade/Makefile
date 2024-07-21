@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/syscons/fade
 
 KMOD=	fade_saver

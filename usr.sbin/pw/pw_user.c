@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 1996
  *	David L. Nugent.  All rights reserved.
@@ -27,13 +27,8 @@
  * 
  */
 
-#ifndef lint
-static const char rcsid[] =
-  "$FreeBSD$";
-#endif /* not lint */
-
 #include <sys/param.h>
-#include <sys/types.h>
+#include <sys/wait.h>
 
 #include <assert.h>
 #include <ctype.h>
@@ -50,6 +45,7 @@ static const char rcsid[] =
 #include <sysexits.h>
 #include <termios.h>
 #include <unistd.h>
+#include <spawn.h>
 
 #include "pw.h"
 #include "bitmap.h"
@@ -57,6 +53,7 @@ static const char rcsid[] =
 
 #define LOGNAMESIZE (MAXLOGNAME-1)
 
+extern char **environ;
 static		char locked_str[] = "*LOCKED*";
 
 static struct passwd fakeuser = {
@@ -80,11 +77,9 @@ static uid_t	 pw_gidpolicy(struct userconf *cnf, char *grname, char *nam,
 static char	*pw_homepolicy(struct userconf * cnf, char *homedir,
     const char *user);
 static char	*pw_shellpolicy(struct userconf * cnf);
-static char	*pw_password(struct userconf * cnf, char const * user,
-    bool dryrun);
+static char	*pw_password(struct userconf * cnf, char const * user);
 static char	*shell_path(char const * path, char *shells[], char *sh);
 static void	rmat(uid_t uid);
-static void	rmopie(char const * name);
 
 static void
 mkdir_home_parents(int dfd, const char *dir)
@@ -114,36 +109,20 @@ mkdir_home_parents(int dfd, const char *dir)
 	}
 	tmp[0] = '\0';
 
-	/*
-	 * This is a kludge especially for Joerg :)
-	 * If the home directory would be created in the root partition, then
-	 * we really create it under /usr which is likely to have more space.
-	 * But we create a symlink from cnf->home -> "/usr" -> cnf->home
-	 */
-	if (strchr(dirs, '/') == NULL) {
-		asprintf(&tmp, "usr/%s", dirs);
-		if (tmp == NULL)
-			errx(EX_UNAVAILABLE, "out of memory");
-		if (mkdirat(dfd, tmp, _DEF_DIRMODE) != -1 || errno == EEXIST) {
-			fchownat(dfd, tmp, 0, 0, 0);
-			symlinkat(tmp, dfd, dirs);
-		}
-		free(tmp);
-	}
 	tmp = dirs;
 	if (fstatat(dfd, dirs, &st, 0) == -1) {
 		while ((tmp = strchr(tmp + 1, '/')) != NULL) {
 			*tmp = '\0';
 			if (fstatat(dfd, dirs, &st, 0) == -1) {
 				if (mkdirat(dfd, dirs, _DEF_DIRMODE) == -1)
-					err(EX_OSFILE,  "'%s' (root home parent) is not a directory", dirs);
+					err(EX_OSFILE,  "'%s' (home parent) is not a directory", dirs);
 			}
 			*tmp = '/';
 		}
 	}
 	if (fstatat(dfd, dirs, &st, 0) == -1) {
 		if (mkdirat(dfd, dirs, _DEF_DIRMODE) == -1)
-			err(EX_OSFILE,  "'%s' (root home parent) is not a directory", dirs);
+			err(EX_OSFILE,  "'%s' (home parent) is not a directory", dirs);
 		fchownat(dfd, dirs, 0, 0, 0);
 	}
 
@@ -167,7 +146,7 @@ create_and_populate_homedir(struct userconf *cnf, struct passwd *pwd,
 
 	copymkdir(conf.rootfd, pwd->pw_dir, skelfd, homemode, pwd->pw_uid,
 	    pwd->pw_gid, 0);
-	pw_log(cnf, update ? M_UPDATE : M_ADD, W_USER, "%s(%ju) home %s made",
+	pw_log(cnf, update ? M_MODIFY : M_ADD, W_USER, "%s(%ju) home %s made",
 	    pwd->pw_name, (uintmax_t)pwd->pw_uid, pwd->pw_dir);
 }
 
@@ -394,8 +373,7 @@ pw_gidpolicy(struct userconf *cnf, char *grname, char *nam, gid_t prefer, bool d
 			grp = GETGRGID(gid);
 		}
 		gid = grp->gr_gid;
-	} else if ((grp = GETGRNAM(nam)) != NULL &&
-	    (grp->gr_mem == NULL || grp->gr_mem[0] == NULL)) {
+	} else if ((grp = GETGRNAM(nam)) != NULL) {
 		gid = grp->gr_gid;  /* Already created? Use it anyway... */
 	} else {
 		intmax_t		grid = -1;
@@ -511,7 +489,7 @@ pw_pwcrypt(char *password)
 }
 
 static char *
-pw_password(struct userconf * cnf, char const * user, bool dryrun)
+pw_password(struct userconf * cnf, char const * user)
 {
 	int             i, l;
 	char            pwbuf[32];
@@ -528,7 +506,7 @@ pw_password(struct userconf * cnf, char const * user, bool dryrun)
 		/*
 		 * We give this information back to the user
 		 */
-		if (conf.fd == -1 && !dryrun) {
+		if (conf.fd == -1) {
 			if (isatty(STDOUT_FILENO))
 				printf("Password for '%s' is: ", user);
 			printf("%s\n", pwbuf);
@@ -636,7 +614,7 @@ pw_checkname(char *name, int gecos)
 		showtype = "gecos field";
 	} else {
 		/* See if the name is valid as a userid or group. */
-		badchars = " ,\t:+&#%$^()!@~*?<>=|\\/\"";
+		badchars = " ,\t:+&#%$^()!@~*?<>=|\\/\";";
 		showtype = "userid/group name";
 		/* Userids and groups can not have a leading '-'. */
 		if (*ch == '-')
@@ -691,50 +669,27 @@ rmat(uid_t uid)
 
 		while ((e = readdir(d)) != NULL) {
 			struct stat     st;
+			pid_t		pid;
 
 			if (strncmp(e->d_name, ".lock", 5) != 0 &&
 			    stat(e->d_name, &st) == 0 &&
 			    !S_ISDIR(st.st_mode) &&
 			    st.st_uid == uid) {
-				char            tmp[MAXPATHLEN];
-
-				snprintf(tmp, sizeof(tmp), "/usr/bin/atrm %s",
-				    e->d_name);
-				system(tmp);
+				const char *argv[] = {
+					"/usr/sbin/atrm",
+					e->d_name,
+					NULL
+				};
+				if (posix_spawn(&pid, argv[0], NULL, NULL,
+				    (char *const *) argv, environ)) {
+					warn("Failed to execute '%s %s'",
+					    argv[0], argv[1]);
+				} else
+					(void) waitpid(pid, NULL, 0);
 			}
 		}
 		closedir(d);
 	}
-}
-
-static void
-rmopie(char const * name)
-{
-	char tmp[1014];
-	FILE *fp;
-	size_t len;
-	long atofs;
-	int fd;
-
-	if ((fd = openat(conf.rootfd, "etc/opiekeys", O_RDWR)) == -1)
-		return;
-
-	fp = fdopen(fd, "r+");
-	len = strlen(name);
-
-	for (atofs = 0; fgets(tmp, sizeof(tmp), fp) != NULL && atofs >= 0;
-	    atofs = ftell(fp)) {
-		if (strncmp(name, tmp, len) == 0 && tmp[len]==' ') {
-			/* Comment username out */
-			if (fseek(fp, atofs, SEEK_SET) == 0)
-				fwrite("#", 1, 1, fp);
-			break;
-		}
-	}
-	/*
-	 * If we got an error of any sort, don't update!
-	 */
-	fclose(fp);
 }
 
 int
@@ -754,8 +709,14 @@ pw_user_next(int argc, char **argv, char *name __unused)
 		case 'q':
 			quiet = true;
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	if (quiet)
 		freopen(_PATH_DEVNULL, "w", stderr);
@@ -816,8 +777,14 @@ pw_user_show(int argc, char **argv, char *arg1)
 		case '7':
 			v7 = true;
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	if (quiet)
 		freopen(_PATH_DEVNULL, "w", stderr);
@@ -897,8 +864,14 @@ pw_user_del(int argc, char **argv, char *arg1)
 		case 'Y':
 			nis = true;
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	if (quiet)
 		freopen(_PATH_DEVNULL, "w", stderr);
@@ -937,17 +910,25 @@ pw_user_del(int argc, char **argv, char *arg1)
 	if (strcmp(pwd->pw_name, "root") == 0)
 		errx(EX_DATAERR, "cannot remove user 'root'");
 
-	/* Remove opie record from /etc/opiekeys */
-	if (PWALTDIR() != PWF_ALT)
-		rmopie(pwd->pw_name);
-
 	if (!PWALTDIR()) {
 		/* Remove crontabs */
 		snprintf(file, sizeof(file), "/var/cron/tabs/%s", pwd->pw_name);
 		if (access(file, F_OK) == 0) {
-			snprintf(file, sizeof(file), "crontab -u %s -r",
-			    pwd->pw_name);
-			system(file);
+			const char *argv[] = {
+				"crontab",
+				"-u",
+				pwd->pw_name,
+				"-r",
+				NULL
+			};
+			pid_t pid;
+
+			if (posix_spawnp(&pid, argv[0], NULL, NULL,
+						(char *const *) argv, environ)) {
+				warn("Failed to execute '%s %s'",
+						argv[0], argv[1]);
+			} else
+				(void) waitpid(pid, NULL, 0);
 		}
 	}
 
@@ -1038,8 +1019,14 @@ pw_user_lock(int argc, char **argv, char *arg1)
 		case 'q':
 			/* compatibility */
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	return (pw_userlock(arg1, M_LOCK));
 }
@@ -1055,8 +1042,14 @@ pw_user_unlock(int argc, char **argv, char *arg1)
 		case 'q':
 			/* compatibility */
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	return (pw_userlock(arg1, M_UNLOCK));
 }
@@ -1322,8 +1315,14 @@ pw_user_add(int argc, char **argv, char *arg1)
 		case 'Y':
 			nis = true;
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	if (geteuid() != 0 && ! dryrun)
 		errx(EX_NOPERM, "you must be root");
@@ -1398,7 +1397,7 @@ pw_user_add(int argc, char **argv, char *arg1)
 	if (lc == NULL || login_setcryptfmt(lc, "sha512", NULL) == NULL)
 		warn("setting crypt(3) format");
 	login_close(lc);
-	pwd->pw_passwd = pw_password(cmdcnf, pwd->pw_name, dryrun);
+	pwd->pw_passwd = pw_password(cmdcnf, pwd->pw_name);
 	if (pwd->pw_uid == 0 && strcmp(pwd->pw_name, "root") != 0)
 		warnx("WARNING: new account `%s' has a uid of 0 "
 		    "(superuser access!)", pwd->pw_name);
@@ -1432,6 +1431,9 @@ pw_user_add(int argc, char **argv, char *arg1)
 	if (cmdcnf->groups != NULL) {
 		for (i = 0; i < cmdcnf->groups->sl_cur; i++) {
 			grp = GETGRNAM(cmdcnf->groups->sl_str[i]);
+			/* gr_add doesn't check if new member is already in group */
+			if (grp_has_member(grp, pwd->pw_name))
+				continue;
 			grp = gr_add(grp, pwd->pw_name);
 			/*
 			 * grp can only be NULL in 2 cases:
@@ -1630,8 +1632,14 @@ pw_user_mod(int argc, char **argv, char *arg1)
 		case 'Y':
 			nis = true;
 			break;
+		default:
+			usage();
 		}
 	}
+	argc -= optind;
+	argv += optind;
+	if (argc > 0)
+		usage();
 
 	if (geteuid() != 0 && ! dryrun)
 		errx(EX_NOPERM, "you must be root");
@@ -1745,7 +1753,7 @@ pw_user_mod(int argc, char **argv, char *arg1)
 		login_close(lc);
 		cnf->default_password = passwd_val(passwd,
 		    cnf->default_password);
-		pwd->pw_passwd = pw_password(cnf, pwd->pw_name, dryrun);
+		pwd->pw_passwd = pw_password(cnf, pwd->pw_name);
 		edited = true;
 	}
 
@@ -1812,7 +1820,7 @@ pw_user_mod(int argc, char **argv, char *arg1)
 	if (pwd == NULL)
 		errx(EX_NOUSER, "user '%s' disappeared during update", name);
 	grp = GETGRGID(pwd->pw_gid);
-	pw_log(cnf, M_UPDATE, W_USER, "%s(%ju):%s(%ju):%s:%s:%s",
+	pw_log(cnf, M_MODIFY, W_USER, "%s(%ju):%s(%ju):%s:%s:%s",
 	    pwd->pw_name, (uintmax_t)pwd->pw_uid,
 	    grp ? grp->gr_name : "unknown",
 	    (uintmax_t)(grp ? grp->gr_gid : (uid_t)-1),
@@ -1833,7 +1841,7 @@ pw_user_mod(int argc, char **argv, char *arg1)
 	}
 
 	if (nis && nis_update() == 0)
-		pw_log(cnf, M_UPDATE, W_USER, "NIS maps updated");
+		pw_log(cnf, M_MODIFY, W_USER, "NIS maps updated");
 
 	return (EXIT_SUCCESS);
 }

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	i2c
 MAN=	i2c.8
 

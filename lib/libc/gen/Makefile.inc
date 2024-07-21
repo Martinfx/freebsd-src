@@ -1,6 +1,3 @@
-#	@(#)Makefile.inc	8.6 (Berkeley) 5/4/95
-# $FreeBSD$
-
 # machine-independent gen sources
 .PATH: ${LIBC_SRCTOP}/${LIBC_ARCH}/gen ${LIBC_SRCTOP}/gen ${SRCTOP}/etc
 
@@ -8,7 +5,7 @@ CONFS+=	group master.passwd shells
 CONFSMODE_master.passwd=	600
 CONFSPACKAGE=   runtime
 
-SRCS+=	__getosreldate.c \
+SRCS+= \
 	__pthread_mutex_init_calloc_cb_stub.c \
 	__xuname.c \
 	_once_stub.c \
@@ -16,12 +13,13 @@ SRCS+=	__getosreldate.c \
 	_rand48.c \
 	_spinlock_stub.c \
 	_thread_init.c \
+	aio_read2.c \
+	aio_write2.c \
 	alarm.c \
 	arc4random.c \
 	arc4random-compat.c \
 	arc4random_uniform.c \
 	assert.c \
-	auxv.c \
 	basename.c \
 	basename_compat.c \
 	cap_sandboxed.c \
@@ -48,7 +46,6 @@ SRCS+=	__getosreldate.c \
 	erand48.c \
 	err.c \
 	errlst.c \
-	errno.c \
 	eventfd.c \
 	exec.c \
 	exect.c \
@@ -81,8 +78,6 @@ SRCS+=	__getosreldate.c \
 	getmntinfo-compat11.c \
 	getnetgrent.c \
 	getosreldate.c \
-	getpagesize.c \
-	getpagesizes.c \
 	getpeereid.c \
 	getprogname.c \
 	getpwent.c \
@@ -97,11 +92,13 @@ SRCS+=	__getosreldate.c \
 	isinf.c \
 	isnan.c \
 	jrand48.c \
+	kqueue1.c \
 	lcong48.c \
 	libc_dlopen.c \
-	lockf.c \
+	libc_interposing_table.c  \
 	lrand48.c \
 	memalign.c \
+	memfd_create.c \
 	mrand48.c \
 	nftw.c \
 	nftw-compat11.c \
@@ -120,7 +117,6 @@ SRCS+=	__getosreldate.c \
 	readdir.c \
 	readdir-compat11.c \
 	readpassphrase.c \
-	recvmmsg.c \
 	rewinddir.c \
 	scandir.c \
 	scandir_b.c \
@@ -130,7 +126,6 @@ SRCS+=	__getosreldate.c \
 	seed48.c \
 	seekdir.c \
 	semctl.c \
-	sendmmsg.c \
 	setdomainname.c \
 	sethostname.c \
 	setjmperr.c \
@@ -156,6 +151,7 @@ SRCS+=	__getosreldate.c \
 	time.c \
 	times.c \
 	timespec_get.c \
+	timespec_getres.c \
 	timezone.c \
 	tls.c \
 	ttyname.c \
@@ -168,13 +164,11 @@ SRCS+=	__getosreldate.c \
 	utime.c \
 	utxdb.c \
 	valloc.c \
-	wait.c \
-	wait3.c \
-	waitpid.c \
-	waitid.c \
 	wordexp.c
 
 CFLAGS.arc4random.c= -I${SRCTOP}/sys -I${SRCTOP}/sys/crypto/chacha20
+
+CFLAGS.sysconf.c= -I${SRCTOP}/contrib/tzcode
 
 CFLAGS.dlfcn.c= ${RTLD_HDRS}
 CFLAGS.tls.c= ${RTLD_HDRS}
@@ -203,7 +197,6 @@ SYM_MAPS+=${LIBC_SRCTOP}/gen/Symbol.map
 
 MAN+=	alarm.3 \
 	arc4random.3 \
-	auxv.3 \
 	basename.3 \
 	cap_rights_get.3 \
 	cap_sandboxed.3 \
@@ -249,8 +242,6 @@ MAN+=	alarm.3 \
 	getmntinfo.3 \
 	getnetgrent.3 \
 	getosreldate.3 \
-	getpagesize.3 \
-	getpagesizes.3 \
 	getpass.3 \
 	getpeereid.3 \
 	getprogname.3 \
@@ -263,7 +254,6 @@ MAN+=	alarm.3 \
 	initgroups.3 \
 	isgreater.3 \
 	ldexp.3 \
-	lockf.3 \
 	makecontext.3 \
 	modf.3 \
 	nice.3 \
@@ -285,7 +275,6 @@ MAN+=	alarm.3 \
 	raise.3 \
 	rand48.3 \
 	readpassphrase.3 \
-	rfork_thread.3 \
 	scandir.3 \
 	sem_destroy.3 \
 	sem_getvalue.3 \
@@ -300,7 +289,6 @@ MAN+=	alarm.3 \
 	siginterrupt.3 \
 	signal.3 \
 	sigsetops.3 \
-	sleep.3 \
 	statvfs.3 \
 	stringlist.3 \
 	strtofflags.3 \
@@ -317,15 +305,13 @@ MAN+=	alarm.3 \
 	time.3 \
 	times.3 \
 	timespec_get.3 \
-	timezone.3 \
+	timespec_getres.3 \
 	ttyname.3 \
-	tzset.3 \
 	ualarm.3 \
 	ucontext.3 \
 	ulimit.3 \
 	uname.3 \
 	unvis.3 \
-	usleep.3 \
 	utime.3 \
 	valloc.3 \
 	vis.3 \
@@ -333,7 +319,6 @@ MAN+=	alarm.3 \
 
 MLINKS+=arc4random.3 arc4random_buf.3 \
 	arc4random.3 arc4random_uniform.3
-MLINKS+=auxv.3 elf_aux_info.3
 MLINKS+=ctermid.3 ctermid_r.3
 MLINKS+=daemon.3 daemonfd.3
 MLINKS+=devname.3 devname_r.3
@@ -480,7 +465,11 @@ MLINKS+=posix_spawn.3 posix_spawnp.3 \
 MLINKS+=psignal.3 strsignal.3 \
 	psignal.3 sys_siglist.3 \
 	psignal.3 sys_signame.3
-MLINKS+=pwcache.3 group_from_gid.3 \
+MLINKS+=pwcache.3 gid_from_group.3 \
+	pwcache.3 group_from_gid.3 \
+	pwcache.3 pwcache_groupdb.3 \
+	pwcache.3 pwcache_userdb.3 \
+	pwcache.3 uid_from_user.3 \
 	pwcache.3 user_from_uid.3
 MLINKS+=rand48.3 _rand48.3 \
 	rand48.3 drand48.3 \
@@ -492,7 +481,6 @@ MLINKS+=rand48.3 _rand48.3 \
 	rand48.3 nrand48.3 \
 	rand48.3 seed48.3 \
 	rand48.3 srand48.3
-MLINKS+=recv.2 recvmmsg.2
 MLINKS+=scandir.3 alphasort.3 \
 	scandir.3 scandirat.3 \
 	scandir.3 scandir_b.3 \
@@ -501,7 +489,6 @@ MLINKS+=sem_open.3 sem_close.3 \
 	sem_open.3 sem_unlink.3
 MLINKS+=sem_wait.3 sem_trywait.3
 MLINKS+=sem_timedwait.3 sem_clockwait_np.3
-MLINKS+=send.2 sendmmsg.2
 MLINKS+=setjmp.3 _longjmp.3 \
 	setjmp.3 _setjmp.3 \
 	setjmp.3 longjmp.3 \
@@ -545,7 +532,6 @@ MLINKS+=tcsetattr.3 cfgetispeed.3 \
 	tcsetattr.3 tcgetattr.3
 MLINKS+=ttyname.3 isatty.3 \
 	ttyname.3 ttyname_r.3
-MLINKS+=tzset.3 tzsetwall.3
 MLINKS+=unvis.3 strunvis.3 \
 	unvis.3 strunvisx.3
 MLINKS+=vis.3 nvis.3 \

@@ -32,9 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)types.h	8.6 (Berkeley) 2/19/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_TYPES_H_
@@ -273,7 +270,7 @@ typedef __rman_res_t    rman_res_t;
 typedef __register_t	syscallarg_t;
 
 #ifdef _KERNEL
-typedef	int		boolean_t;
+typedef	unsigned int	boolean_t;
 typedef	struct _device	*device_t;
 typedef	__intfptr_t	intfptr_t;
 
@@ -320,7 +317,7 @@ typedef	_Bool	bool;
  * The major and minor numbers are encoded in dev_t as MMMmmmMm (where
  * letters correspond to bytes).  The encoding of the lower 4 bytes is
  * constrained by compatibility with 16-bit and 32-bit dev_t's.  The
- * encoding of of the upper 4 bytes is the least unnatural one consistent
+ * encoding of the upper 4 bytes is the least unnatural one consistent
  * with this and other constraints.  Also, the decoding of the m bytes by
  * minor() is unnatural to maximize compatibility subject to not discarding
  * bits.  The upper m byte is shifted into the position of the lower M byte
@@ -346,6 +343,18 @@ __makedev(int _Major, int _Minor)
 	return (((dev_t)(_Major & 0xffffff00) << 32) | ((_Major & 0xff) << 8) |
 	    ((dev_t)(_Minor & 0xff00) << 24) | (_Minor & 0xffff00ff));
 }
+
+#if (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 13))
+#define __enum_uint8_decl(name)	enum enum_ ## name ## _uint8 : uint8_t
+#define __enum_uint8(name)	enum enum_ ## name ## _uint8
+#else
+/*
+ * Note: there is no real size checking here, but the code below can be
+ * removed once we require GCC 13.
+ */
+#define __enum_uint8_decl(name)	enum __attribute__((packed)) enum_ ## name ## _uint8
+#define __enum_uint8(name)	enum __attribute__((packed)) enum_ ## name ## _uint8
+#endif
 
 /*
  * These declarations belong elsewhere, but are repeated here and in

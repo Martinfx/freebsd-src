@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	athsurvey
 
 .include <../Makefile.inc>

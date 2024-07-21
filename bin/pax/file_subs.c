@@ -33,14 +33,6 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)file_subs.c	8.1 (Berkeley) 5/31/93";
-#endif
-#endif /* not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/stat.h>
@@ -563,7 +555,12 @@ chk_path( char *name, uid_t st_uid, gid_t st_gid)
 		 * work forward from the first / and check each part of the path
 		 */
 		spt = strchr(spt, '/');
-		if (spt == NULL)
+
+		/*
+		 * skip creating a leaf dir (with an ending '/') as we only want
+		 * to create parents here
+		 */
+		if ((spt == NULL) || (*(spt + 1) == '\0'))
 			break;
 		*spt = '\0';
 
@@ -623,7 +620,7 @@ chk_path( char *name, uid_t st_uid, gid_t st_gid)
  *	non-zero we force these times to be set even if the user did not
  *	request access and/or modification time preservation (this is also
  *	used by -t to reset access times).
- *	When ign is zero, only those times the user has asked for are set, the
+ *	When frc is zero, only those times the user has asked for are set, the
  *	other ones are left alone. We do not assume the un-documented feature
  *	of many lutimes() implementations that consider a 0 time value as a do
  *	not set request.
@@ -724,7 +721,7 @@ set_pmode(char *fnm, mode_t mode)
  *	block boundaries significantly reduces the overhead when copying files
  *	that are NOT very sparse. This overhead (when compared to a write) is
  *	almost below the measurement resolution on many systems. Without it,
- *	files with holes cannot be safely copied. It does has a side effect as
+ *	files with holes cannot be safely copied. It does have a side effect as
  *	it can put holes into files that did not have them before, but that is
  *	not a problem since the file contents are unchanged (in fact it saves
  *	file space). (Except on paging files for diskless clients. But since we

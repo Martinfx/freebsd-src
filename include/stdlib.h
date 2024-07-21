@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)stdlib.h	8.5 (Berkeley) 5/19/95
- * $FreeBSD$
  */
 
 #ifndef _STDLIB_H_
@@ -40,13 +37,6 @@
 #include <sys/_types.h>
 
 __NULLABILITY_PRAGMA_PUSH
-
-#if __BSD_VISIBLE
-#ifndef _RUNE_T_DECLARED
-typedef	__rune_t	rune_t;
-#define	_RUNE_T_DECLARED
-#endif
-#endif
 
 #ifndef _SIZE_T_DECLARED
 typedef	__size_t	size_t;
@@ -79,6 +69,10 @@ typedef struct {
  */
 #define	RAND_MAX	0x7fffffff
 
+#if !defined(_STANDALONE) && defined(_FORTIFY_SOURCE) && _FORTIFY_SOURCE > 0
+#include <ssp/stdlib.h>
+#endif
+
 __BEGIN_DECLS
 #ifdef _XLOCALE_H_
 #include <xlocale/_stdlib.h>
@@ -87,9 +81,9 @@ extern int __mb_cur_max;
 extern int ___mb_cur_max(void);
 #define	MB_CUR_MAX	((size_t)___mb_cur_max())
 
-_Noreturn void	 abort(void);
+_Noreturn void	 abort(void) __noexcept;
 int	 abs(int) __pure2;
-int	 atexit(void (* _Nonnull)(void));
+int	 atexit(void (* _Nonnull)(void)) __noexcept;
 double	 atof(const char *);
 int	 atoi(const char *);
 long	 atol(const char *);
@@ -131,7 +125,7 @@ size_t	 wcstombs(char * __restrict, const wchar_t * __restrict, size_t);
  * is not supported in the compilation environment (which therefore means
  * that it can't really be ISO C99).
  *
- * (The only other extension made by C99 in thie header is _Exit().)
+ * (The only other extension made by C99 in this header is _Exit().)
  */
 #if __ISO_C_VISIBLE >= 1999 || defined(__cplusplus)
 #ifdef __LONG_LONG_SUPPORTED
@@ -157,7 +151,7 @@ unsigned long long
 	 strtoull(const char * __restrict, char ** __restrict, int);
 #endif /* __LONG_LONG_SUPPORTED */
 
-_Noreturn void	 _Exit(int);
+_Noreturn void	 _Exit(int) __noexcept;
 #endif /* __ISO_C_VISIBLE >= 1999 */
 
 /*
@@ -166,9 +160,9 @@ _Noreturn void	 _Exit(int);
 #if __ISO_C_VISIBLE >= 2011 || __cplusplus >= 201103L
 void *	aligned_alloc(size_t, size_t) __malloc_like __alloc_align(1)
 	    __alloc_size(2);
-int	at_quick_exit(void (*)(void));
+int	at_quick_exit(void (*)(void)) __noexcept;
 _Noreturn void
-	quick_exit(int);
+	quick_exit(int) /* __noexcept -- not ready ABI issues? */;
 #endif /* __ISO_C_VISIBLE >= 2011 */
 /*
  * Extensions made by POSIX relative to C.
@@ -311,14 +305,15 @@ int	 mergesort_b(void *, size_t, size_t, int (^)(const void *, const void *));
 int	 mkostemp(char *, int);
 int	 mkostemps(char *, int, int);
 int	 mkostempsat(int, char *, int, int);
-void	 qsort_r(void *, size_t, size_t, void *,
-	    int (*)(void *, const void *, const void *));
+void	 qsort_r(void *, size_t, size_t,
+	    int (*)(const void *, const void *, void *), void *);
 int	 radixsort(const unsigned char **, int, const unsigned char *,
 	    unsigned);
 void	*reallocarray(void *, size_t, size_t) __result_use_check
 	    __alloc_size2(2, 3);
 void	*reallocf(void *, size_t) __result_use_check __alloc_size(2);
 int	 rpmatch(const char *);
+char	*secure_getenv(const char *);
 void	 setprogname(const char *);
 int	 sradixsort(const unsigned char **, int, const unsigned char *,
 	    unsigned);
@@ -331,6 +326,43 @@ __int64_t
 	 strtoq(const char *, char **, int);
 __uint64_t
 	 strtouq(const char *, char **, int);
+
+/*
+ * In FreeBSD 14, the prototype of qsort_r() was modified to comply with
+ * POSIX.  The standardized qsort_r()'s order of last two parameters was
+ * changed, and the comparator function is now taking thunk as its last
+ * parameter, and both are different from the ones expected by the historical
+ * FreeBSD qsort_r() interface.
+ *
+ * Apply a workaround where we explicitly link against the historical interface,
+ * qsort_r@FBSD_1.0, in case when qsort_r() is called with the last parameter
+ * with a function pointer that exactly matches the historical FreeBSD qsort_r()
+ * comparator signature, so applications written for the historical interface
+ * can continue to work without modification. Toolchains that don't support
+ * symbol versioning don't define __sym_compat, so only provide this symbol in
+ * supported environments.
+ */
+#ifdef __sym_compat
+#if defined(__generic) || defined(__cplusplus)
+void __qsort_r_compat(void *, size_t, size_t, void *,
+	    int (*)(void *, const void *, const void *));
+__sym_compat(qsort_r, __qsort_r_compat, FBSD_1.0);
+#endif
+#endif
+#if defined(__generic) && !defined(__cplusplus)
+#define	qsort_r(base, nel, width, arg4, arg5)				\
+    __generic(arg5, int (*)(void *, const void *, const void *),	\
+        __qsort_r_compat, qsort_r)(base, nel, width, arg4, arg5)
+#elif defined(__cplusplus) && defined(__sym_compat)
+__END_DECLS
+extern "C++" {
+static inline void qsort_r(void *base, size_t nmemb, size_t size,
+    void *thunk, int (*compar)(void *, const void *, const void *)) {
+	__qsort_r_compat(base, nmemb, size, thunk, compar);
+}
+}
+__BEGIN_DECLS
+#endif
 
 extern char *suboptarg;			/* getsubopt(3) external variable */
 #endif /* __BSD_VISIBLE */

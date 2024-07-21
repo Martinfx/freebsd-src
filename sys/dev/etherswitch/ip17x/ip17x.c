@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 Luiz Otavio O Souza.
  * Copyright (c) 2011-2012 Stefan Bethke.
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include "opt_platform.h"
@@ -79,8 +77,8 @@ MALLOC_DECLARE(M_IP17X);
 MALLOC_DEFINE(M_IP17X, "ip17x", "ip17x data structures");
 
 static void ip17x_tick(void *);
-static int ip17x_ifmedia_upd(struct ifnet *);
-static void ip17x_ifmedia_sts(struct ifnet *, struct ifmediareq *);
+static int ip17x_ifmedia_upd(if_t);
+static void ip17x_ifmedia_sts(if_t, struct ifmediareq *);
 
 static void
 ip17x_identify(driver_t *driver, device_t parent)
@@ -154,7 +152,7 @@ ip17x_probe(device_t dev)
 	(void) resource_int_value(device_get_name(dev), device_get_unit(dev),
 	    "mii-poll", &sc->miipoll);
 #endif
-	device_set_desc_copy(dev, "IC+ IP17x switch driver");
+	device_set_desc(dev, "IC+ IP17x switch driver");
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -174,15 +172,9 @@ ip17x_attach_phys(struct ip17x_softc *sc)
 		sc->phyport[phy] = port;
 		sc->portphy[port] = phy;
 		sc->ifp[port] = if_alloc(IFT_ETHER);
-		if (sc->ifp[port] == NULL) {
-			device_printf(sc->sc_dev, "couldn't allocate ifnet structure\n");
-			err = ENOMEM;
-			break;
-		}
-
-		sc->ifp[port]->if_softc = sc;
-		sc->ifp[port]->if_flags |= IFF_UP | IFF_BROADCAST |
-		    IFF_DRV_RUNNING | IFF_SIMPLEX;
+		if_setsoftc(sc->ifp[port], sc);
+		if_setflags(sc->ifp[port], IFF_UP | IFF_BROADCAST |
+		    IFF_DRV_RUNNING | IFF_SIMPLEX);
 		if_initname(sc->ifp[port], name, port);
 		sc->miibus[port] = malloc(sizeof(device_t), M_IP17X,
 		    M_WAITOK | M_ZERO);
@@ -191,7 +183,7 @@ ip17x_attach_phys(struct ip17x_softc *sc)
 		    BMSR_DEFCAPMASK, phy, MII_OFFSET_ANY, 0);
 		DPRINTF(sc->sc_dev, "%s attached to pseudo interface %s\n",
 		    device_get_nameunit(*sc->miibus[port]),
-		    sc->ifp[port]->if_xname);
+		    if_name(sc->ifp[port]));
 		if (err != 0) {
 			device_printf(sc->sc_dev,
 			    "attaching PHY %d failed\n",
@@ -240,7 +232,7 @@ ip17x_attach(device_t dev)
 	/* Always attach the cpu port. */
 	sc->phymask |= (1 << sc->cpuport);
 
-	sc->ifp = malloc(sizeof(struct ifnet *) * sc->numports, M_IP17X,
+	sc->ifp = malloc(sizeof(if_t) * sc->numports, M_IP17X,
 	    M_WAITOK | M_ZERO);
 	sc->pvid = malloc(sizeof(uint32_t) * sc->numports, M_IP17X,
 	    M_WAITOK | M_ZERO);
@@ -324,7 +316,7 @@ ip17x_miiforport(struct ip17x_softc *sc, int port)
 	return (device_get_softc(*sc->miibus[port]));
 }
 
-static inline struct ifnet *
+static inline if_t 
 ip17x_ifpforport(struct ip17x_softc *sc, int port)
 {
 
@@ -459,7 +451,7 @@ ip17x_setport(device_t dev, etherswitch_port_t *p)
 {
 	struct ip17x_softc *sc;
 	struct ifmedia *ifm;
-	struct ifnet *ifp;
+	if_t ifp;
 	struct mii_data *mii;
 	int phy;
 
@@ -524,14 +516,14 @@ ip17x_statchg(device_t dev)
 }
 
 static int
-ip17x_ifmedia_upd(struct ifnet *ifp)
+ip17x_ifmedia_upd(if_t ifp)
 {
 	struct ip17x_softc *sc;
 	struct mii_data *mii;
 
- 	sc = ifp->if_softc;
+ 	sc = if_getsoftc(ifp);
 	DPRINTF(sc->sc_dev, "%s\n", __func__);
- 	mii = ip17x_miiforport(sc, ifp->if_dunit);
+ 	mii = ip17x_miiforport(sc, if_getdunit(ifp));
 	if (mii == NULL)
 		return (ENXIO);
 	mii_mediachg(mii);
@@ -540,14 +532,14 @@ ip17x_ifmedia_upd(struct ifnet *ifp)
 }
 
 static void
-ip17x_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
+ip17x_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
 	struct ip17x_softc *sc;
 	struct mii_data *mii;
 
- 	sc = ifp->if_softc;
+ 	sc = if_getsoftc(ifp);
 	DPRINTF(sc->sc_dev, "%s\n", __func__);
-	mii = ip17x_miiforport(sc, ifp->if_dunit);
+	mii = ip17x_miiforport(sc, if_getdunit(ifp));
 	if (mii == NULL)
 		return;
 	mii_pollstat(mii);
@@ -558,7 +550,7 @@ ip17x_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
 static int
 ip17x_readreg(device_t dev, int addr)
 {
-	struct ip17x_softc *sc;
+	struct ip17x_softc *sc __diagused;
 
 	sc = device_get_softc(dev);
 	IP17X_LOCK_ASSERT(sc, MA_OWNED);
@@ -570,7 +562,7 @@ ip17x_readreg(device_t dev, int addr)
 static int
 ip17x_writereg(device_t dev, int addr, int value)
 {
-	struct ip17x_softc *sc;
+	struct ip17x_softc *sc __diagused;
 
 	sc = device_get_softc(dev);
 	IP17X_LOCK_ASSERT(sc, MA_OWNED);

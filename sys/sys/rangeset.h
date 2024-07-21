@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_SYS_RANGESET_H
@@ -75,6 +73,11 @@ int	rangeset_remove_pred(struct rangeset *rs, uint64_t start,
  * at the beginning.
  */
 void	*rangeset_lookup(struct rangeset *rs, uint64_t place);
+
+/*
+ * Finds the first range that begins at or after place.
+ */
+void	*rangeset_next(struct rangeset *rs, uint64_t place);
 
 /*
  * Copies src_rs entries into dst_rs.  dst_rs must be empty.

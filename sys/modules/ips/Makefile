@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:		${SRCTOP}/sys/dev/ips
 KMOD		= ips
 SRCS		= ips.c ips_pci.c ips.h ips_disk.c ips_disk.h ips_commands.c \

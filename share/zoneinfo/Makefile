@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 #
 # HOW TO UPDATE THE ZONEINFO DATA
 #
@@ -29,11 +27,16 @@
 #   (write a meaningful commit message)
 # $ git push freebsd HEAD:stable/12
 #
+#
+# If there are changes to zone1970.tab, update the baseline file by running
+# `make baseline` in usr.sbin/tzsetup to check if tzsetup is able to parse new
+# contents (if not, report/fix tzsetup).  Check that update does not
+# introduce breaking/unexpected changes to continents/countries/zones,
+# and commit the updated baseline file.
 
 .include <src.opts.mk>
 
 PACKAGE=	zoneinfo
-CLEANFILES+=	yearistype
 CLEANDIRS+=	builddir
 CONTRIBDIR=	${SRCTOP}/contrib/tzdata/
 .PATH:		${CONTRIBDIR}
@@ -51,8 +54,7 @@ LEAPFILE=
 
 TZFILES=	africa antarctica asia australasia etcetera europe \
 		factory northamerica southamerica
-TZFILES+=	backward systemv
-POSIXRULES=	America/New_York
+TZFILES+=	backward
 
 TZFILES:=	${TZFILES:S/^/${CONTRIBDIR}/}
 
@@ -71,40 +73,42 @@ TZBUILDSUBDIRS=	\
 		Etc \
 		Europe \
 		Indian \
-		Pacific \
-		SystemV
+		Pacific
 TZBUILDSUBDIRS+= US Mexico Chile Canada Brazil
 
 .if !defined(_SKIP_BUILD)
-all: zoneinfo
+all: zonefiles
 .endif
-META_TARGETS+=	zoneinfo install-zoneinfo
+META_TARGETS+=	zonefiles install-zoneinfo
 
-zoneinfo: yearistype ${TDATA}
+#
+# Produce “fat” zoneinfo files for backward compatibility.
+#
+ZICFLAGS?=	-b fat
+
+.if ${MK_DIRDEPS_BUILD} == "yes"
+ZIC= ${STAGE_HOST_OBJTOP}/usr/sbin/zic
+# we do everything in a single visit
+install-zoneinfo: zonefiles
+.endif
+
+zonefiles: ${TDATA}
 	mkdir -p ${TZBUILDDIR}
-	cd ${TZBUILDDIR}; mkdir -p ${TZBUILDSUBDIRS}
-	umask 022; cd ${.CURDIR}; \
-	zic -D -d ${TZBUILDDIR} -p ${POSIXRULES} -m ${NOBINMODE} \
-	    ${LEAPFILE} -y ${.OBJDIR}/yearistype ${TZFILES}
-
-#
-# Sort TZS to ensure they are the same every build. find -s might
-# be a shorter way to express this, but it's non-portable. Any
-# differences between the two don't matter for this purpose.
-#
-.if make(*install*)
-TZS!= cd ${TZBUILDDIR} && find * -type f | LC_ALL=C sort
-.endif
+	(cd ${TZBUILDDIR}; mkdir -p ${TZBUILDSUBDIRS})
+	(umask 022; cd ${.CURDIR}; \
+	${ZIC:Uzic} -D -d ${TZBUILDDIR} ${ZICFLAGS} -m ${NOBINMODE} \
+	    ${LEAPFILE} ${TZFILES})
+	(cd ${TZBUILDDIR} && find * -type f | LC_ALL=C sort) > ${.TARGET}
 
 beforeinstall: install-zoneinfo
 install-zoneinfo:
 	mkdir -p ${DESTDIR}/usr/share/zoneinfo
-	cd ${DESTDIR}/usr/share/zoneinfo;  mkdir -p ${TZBUILDSUBDIRS}
-.for f in ${TZS}
-	${INSTALL} ${TAG_ARGS} \
-	    -o ${BINOWN} -g ${BINGRP} -m ${NOBINMODE} \
-	    ${TZBUILDDIR}/${f} ${DESTDIR}/usr/share/zoneinfo/${f}
-.endfor
+	(cd ${DESTDIR}/usr/share/zoneinfo;  mkdir -p ${TZBUILDSUBDIRS})
+	for f in `cat zonefiles`; do \
+		${INSTALL} ${TAG_ARGS} \
+		    -o ${BINOWN} -g ${BINGRP} -m ${NOBINMODE} \
+		    ${TZBUILDDIR}/$${f} ${DESTDIR}/usr/share/zoneinfo/$${f}; \
+	done
 	${INSTALL} ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m ${NOBINMODE} \
 	    ${CONTRIBDIR}/zone.tab ${DESTDIR}/usr/share/zoneinfo/
 	${INSTALL} ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m ${NOBINMODE} \

@@ -152,7 +152,7 @@ typedef const struct zio_compress_info {
 	zio_decompresslevel_func_t	*ci_decompress_level;
 } zio_compress_info_t;
 
-extern const zio_compress_info_t zio_compress_table[ZIO_COMPRESS_FUNCTIONS];
+extern zio_compress_info_t zio_compress_table[ZIO_COMPRESS_FUNCTIONS];
 
 /*
  * lz4 compression init & free
@@ -183,7 +183,7 @@ extern int lz4_decompress_zfs(void *src, void *dst, size_t s_len, size_t d_len,
 /*
  * Compress and decompress data if necessary.
  */
-extern size_t zio_compress_data(enum zio_compress c, abd_t *src, void *dst,
+extern size_t zio_compress_data(enum zio_compress c, abd_t *src, void **dst,
     size_t s_len, uint8_t level);
 extern int zio_decompress_data(enum zio_compress c, abd_t *src, void *dst,
     size_t s_len, size_t d_len, uint8_t *level);

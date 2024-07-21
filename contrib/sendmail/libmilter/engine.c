@@ -60,32 +60,32 @@ typedef struct cmdfct_t cmdfct;
 #define	CI_MAIL		2
 #define CI_RCPT		3
 #define CI_DATA		4
-#define CI_EOM		5
-#define CI_EOH		6
-#define CI_LAST		CI_EOH
+#define CI_EOH		5
+#define CI_EOM		6
+#define CI_LAST		CI_EOM
 #if CI_LAST < CI_DATA
-ERROR: do not compile with CI_LAST < CI_DATA
+# error "do not compile with CI_LAST < CI_DATA"
 #endif
 #if CI_LAST < CI_EOM
-ERROR: do not compile with CI_LAST < CI_EOM
+# error "do not compile with CI_LAST < CI_EOM"
 #endif
 #if CI_LAST < CI_EOH
-ERROR: do not compile with CI_LAST < CI_EOH
+# error "do not compile with CI_LAST < CI_EOH"
 #endif
 #if CI_LAST < CI_RCPT
-ERROR: do not compile with CI_LAST < CI_RCPT
+# error "do not compile with CI_LAST < CI_RCPT"
 #endif
 #if CI_LAST < CI_MAIL
-ERROR: do not compile with CI_LAST < CI_MAIL
+# error "do not compile with CI_LAST < CI_MAIL"
 #endif
 #if CI_LAST < CI_HELO
-ERROR: do not compile with CI_LAST < CI_HELO
+# error "do not compile with CI_LAST < CI_HELO"
 #endif
 #if CI_LAST < CI_CONN
-ERROR: do not compile with CI_LAST < CI_CONN
+# error "do not compile with CI_LAST < CI_CONN"
 #endif
 #if CI_LAST >= MAX_MACROS_ENTRIES
-ERROR: do not compile with CI_LAST >= MAX_MACROS_ENTRIES
+# error "do not compile with CI_LAST >= MAX_MACROS_ENTRIES"
 #endif
 
 /* function prototypes */
@@ -111,7 +111,7 @@ static int	dec_arg2 __P((char *, size_t, char **, char **));
 static void	mi_clr_symlist __P((SMFICTX_PTR));
 
 #if _FFR_WORKERS_POOL
-static bool     mi_rd_socket_ready __P((int));
+static bool	mi_rd_socket_ready __P((int));
 #endif
 
 /* states */
@@ -1190,7 +1190,7 @@ st_connectinfo(g)
 	s = g->a_buf;
 	i = 0;
 	l = g->a_len;
-	while (i <= l && s[i] != '\0')  
+	while (i <= l && s[i] != '\0')
 		++i;
 	if (i + 1 >= l)
 		return _SMFIS_ABORT;
@@ -1216,7 +1216,7 @@ st_connectinfo(g)
 		/* make sure string is terminated */
 		if (s[l - 1] != '\0')
 			return _SMFIS_ABORT;
-# if NETINET
+#if NETINET
 		if (family == SMFIA_INET)
 		{
 			if (inet_aton(s + i, (struct in_addr *) &sockaddr.sin.sin_addr)
@@ -1233,8 +1233,8 @@ st_connectinfo(g)
 				sockaddr.sin.sin_port = port;
 		}
 		else
-# endif /* NETINET */
-# if NETINET6
+#endif /* NETINET */
+#if NETINET6
 		if (family == SMFIA_INET6)
 		{
 			if (mi_inet_pton(AF_INET6, s + i,
@@ -1251,8 +1251,8 @@ st_connectinfo(g)
 				sockaddr.sin6.sin6_port = port;
 		}
 		else
-# endif /* NETINET6 */
-# if NETUNIX
+#endif /* NETINET6 */
+#if NETUNIX
 		if (family == SMFIA_UNIX)
 		{
 			if (sm_strlcpy(sockaddr.sunix.sun_path, s + i,
@@ -1268,7 +1268,7 @@ st_connectinfo(g)
 			sockaddr.sunix.sun_family = AF_UNIX;
 		}
 		else
-# endif /* NETUNIX */
+#endif /* NETUNIX */
 		{
 			smi_log(SMI_LOG_ERR,
 				"%s: connect[%ld]: unknown family %d",
@@ -1870,21 +1870,21 @@ mi_rd_socket_ready (sd)
 {
 	int n;
 	int nerr = 0;
-#if SM_CONF_POLL
+# if SM_CONF_POLL
 	struct pollfd pfd;
-#else
+# else
 	fd_set	rd_set, exc_set;
-#endif
+# endif
 
 	do
 	{
-#if SM_CONF_POLL
+# if SM_CONF_POLL
 		pfd.fd = sd;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
 
 		n = poll(&pfd, 1, MI_RD_CMD_TO);
-#else /* SM_CONF_POLL */
+# else /* SM_CONF_POLL */
 		struct timeval timeout;
 
 		FD_ZERO(&rd_set);
@@ -1895,7 +1895,7 @@ mi_rd_socket_ready (sd)
 		timeout.tv_sec = MI_RD_CMD_TO / 1000;
 		timeout.tv_usec = 0;
 		n = select(sd + 1, &rd_set, NULL, &exc_set, &timeout);
-#endif /* SM_CONF_POLL */
+# endif /* SM_CONF_POLL */
 
 		if (n < 0)
 		{
@@ -1914,10 +1914,10 @@ mi_rd_socket_ready (sd)
 	if (nerr >= MI_RD_MAX_ERR)
 		return false;
 
-#if SM_CONF_POLL
+# if SM_CONF_POLL
 	return (pfd.revents != 0);
-#else
+# else
 	return FD_ISSET(sd, &rd_set) || FD_ISSET(sd, &exc_set);
-#endif
+# endif
 }
 #endif /* _FFR_WORKERS_POOL */

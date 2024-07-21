@@ -1,4 +1,3 @@
-# $FreeBSD$
 
 # The include file <bsd.libnames.mk> define library names.
 # Other include files (e.g. bsd.prog.mk, bsd.lib.mk) include this
@@ -27,6 +26,7 @@ LIBAVL?=	${LIBDESTDIR}${LIBDIR_BASE}/libavl.a
 LIBBE?=		${LIBDESTDIR}${LIBDIR_BASE}/libbe.a
 LIBBEGEMOT?=	${LIBDESTDIR}${LIBDIR_BASE}/libbegemot.a
 LIBBLACKLIST?=	${LIBDESTDIR}${LIBDIR_BASE}/libblacklist.a
+LIBBLOCKSRUNTIME?= ${LIBDESTDIR}${LIBDIR_BASE}/libBlocksRuntime.a
 LIBBLUETOOTH?=	${LIBDESTDIR}${LIBDIR_BASE}/libbluetooth.a
 LIBBSDXML?=	${LIBDESTDIR}${LIBDIR_BASE}/libbsdxml.a
 LIBBSM?=	${LIBDESTDIR}${LIBDIR_BASE}/libbsm.a
@@ -116,7 +116,6 @@ LIBNV?=		${LIBDESTDIR}${LIBDIR_BASE}/libnv.a
 LIBNVPAIR?=	${LIBDESTDIR}${LIBDIR_BASE}/libnvpair.a
 LIBOPENCSD?=	${LIBDESTDIR}${LIBDIR_BASE}/libopencsd.a
 LIBOPENSM?=	${LIBDESTDIR}${LIBDIR_BASE}/libopensm.a
-LIBOPIE?=	${LIBDESTDIR}${LIBDIR_BASE}/libopie.a
 LIBOSMCOMP?=	${LIBDESTDIR}${LIBDIR_BASE}/libosmcomp.a
 LIBOSMVENDOR?=	${LIBDESTDIR}${LIBDIR_BASE}/libosmvendor.a
 LIBPAM?=	${LIBDESTDIR}${LIBDIR_BASE}/libpam.a
@@ -168,19 +167,23 @@ LIBXPG4?=	${LIBDESTDIR}${LIBDIR_BASE}/libxpg4.a
 LIBY?=		${LIBDESTDIR}${LIBDIR_BASE}/liby.a
 LIBYPCLNT?=	${LIBDESTDIR}${LIBDIR_BASE}/libypclnt.a
 LIBZ?=		${LIBDESTDIR}${LIBDIR_BASE}/libz.a
+LIBZDB?=	${LIBDESTDIR}${LIBDIR_BASE}/libzdb.a
 LIBZFS?=	${LIBDESTDIR}${LIBDIR_BASE}/libzfs.a
 LIBZFS_CORE?=	${LIBDESTDIR}${LIBDIR_BASE}/libzfs_core.a
 LIBZFSBOOTENV?=	${LIBDESTDIR}${LIBDIR_BASE}/libzfsbootenv.a
 LIBZPOOL?=	${LIBDESTDIR}${LIBDIR_BASE}/libzpool.a
 LIBZUTIL?=	${LIBDESTDIR}${LIBDIR_BASE}/libzutil.a
 
-# enforce the 2 -lpthread and -lc to always be the last in that exact order
+# enforce -lpthread, -lc, and -lsys to always be the last in that exact order
 .if defined(LDADD)
 .if ${LDADD:M-lpthread}
 LDADD:=	${LDADD:N-lpthread} -lpthread
 .endif
 .if ${LDADD:M-lc}
 LDADD:=	${LDADD:N-lc} -lc
+.endif
+.if ${LDADD:M-lsys}
+LDADD:=	${LDADD:N-lsys} -lsys
 .endif
 .endif
 

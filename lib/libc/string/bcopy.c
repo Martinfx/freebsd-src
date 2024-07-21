@@ -32,12 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)bcopy.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 
 typedef	intptr_t word;		/* "word" used for optimal copy speed */
@@ -53,6 +47,9 @@ typedef	intptr_t word;		/* "word" used for optimal copy speed */
 #if defined(MEMCOPY) || defined(MEMMOVE)
 #include <string.h>
 
+#undef memcpy	/* _FORTIFY_SOURCE */
+#undef memmove	/* _FORTIFY_SOURCE */
+
 void *
 #ifdef MEMCOPY
 memcpy
@@ -62,6 +59,8 @@ memmove
 (void *dst0, const void *src0, size_t length)
 #else
 #include <strings.h>
+
+#undef bcopy	/* _FORTIFY_SOURCE */
 
 void
 bcopy(const void *src0, void *dst0, size_t length)

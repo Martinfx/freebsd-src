@@ -10,7 +10,7 @@
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Target/DynamicLoader.h"
 
-#include "Plugins/DynamicLoader/Static/DynamicLoaderStatic.h"
+#include "Plugins/DynamicLoader/FreeBSD-Kernel/DynamicLoaderFreeBSDKernel.h"
 #include "ProcessFreeBSDKernel.h"
 #include "ThreadFreeBSDKernel.h"
 
@@ -178,6 +178,11 @@ bool ProcessFreeBSDKernel::DoUpdateThreadList(ThreadList &old_thread_list,
     int32_t pcbsize =
         ReadSignedIntegerFromMemory(FindSymbol("pcb_size"), 4, -1, error);
     lldb::addr_t stoppcbs = FindSymbol("stoppcbs");
+    // In later FreeBSD versions stoppcbs is a pointer to the array.
+    int32_t osreldate =
+        ReadSignedIntegerFromMemory(FindSymbol("osreldate"), 4, -1, error);
+    if (stoppcbs != LLDB_INVALID_ADDRESS && osreldate >= 1400089)
+        stoppcbs = ReadPointerFromMemory(stoppcbs, error);
 
     // from FreeBSD sys/param.h
     constexpr size_t fbsd_maxcomlen = 19;
@@ -262,7 +267,7 @@ Status ProcessFreeBSDKernel::DoLoadCore() {
 DynamicLoader *ProcessFreeBSDKernel::GetDynamicLoader() {
   if (m_dyld_up.get() == nullptr)
     m_dyld_up.reset(DynamicLoader::FindPlugin(
-        this, DynamicLoaderStatic::GetPluginNameStatic()));
+        this, DynamicLoaderFreeBSDKernel::GetPluginNameStatic()));
   return m_dyld_up.get();
 }
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 NetApp, Inc.
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_MEVENT_H_
@@ -57,6 +55,7 @@ int	mevent_enable(struct mevent *evp);
 int	mevent_disable(struct mevent *evp);
 int	mevent_delete(struct mevent *evp);
 int	mevent_delete_close(struct mevent *evp);
+int	mevent_timer_update(struct mevent *evp, int msecs);
 
 void	mevent_dispatch(void);
 

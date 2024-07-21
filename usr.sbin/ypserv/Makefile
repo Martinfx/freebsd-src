@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 RPCDIR=	${SRCTOP}/include/rpcsvc

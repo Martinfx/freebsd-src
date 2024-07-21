@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 Juniper Networks
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -276,6 +273,7 @@ struct uart_class uart_quicc_class = {
 	.uc_rclk = DEFAULT_RCLK,
 	.uc_rshift = 0
 };
+UART_CLASS(uart_quicc_class);
 
 #define	SIGCHG(c, i, s, d)				\
 	if (c) {					\
@@ -414,7 +412,6 @@ quicc_bus_param(struct uart_softc *sc, int baudrate, int databits,
 static int
 quicc_bus_probe(struct uart_softc *sc)
 {
-	char buf[80];
 	int error;
 
 	error = quicc_probe(&sc->sc_bas);
@@ -424,8 +421,7 @@ quicc_bus_probe(struct uart_softc *sc)
 	sc->sc_rxfifosz = 1;
 	sc->sc_txfifosz = 1;
 
-	snprintf(buf, sizeof(buf), "quicc, channel %d", sc->sc_bas.chan);
-	device_set_desc_copy(sc->sc_dev, buf);
+	device_set_descf(sc->sc_dev, "quicc, channel %d", sc->sc_bas.chan);
 	return (0);
 }
 

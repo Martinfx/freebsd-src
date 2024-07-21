@@ -94,6 +94,33 @@ blk_queue_set_write_cache(struct request_queue *q, bool wc, bool fua)
 #endif
 }
 
+/*
+ * Detect if a device has a write cache. Used to set the intial value for the
+ * vdev nowritecache flag.
+ *
+ * 4.10: QUEUE_FLAG_WC added. Initialised by the driver, but can be changed
+ *       later by the operator. If not set, kernel will return flush requests
+ *       immediately without doing anything.
+ * 6.6: QUEUE_FLAG_HW_WC added. Initialised by the driver, can't be changed.
+ *      Only controls if the operator is allowed to change _WC. Initial version
+ *      buggy; aliased to QUEUE_FLAG_FUA, so unuseable.
+ * 6.6.10, 6.7: QUEUE_FLAG_HW_WC fixed.
+ *
+ * Older than 4.10 we just assume write cache, and let the normal flush fail
+ * detection apply.
+ */
+static inline boolean_t
+zfs_bdev_has_write_cache(struct block_device *bdev)
+{
+#if defined(QUEUE_FLAG_HW_WC) && QUEUE_FLAG_HW_WC != QUEUE_FLAG_FUA
+	return (test_bit(QUEUE_FLAG_HW_WC, &bdev_get_queue(bdev)->queue_flags));
+#elif defined(QUEUE_FLAG_WC)
+	return (test_bit(QUEUE_FLAG_WC, &bdev_get_queue(bdev)->queue_flags));
+#else
+	return (B_TRUE);
+#endif
+}
+
 static inline void
 blk_queue_set_read_ahead(struct request_queue *q, unsigned long ra_pages)
 {
@@ -126,7 +153,8 @@ typedef int bvec_iterator_t;
 #endif
 
 static inline void
-bio_set_flags_failfast(struct block_device *bdev, int *flags)
+bio_set_flags_failfast(struct block_device *bdev, int *flags, bool dev,
+    bool transport, bool driver)
 {
 #ifdef CONFIG_BUG
 	/*
@@ -148,7 +176,12 @@ bio_set_flags_failfast(struct block_device *bdev, int *flags)
 #endif /* BLOCK_EXT_MAJOR */
 #endif /* CONFIG_BUG */
 
-	*flags |= REQ_FAILFAST_MASK;
+	if (dev)
+		*flags |= REQ_FAILFAST_DEV;
+	if (transport)
+		*flags |= REQ_FAILFAST_TRANSPORT;
+	if (driver)
+		*flags |= REQ_FAILFAST_DRIVER;
 }
 
 /*
@@ -175,7 +208,11 @@ bi_status_to_errno(blk_status_t status)
 		return (ENOLINK);
 	case BLK_STS_TARGET:
 		return (EREMOTEIO);
+#ifdef HAVE_BLK_STS_RESV_CONFLICT
+	case BLK_STS_RESV_CONFLICT:
+#else
 	case BLK_STS_NEXUS:
+#endif
 		return (EBADE);
 	case BLK_STS_MEDIUM:
 		return (ENODATA);
@@ -209,7 +246,11 @@ errno_to_bi_status(int error)
 	case EREMOTEIO:
 		return (BLK_STS_TARGET);
 	case EBADE:
+#ifdef HAVE_BLK_STS_RESV_CONFLICT
+		return (BLK_STS_RESV_CONFLICT);
+#else
 		return (BLK_STS_NEXUS);
+#endif
 	case ENODATA:
 		return (BLK_STS_MEDIUM);
 	case EILSEQ:
@@ -262,6 +303,32 @@ bio_set_bi_error(struct bio *bio, int error)
 #endif /* HAVE_1ARG_BIO_END_IO_T */
 
 /*
+ * 5.15 MACRO,
+ *   GD_DEAD
+ *
+ * 2.6.36 - 5.14 MACRO,
+ *   GENHD_FL_UP
+ *
+ * Check the disk status and return B_TRUE if alive
+ * otherwise B_FALSE
+ */
+static inline boolean_t
+zfs_check_disk_status(struct block_device *bdev)
+{
+#if defined(GENHD_FL_UP)
+	return (!!(bdev->bd_disk->flags & GENHD_FL_UP));
+#elif defined(GD_DEAD)
+	return (!test_bit(GD_DEAD, &bdev->bd_disk->state));
+#else
+/*
+ * This is encountered if neither GENHD_FL_UP nor GD_DEAD is available in
+ * the kernel - likely due to an MACRO change that needs to be chased down.
+ */
+#error "Unsupported kernel: no usable disk status check"
+#endif
+}
+
+/*
  * 4.1 API,
  * 3.10.0 CentOS 7.x API,
  *   blkdev_reread_part()
@@ -305,6 +372,9 @@ zfs_check_media_change(struct block_device *bdev)
 	return (0);
 }
 #define	vdev_bdev_reread_part(bdev)	zfs_check_media_change(bdev)
+#elif defined(HAVE_DISK_CHECK_MEDIA_CHANGE)
+#define	vdev_bdev_reread_part(bdev)	disk_check_media_change(bdev->bd_disk)
+#define	zfs_check_media_change(bdev)	disk_check_media_change(bdev->bd_disk)
 #else
 /*
  * This is encountered if check_disk_change() and bdev_check_media_change()
@@ -355,6 +425,12 @@ vdev_lookup_bdev(const char *path, dev_t *dev)
 #endif
 }
 
+#if defined(HAVE_BLK_MODE_T)
+#define	blk_mode_is_open_write(flag)	((flag) & BLK_OPEN_WRITE)
+#else
+#define	blk_mode_is_open_write(flag)	((flag) & FMODE_WRITE)
+#endif
+
 /*
  * Kernels without bio_set_op_attrs use bi_rw for the bio flags.
  */
@@ -362,7 +438,11 @@ vdev_lookup_bdev(const char *path, dev_t *dev)
 static inline void
 bio_set_op_attrs(struct bio *bio, unsigned rw, unsigned flags)
 {
+#if defined(HAVE_BIO_BI_OPF)
+	bio->bi_opf = rw | flags;
+#else
 	bio->bi_rw |= rw | flags;
+#endif /* HAVE_BIO_BI_OPF */
 }
 #endif
 
@@ -390,7 +470,7 @@ static inline void
 bio_set_flush(struct bio *bio)
 {
 #if defined(HAVE_REQ_PREFLUSH)	/* >= 4.10 */
-	bio_set_op_attrs(bio, 0, REQ_PREFLUSH);
+	bio_set_op_attrs(bio, 0, REQ_PREFLUSH | REQ_OP_WRITE);
 #elif defined(WRITE_FLUSH_FUA)	/* >= 2.6.37 and <= 4.9 */
 	bio_set_op_attrs(bio, 0, WRITE_FLUSH_FUA);
 #else
@@ -510,9 +590,11 @@ static inline boolean_t
 bdev_discard_supported(struct block_device *bdev)
 {
 #if defined(HAVE_BDEV_MAX_DISCARD_SECTORS)
-	return (!!bdev_max_discard_sectors(bdev));
+	return (bdev_max_discard_sectors(bdev) > 0 &&
+	    bdev_discard_granularity(bdev) > 0);
 #elif defined(HAVE_BLK_QUEUE_DISCARD)
-	return (!!blk_queue_discard(bdev_get_queue(bdev)));
+	return (blk_queue_discard(bdev_get_queue(bdev)) > 0 &&
+	    bdev_get_queue(bdev)->limits.discard_granularity > 0);
 #else
 #error "Unsupported kernel"
 #endif
@@ -556,7 +638,10 @@ blk_generic_start_io_acct(struct request_queue *q __attribute__((unused)),
     struct gendisk *disk __attribute__((unused)),
     int rw __attribute__((unused)), struct bio *bio)
 {
-#if defined(HAVE_BDEV_IO_ACCT)
+#if defined(HAVE_BDEV_IO_ACCT_63)
+	return (bdev_start_io_acct(bio->bi_bdev, bio_op(bio),
+	    jiffies));
+#elif defined(HAVE_BDEV_IO_ACCT_OLD)
 	return (bdev_start_io_acct(bio->bi_bdev, bio_sectors(bio),
 	    bio_op(bio), jiffies));
 #elif defined(HAVE_DISK_IO_ACCT)
@@ -582,7 +667,10 @@ blk_generic_end_io_acct(struct request_queue *q __attribute__((unused)),
     struct gendisk *disk __attribute__((unused)),
     int rw __attribute__((unused)), struct bio *bio, unsigned long start_time)
 {
-#if defined(HAVE_BDEV_IO_ACCT)
+#if defined(HAVE_BDEV_IO_ACCT_63)
+	bdev_end_io_acct(bio->bi_bdev, bio_op(bio), bio_sectors(bio),
+	    start_time);
+#elif defined(HAVE_BDEV_IO_ACCT_OLD)
 	bdev_end_io_acct(bio->bi_bdev, bio_op(bio), start_time);
 #elif defined(HAVE_DISK_IO_ACCT)
 	disk_end_io_acct(disk, bio_op(bio), start_time);

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1997 John S. Dyson.  All rights reserved.
  *
@@ -19,9 +19,6 @@
 /*
  * This file contains support for the POSIX 1003.1B AIO/LIO facility.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -70,6 +67,7 @@ __FBSDID("$FreeBSD$");
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 #include <vm/vm_object.h>
+#include <vm/vnode_pager.h>
 #include <vm/uma.h>
 #include <sys/aio.h>
 
@@ -230,6 +228,9 @@ typedef struct oaiocb {
 #define	KAIOCB_CHECKSYNC	0x08
 #define	KAIOCB_CLEARED		0x10
 #define	KAIOCB_FINISHED		0x20
+
+/* ioflags */
+#define	KAIOCB_IO_FOFFSET	0x01
 
 /*
  * AIO process info
@@ -557,7 +558,7 @@ aio_free_entry(struct kaiocb *job)
 		fdrop(job->fd_file, curthread);
 	crfree(job->cred);
 	if (job->uiop != &job->uio)
-		free(job->uiop, M_IOV);
+		freeuio(job->uiop);
 	uma_zfree(aiocb_zone, job);
 	AIO_LOCK(ki);
 
@@ -720,20 +721,14 @@ static int
 aio_fsync_vnode(struct thread *td, struct vnode *vp, int op)
 {
 	struct mount *mp;
-	vm_object_t obj;
 	int error;
 
 	for (;;) {
-		error = vn_start_write(vp, &mp, V_WAIT | PCATCH);
+		error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
 		if (error != 0)
 			break;
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-		obj = vp->v_object;
-		if (obj != NULL) {
-			VM_OBJECT_WLOCK(obj);
-			vm_object_page_clean(obj, 0, 0, 0);
-			VM_OBJECT_WUNLOCK(obj);
-		}
+		vnode_pager_clean_async(vp);
 		if (op == LIO_DSYNC)
 			error = VOP_FDATASYNC(vp, td);
 		else
@@ -797,12 +792,14 @@ aio_process_rw(struct kaiocb *job)
 		if (job->uiop->uio_resid == 0)
 			error = 0;
 		else
-			error = fo_read(fp, job->uiop, fp->f_cred, FOF_OFFSET,
-			    td);
+			error = fo_read(fp, job->uiop, fp->f_cred,
+			    (job->ioflags & KAIOCB_IO_FOFFSET) != 0 ? 0 :
+			    FOF_OFFSET, td);
 	} else {
 		if (fp->f_type == DTYPE_VNODE)
 			bwillwrite();
-		error = fo_write(fp, job->uiop, fp->f_cred, FOF_OFFSET, td);
+		error = fo_write(fp, job->uiop, fp->f_cred, (job->ioflags &
+		    KAIOCB_IO_FOFFSET) != 0 ? 0 : FOF_OFFSET, td);
 	}
 	msgrcv_end = td->td_ru.ru_msgrcv;
 	msgsnd_end = td->td_ru.ru_msgsnd;
@@ -1281,7 +1278,7 @@ aio_qbio(struct proc *p, struct kaiocb *job)
 	}
 
 	bios = malloc(sizeof(struct bio *) * iovcnt, M_TEMP, M_WAITOK);
-	atomic_store_int(&job->nbio, iovcnt);
+	refcount_init(&job->nbio, iovcnt);
 	for (i = 0; i < iovcnt; i++) {
 		struct vm_page** pages;
 		struct bio *bp;
@@ -1557,13 +1554,15 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 
 	/* Get the opcode. */
 	if (type == LIO_NOP) {
-		switch (job->uaiocb.aio_lio_opcode) {
+		switch (job->uaiocb.aio_lio_opcode & ~LIO_FOFFSET) {
 		case LIO_WRITE:
 		case LIO_WRITEV:
 		case LIO_NOP:
 		case LIO_READ:
 		case LIO_READV:
-			opcode = job->uaiocb.aio_lio_opcode;
+			opcode = job->uaiocb.aio_lio_opcode & ~LIO_FOFFSET;
+			if ((job->uaiocb.aio_lio_opcode & LIO_FOFFSET) != 0)
+				job->ioflags |= KAIOCB_IO_FOFFSET;
 			break;
 		default:
 			error = EINVAL;
@@ -1736,7 +1735,7 @@ err3:
 	knlist_delete(&job->klist, curthread, 0);
 err2:
 	if (job->uiop != &job->uio)
-		free(job->uiop, M_IOV);
+		freeuio(job->uiop);
 	uma_zfree(aiocb_zone, job);
 err1:
 	ops->store_error(ujob, error);
@@ -2480,25 +2479,25 @@ aio_biowakeup(struct bio *bp)
 
 	aio_biocleanup(bp);
 
-	nbytes =bcount - resid;
+	nbytes = bcount - resid;
 	atomic_add_acq_long(&job->nbytes, nbytes);
 	nblks = btodb(nbytes);
+
 	/*
 	 * If multiple bios experienced an error, the job will reflect the
 	 * error of whichever failed bio completed last.
 	 */
 	if (flags & BIO_ERROR)
-		atomic_set_int(&job->error, bio_error);
+		atomic_store_int(&job->error, bio_error);
 	if (opcode & LIO_WRITE)
 		atomic_add_int(&job->outblock, nblks);
 	else
 		atomic_add_int(&job->inblock, nblks);
-	atomic_subtract_int(&job->nbio, 1);
 
-
-	if (atomic_load_int(&job->nbio) == 0) {
-		if (atomic_load_int(&job->error))
-			aio_complete(job, -1, job->error);
+	if (refcount_release(&job->nbio)) {
+		bio_error = atomic_load_int(&job->error);
+		if (bio_error != 0)
+			aio_complete(job, -1, bio_error);
 		else
 			aio_complete(job, atomic_load_long(&job->nbytes), 0);
 	}

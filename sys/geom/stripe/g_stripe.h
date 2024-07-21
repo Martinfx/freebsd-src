@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004-2005 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef	_G_STRIPE_H_
@@ -49,6 +47,8 @@
 #define	G_STRIPE_TYPE_MANUAL	0
 #define	G_STRIPE_TYPE_AUTOMATIC	1
 
+#define	G_STRIPE_FLAG_CANDELETE	0x00000001UL
+
 #define	G_STRIPE_DEBUG(lvl, ...) \
     _GEOM_DEBUG("GEOM_STRIPE", g_stripe_debug, (lvl), NULL, __VA_ARGS__)
 #define	G_STRIPE_LOGREQ(bp, ...) \
@@ -64,6 +64,7 @@ struct g_stripe_softc {
 	off_t		 sc_stripesize;
 	uint32_t	 sc_stripebits;
 	struct mtx	 sc_lock;
+	int		 sc_flags;
 };
 #define	sc_name	sc_geom->name
 #endif	/* _KERNEL */

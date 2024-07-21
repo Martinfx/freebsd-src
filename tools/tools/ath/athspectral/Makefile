@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	athspectral
 
 .include <../Makefile.inc>

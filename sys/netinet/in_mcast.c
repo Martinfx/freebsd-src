@@ -34,9 +34,6 @@
  * IPv4 multicast socket, group, and socket option processing module.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -66,6 +63,7 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in_fib.h>
 #include <netinet/in_pcb.h>
 #include <netinet/in_var.h>
+#include <net/if_private.h>
 #include <netinet/ip_var.h>
 #include <netinet/igmp_var.h>
 
@@ -94,8 +92,8 @@ static MALLOC_DEFINE(M_IPMSOURCE, "ip_msource",
 /*
  * Locking:
  *
- * - Lock order is: Giant, IN_MULTI_LOCK, INP_WLOCK,
- *   IN_MULTI_LIST_LOCK, IGMP_LOCK, IF_ADDR_LOCK.
+ * - Lock order is: IN_MULTI_LOCK, INP_WLOCK, IN_MULTI_LIST_LOCK, IGMP_LOCK,
+ *                  IF_ADDR_LOCK.
  * - The IF_ADDR_LOCK is implicitly taken by inm_lookup() earlier, however
  *   it can be taken by code in net/if.c also.
  * - ip_moptions and in_mfilter are covered by the INP_WLOCK.
@@ -112,8 +110,6 @@ MTX_SYSINIT(in_multi_free_mtx, &in_multi_free_mtx, "in_multi_free_mtx", MTX_DEF)
 
 struct sx in_multi_sx;
 SX_SYSINIT(in_multi_sx, &in_multi_sx, "in_multi_sx");
-
-int ifma_restart;
 
 /*
  * Functions with non-static linkage defined in this file should be
@@ -282,7 +278,6 @@ inm_disconnect(struct in_multi *inm)
 			}
 			MCDPRINTF("removed ll_ifma: %p from %s\n", ll_ifma, ifp->if_xname);
 			if_freemulti(ll_ifma);
-			ifma_restart = true;
 		}
 	}
 }
@@ -369,17 +364,14 @@ inm_lookup_locked(struct ifnet *ifp, const struct in_addr ina)
 	IN_MULTI_LIST_LOCK_ASSERT();
 	IF_ADDR_LOCK_ASSERT(ifp);
 
-	inm = NULL;
 	CK_STAILQ_FOREACH(ifma, &((ifp)->if_multiaddrs), ifma_link) {
-		if (ifma->ifma_addr->sa_family != AF_INET ||
-			ifma->ifma_protospec == NULL)
+		inm = inm_ifmultiaddr_get_inm(ifma);
+		if (inm == NULL)
 			continue;
-		inm = (struct in_multi *)ifma->ifma_protospec;
 		if (inm->inm_addr.s_addr == ina.s_addr)
-			break;
-		inm = NULL;
+			return (inm);
 	}
-	return (inm);
+	return (NULL);
 }
 
 /*
@@ -485,7 +477,7 @@ imo_multi_filter(const struct ip_moptions *imo, const struct ifnet *ifp,
 	ims = imo_match_source(imf, src);
 
 	if ((ims == NULL && mode == MCAST_INCLUDE) ||
-	    (ims != NULL && ims->imsl_st[0] != mode))
+	    (ims != NULL && ims->imsl_st[0] == MCAST_EXCLUDE))
 		return (MCAST_NOTSMEMBER);
 
 	return (MCAST_PASS);
@@ -1188,14 +1180,15 @@ inm_purge(struct in_multi *inm)
 		free(ims, M_IPMSOURCE);
 		inm->inm_nsrc--;
 	}
+	mbufq_drain(&inm->inm_scq);
 }
 
 /*
  * Join a multicast group; unlocked entry point.
  *
- * SMPng: XXX: in_joingroup() is called from in_control() when Giant
- * is not held. Fortunately, ifp is unlikely to have been detached
- * at this point, so we assume it's OK to recurse.
+ * SMPng: XXX: in_joingroup() is called from in_control().  Fortunately,
+ * ifp is unlikely to have been detached at this point, so we assume
+ * it's OK to recurse.
  */
 int
 in_joingroup(struct ifnet *ifp, const struct in_addr *gina,
@@ -1368,8 +1361,6 @@ in_leavegroup_locked(struct in_multi *inm, /*const*/ struct in_mfilter *imf)
  *
  * The delta-based API applies only to exclusive-mode memberships.
  * An IGMP downcall will be performed.
- *
- * SMPng: NOTE: Must take Giant as a join may create a new ifma.
  *
  * Return 0 if successful, otherwise return an appropriate error code.
  */
@@ -1557,7 +1548,6 @@ out_inp_locked:
  * Given an inpcb, return its multicast options structure pointer.  Accepts
  * an unlocked inpcb pointer, but will return it locked.  May sleep.
  *
- * SMPng: NOTE: Potentially calls malloc(M_WAITOK) with Giant held.
  * SMPng: NOTE: Returns with the INP write lock held.
  */
 static struct ip_moptions *
@@ -1751,13 +1741,9 @@ inp_getmoptions(struct inpcb *inp, struct sockopt *sopt)
 
 	INP_WLOCK(inp);
 	imo = inp->inp_moptions;
-	/*
-	 * If socket is neither of type SOCK_RAW or SOCK_DGRAM,
-	 * or is a divert socket, reject it.
-	 */
-	if (inp->inp_socket->so_proto->pr_protocol == IPPROTO_DIVERT ||
-	    (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
-	    inp->inp_socket->so_proto->pr_type != SOCK_DGRAM)) {
+	/* If socket is neither of type SOCK_RAW or SOCK_DGRAM reject it. */
+	if (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
+	    inp->inp_socket->so_proto->pr_type != SOCK_DGRAM) {
 		INP_WUNLOCK(inp);
 		return (EOPNOTSUPP);
 	}
@@ -2531,8 +2517,6 @@ inp_set_multicast_if(struct inpcb *inp, struct sockopt *sopt)
 
 /*
  * Atomically set source filters on a socket for an IPv4 multicast group.
- *
- * SMPng: NOTE: Potentially calls malloc(M_WAITOK) with Giant held.
  */
 static int
 inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
@@ -2717,13 +2701,9 @@ inp_setmoptions(struct inpcb *inp, struct sockopt *sopt)
 
 	error = 0;
 
-	/*
-	 * If socket is neither of type SOCK_RAW or SOCK_DGRAM,
-	 * or is a divert socket, reject it.
-	 */
-	if (inp->inp_socket->so_proto->pr_protocol == IPPROTO_DIVERT ||
-	    (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
-	     inp->inp_socket->so_proto->pr_type != SOCK_DGRAM))
+	/* If socket is neither of type SOCK_RAW or SOCK_DGRAM, reject it. */
+	if (inp->inp_socket->so_proto->pr_type != SOCK_RAW &&
+	     inp->inp_socket->so_proto->pr_type != SOCK_DGRAM)
 		return (EOPNOTSUPP);
 
 	switch (sopt->sopt_name) {
@@ -2909,10 +2889,9 @@ sysctl_ip_mcast_filters(SYSCTL_HANDLER_ARGS)
 	IN_MULTI_LIST_LOCK();
 
 	CK_STAILQ_FOREACH(ifma, &ifp->if_multiaddrs, ifma_link) {
-		if (ifma->ifma_addr->sa_family != AF_INET ||
-		    ifma->ifma_protospec == NULL)
+		inm = inm_ifmultiaddr_get_inm(ifma);
+		if (inm == NULL)
 			continue;
-		inm = (struct in_multi *)ifma->ifma_protospec;
 		if (!in_hosteq(inm->inm_addr, group))
 			continue;
 		fmode = inm->inm_st[1].iss_fmode;

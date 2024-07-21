@@ -42,21 +42,6 @@
  *	from: $NetBSD: disksubr.c,v 1.13 2000/12/17 22:39:18 pk $
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1987, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)disklabel.c	8.2 (Berkeley) 1/7/94";
-/* from static char sccsid[] = "@(#)disklabel.c	1.2 (Symmetric) 11/28/85"; */
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <stdint.h>
 #include <sys/file.h>
@@ -65,7 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/disk.h>
 #define DKTYPENAMES
 #define FSTYPENAMES
-#define MAXPARTITIONS	20
+#define MAXPARTITIONS	8 /* XXX should be 20, but see PR276517 */
 #include <sys/disklabel.h>
 
 #include <unistd.h>
@@ -146,9 +131,13 @@ main(int argc, char *argv[])
 	FILE *t;
 	int ch, error, fd;
 	const char *name;
-	
+
 	error = 0;
 	name = NULL;
+
+	fprintf(stderr,
+	    "WARNING: bsdlabel is deprecated and is not available in FreeBSD 15 or later.\n"
+	    "Please use gpart instead.\n\n");
 
 	while ((ch = getopt(argc, argv, "ABb:efm:nRrw")) != -1)
 		switch (ch) {
@@ -1094,7 +1083,7 @@ checklabel(struct disklabel *lp)
 	struct partition *pp;
 	int i, errors = 0;
 	char part;
-	u_long base_offset, needed, total_size, total_percent, current_offset;
+	u_long base_offset, needed, total_percent, current_offset;
 	long free_space;
 	int seen_default_offset;
 	int hog_part;
@@ -1173,7 +1162,6 @@ checklabel(struct disklabel *lp)
 
 
 	/* first allocate space to the partitions, then offsets */
-	total_size = 0; /* in sectors */
 	total_percent = 0; /* in percent */
 	hog_part = -1;
 	/* find all fixed partitions */
@@ -1234,9 +1222,6 @@ checklabel(struct disklabel *lp)
 						size /= lp->d_secsize;
 						pp->p_size = size;
 					}
-					/* else already in sectors */
-					if (i != RAW_PART)
-						total_size += size;
 				}
 			}
 		}
@@ -1272,7 +1257,6 @@ checklabel(struct disklabel *lp)
 				if (part_set[i] && part_size_type[i] == '%') {
 					/* careful of overflows! and integer roundoff */
 					pp->p_size = ((double)pp->p_size/100) * free_space;
-					total_size += pp->p_size;
 
 					/* FIX we can lose a sector or so due to roundoff per
 					   partition.  A more complex algorithm could avoid that */
@@ -1328,7 +1312,6 @@ checklabel(struct disklabel *lp)
 		} else {
 			lp->d_partitions[hog_part].p_size = current_offset -
 			    base_offset - needed;
-			total_size += lp->d_partitions[hog_part].p_size;
 		}
 	}
 

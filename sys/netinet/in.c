@@ -28,13 +28,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)in.c	8.4 (Berkeley) 1/9/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 
 #define IN_HISTORICAL_NETS		/* include class masks */
@@ -59,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_arp.h>
 #include <net/if_dl.h>
 #include <net/if_llatbl.h>
+#include <net/if_private.h>
 #include <net/if_types.h>
 #include <net/route.h>
 #include <net/route/nhop.h>
@@ -76,9 +73,13 @@ __FBSDID("$FreeBSD$");
 #include <netinet/udp.h>
 #include <netinet/udp_var.h>
 
-static int in_aifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct thread *);
-static int in_difaddr_ioctl(u_long, caddr_t, struct ifnet *, struct thread *);
-static int in_gifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct thread *);
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
+
+static int in_aifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
+static int in_difaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
+static int in_gifaddr_ioctl(u_long, caddr_t, struct ifnet *, struct ucred *);
 
 static void	in_socktrim(struct sockaddr_in *);
 static void	in_purgemaddrs(struct ifnet *);
@@ -164,7 +165,7 @@ in_localip(struct in_addr in)
 }
 
 /*
- * Like in_localip(), but FIB-aware.
+ * Like in_localip(), but FIB-aware and carp(4)-aware.
  */
 bool
 in_localip_fib(struct in_addr in, uint16_t fib)
@@ -175,6 +176,8 @@ in_localip_fib(struct in_addr in, uint16_t fib)
 
 	CK_LIST_FOREACH(ia, INADDR_HASH(in.s_addr), ia_hash)
 		if (IA_SIN(ia)->sin_addr.s_addr == in.s_addr &&
+		    (ia->ia_ifa.ifa_carp == NULL ||
+		    carp_master_p(&ia->ia_ifa)) &&
 		    ia->ia_ifa.ifa_ifp->if_fib == fib)
 			return (true);
 
@@ -324,8 +327,8 @@ in_socktrim(struct sockaddr_in *ap)
  * Generic internet control operations (ioctl's).
  */
 int
-in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
-    struct thread *td)
+in_control_ioctl(u_long cmd, void *data, struct ifnet *ifp,
+    struct ucred *cred)
 {
 	struct ifreq *ifr = (struct ifreq *)data;
 	struct sockaddr_in *addr = (struct sockaddr_in *)&ifr->ifr_addr;
@@ -349,18 +352,18 @@ in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
 		break;
 	case SIOCGIFALIAS:
 		sx_xlock(&in_control_sx);
-		error = in_gifaddr_ioctl(cmd, data, ifp, td);
+		error = in_gifaddr_ioctl(cmd, data, ifp, cred);
 		sx_xunlock(&in_control_sx);
 		return (error);
 	case SIOCDIFADDR:
 		sx_xlock(&in_control_sx);
-		error = in_difaddr_ioctl(cmd, data, ifp, td);
+		error = in_difaddr_ioctl(cmd, data, ifp, cred);
 		sx_xunlock(&in_control_sx);
 		return (error);
 	case OSIOCAIFADDR:	/* 9.x compat */
 	case SIOCAIFADDR:
 		sx_xlock(&in_control_sx);
-		error = in_aifaddr_ioctl(cmd, data, ifp, td);
+		error = in_aifaddr_ioctl(cmd, data, ifp, cred);
 		sx_xunlock(&in_control_sx);
 		return (error);
 	case SIOCSIFADDR:
@@ -376,7 +379,7 @@ in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
 	}
 
 	if (addr->sin_addr.s_addr != INADDR_ANY &&
-	    prison_check_ip4(td->td_ucred, &addr->sin_addr) != 0)
+	    prison_check_ip4(cred, &addr->sin_addr) != 0)
 		return (EADDRNOTAVAIL);
 
 	/*
@@ -396,7 +399,7 @@ in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
 		CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link)
 			if (ifa->ifa_addr->sa_family == AF_INET) {
 				ia = (struct in_ifaddr *)ifa;
-				if (prison_check_ip4(td->td_ucred,
+				if (prison_check_ip4(cred,
 				    &ia->ia_addr.sin_addr) == 0)
 					break;
 			}
@@ -438,8 +441,15 @@ in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
 	return (error);
 }
 
+int
+in_control(struct socket *so, u_long cmd, void *data, struct ifnet *ifp,
+    struct thread *td)
+{
+	return (in_control_ioctl(cmd, data, ifp, td ? td->td_ucred : NULL));
+}
+
 static int
-in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
+in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred)
 {
 	const struct in_aliasreq *ifra = (struct in_aliasreq *)data;
 	const struct sockaddr_in *addr = &ifra->ifra_addr;
@@ -453,7 +463,7 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 	bool iaIsFirst;
 	int error = 0;
 
-	error = priv_check(td, PRIV_NET_ADDIFADDR);
+	error = priv_check_cred(cred, PRIV_NET_ADDIFADDR);
 	if (error)
 		return (error);
 
@@ -479,6 +489,13 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 	if (vhid != 0 && carp_attach_p == NULL)
 		return (EPROTONOSUPPORT);
 
+#ifdef MAC
+	/* Check if a MAC policy disallows setting the IPv4 address. */
+	error = mac_inet_check_add_addr(cred, &addr->sin_addr, ifp);
+	if (error != 0)
+		return (error);
+#endif
+
 	/*
 	 * See whether address already exist.
 	 */
@@ -493,7 +510,7 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 
 		it = (struct in_ifaddr *)ifa;
 		if (it->ia_addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-		    prison_check_ip4(td->td_ucred, &addr->sin_addr) == 0)
+		    prison_check_ip4(cred, &addr->sin_addr) == 0)
 			ia = it;
 		else
 			iaIsFirst = false;
@@ -501,7 +518,7 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 	NET_EPOCH_EXIT(et);
 
 	if (ia != NULL)
-		(void )in_difaddr_ioctl(cmd, data, ifp, td);
+		(void )in_difaddr_ioctl(cmd, data, ifp, cred);
 
 	ifa = ifa_alloc(sizeof(struct in_ifaddr), M_WAITOK);
 	ia = (struct in_ifaddr *)ifa;
@@ -654,7 +671,7 @@ fail1:
 }
 
 static int
-in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
+in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred)
 {
 	const struct ifreq *ifr = (struct ifreq *)data;
 	const struct sockaddr_in *addr = (const struct sockaddr_in *)
@@ -664,8 +681,8 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 	bool deleteAny, iaIsLast;
 	int error;
 
-	if (td != NULL) {
-		error = priv_check(td, PRIV_NET_DELIFADDR);
+	if (cred != NULL) {
+		error = priv_check_cred(cred, PRIV_NET_DELIFADDR);
 		if (error)
 			return (error);
 	}
@@ -686,12 +703,12 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 			continue;
 
 		it = (struct in_ifaddr *)ifa;
-		if (deleteAny && ia == NULL && (td == NULL ||
-		    prison_check_ip4(td->td_ucred, &it->ia_addr.sin_addr) == 0))
+		if (deleteAny && ia == NULL && (cred == NULL ||
+		    prison_check_ip4(cred, &it->ia_addr.sin_addr) == 0))
 			ia = it;
 
 		if (it->ia_addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-		    (td == NULL || prison_check_ip4(td->td_ucred,
+		    (cred == NULL || prison_check_ip4(cred,
 		    &addr->sin_addr) == 0))
 			ia = it;
 
@@ -757,7 +774,7 @@ in_difaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 }
 
 static int
-in_gifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
+in_gifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct ucred *cred)
 {
 	struct in_aliasreq *ifra = (struct in_aliasreq *)data;
 	const struct sockaddr_in *addr = &ifra->ifra_addr;
@@ -785,7 +802,7 @@ in_gifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 
 		it = (struct in_ifaddr *)ifa;
 		if (it->ia_addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-		    prison_check_ip4(td->td_ucred, &addr->sin_addr) == 0) {
+		    prison_check_ip4(cred, &addr->sin_addr) == 0) {
 			ia = it;
 			break;
 		}
@@ -1368,9 +1385,10 @@ EVENTHANDLER_DEFINE(ifnet_event, in_ifnet_event, NULL, EVENTHANDLER_PRI_ANY);
 static void
 in_purgemaddrs(struct ifnet *ifp)
 {
+	struct epoch_tracker	 et;
 	struct in_multi_head purgeinms;
 	struct in_multi		*inm;
-	struct ifmultiaddr	*ifma, *next;
+	struct ifmultiaddr	*ifma;
 
 	SLIST_INIT(&purgeinms);
 	IN_MULTI_LIST_LOCK();
@@ -1382,18 +1400,14 @@ in_purgemaddrs(struct ifnet *ifp)
 	 * by code further down.
 	 */
 	IF_ADDR_WLOCK(ifp);
- restart:
-	CK_STAILQ_FOREACH_SAFE(ifma, &ifp->if_multiaddrs, ifma_link, next) {
-		if (ifma->ifma_addr->sa_family != AF_INET ||
-		    ifma->ifma_protospec == NULL)
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifma, &ifp->if_multiaddrs, ifma_link) {
+		inm = inm_ifmultiaddr_get_inm(ifma);
+		if (inm == NULL)
 			continue;
-		inm = (struct in_multi *)ifma->ifma_protospec;
 		inm_rele_locked(&purgeinms, inm);
-		if (__predict_false(ifma_restart)) {
-			ifma_restart = true;
-			goto restart;
-		}
 	}
+	NET_EPOCH_EXIT(et);
 	IF_ADDR_WUNLOCK(ifp);
 
 	inm_release_list_deferred(&purgeinms);
@@ -1458,9 +1472,6 @@ in_lltable_new(struct in_addr addr4, u_int flags)
 
 	return (&lle->base);
 }
-
-#define IN_ARE_MASKED_ADDR_EQUAL(d, a, m)	(		\
-	((((d).s_addr ^ (a).s_addr) & (m).s_addr)) == 0 )
 
 static int
 in_lltable_match_prefix(const struct sockaddr *saddr,
@@ -1671,6 +1682,7 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 		    lladdr_off);
 		lle->la_flags |= LLE_STATIC;
 		lle->r_flags |= (RLLE_VALID | RLLE_IFADDR);
+		lle->la_expire = 0;
 	}
 
 	return (lle);

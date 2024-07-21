@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Ampere Computing LLC
  *
@@ -23,13 +23,9 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_hwpmc_hooks.h"
 #include "opt_acpi.h"
 
@@ -72,7 +68,7 @@ struct pmu_dmc620_softc {
 
 #define	RD4(sc, r)		bus_read_4((sc)->sc_res[0], (r))
 #define	WR4(sc, r, v)		bus_write_4((sc)->sc_res[0], (r), (v))
-#define	MD4(sc, r, c, s)	WR4((sc), (r), RD4((sc), (r)) & ~(c) | (s))
+#define	MD4(sc, r, c, s)	WR4((sc), (r), (RD4((sc), (r)) & ~(c)) | (s))
 
 #define	CD2MD4(sc, u, r, c, s)	MD4((sc), DMC620_CLKDIV2_REG((u), (r)), (c), (s))
 #define	CMD4(sc, u, r, c, s)	MD4((sc), DMC620_CLK_REG((u), (r)), (c), (s))

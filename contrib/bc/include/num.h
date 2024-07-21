@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2018-2021 Gavin D. Howard and contributors.
+ * Copyright (c) 2018-2024 Gavin D. Howard and contributors.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -47,10 +47,6 @@
 #include <vector.h>
 #include <bcl.h>
 
-#ifndef BC_ENABLE_EXTRA_MATH
-#define BC_ENABLE_EXTRA_MATH (1)
-#endif // BC_ENABLE_EXTRA_MATH
-
 /// Everything in bc is base 10..
 #define BC_BASE (10)
 
@@ -75,6 +71,10 @@ typedef BclBigDig BcBigDig;
 /// An alias for portability.
 #define BC_NUM_BIGDIG_C UINT64_C
 
+/// The max number + 1 that two limbs can hold. This is used for generating
+/// numbers because the PRNG can generate a number that will fill two limbs.
+#define BC_BASE_RAND_POW (BC_NUM_BIGDIG_C(1000000000000000000))
+
 /// The actual limb type.
 typedef int_least32_t BcDig;
 
@@ -91,6 +91,10 @@ typedef int_least32_t BcDig;
 
 /// An alias for portability.
 #define BC_NUM_BIGDIG_C UINT32_C
+
+/// The max number + 1 that two limbs can hold. This is used for generating
+/// numbers because the PRNG can generate a number that will fill two limbs.
+#define BC_BASE_RAND_POW (UINT64_C(100000000))
 
 /// The actual limb type.
 typedef int_least16_t BcDig;
@@ -207,9 +211,9 @@ struct BcRNG;
 #define BC_NUM_KARATSUBA_ALLOCS (6)
 
 /**
- * Rounds @a s (scale) up to the next power of BC_BASE_DIGS. This also check for
- * overflow and gives a fatal error if that happens because we just can't go
- * over the limits we have imposed.
+ * Rounds @a s (scale) up to the next power of BC_BASE_DIGS. This will also
+ * check for overflow and gives a fatal error if that happens because we just
+ * can't go over the limits we have imposed.
  * @param s  The scale to round up.
  * @return   @a s rounded up to the next power of BC_BASE_DIGS.
  */
@@ -828,6 +832,14 @@ bc_num_parse(BcNum* restrict n, const char* restrict val, BcBigDig base);
  */
 void
 bc_num_print(BcNum* restrict n, BcBigDig base, bool newline);
+
+/**
+ * Invert @a into @a b at the current scale.
+ * @param a      The number to invert.
+ * @param b      The return parameter. This must be preallocated.
+ * @param scale  The current scale.
+ */
+#define bc_num_inv(a, b, scale) bc_num_div(&vm->one, (a), (b), (scale))
 
 #if !BC_ENABLE_LIBRARY
 

@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: rtadvd.h,v 1.26 2003/08/05 12:34:23 itojun Exp $	*/
 
 /*-
@@ -32,6 +31,8 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+
+#include <stdbool.h>
 
 #define	ELM_MALLOC(p,error_action)					\
 	do {								\
@@ -149,6 +150,14 @@ struct rdnss {
 	uint32_t rd_ltime;	/* number of seconds valid */
 };
 
+struct pref64 {
+	TAILQ_ENTRY(pref64) p64_next;
+	bool		p64_enabled;
+	uint16_t	p64_plc;	/* prefix length code */
+	uint16_t	p64_sl;		/* scaled lifetime */
+	struct in6_addr	p64_prefix;
+};
+
 /*
  * The maximum length of a domain name in a DNS search list is calculated
  * by a domain name + length fields per 63 octets + a zero octet at
@@ -218,6 +227,7 @@ struct	rainfo {
 	/* actual RA packet data and its length */
 	size_t	rai_ra_datalen;
 	char	*rai_ra_data;
+	struct pref64 rai_pref64;	/* PREF64 option */
 
 	/* info about soliciter */
 	TAILQ_HEAD(, soliciter) rai_soliciter;	/* recent solication source */

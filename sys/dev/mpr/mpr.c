@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /* Communications core for Avago Technologies (LSI) MPT3 */
 
 /* TODO Move headers to mprvar */
@@ -740,7 +738,7 @@ mpr_iocfacts_allocate(struct mpr_softc *sc, uint8_t attaching)
 	 * XXX If the number of MSI-X vectors changes during re-init, this
 	 * won't see it and adjust.
 	 */
-	if (attaching && (error = mpr_pci_setup_interrupts(sc)) != 0) {
+	if ((attaching || reallocating) && (error = mpr_pci_setup_interrupts(sc)) != 0) {
 		mpr_dprint(sc, MPR_INIT|MPR_ERROR,
 		    "Failed to setup interrupts\n");
 		mpr_free(sc);
@@ -1502,7 +1500,8 @@ mpr_alloc_requests(struct mpr_softc *sc)
 	rsize = sc->chain_frame_size * sc->num_chains;
 	bus_dma_template_init(&t, sc->mpr_parent_dmat);
 	BUS_DMA_TEMPLATE_FILL(&t, BD_ALIGNMENT(16), BD_MAXSIZE(rsize),
-	    BD_MAXSEGSIZE(rsize), BD_NSEGMENTS((howmany(rsize, PAGE_SIZE))));
+	    BD_MAXSEGSIZE(rsize), BD_NSEGMENTS((howmany(rsize, PAGE_SIZE))),
+	    BD_BOUNDARY(BUS_SPACE_MAXSIZE_32BIT+1));
 	if (bus_dma_template_tag(&t, &sc->chain_dmat)) {
 		mpr_dprint(sc, MPR_ERROR, "Cannot allocate chain DMA tag\n");
 		return (ENOMEM);
@@ -1554,7 +1553,8 @@ mpr_alloc_requests(struct mpr_softc *sc)
 	BUS_DMA_TEMPLATE_FILL(&t, BD_MAXSIZE(BUS_SPACE_MAXSIZE_32BIT),
 	    BD_NSEGMENTS(nsegs), BD_MAXSEGSIZE(BUS_SPACE_MAXSIZE_32BIT),
 	    BD_FLAGS(BUS_DMA_ALLOCNOW), BD_LOCKFUNC(busdma_lock_mutex),
-	    BD_LOCKFUNCARG(&sc->mpr_mtx));
+	    BD_LOCKFUNCARG(&sc->mpr_mtx),
+	    BD_BOUNDARY(BUS_SPACE_MAXSIZE_32BIT+1));
 	if (bus_dma_template_tag(&t, &sc->buffer_dmat)) {
 		mpr_dprint(sc, MPR_ERROR, "Cannot allocate buffer DMA tag\n");
 		return (ENOMEM);
@@ -1873,7 +1873,7 @@ mpr_setup_sysctl(struct mpr_softc *sc)
 
 	SYSCTL_ADD_STRING(sysctl_ctx, SYSCTL_CHILDREN(sysctl_tree),
 	    OID_AUTO, "msg_version", CTLFLAG_RD, sc->msg_version,
-	    strlen(sc->msg_version), "message interface version");
+	    strlen(sc->msg_version), "message interface version (deprecated)");
 
 	SYSCTL_ADD_INT(sysctl_ctx, SYSCTL_CHILDREN(sysctl_tree),
 	    OID_AUTO, "io_cmds_active", CTLFLAG_RD,
@@ -2759,13 +2759,14 @@ mpr_update_events(struct mpr_softc *sc, struct mpr_event_handle *handle,
 	evtreq->SASBroadcastPrimitiveMasks = 0;
 #ifdef MPR_DEBUG_ALL_EVENTS
 	{
-		u_char fullmask[16];
-		memset(fullmask, 0x00, 16);
-		bcopy(fullmask, (uint8_t *)&evtreq->EventMasks, 16);
+		u_char fullmask[sizeof(evtreq->EventMasks)];
+		memset(fullmask, 0x00, sizeof(fullmask));
+		bcopy(fullmask, (uint8_t *)&evtreq->EventMasks, sizeof(fullmask));
 	}
 #else
+	bcopy(sc->event_mask, (uint8_t *)&evtreq->EventMasks, sizeof(sc->event_mask));
 	for (i = 0; i < MPI2_EVENT_NOTIFY_EVENTMASK_WORDS; i++)
-		evtreq->EventMasks[i] = htole32(sc->event_mask[i]);
+		evtreq->EventMasks[i] = htole32(evtreq->EventMasks[i]);
 #endif
 	cm->cm_desc.Default.RequestFlags = MPI2_REQ_DESCRIPT_FLAGS_DEFAULT_TYPE;
 	cm->cm_data = NULL;
@@ -2814,13 +2815,14 @@ mpr_reregister_events(struct mpr_softc *sc)
 	evtreq->SASBroadcastPrimitiveMasks = 0;
 #ifdef MPR_DEBUG_ALL_EVENTS
 	{
-		u_char fullmask[16];
-		memset(fullmask, 0x00, 16);
-		bcopy(fullmask, (uint8_t *)&evtreq->EventMasks, 16);
+		u_char fullmask[sizeof(evtreq->EventMasks)];
+		memset(fullmask, 0x00, sizeof(fullmask));
+		bcopy(fullmask, (uint8_t *)&evtreq->EventMasks, sizeof(fullmask));
 	}
 #else
+	bcopy(sc->event_mask, (uint8_t *)&evtreq->EventMasks, sizeof(sc->event_mask));
 	for (i = 0; i < MPI2_EVENT_NOTIFY_EVENTMASK_WORDS; i++)
-		evtreq->EventMasks[i] = htole32(sc->event_mask[i]);
+		evtreq->EventMasks[i] = htole32(evtreq->EventMasks[i]);
 #endif
 	cm->cm_desc.Default.RequestFlags = MPI2_REQ_DESCRIPT_FLAGS_DEFAULT_TYPE;
 	cm->cm_data = NULL;

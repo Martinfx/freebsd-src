@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Vladimir Kondratyev <wulf@FreeBSD.org>
  *
@@ -31,8 +31,10 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/cdefs.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/rwlock.h>
 #include <sys/seqc.h>
 
 struct lock_class_key;
@@ -48,6 +50,12 @@ struct seqlock {
 };
 typedef struct seqlock seqlock_t;
 
+struct seqcount_mutex {
+	seqc_t		seqc;
+};
+typedef struct seqcount_mutex seqcount_mutex_t;
+typedef struct seqcount_mutex seqcount_ww_mutex_t;
+
 static inline void
 __seqcount_init(struct seqcount *seqcount, const char *name __unused,
     struct lock_class_key *key __unused)
@@ -57,16 +65,43 @@ __seqcount_init(struct seqcount *seqcount, const char *name __unused,
 #define	seqcount_init(seqcount)	__seqcount_init(seqcount, NULL, NULL)
 
 static inline void
-write_seqcount_begin(struct seqcount *seqcount)
+seqcount_mutex_init(struct seqcount_mutex *seqcount, void *mutex __unused)
 {
-	seqc_sleepable_write_begin(&seqcount->seqc);
+	seqcount->seqc = 0;
 }
 
+#define	seqcount_ww_mutex_init(seqcount, ww_mutex) \
+    seqcount_mutex_init((seqcount), (ww_mutex))
+
+#define	write_seqcount_begin(s)						\
+    _Generic(*(s),							\
+	struct seqcount:	seqc_sleepable_write_begin,		\
+	struct seqcount_mutex:	seqc_write_begin			\
+    )(&(s)->seqc)
+
+#define	write_seqcount_end(s)						\
+    _Generic(*(s),							\
+	struct seqcount:	seqc_sleepable_write_end,		\
+	struct seqcount_mutex:	seqc_write_end				\
+    )(&(s)->seqc)
+
 static inline void
-write_seqcount_end(struct seqcount *seqcount)
+lkpi_write_seqcount_invalidate(seqc_t *seqcp)
 {
-	seqc_sleepable_write_end(&seqcount->seqc);
+	atomic_thread_fence_rel();
+	*seqcp += SEQC_MOD * 2;
 }
+#define	write_seqcount_invalidate(s) lkpi_write_seqcount_invalidate(&(s)->seqc)
+
+#define	read_seqcount_begin(s)	seqc_read(&(s)->seqc)
+#define	raw_read_seqcount(s)	seqc_read_any(&(s)->seqc)
+
+static inline seqc_t
+lkpi_seqprop_sequence(const seqc_t *seqcp)
+{
+	return (atomic_load_int(__DECONST(seqc_t *, seqcp)));
+}
+#define	seqprop_sequence(s)	lkpi_seqprop_sequence(&(s)->seqc)
 
 /*
  * XXX: Are predicts from inline functions still not honored by clang?
@@ -75,18 +110,6 @@ write_seqcount_end(struct seqcount *seqcount)
 	(!seqc_consistent_no_fence(&(seqcount)->seqc, gen))
 #define	read_seqcount_retry(seqcount, gen)	\
 	(!seqc_consistent(&(seqcount)->seqc, gen))
-
-static inline unsigned
-read_seqcount_begin(const struct seqcount *seqcount)
-{
-	return (seqc_read(&seqcount->seqc));
-}
-
-static inline unsigned
-raw_read_seqcount(const struct seqcount *seqcount)
-{
-	return (seqc_read_any(&seqcount->seqc));
-}
 
 static inline void
 seqlock_init(struct seqlock *seqlock)

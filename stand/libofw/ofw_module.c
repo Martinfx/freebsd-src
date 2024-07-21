@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * ofw-specific module functionality.
  *
@@ -45,5 +42,5 @@ int
 ofw_autoload(void)
 {
     /* XXX Call some machdep autoload routine? */
-    return(0);
+    return (0);
 }

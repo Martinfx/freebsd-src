@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 Alexander Motin <mav@FreeBSD.org>
  * Copyright (c) 2004, 2005 Silicon Graphics International Corp.
@@ -26,9 +26,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -61,7 +58,7 @@ __FBSDID("$FreeBSD$");
 
 struct tpcl_softc {
 	struct ctl_port port;
-	int cur_tag_num;
+	u_int cur_tag_num;
 };
 
 static struct tpcl_softc tpcl_softc;

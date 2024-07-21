@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:  ${SRCTOP}/sys/dev/ntb/if_ntb
 
 KMOD    = if_ntb

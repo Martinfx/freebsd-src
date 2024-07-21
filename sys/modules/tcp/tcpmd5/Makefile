@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/netipsec
 
 KMOD=   tcpmd5

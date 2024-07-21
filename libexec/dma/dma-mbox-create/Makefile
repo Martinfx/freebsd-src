@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MAN=
 
 WARNS?=	2

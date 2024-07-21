@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 ATF_TESTS_SH+=	sed2_test

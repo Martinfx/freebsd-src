@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	cxgbtool
 SRCS=	cxgbtool.c
 MAN=

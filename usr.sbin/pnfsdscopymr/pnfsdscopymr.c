@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2017 Rick Macklem
  *
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <err.h>
 #include <errno.h>
 #include <getopt.h>
@@ -53,7 +51,7 @@ __FBSDID("$FreeBSD$");
 #include <fs/nfs/nfs.h>
 #include <fs/nfs/nfsrvstate.h>
 
-static void usage(void);
+static void usage(void) __dead2;
 
 static struct option longopts[] = {
 	{ "migrate",	required_argument,	NULL,	'm'	},
@@ -173,7 +171,7 @@ main(int argc, char *argv[])
 			    pnfsdarg.dspath);
 	
 		/*
-		 * Check the IP address of the NFS server against the entrie(s)
+		 * Check the IP address of the NFS server against the entry(ies)
 		 * in the extended attribute.
 		 */
 		strlcpy(host, sf.f_mntfromname, sizeof(host));
@@ -235,7 +233,7 @@ main(int argc, char *argv[])
 			    pnfsdarg.curdspath);
 	
 		/*
-		 * Check the IP address of the NFS server against the entrie(s)
+		 * Check the IP address of the NFS server against the entry(ies)
 		 * in the extended attribute.
 		 */
 		strlcpy(host, sf.f_mntfromname, sizeof(host));

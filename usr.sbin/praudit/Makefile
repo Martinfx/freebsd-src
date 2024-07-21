@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 
 .include <src.opts.mk>
@@ -9,6 +8,7 @@ OPENBSMDIR=${SRCTOP}/contrib/openbsm
 
 CFLAGS+=	-I${OPENBSMDIR}
 
+PACKAGE=audit
 PROG=	praudit
 MAN=	praudit.1
 

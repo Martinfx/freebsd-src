@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999, 2000, 2001, 2002 Robert N. M. Watson
  * All rights reserved.
@@ -30,9 +30,6 @@
 /*
  * acl_delete_def_file -- remove a default acl from a file
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include "namespace.h"

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Peter Wemm <peter@FreeBSD.org>
  * Copyright (c) 2000 Paul Saab <ps@FreeBSD.org>
@@ -26,9 +26,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -255,7 +252,8 @@ main(int ac, char **av)
 	if (tty) {
 		if (strncmp(tty, "/dev/", 5) == 0)
 			snprintf(buf, sizeof(buf), "%s", tty);
-		else if (strncmp(tty, "tty", 3) == 0)
+		else if (strncmp(tty, "tty", 3) == 0 ||
+		    strncmp(tty, "pts/", 4) == 0)
 			snprintf(buf, sizeof(buf), "/dev/%s", tty);
 		else
 			snprintf(buf, sizeof(buf), "/dev/tty%s", tty);

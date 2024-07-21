@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * MD bootstrap main() and assorted miscellaneous
  * commands.
@@ -53,14 +50,13 @@ __FBSDID("$FreeBSD$");
 #include "libzfs.h"
 #endif
 
-CTASSERT(sizeof(struct bootargs) == BOOTARGS_SIZE);
-CTASSERT(offsetof(struct bootargs, bootinfo) == BA_BOOTINFO);
-CTASSERT(offsetof(struct bootargs, bootflags) == BA_BOOTFLAGS);
-CTASSERT(offsetof(struct bootinfo, bi_size) == BI_SIZE);
+_Static_assert(sizeof(struct bootargs) == BOOTARGS_SIZE, "Bootarg size bad");
+_Static_assert(offsetof(struct bootargs, bootinfo) == BA_BOOTINFO, "BA_BOOTINFO");
+_Static_assert(offsetof(struct bootargs, bootflags) == BA_BOOTFLAGS, "BA_BOOTFLAGS");
+_Static_assert(offsetof(struct bootinfo, bi_size) == BI_SIZE, "BI_SIZE");
 
 /* Arguments passed in from the boot1/boot2 loader */
 static struct bootargs *kargs;
-
 static uint32_t		initial_howto;
 static uint32_t		initial_bootdev;
 static struct bootinfo	*initial_bootinfo;
@@ -96,8 +92,6 @@ ptov(uintptr_t x)
 int
 main(void)
 {
-	int	i;
-
 	/* Pick up arguments */
 	kargs = (void *)__args;
 	initial_howto = kargs->howto;
@@ -115,7 +109,7 @@ main(void)
 	 */
 	bios_getmem();
 
-#if defined(LOADER_BZIP2_SUPPORT) || defined(LOADER_FIREWIRE_SUPPORT) || \
+#if defined(LOADER_BZIP2_SUPPORT) || \
     defined(LOADER_GPT_SUPPORT) || defined(LOADER_ZFS_SUPPORT)
 	if (high_heap_size > 0) {
 		heap_top = PTOV(high_heap_base + high_heap_size);
@@ -166,7 +160,7 @@ main(void)
 
 	/* Set up currdev variable to have hooks in place. */
 	env_setenv("currdev", EV_VOLATILE | EV_NOHOOK, "",
-	    i386_setcurrdev, env_nounset);
+	    gen_setcurrdev, env_nounset);
 
 	/*
 	 * Initialise the block cache. Set the upper limit.
@@ -244,12 +238,7 @@ main(void)
 		import_geli_boot_data(gbdata);
 #endif /* LOADER_GELI_SUPPORT */
 
-	/*
-	 * March through the device switch probing for things.
-	 */
-	for (i = 0; devsw[i] != NULL; i++)
-		if (devsw[i]->dv_init != NULL)
-			(devsw[i]->dv_init)();
+	devinit();
 
 	printf("BIOS %dkB/%dkB available memory\n", bios_basemem / 1024,
 	    bios_extmem / 1024);
@@ -390,10 +379,7 @@ extract_currdev(void)
 		init_zfs_boot_options(devformat(&new_currdev.dd));
 #endif
 
-	env_setenv("currdev", EV_VOLATILE, devformat(&new_currdev.dd),
-	    i386_setcurrdev, env_nounset);
-	env_setenv("loaddev", EV_VOLATILE, devformat(&new_currdev.dd),
-	    env_noset, env_nounset);
+	set_currdev(devformat(&new_currdev.dd));
 }
 
 COMMAND_SET(reboot, "reboot", "reboot the system", command_reboot);
@@ -460,7 +446,7 @@ i386_zfs_probe(void)
 	for (dev.dd.d_unit = 0; bd_unit2bios(&dev) >= 0; dev.dd.d_unit++) {
 		snprintf(devname, sizeof(devname), "%s%d:", bioshd.dv_name,
 		    dev.dd.d_unit);
-		zfs_probe_dev(devname, NULL);
+		zfs_probe_dev(devname, NULL, true);
 	}
 }
 #endif

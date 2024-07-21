@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 .include "${SRCTOP}/secure/ssh.mk"
 
@@ -12,7 +10,7 @@ SRCS=	sshd.c auth-rhosts.c auth-passwd.c \
 	auth.c auth2.c auth-options.c session.c \
 	auth2-chall.c groupaccess.c \
 	auth-bsdauth.c auth2-hostbased.c auth2-kbdint.c \
-	auth2-none.c auth2-passwd.c auth2-pubkey.c \
+	auth2-none.c auth2-passwd.c auth2-pubkey.c auth2-pubkeyfile.c \
 	monitor.c monitor_wrap.c auth-krb5.c \
 	auth2-gss.c gss-serv.c gss-serv-krb5.c \
 	loginrec.c auth-pam.c auth-shadow.c auth-sia.c \
@@ -45,7 +43,7 @@ LIBADD+=	bsm
 .endif
 
 .if ${MK_BLACKLIST_SUPPORT} != "no"
-CFLAGS+= -DUSE_BLACKLIST=1 -I${SRCTOP}/contrib/blacklist/include
+CFLAGS+= -DUSE_BLACKLIST=1 -I${SRCTOP}/contrib/blocklist/include
 SRCS+=	blacklist.c
 LIBADD+= blacklist
 LDFLAGS+=-L${LIBBLACKLISTDIR}

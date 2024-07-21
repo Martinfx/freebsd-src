@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011, Bryan Venteicher <bryanv@FreeBSD.org>
  * All rights reserved.
@@ -27,9 +27,6 @@
  */
 
 /* Driver for VirtIO memory balloon devices. */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -316,7 +313,7 @@ vtballoon_alloc_virtqueues(struct vtballoon_softc *sc)
 	VQ_ALLOC_INFO_INIT(&vq_info[1], 0, vtballoon_vq_intr, sc,
 	    &sc->vtballoon_deflate_vq, "%s deflate", device_get_nameunit(dev));
 
-	return (virtio_alloc_virtqueues(dev, 0, nvqs, vq_info));
+	return (virtio_alloc_virtqueues(dev, nvqs, vq_info));
 }
 
 static void

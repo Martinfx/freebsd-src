@@ -32,8 +32,6 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*-
@@ -407,7 +405,7 @@
  * fiber-based cards or BCOM for 1000baseT cards with a Broadcom
  * PHY.
  */
-#define SK_PHYTYPE_XMAC		0	/* integeated XMAC II PHY */
+#define SK_PHYTYPE_XMAC		0	/* integrated XMAC II PHY */
 #define SK_PHYTYPE_BCOM		1	/* Broadcom BCM5400 */
 #define SK_PHYTYPE_LONE		2	/* Level One LXT1000 */
 #define SK_PHYTYPE_NAT		3	/* National DP83891 */
@@ -1471,7 +1469,7 @@ struct sk_softc {
 
 /* Softc for each logical interface */
 struct sk_if_softc {
-	struct ifnet		*sk_ifp;	/* interface info */
+	if_t			sk_ifp;	/* interface info */
 	device_t		sk_miibus;
 	device_t		sk_if_dev;
 	u_int8_t		sk_port;	/* port # on controller */

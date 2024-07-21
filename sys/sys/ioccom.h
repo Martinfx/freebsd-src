@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ioccom.h	8.3 (Berkeley) 1/9/95
- * $FreeBSD$
  */
 
 #ifndef	_SYS_IOCCOM_H_
@@ -82,7 +79,7 @@
 #define	_IOC_INVALID	(_IOC_VOID|_IOC_INOUT)	/* Never valid cmd value,
 						   use as filler */
 
-#else
+#elif !defined(_STANDALONE)
 
 #include <sys/cdefs.h>
 

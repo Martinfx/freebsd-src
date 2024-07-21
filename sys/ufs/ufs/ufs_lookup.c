@@ -32,13 +32,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ufs_lookup.c	8.15 (Berkeley) 6/16/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ufs.h"
 #include "opt_quota.h"
 
@@ -209,7 +205,7 @@ ufs_lookup_ino(struct vnode *vdp, struct vnode **vpp, struct componentname *cnp,
 	struct vnode *pdp;		/* saved dp during symlink work */
 	struct vnode *tdp;		/* returned by VFS_VGET */
 	doff_t enduseful;		/* pointer past last used dir slot */
-	u_long bmask;			/* block offset mask */
+	uint64_t bmask;			/* block offset mask */
 	int namlen, error;
 	struct ucred *cred = cnp->cn_cred;
 	int flags = cnp->cn_flags;
@@ -524,13 +520,10 @@ notfound:
 		 * We return ni_vp == NULL to indicate that the entry
 		 * does not currently exist; we leave a pointer to
 		 * the (locked) directory inode in ndp->ni_dvp.
-		 * The pathname buffer is saved so that the name
-		 * can be obtained later.
 		 *
 		 * NB - if the directory is unlocked, then this
 		 * information cannot be used.
 		 */
-		cnp->cn_flags |= SAVENAME;
 		return (EJUSTRETURN);
 	}
 	/*
@@ -551,9 +544,8 @@ found:
 	 */
 	if (i_offset + DIRSIZ(OFSFMT(vdp), ep) > dp->i_size) {
 		ufs_dirbad(dp, i_offset, "i_size too small");
-		dp->i_size = i_offset + DIRSIZ(OFSFMT(vdp), ep);
-		DIP_SET(dp, i_size, dp->i_size);
-		UFS_INODE_SET_FLAG(dp, IN_SIZEMOD | IN_CHANGE | IN_UPDATE);
+		brelse(bp);
+		return (EIO);
 	}
 	brelse(bp);
 
@@ -670,7 +662,6 @@ found:
 #endif
 
 		*vpp = tdp;
-		cnp->cn_flags |= SAVENAME;
 		return (0);
 	}
 	if (dd_ino != NULL)
@@ -762,17 +753,10 @@ found:
 void
 ufs_dirbad(struct inode *ip, doff_t offset, char *how)
 {
-	struct mount *mp;
 
-	mp = ITOV(ip)->v_mount;
-	if ((mp->mnt_flag & MNT_RDONLY) == 0)
-		panic("ufs_dirbad: %s: bad dir ino %ju at offset %ld: %s",
-		    mp->mnt_stat.f_mntonname, (uintmax_t)ip->i_number,
-		    (long)offset, how);
-	else
-		(void)printf("%s: bad dir ino %ju at offset %ld: %s\n",
-		    mp->mnt_stat.f_mntonname, (uintmax_t)ip->i_number,
-		    (long)offset, how);
+	(void)printf("%s: bad dir ino %ju at offset %ld: %s\n",
+	    ITOV(ip)->v_mount->mnt_stat.f_mntonname, (uintmax_t)ip->i_number,
+	    (long)offset, how);
 }
 
 /*
@@ -827,18 +811,16 @@ void
 ufs_makedirentry(struct inode *ip, struct componentname *cnp,
     struct direct *newdirp)
 {
-	u_int namelen;
+	uint64_t namelen;
 
 	namelen = (unsigned)cnp->cn_namelen;
-	KASSERT((cnp->cn_flags & SAVENAME) != 0,
-		("ufs_makedirentry: missing name"));
 	KASSERT(namelen <= UFS_MAXNAMLEN,
 		("ufs_makedirentry: name too long"));
 	newdirp->d_ino = ip->i_number;
 	newdirp->d_namlen = namelen;
 
 	/* Zero out after-name padding */
-	*(u_int32_t *)(&newdirp->d_name[namelen & ~(DIR_ROUNDUP - 1)]) = 0;
+	*(uint32_t *)(&newdirp->d_name[namelen & ~(DIR_ROUNDUP - 1)]) = 0;
 
 	bcopy(cnp->cn_nameptr, newdirp->d_name, namelen);
 
@@ -847,7 +829,7 @@ ufs_makedirentry(struct inode *ip, struct componentname *cnp,
 	else {
 		newdirp->d_type = 0;
 #		if (BYTE_ORDER == LITTLE_ENDIAN)
-			{ u_char tmp = newdirp->d_namlen;
+			{ uint8_t tmp = newdirp->d_namlen;
 			newdirp->d_namlen = newdirp->d_type;
 			newdirp->d_type = tmp; }
 #		endif
@@ -872,9 +854,9 @@ ufs_direnter(struct vnode *dvp, struct vnode *tvp, struct direct *dirp,
 	int newentrysize;
 	struct inode *dp;
 	struct buf *bp;
-	u_int dsize;
+	uint64_t dsize;
 	struct direct *ep, *nep;
-	u_int64_t old_isize;
+	uint64_t old_isize;
 	int error, ret, blkoff, loc, spacefree, flags, namlen;
 	char *dirbuf;
 
@@ -904,12 +886,13 @@ ufs_direnter(struct vnode *dvp, struct vnode *tvp, struct direct *dirp,
 		}
 #endif
 		old_isize = dp->i_size;
-		vnode_pager_setsize(dvp, (u_long)I_OFFSET(dp) + DIRBLKSIZ);
+		vnode_pager_setsize(dvp,
+		    (vm_ooffset_t)I_OFFSET(dp) + DIRBLKSIZ);
 		if ((error = UFS_BALLOC(dvp, (off_t)I_OFFSET(dp), DIRBLKSIZ,
 		    cr, flags, &bp)) != 0) {
 			if (DOINGSOFTDEP(dvp) && newdirbp != NULL)
 				bdwrite(newdirbp);
-			vnode_pager_setsize(dvp, (u_long)old_isize);
+			vnode_pager_setsize(dvp, (vm_ooffset_t)old_isize);
 			return (error);
 		}
 		dp->i_size = I_OFFSET(dp) + DIRBLKSIZ;
@@ -1071,7 +1054,7 @@ ufs_direnter(struct vnode *dvp, struct vnode *tvp, struct direct *dirp,
 	    dirp->d_reclen == spacefree))
 		ufsdirhash_add(dp, dirp, I_OFFSET(dp) + ((char *)ep - dirbuf));
 #endif
-	bcopy((caddr_t)dirp, (caddr_t)ep, (u_int)newentrysize);
+	bcopy((caddr_t)dirp, (caddr_t)ep, (uint64_t)newentrysize);
 #ifdef UFS_DIRHASH
 	if (dp->i_dirhash != NULL)
 		ufsdirhash_checkblock(dp, dirbuf -
@@ -1138,7 +1121,7 @@ ufs_dirremove(struct vnode *dvp, struct inode *ip, int flags, int isrmdir)
 			softdep_setup_unlink(dp, ip);
 		} else {
 			ip->i_nlink--;
-			DIP_SET(ip, i_nlink, ip->i_nlink);
+			DIP_SET_NLINK(ip, ip->i_nlink);
 			UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 		}
 	}
@@ -1154,7 +1137,7 @@ ufs_dirremove(struct vnode *dvp, struct inode *ip, int flags, int isrmdir)
 				softdep_change_linkcnt(ip);
 			} else {
 				ip->i_nlink++;
-				DIP_SET(ip, i_nlink, ip->i_nlink);
+				DIP_SET_NLINK(ip, ip->i_nlink);
 				UFS_INODE_SET_FLAG(ip, IN_CHANGE);
 			}
 		}
@@ -1258,7 +1241,7 @@ ufs_dirrewrite(struct inode *dp, struct inode *oip, ino_t newinum, int newtype,
 		softdep_setup_unlink(dp, oip);
 	} else {
 		oip->i_nlink--;
-		DIP_SET(oip, i_nlink, oip->i_nlink);
+		DIP_SET_NLINK(oip, oip->i_nlink);
 		UFS_INODE_SET_FLAG(oip, IN_CHANGE);
 	}
 
@@ -1275,7 +1258,7 @@ ufs_dirrewrite(struct inode *dp, struct inode *oip, ino_t newinum, int newtype,
 			softdep_change_linkcnt(oip);
 		} else {
 			oip->i_nlink++;
-			DIP_SET(oip, i_nlink, oip->i_nlink);
+			DIP_SET_NLINK(oip, oip->i_nlink);
 			UFS_INODE_SET_FLAG(oip, IN_CHANGE);
 		}
 		return (error);

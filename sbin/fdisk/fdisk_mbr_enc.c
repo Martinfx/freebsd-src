@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Poul-Henning Kamp
  * All rights reserved.
@@ -32,9 +32,6 @@
  *
  * NB!  This file must be usable both in kernel and userland.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/diskmbr.h>

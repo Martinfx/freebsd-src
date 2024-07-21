@@ -30,7 +30,6 @@
   POSSIBILITY OF SUCH DAMAGE.
 
 ******************************************************************************/
-/*$FreeBSD$*/
 
 #include "opt_inet.h"
 #include "opt_inet6.h"
@@ -46,7 +45,7 @@
 /************************************************************************
  * Driver version
  ************************************************************************/
-char ixgbe_driver_version[] = "4.0.1-k";
+static const char ixgbe_driver_version[] = "4.0.1-k";
 
 /************************************************************************
  * PCI Device ID Table
@@ -57,7 +56,7 @@ char ixgbe_driver_version[] = "4.0.1-k";
  *
  *   { Vendor ID, Device ID, SubVendor ID, SubDevice ID, String Index }
  ************************************************************************/
-static pci_vendor_info_t ixgbe_vendor_info_array[] =
+static const pci_vendor_info_t ixgbe_vendor_info_array[] =
 {
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82598AF_DUAL_PORT,  "Intel(R) 82598EB AF (Dual Fiber)"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82598AF_SINGLE_PORT,  "Intel(R) 82598EB AF (Fiber)"),
@@ -76,6 +75,7 @@ static pci_vendor_info_t ixgbe_vendor_info_array[] =
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_XAUI_LOM,  "Intel(R) X520 82599 (XAUI/BX4)"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_CX4,  "Intel(R) X520 82599 (Dual CX4)"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_T3_LOM,  "Intel(R) X520-T 82599 LOM"),
+  PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_LS,  "Intel(R) X520 82599 LS"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_COMBO_BACKPLANE,  "Intel(R) X520 82599 (Combined Backplane)"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_BACKPLANE_FCOE,  "Intel(R) X520 82599 (Backplane w/FCoE)"),
   PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_SFP_SF2,  "Intel(R) X520 82599 (Dual SFP+)"),
@@ -666,7 +666,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 	struct ixgbe_softc     *sc = iflib_get_softc(ctx);
 	if_softc_ctx_t     scctx = sc->shared;
 	struct ixgbe_hw    *hw = &sc->hw;
-	struct ifnet       *ifp = iflib_get_ifp(ctx);
+	if_t               ifp = iflib_get_ifp(ctx);
 	struct ix_rx_queue *que;
 	int                i, j;
 	u32                bufsz, fctrl, srrctl, rxcsum;
@@ -689,7 +689,7 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 
 	/* Set for Jumbo Frames? */
 	hlreg = IXGBE_READ_REG(hw, IXGBE_HLREG0);
-	if (ifp->if_mtu > ETHERMTU)
+	if (if_getmtu(ifp) > ETHERMTU)
 		hlreg |= IXGBE_HLREG0_JUMBOEN;
 	else
 		hlreg &= ~IXGBE_HLREG0_JUMBOEN;
@@ -754,12 +754,12 @@ ixgbe_initialize_receive_units(if_ctx_t ctx)
 
 	ixgbe_initialize_rss_mapping(sc);
 
-	if (sc->num_rx_queues > 1) {
+	if (sc->feat_en & IXGBE_FEATURE_RSS) {
 		/* RSS and RX IPP Checksum are mutually exclusive */
 		rxcsum |= IXGBE_RXCSUM_PCSD;
 	}
 
-	if (ifp->if_capenable & IFCAP_RXCSUM)
+	if (if_getcapenable(ifp) & IFCAP_RXCSUM)
 		rxcsum |= IXGBE_RXCSUM_PCSD;
 
 	/* This is useful for calculating UDP/IP fragment checksums */
@@ -916,6 +916,15 @@ ixgbe_if_attach_pre(if_ctx_t ctx)
 	if (ixgbe_init_shared_code(hw) != 0) {
 		device_printf(dev, "Unable to initialize the shared code\n");
 		error = ENXIO;
+		goto err_pci;
+	}
+
+	if (hw->mac.ops.fw_recovery_mode && hw->mac.ops.fw_recovery_mode(hw)) {
+		device_printf(dev, "Firmware recovery mode detected. Limiting "
+		    "functionality.\nRefer to the Intel(R) Ethernet Adapters "
+		    "and Devices User Guide for details on firmware recovery "
+		    "mode.");
+		error = ENOSYS;
 		goto err_pci;
 	}
 
@@ -1170,14 +1179,14 @@ ixgbe_check_wol_support(struct ixgbe_softc *sc)
 static int
 ixgbe_setup_interface(if_ctx_t ctx)
 {
-	struct ifnet   *ifp = iflib_get_ifp(ctx);
+	if_t               ifp = iflib_get_ifp(ctx);
 	struct ixgbe_softc *sc = iflib_get_softc(ctx);
 
 	INIT_DEBUGOUT("ixgbe_setup_interface: begin");
 
 	if_setbaudrate(ifp, IF_Gbps(10));
 
-	sc->max_frame_size = ifp->if_mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
+	sc->max_frame_size = if_getmtu(ifp) + ETHER_HDR_LEN + ETHER_CRC_LEN;
 
 	sc->phy_layer = ixgbe_get_supported_physical_layer(&sc->hw);
 
@@ -1247,7 +1256,7 @@ ixgbe_if_i2c_req(if_ctx_t ctx, struct ifi2creq *req)
  * @ctx: iflib context
  * @event: event code to check
  *
- * Defaults to returning true for unknown events.
+ * Defaults to returning false for unknown events.
  *
  * @returns true if iflib needs to reinit the interface
  */
@@ -1256,9 +1265,8 @@ ixgbe_if_needs_restart(if_ctx_t ctx __unused, enum iflib_restart_event event)
 {
 	switch (event) {
 	case IFLIB_RESTART_VLAN_CONFIG:
-		return (false);
 	default:
-		return (true);
+		return (false);
 	}
 }
 
@@ -1577,7 +1585,6 @@ ixgbe_update_stats_counters(struct ixgbe_softc *sc)
 	 * Aggregate following types of errors as RX errors:
 	 * - CRC error count,
 	 * - illegal byte error count,
-	 * - checksum error count,
 	 * - missed packets count,
 	 * - length error count,
 	 * - undersized packets count,
@@ -1585,7 +1592,7 @@ ixgbe_update_stats_counters(struct ixgbe_softc *sc)
 	 * - oversized packets count,
 	 * - jabber count.
 	 */
-	IXGBE_SET_IERRORS(sc, stats->crcerrs + stats->illerrc + stats->xec +
+	IXGBE_SET_IERRORS(sc, stats->crcerrs + stats->illerrc +
 	    stats->mpc[0] + stats->rlec + stats->ruc + stats->rfc + stats->roc +
 	    stats->rjc);
 } /* ixgbe_update_stats_counters */
@@ -1911,7 +1918,7 @@ ixgbe_if_vlan_unregister(if_ctx_t ctx, u16 vtag)
 static void
 ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 {
-	struct ifnet	*ifp = iflib_get_ifp(ctx);
+	if_t            ifp = iflib_get_ifp(ctx);
 	struct ixgbe_softc  *sc = iflib_get_softc(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
 	struct rx_ring  *rxr;
@@ -1925,7 +1932,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 	 * the VFTA and other state, so if there
 	 * have been no vlan's registered do nothing.
 	 */
-	if (sc->num_vlans == 0 || (ifp->if_capenable & IFCAP_VLAN_HWTAGGING) == 0) {
+	if (sc->num_vlans == 0 || (if_getcapenable(ifp) & IFCAP_VLAN_HWTAGGING) == 0) {
 		/* Clear the vlan hw flag */
 		for (i = 0; i < sc->num_rx_queues; i++) {
 			rxr = &sc->rx_queues[i].rxr;
@@ -1948,7 +1955,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 	}
 
 	/* Setup the queues for vlans */
-	if (ifp->if_capenable & IFCAP_VLAN_HWTAGGING) {
+	if (if_getcapenable(ifp) & IFCAP_VLAN_HWTAGGING) {
 		for (i = 0; i < sc->num_rx_queues; i++) {
 			rxr = &sc->rx_queues[i].rxr;
 			/* On 82599 the VLAN enable is per/queue in RXDCTL */
@@ -1961,7 +1968,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 		}
 	}
 
-	if ((ifp->if_capenable & IFCAP_VLAN_HWFILTER) == 0)
+	if ((if_getcapenable(ifp) & IFCAP_VLAN_HWFILTER) == 0)
 		return;
 	/*
 	 * A soft reset zero's out the VFTA, so
@@ -1974,7 +1981,7 @@ ixgbe_setup_vlan_hw_support(if_ctx_t ctx)
 
 	ctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
 	/* Enable the Filter Table if enabled */
-	if (ifp->if_capenable & IFCAP_VLAN_HWFILTER) {
+	if (if_getcapenable(ifp) & IFCAP_VLAN_HWFILTER) {
 		ctrl &= ~IXGBE_VLNCTRL_CFIEN;
 		ctrl |= IXGBE_VLNCTRL_VFE;
 	}
@@ -2204,10 +2211,10 @@ ixgbe_msix_que(void *arg)
 {
 	struct ix_rx_queue *que = arg;
 	struct ixgbe_softc     *sc = que->sc;
-	struct ifnet       *ifp = iflib_get_ifp(que->sc->ctx);
+	if_t               ifp = iflib_get_ifp(que->sc->ctx);
 
 	/* Protect against spurious interrupts */
-	if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
+	if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
 		return (FILTER_HANDLED);
 
 	ixgbe_disable_queue(sc, que->msix);
@@ -2489,13 +2496,13 @@ static int
 ixgbe_if_promisc_set(if_ctx_t ctx, int flags)
 {
 	struct ixgbe_softc *sc = iflib_get_softc(ctx);
-	struct ifnet   *ifp = iflib_get_ifp(ctx);
+	if_t           ifp = iflib_get_ifp(ctx);
 	u32            rctl;
 	int            mcnt = 0;
 
 	rctl = IXGBE_READ_REG(&sc->hw, IXGBE_FCTRL);
 	rctl &= (~IXGBE_FCTRL_UPE);
-	if (ifp->if_flags & IFF_ALLMULTI)
+	if (if_getflags(ifp) & IFF_ALLMULTI)
 		mcnt = MAX_NUM_MULTICAST_ADDRESSES;
 	else {
 		mcnt = min(if_llmaddr_count(ifp), MAX_NUM_MULTICAST_ADDRESSES);
@@ -2504,10 +2511,10 @@ ixgbe_if_promisc_set(if_ctx_t ctx, int flags)
 		rctl &= (~IXGBE_FCTRL_MPE);
 	IXGBE_WRITE_REG(&sc->hw, IXGBE_FCTRL, rctl);
 
-	if (ifp->if_flags & IFF_PROMISC) {
+	if (if_getflags(ifp) & IFF_PROMISC) {
 		rctl |= (IXGBE_FCTRL_UPE | IXGBE_FCTRL_MPE);
 		IXGBE_WRITE_REG(&sc->hw, IXGBE_FCTRL, rctl);
-	} else if (ifp->if_flags & IFF_ALLMULTI) {
+	} else if (if_getflags(ifp) & IFF_ALLMULTI) {
 		rctl |= IXGBE_FCTRL_MPE;
 		rctl &= ~IXGBE_FCTRL_UPE;
 		IXGBE_WRITE_REG(&sc->hw, IXGBE_FCTRL, rctl);
@@ -2846,8 +2853,8 @@ ixgbe_setup_low_power_mode(if_ctx_t ctx)
 	if (hw->device_id == IXGBE_DEV_ID_X550EM_X_10G_T &&
 	    hw->phy.ops.enter_lplu) {
 		/* Turn off support for APM wakeup. (Using ACPI instead) */
-		IXGBE_WRITE_REG(hw, IXGBE_GRC,
-		    IXGBE_READ_REG(hw, IXGBE_GRC) & ~(u32)2);
+		IXGBE_WRITE_REG(hw, IXGBE_GRC_BY_MAC(hw),
+		    IXGBE_READ_REG(hw, IXGBE_GRC_BY_MAC(hw)) & ~(u32)2);
 
 		/*
 		 * Clear Wake Up Status register to prevent any previous wakeup
@@ -2922,7 +2929,7 @@ ixgbe_if_resume(if_ctx_t ctx)
 {
 	struct ixgbe_softc  *sc = iflib_get_softc(ctx);
 	device_t        dev = iflib_get_dev(ctx);
-	struct ifnet    *ifp = iflib_get_ifp(ctx);
+	if_t            ifp = iflib_get_ifp(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
 	u32             wus;
 
@@ -2941,7 +2948,7 @@ ixgbe_if_resume(if_ctx_t ctx)
 	 * Required after D3->D0 transition;
 	 * will re-advertise all previous advertised speeds
 	 */
-	if (ifp->if_flags & IFF_UP)
+	if (if_getflags(ifp) & IFF_UP)
 		ixgbe_if_init(ctx);
 
 	return (0);
@@ -3029,7 +3036,7 @@ void
 ixgbe_if_init(if_ctx_t ctx)
 {
 	struct ixgbe_softc     *sc = iflib_get_softc(ctx);
-	struct ifnet       *ifp = iflib_get_ifp(ctx);
+	if_t               ifp = iflib_get_ifp(ctx);
 	device_t           dev = iflib_get_dev(ctx);
 	struct ixgbe_hw *hw = &sc->hw;
 	struct ix_rx_queue *rx_que;
@@ -3049,7 +3056,7 @@ ixgbe_if_init(if_ctx_t ctx)
 	ixgbe_set_rar(hw, 0, hw->mac.addr, sc->pool, IXGBE_RAH_AV);
 
 	/* Get the latest mac address, User can use a LAA */
-	bcopy(IF_LLADDR(ifp), hw->mac.addr, IXGBE_ETH_LENGTH_OF_ADDRESS);
+	bcopy(if_getlladdr(ifp), hw->mac.addr, IXGBE_ETH_LENGTH_OF_ADDRESS);
 	ixgbe_set_rar(hw, 0, hw->mac.addr, sc->pool, 1);
 	hw->addr_ctrl.rar_used_count = 1;
 
@@ -3078,7 +3085,7 @@ ixgbe_if_init(if_ctx_t ctx)
 	ixgbe_config_gpie(sc);
 
 	/* Set MTU size */
-	if (ifp->if_mtu > ETHERMTU) {
+	if (if_getmtu(ifp) > ETHERMTU) {
 		/* aka IXGBE_MAXFRS on 82599 and newer */
 		mhadd = IXGBE_READ_REG(hw, IXGBE_MHADD);
 		mhadd &= ~IXGBE_MHADD_MFS_MASK;
@@ -3408,7 +3415,7 @@ ixgbe_if_multi_set(if_ctx_t ctx)
 {
 	struct ixgbe_softc       *sc = iflib_get_softc(ctx);
 	struct ixgbe_mc_addr *mta;
-	struct ifnet         *ifp = iflib_get_ifp(ctx);
+	if_t                  ifp = iflib_get_ifp(ctx);
 	u8                   *update_ptr;
 	u32                  fctrl;
 	u_int		     mcnt;
@@ -3428,10 +3435,10 @@ ixgbe_if_multi_set(if_ctx_t ctx)
 
 	fctrl = IXGBE_READ_REG(&sc->hw, IXGBE_FCTRL);
 
-	if (ifp->if_flags & IFF_PROMISC)
+	if (if_getflags(ifp) & IFF_PROMISC)
 		fctrl |= (IXGBE_FCTRL_UPE | IXGBE_FCTRL_MPE);
 	else if (mcnt >= MAX_NUM_MULTICAST_ADDRESSES ||
-	    ifp->if_flags & IFF_ALLMULTI) {
+	    if_getflags(ifp) & IFF_ALLMULTI) {
 		fctrl |= IXGBE_FCTRL_MPE;
 		fctrl &= ~IXGBE_FCTRL_UPE;
 	} else
@@ -3679,8 +3686,8 @@ ixgbe_if_update_admin_status(if_ctx_t ctx)
 			ixgbe_fc_enable(&sc->hw);
 			/* Update DMA coalescing config */
 			ixgbe_config_dmac(sc);
-			/* should actually be negotiated value */
-			iflib_link_state_change(ctx, LINK_STATE_UP, IF_Gbps(10));
+			iflib_link_state_change(ctx, LINK_STATE_UP,
+			    ixgbe_link_speed_to_baudrate(sc->link_speed));
 
 			if (sc->feat_en & IXGBE_FEATURE_SRIOV)
 				ixgbe_ping_all_vfs(sc);
@@ -4312,7 +4319,7 @@ static int
 ixgbe_sysctl_dmac(SYSCTL_HANDLER_ARGS)
 {
 	struct ixgbe_softc *sc = (struct ixgbe_softc *)arg1;
-	struct ifnet   *ifp = iflib_get_ifp(sc->ctx);
+	if_t           ifp = iflib_get_ifp(sc->ctx);
 	int            error;
 	u16            newval;
 
@@ -4347,8 +4354,8 @@ ixgbe_sysctl_dmac(SYSCTL_HANDLER_ARGS)
 	}
 
 	/* Re-initialize hardware if it's already running */
-	if (ifp->if_drv_flags & IFF_DRV_RUNNING)
-		ifp->if_init(ifp);
+	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
+		if_init(ifp, ifp);
 
 	return (0);
 } /* ixgbe_sysctl_dmac */
@@ -4602,7 +4609,7 @@ ixgbe_sysctl_eee_state(SYSCTL_HANDLER_ARGS)
 {
 	struct ixgbe_softc *sc = (struct ixgbe_softc *)arg1;
 	device_t       dev = sc->dev;
-	struct ifnet   *ifp = iflib_get_ifp(sc->ctx);
+	if_t           ifp = iflib_get_ifp(sc->ctx);
 	int            curr_eee, new_eee, error = 0;
 	s32            retval;
 
@@ -4631,7 +4638,7 @@ ixgbe_sysctl_eee_state(SYSCTL_HANDLER_ARGS)
 	}
 
 	/* Restart auto-neg */
-	ifp->if_init(ifp);
+	if_init(ifp, ifp);
 
 	device_printf(dev, "New EEE state: %d\n", new_eee);
 

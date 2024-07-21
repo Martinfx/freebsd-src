@@ -63,13 +63,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)mroute.c	8.2 (Berkeley) 4/28/95
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifdef INET6
 #include <sys/param.h>
 #include <sys/queue.h>
@@ -102,7 +98,7 @@ __FBSDID("$FreeBSD$");
 #define	WID_GRP	(Wflag ? 18 : (numeric_addr ? 16 : 18)) /* width of group column */
 
 void
-mroute6pr()
+mroute6pr(void)
 {
 	struct mf6c *mf6ctable[MF6CTBLSIZ], *mfcp;
 	struct mif6_sctl mif6table[MAXMIFS];
@@ -230,7 +226,7 @@ mroute6pr()
 }
 
 void
-mrt6_stats()
+mrt6_stats(void)
 {
 	struct mrt6stat mrtstat;
 

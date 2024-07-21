@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: (BSD-2-Clause-FreeBSD AND BSD-3-Clause)
+ * SPDX-License-Identifier: (BSD-2-Clause AND BSD-3-Clause)
  *
  * Copyright (c) 2002 Networks Associates Technology, Inc.
  * All rights reserved.
@@ -57,12 +57,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ffs_balloc.c	8.8 (Berkeley) 6/16/95
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

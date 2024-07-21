@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 # isc sources
 .PATH: ${LIBC_SRCTOP}/isc
 

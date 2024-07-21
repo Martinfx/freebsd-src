@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$OpenBSD: ip_esp.h,v 1.37 2002/06/09 16:26:10 itojun Exp $	*/
 /*-
  * The authors of this code are John Ioannidis (ji@tla.org),
@@ -75,6 +74,8 @@ struct espstat {
 #include <sys/counter.h>
 
 VNET_DECLARE(int, esp_enable);
+VNET_DECLARE(int, esp_ctr_compatibility);
+#define V_esp_ctr_compatibility VNET(esp_ctr_compatibility)
 VNET_PCPUSTAT_DECLARE(struct espstat, espstat);
 
 #define	ESPSTAT_ADD(name, val)	\

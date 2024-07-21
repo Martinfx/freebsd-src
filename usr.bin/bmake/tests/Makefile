@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 ${PACKAGE}FILES+=	common.sh

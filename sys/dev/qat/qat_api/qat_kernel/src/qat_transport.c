@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #include "adf_transport_access_macros.h"
 #include "adf_transport_internal.h"
 
 #include "cpa.h"
 #include "icp_adf_init.h"
+#include "icp_adf_transport.h"
+#include "icp_adf_poll.h"
 #include "icp_adf_transport_dp.h"
+#include "icp_sal_poll.h"
 
 /*
  * adf_modulo
@@ -369,13 +371,20 @@ void
 icp_adf_updateQueueTail(icp_comms_trans_handle trans_handle)
 {
 	struct adf_etr_ring_data *ring = trans_handle;
+	struct adf_hw_csr_ops *csr_ops;
 
 	ICP_CHECK_FOR_NULL_PARAM_VOID(ring);
+	ICP_CHECK_FOR_NULL_PARAM_VOID(ring->bank);
+	ICP_CHECK_FOR_NULL_PARAM_VOID(ring->bank->accel_dev);
 
-	WRITE_CSR_RING_TAIL(ring->bank->csr_addr,
-			    ring->bank->bank_number,
-			    ring->ring_number,
-			    ring->tail);
+	csr_ops = GET_CSR_OPS(ring->bank->accel_dev);
+
+	ICP_CHECK_FOR_NULL_PARAM_VOID(csr_ops);
+
+	csr_ops->write_csr_ring_tail(ring->bank->csr_addr,
+				     ring->bank->bank_number,
+				     ring->ring_number,
+				     ring->tail);
 	ring->csr_tail_offset = ring->tail;
 }
 

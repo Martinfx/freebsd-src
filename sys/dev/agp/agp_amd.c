@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Doug Rabson
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -101,7 +98,7 @@ agp_amd_alloc_gatt(device_t dev)
 	 * directory.
 	 */
 	gatt->ag_entries = entries;
-	gatt->ag_virtual = (void *)kmem_alloc_attr(entries * sizeof(u_int32_t),
+	gatt->ag_virtual = kmem_alloc_attr(entries * sizeof(uint32_t),
 	    M_NOWAIT | M_ZERO, 0, ~0, VM_MEMATTR_WRITE_COMBINING);
 	if (!gatt->ag_virtual) {
 		if (bootverbose)
@@ -113,14 +110,13 @@ agp_amd_alloc_gatt(device_t dev)
 	/*
 	 * Allocate the page directory.
 	 */
-	gatt->ag_vdir = (void *)kmem_alloc_attr(AGP_PAGE_SIZE, M_NOWAIT |
+	gatt->ag_vdir = kmem_alloc_attr(AGP_PAGE_SIZE, M_NOWAIT |
 	    M_ZERO, 0, ~0, VM_MEMATTR_WRITE_COMBINING);
 	if (!gatt->ag_vdir) {
 		if (bootverbose)
 			device_printf(dev,
 				      "failed to allocate page directory\n");
-		kmem_free((vm_offset_t)gatt->ag_virtual, entries *
-		    sizeof(u_int32_t));
+		kmem_free(gatt->ag_virtual, entries * sizeof(uint32_t));
 		free(gatt, M_AGP);
 		return 0;
 	}
@@ -168,9 +164,8 @@ agp_amd_alloc_gatt(device_t dev)
 static void
 agp_amd_free_gatt(struct agp_amd_gatt *gatt)
 {
-	kmem_free((vm_offset_t)gatt->ag_vdir, AGP_PAGE_SIZE);
-	kmem_free((vm_offset_t)gatt->ag_virtual, gatt->ag_entries *
-	    sizeof(u_int32_t));
+	kmem_free(gatt->ag_vdir, AGP_PAGE_SIZE);
+	kmem_free(gatt->ag_virtual, gatt->ag_entries * sizeof(uint32_t));
 	free(gatt, M_AGP);
 }
 

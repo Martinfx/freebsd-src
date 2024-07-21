@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ypset
@@ -14,6 +13,9 @@ desc="tell ypbind(8) which YP server process to use"
 rcvar="nis_ypset_enable"
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: config setting
+ypset_svcj="NO"
 
 command="/usr/sbin/${name}"
 command_args="${nis_ypset_flags}"

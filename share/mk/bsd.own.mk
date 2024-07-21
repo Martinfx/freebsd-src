@@ -1,4 +1,3 @@
-# $FreeBSD$
 #
 # The include file <bsd.own.mk> set common variables for owner,
 # group, mode, and directories. Defaults are in brackets.
@@ -155,10 +154,8 @@ __<bsd.own.mk>__:
 
 .if ${MK_CTF} != "no"
 CTFCONVERT_CMD=	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.elif defined(.PARSEDIR) || (defined(MAKE_VERSION) && ${MAKE_VERSION} >= 5201111300)
-CTFCONVERT_CMD=
 .else
-CTFCONVERT_CMD=	@:
+CTFCONVERT_CMD=
 .endif 
 
 .endif # !_WITHOUT_SRCCONF
@@ -172,7 +169,7 @@ NOBINMODE?=	444
 KMODDIR?=	/boot/modules
 KMODOWN?=	${BINOWN}
 KMODGRP?=	${BINGRP}
-KMODMODE?=	${BINMODE}
+KMODMODE?=	${NOBINMODE}
 DTBDIR?=	/boot/dtb
 DTBODIR?=	/boot/dtb/overlays
 DTBOWN?=	root
@@ -248,7 +245,7 @@ _LINKMODE?=	${LINKMODE:U${NOBINMODE}}
 _SYMLINKOWN?=	${SYMLINKOWN:U${BINOWN}}
 _SYMLINKGRP?=	${SYMLINKGRP:U${BINGRP}}
 _SYMLINKMODE?=	${SYMLINKMODE:U755}
-HRDLINK?=	-l h -o ${_LINKOWN} -g ${_LINKGRP} -m ${_LINKMODE}
+HRDLINK?=	-l mr -o ${_LINKOWN} -g ${_LINKGRP} -m ${_LINKMODE}
 MANHRDLINK?=	-l h -o ${MANOWN} -g ${MANGRP} -m ${MANMODE}
 SYMLINK?=	-l s -o ${_SYMLINKOWN} -g ${_SYMLINKGRP} -m ${_SYMLINKMODE}
 LSYMLINK?=	-l s -o ${LIBOWN} -g ${LIBGRP} -m ${LIBMODE}

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005, David Xu <davidxu@freebsd.org>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include "namespace.h"
 #include <sys/param.h>
@@ -250,7 +247,6 @@ static void
 handle_signal(struct sigaction *actp, int sig, siginfo_t *info, ucontext_t *ucp)
 {
 	struct pthread *curthread = _get_curthread();
-	ucontext_t uc2;
 	__siginfohandler_t *sigfunc;
 	int cancel_point;
 	int cancel_async;
@@ -310,13 +306,11 @@ handle_signal(struct sigaction *actp, int sig, siginfo_t *info, ucontext_t *ucp)
 	curthread->cancel_point = cancel_point;
 	curthread->cancel_enable = cancel_enable;
 
-	memcpy(&uc2, ucp, sizeof(uc2));
-	SIGDELSET(uc2.uc_sigmask, SIGCANCEL);
+	SIGDELSET(ucp->uc_sigmask, SIGCANCEL);
 
 	/* reschedule cancellation */
-	check_cancel(curthread, &uc2);
+	check_cancel(curthread, ucp);
 	errno = err;
-	syscall(SYS_sigreturn, &uc2);
 }
 
 void
@@ -403,6 +397,7 @@ check_deferred_signal(struct pthread *curthread)
 	/* remove signal */
 	curthread->deferred_siginfo.si_signo = 0;
 	handle_signal(&act, info.si_signo, &info, uc);
+	syscall(SYS_sigreturn, uc);
 }
 
 static void

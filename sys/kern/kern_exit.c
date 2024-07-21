@@ -32,13 +32,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_exit.c	8.7 (Berkeley) 2/12/94
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
 
@@ -239,10 +235,11 @@ exit1(struct thread *td, int rval, int signo)
 
 	p = td->td_proc;
 	/*
-	 * XXX in case we're rebooting we just let init die in order to
-	 * work around an unsolved stack overflow seen very late during
-	 * shutdown on sparc64 when the gmirror worker process exists.
-	 * XXX what to do now that sparc64 is gone... remove if?
+	 * In case we're rebooting we just let init die in order to
+	 * work around an issues where pid 1 might get a fatal signal.
+	 * For instance, if network interface serving NFS root is
+	 * going down due to reboot, page-in requests for text are
+	 * failing.
 	 */
 	if (p == initproc && rebooting == 0) {
 		printf("init died (signal %d, exit %d)\n", signo, rval);
@@ -473,12 +470,15 @@ exit1(struct thread *td, int rval, int signo)
 	 */
 	p->p_list.le_prev = NULL;
 #endif
+	prison_proc_unlink(p->p_ucred->cr_prison, p);
 	sx_xunlock(&allproc_lock);
 
 	sx_xlock(&proctree_lock);
-	PROC_LOCK(p);
-	p->p_flag &= ~(P_TRACED | P_PPWAIT | P_PPTRACE);
-	PROC_UNLOCK(p);
+	if ((p->p_flag & (P_TRACED | P_PPWAIT | P_PPTRACE)) != 0) {
+		PROC_LOCK(p);
+		p->p_flag &= ~(P_TRACED | P_PPWAIT | P_PPTRACE);
+		PROC_UNLOCK(p);
+	}
 
 	/*
 	 * killjobc() might drop and re-acquire proctree_lock to
@@ -688,7 +688,7 @@ exit1(struct thread *td, int rval, int signo)
 	prison_proc_free(p->p_ucred->cr_prison);
 
 	/*
-	 * The state PRS_ZOMBIE prevents other proesses from sending
+	 * The state PRS_ZOMBIE prevents other processes from sending
 	 * signal to the process, to avoid memory leak, we free memory
 	 * for signal queue at the time when the state is set.
 	 */
@@ -764,7 +764,7 @@ sys_abort2(struct thread *td, struct abort2_args *uap)
  * kern_abort2()
  * Arguments:
  *  why - user pointer to why
- *  nargs - number of arguments copied or -1 if an error occured in copying
+ *  nargs - number of arguments copied or -1 if an error occurred in copying
  *  args - pointer to an array of pointers in kernel format
  */
 int
@@ -802,13 +802,13 @@ kern_abort2(struct thread *td, const char *why, int nargs, void **uargs)
 		if (error < 0)
 			goto out;
 	} else {
-		sbuf_printf(sb, "(null)");
+		sbuf_cat(sb, "(null)");
 	}
 	if (nargs > 0) {
-		sbuf_printf(sb, "(");
+		sbuf_putc(sb, '(');
 		for (i = 0;i < nargs; i++)
 			sbuf_printf(sb, "%s%p", i == 0 ? "" : ", ", uargs[i]);
-		sbuf_printf(sb, ")");
+		sbuf_putc(sb, ')');
 	}
 	/*
 	 * Final stage: arguments were proper, string has been
@@ -819,14 +819,15 @@ kern_abort2(struct thread *td, const char *why, int nargs, void **uargs)
 out:
 	if (sig == SIGKILL) {
 		sbuf_trim(sb);
-		sbuf_printf(sb, " (Reason text inaccessible)");
+		sbuf_cat(sb, " (Reason text inaccessible)");
 	}
 	sbuf_cat(sb, "\n");
 	sbuf_finish(sb);
 	log(LOG_INFO, "%s", sbuf_data(sb));
 	sbuf_delete(sb);
-	exit1(td, 0, sig);
-	return (0);
+	PROC_LOCK(p);
+	sigexit(td, sig);
+	/* NOTREACHED */
 }
 
 #ifdef COMPAT_43

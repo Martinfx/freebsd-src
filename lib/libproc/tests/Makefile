@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 ATF_TESTS_C+=	proc_test
 
 PROGS=		target_prog

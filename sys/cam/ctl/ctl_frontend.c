@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * Copyright (c) 2014-2017 Alexander Motin <mav@FreeBSD.org>
@@ -37,9 +37,6 @@
  *
  * Author: Ken Merry <ken@FreeBSD.org>
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -165,7 +162,7 @@ ctl_port_register(struct ctl_port *port)
 	if ((port_num < 0) ||
 	    (ctl_set_mask(softc->ctl_port_mask, port_num) < 0)) {
 		mtx_unlock(&softc->ctl_lock);
-		return (1);
+		return (EBUSY);
 	}
 	softc->num_ports++;
 	mtx_unlock(&softc->ctl_lock);

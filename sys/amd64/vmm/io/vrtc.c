@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014, Neel Natu (neel@freebsd.org)
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_bhyve_snapshot.h"
 
 #include <sys/param.h>
@@ -844,8 +842,7 @@ vrtc_nvram_read(struct vm *vm, int offset, uint8_t *retval)
 }
 
 int
-vrtc_addr_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *val)
+vrtc_addr_handler(struct vm *vm, bool in, int port, int bytes, uint32_t *val)
 {
 	struct vrtc *vrtc;
 
@@ -867,8 +864,7 @@ vrtc_addr_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 }
 
 int
-vrtc_data_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-    uint32_t *val)
+vrtc_data_handler(struct vm *vm, bool in, int port, int bytes, uint32_t *val)
 {
 	struct vrtc *vrtc;
 	struct rtcdev *rtc;
@@ -915,24 +911,24 @@ vrtc_data_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 		} else {
 			*val = *((uint8_t *)rtc + offset);
 		}
-		VCPU_CTR2(vm, vcpuid, "Read value %#x from RTC offset %#x",
+		VM_CTR2(vm, "Read value %#x from RTC offset %#x",
 		    *val, offset);
 	} else {
 		switch (offset) {
 		case 10:
-			VCPU_CTR1(vm, vcpuid, "RTC reg_a set to %#x", *val);
+			VM_CTR1(vm, "RTC reg_a set to %#x", *val);
 			vrtc_set_reg_a(vrtc, *val);
 			break;
 		case 11:
-			VCPU_CTR1(vm, vcpuid, "RTC reg_b set to %#x", *val);
+			VM_CTR1(vm, "RTC reg_b set to %#x", *val);
 			error = vrtc_set_reg_b(vrtc, *val);
 			break;
 		case 12:
-			VCPU_CTR1(vm, vcpuid, "RTC reg_c set to %#x (ignored)",
+			VM_CTR1(vm, "RTC reg_c set to %#x (ignored)",
 			    *val);
 			break;
 		case 13:
-			VCPU_CTR1(vm, vcpuid, "RTC reg_d set to %#x (ignored)",
+			VM_CTR1(vm, "RTC reg_d set to %#x (ignored)",
 			    *val);
 			break;
 		case 0:
@@ -942,7 +938,7 @@ vrtc_data_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
 			*val &= 0x7f;
 			/* FALLTHRU */
 		default:
-			VCPU_CTR2(vm, vcpuid, "RTC offset %#x set to %#x",
+			VM_CTR2(vm, "RTC offset %#x set to %#x",
 			    offset, *val);
 			*((uint8_t *)rtc + offset) = *val;
 			break;
@@ -1020,6 +1016,7 @@ vrtc_cleanup(struct vrtc *vrtc)
 {
 
 	callout_drain(&vrtc->callout);
+	mtx_destroy(&vrtc->mtx);
 	free(vrtc, M_VRTC);
 }
 

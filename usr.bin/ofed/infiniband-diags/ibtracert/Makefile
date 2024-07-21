@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	ibtracert
 SRCS=	ibtracert.c
 MAN=	ibtracert.8

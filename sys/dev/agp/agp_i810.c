@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Doug Rabson
  * Copyright (c) 2000 Ruslan Ermilov
@@ -40,8 +40,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #if 0
 #define	KTR_AGP_I810	KTR_DEV
 #else
@@ -1189,7 +1187,7 @@ agp_i810_install_gatt(device_t dev)
 		sc->dcache_size = 0;
 
 	/* According to the specs the gatt on the i810 must be 64k. */
-	sc->gatt->ag_virtual = (void *)kmem_alloc_contig(64 * 1024, M_NOWAIT |
+	sc->gatt->ag_virtual = kmem_alloc_contig(64 * 1024, M_NOWAIT |
 	    M_ZERO, 0, ~0, PAGE_SIZE, 0, VM_MEMATTR_WRITE_COMBINING);
 	if (sc->gatt->ag_virtual == NULL) {
 		if (bootverbose)
@@ -1329,7 +1327,7 @@ agp_i810_deinstall_gatt(device_t dev)
 
 	sc = device_get_softc(dev);
 	bus_write_4(sc->sc_res[0], AGP_I810_PGTBL_CTL, 0);
-	kmem_free((vm_offset_t)sc->gatt->ag_virtual, 64 * 1024);
+	kmem_free(sc->gatt->ag_virtual, 64 * 1024);
 }
 
 static void
@@ -2053,10 +2051,10 @@ agp_i915_chipset_flush_free_page(device_t dev)
 	vga = device_get_parent(dev);
 	if (sc->sc_flush_page_res == NULL)
 		return;
-	BUS_DEACTIVATE_RESOURCE(device_get_parent(vga), dev, SYS_RES_MEMORY,
-	    sc->sc_flush_page_rid, sc->sc_flush_page_res);
-	BUS_RELEASE_RESOURCE(device_get_parent(vga), dev, SYS_RES_MEMORY,
-	    sc->sc_flush_page_rid, sc->sc_flush_page_res);
+	BUS_DEACTIVATE_RESOURCE(device_get_parent(vga), dev,
+	    sc->sc_flush_page_res);
+	BUS_RELEASE_RESOURCE(device_get_parent(vga), dev,
+	    sc->sc_flush_page_res);
 }
 
 static int

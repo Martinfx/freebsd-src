@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005 David Xu <davidxu@freebsd.org>
  * Copyright (c) 2015 The FreeBSD Foundation
@@ -29,9 +29,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include "namespace.h"
 #include <stdlib.h>
@@ -66,6 +63,7 @@ __weak_reference(__thr_cond_wait, pthread_cond_wait);
 __weak_reference(__thr_cond_wait, __pthread_cond_wait);
 __weak_reference(_thr_cond_wait, _pthread_cond_wait);
 __weak_reference(__pthread_cond_timedwait, pthread_cond_timedwait);
+__weak_reference(_thr_cond_timedwait, _pthread_cond_timedwait);
 __weak_reference(_thr_cond_init, pthread_cond_init);
 __weak_reference(_thr_cond_init, _pthread_cond_init);
 __weak_reference(_thr_cond_destroy, pthread_cond_destroy);

@@ -1,11 +1,8 @@
-/*	$FreeBSD$	*/
 
 /*
  * Copyright (C) 2012 by Darren Reed.
  *
  * See the IPFILTER.LICENCE file for details on licencing.
- *
- * @(#)ipf.h	1.12 6/5/96
  * $Id$
  */
 
@@ -47,6 +44,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <netdb.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -173,13 +171,7 @@ typedef	struct	proxyrule {
 } proxyrule_t;
 
 
-#if defined(__NetBSD__) || defined(__FreeBSD__) || \
-	SOLARIS
-# include <stdarg.h>
 typedef	int	(* ioctlfunc_t)(int, ioctlcmd_t, ...);
-#else
-typedef	int	(* ioctlfunc_t)(dev_t, ioctlcmd_t, void *);
-#endif
 typedef	int	(* addfunc_t)(int, ioctlfunc_t, void *);
 typedef	int	(* copyfunc_t)(void *, void *, size_t);
 
@@ -318,7 +310,7 @@ extern ipf_dstnode_t *printdstlistnode(ipf_dstnode_t *, copyfunc_t,
 extern void printdstlistpolicy(ippool_policy_t);
 extern struct ip_pool_s *printpool(struct ip_pool_s *, copyfunc_t,
 					char *, int, wordtab_t *);
-extern struct ip_pool_s *printpool_live(struct ip_pool_s *, int,
+extern void printpool_live(struct ip_pool_s *, int,
 					     char *, int, wordtab_t *);
 extern void printpooldata(ip_pool_t *, int);
 extern void printpoolfield(void *, int, int);

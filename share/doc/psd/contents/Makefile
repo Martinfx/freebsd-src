@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 VOLUME=	psd
 DOC=	contents
 SRCS=	contents.ms

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/fs/nfsserver
 KMOD=	nfsd
 SRCS=	vnode_if.h \

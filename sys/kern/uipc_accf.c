@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2000 Paycounter, Inc.
  * Copyright (c) 2005 Robert N. M. Watson
@@ -29,8 +29,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #define ACCEPT_FILTER_MOD
 
 #include "opt_param.h"
@@ -278,8 +276,12 @@ accept_filt_setopt(struct socket *so, struct sockopt *sopt)
 	 * without first removing it.
 	 */
 	SOCK_LOCK(so);
-	if (!SOLISTENING(so) || so->sol_accept_filter != NULL) {
+	if (__predict_false(!SOLISTENING(so))) {
 		error = EINVAL;
+		goto out;
+	}
+	if (__predict_false(so->sol_accept_filter != NULL)) {
+		error = EBUSY;
 		goto out;
 	}
 

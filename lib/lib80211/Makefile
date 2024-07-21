@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	runtime
 CONFS=	regdomain.xml
 LIB=	80211

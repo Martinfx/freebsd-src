@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2021 Robert N M Watson, Gleb Popov
  * All rights reserved.
@@ -28,9 +28,6 @@
 /*
  * acl_from_mode_np: Create an ACL from a mode_t.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/param.h>

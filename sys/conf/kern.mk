@@ -1,13 +1,12 @@
-# $FreeBSD$
 
 #
 # Warning flags for compiling the kernel and components of the kernel:
 #
-CWARNFLAGS?=	-Wall -Wnested-externs -Wstrict-prototypes \
+CWARNFLAGS?=	-Wall -Wstrict-prototypes \
 		-Wmissing-prototypes -Wpointer-arith -Wcast-qual \
 		-Wundef -Wno-pointer-sign ${FORMAT_EXTENSIONS} \
 		-Wmissing-include-dirs -fdiagnostics-show-option \
-		-Wno-unknown-pragmas \
+		-Wno-unknown-pragmas -Wswitch \
 		${CWARNEXTRA}
 #
 # The following flags are next up for working on:
@@ -36,6 +35,7 @@ NO_WBITWISE_INSTEAD_OF_LOGICAL=	-Wno-bitwise-instead-of-logical
 .endif
 .if ${COMPILER_VERSION} >= 150000
 NO_WSTRICT_PROTOTYPES=		-Wno-strict-prototypes
+NO_WDEPRECATED_NON_PROTOTYPE=	-Wno-deprecated-non-prototype
 .endif
 # Several other warnings which might be useful in some cases, but not severe
 # enough to error out the whole kernel build.  Display them anyway, so there is
@@ -64,7 +64,7 @@ CWARNEXTRA?=	-Wno-error=address				\
 		-Wno-error=sequence-point			\
 		-Wno-error=shift-overflow			\
 		-Wno-error=tautological-compare			\
-		-Wno-unused-but-set-variable
+		-Wno-error=unused-function
 .if ${COMPILER_VERSION} >= 70100
 CWARNEXTRA+=	-Wno-error=stringop-overflow
 .endif
@@ -76,7 +76,15 @@ CWARNEXTRA+=	-Wno-error=packed-not-aligned
 .endif
 .if ${COMPILER_VERSION} >= 90100
 CWARNEXTRA+=	-Wno-address-of-packed-member			\
+		-Wno-alloc-size-larger-than			\
 		-Wno-error=alloca-larger-than=
+.if ${COMPILER_VERSION} >= 120100
+CWARNEXTRA+=	-Wno-error=nonnull				\
+		-Wno-dangling-pointer				\
+		-Wno-zero-length-bounds
+NO_WINFINITE_RECURSION=	-Wno-infinite-recursion
+NO_WSTRINGOP_OVERREAD=	-Wno-stringop-overread
+.endif
 .endif
 
 # GCC produces false positives for functions that switch on an
@@ -91,7 +99,8 @@ CWARNFLAGS+=	-Wno-format-zero-length
 # to be disabled.  WARNING: format checking is disabled in this case.
 .if ${MK_FORMAT_EXTENSIONS} == "no"
 FORMAT_EXTENSIONS=	-Wno-format
-.elif ${COMPILER_TYPE} == "clang"
+.elif ${COMPILER_TYPE} == "clang" || \
+    (${COMPILER_TYPE} == "gcc" && ${COMPILER_VERSION} >= 120100)
 FORMAT_EXTENSIONS=	-D__printf__=__freebsd_kprintf__
 .else
 FORMAT_EXTENSIONS=	-fformat-extensions
@@ -132,15 +141,18 @@ INLINE_LIMIT?=	8000
 CFLAGS += -mgeneral-regs-only
 # Reserve x18 for pcpu data
 CFLAGS += -ffixed-x18
+# Build with BTI+PAC
+CFLAGS += -mbranch-protection=standard
+# TODO: support outline atomics
+CFLAGS += -mno-outline-atomics
 INLINE_LIMIT?=	8000
 .endif
 
 #
 # For RISC-V we specify the soft-float ABI (lp64) to avoid the use of floating
-# point registers within the kernel. However, for kernels supporting hardware
-# float (FPE), we have to include that in the march so we can have limited
-# floating point support in context switching needed for that. This is different
-# than userland where we use a hard-float ABI (lp64d).
+# point registers within the kernel. However, we include the F and D extensions
+# in -march so we can have limited floating point support in context switching
+# code. This is different than userland where we use a hard-float ABI (lp64d).
 #
 # We also specify the "medium" code model, which generates code suitable for a
 # 2GiB addressing range located at any offset, allowing modules to be located
@@ -198,7 +210,8 @@ CFLAGS.gcc+=	-mno-spe
 # Use dot symbols (or, better, the V2 ELF ABI) on powerpc64 to make
 # DDB happy. ELFv2, if available, has some other efficiency benefits.
 #
-.if ${MACHINE_ARCH:Mpowerpc64*} != ""
+.if ${MACHINE_ARCH:Mpowerpc64*} != "" && \
+    ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} < 160000
 CFLAGS+=	-mabi=elfv2
 .endif
 
@@ -234,19 +247,23 @@ CFLAGS+=	-mretpoline
 #
 # Initialize stack variables on function entry
 #
-.if ${MK_INIT_ALL_ZERO} == "yes"
+.if ${OPT_INIT_ALL} != "none"
 .if ${COMPILER_FEATURES:Minit-all}
-CFLAGS+= -ftrivial-auto-var-init=zero \
-    -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang
-.else
-.warning InitAll (zeros) requested but not support by compiler
+CFLAGS+= -ftrivial-auto-var-init=${OPT_INIT_ALL}
+.if ${OPT_INIT_ALL} == "zero" && ${COMPILER_TYPE} == "clang" && ${COMPILER_VERSION} < 160000
+CFLAGS+= -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang
 .endif
-.elif ${MK_INIT_ALL_PATTERN} == "yes"
-.if ${COMPILER_FEATURES:Minit-all}
-CFLAGS+= -ftrivial-auto-var-init=pattern
 .else
-.warning InitAll (pattern) requested but not support by compiler
+.warning INIT_ALL (${OPT_INIT_ALL}) requested but not supported by compiler
 .endif
+.endif
+
+#
+# Some newer toolchains default to DWARF 5, which isn't supported by some build
+# tools yet.
+#
+.if (${CFLAGS:M-g} != "" || ${CFLAGS:M-g[0-3]} != "") && ${CFLAGS:M-gdwarf*} == ""
+CFLAGS+=	-gdwarf-4
 .endif
 
 CFLAGS+= ${CWARNFLAGS:M*} ${CWARNFLAGS.${.IMPSRC:T}}
@@ -267,16 +284,12 @@ PHONY_NOTMAIN = afterdepend afterinstall all beforedepend beforeinstall \
 .PHONY: ${PHONY_NOTMAIN}
 .NOTMAIN: ${PHONY_NOTMAIN}
 
-CSTD=		c99
+CSTD?=		gnu99
 
-.if ${CSTD} == "k&r"
-CFLAGS+=        -traditional
-.elif ${CSTD} == "c89" || ${CSTD} == "c90"
-CFLAGS+=        -std=iso9899:1990
-.elif ${CSTD} == "c94" || ${CSTD} == "c95"
-CFLAGS+=        -std=iso9899:199409
-.elif ${CSTD} == "c99"
-CFLAGS+=        -std=iso9899:1999
+# c99/gnu99 is the minimum C standard version supported for kernel build
+.if ${CSTD} == "k&r" || ${CSTD} == "c89" || ${CSTD} == "c90" || \
+    ${CSTD} == "c94" || ${CSTD} == "c95"
+.error "Only c99/gnu99 or later is supported"
 .else # CSTD
 CFLAGS+=        -std=${CSTD}
 .endif # CSTD
@@ -314,5 +327,4 @@ LD_EMULATION_powerpcspe= elf32ppc_fbsd
 LD_EMULATION_powerpc64= elf64ppc_fbsd
 LD_EMULATION_powerpc64le= elf64lppc_fbsd
 LD_EMULATION_riscv64= elf64lriscv
-LD_EMULATION_riscv64sf= elf64lriscv
 LD_EMULATION=${LD_EMULATION_${MACHINE_ARCH}}

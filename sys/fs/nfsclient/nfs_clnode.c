@@ -34,9 +34,6 @@
  *	from nfs_node.c	8.6 (Berkeley) 5/22/95
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/fcntl.h>
@@ -50,6 +47,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/taskqueue.h>
 #include <sys/vnode.h>
 
+#include <vm/vm_param.h>
+#include <vm/vnode_pager.h>
 #include <vm/uma.h>
 
 #include <fs/nfs/nfsport.h>
@@ -61,7 +60,6 @@ __FBSDID("$FreeBSD$");
 #include <nfs/nfs_lock.h>
 
 extern struct vop_vector newnfs_vnodeops;
-extern struct buf_ops buf_ops_newnfs;
 MALLOC_DECLARE(M_NEWNFSREQ);
 
 uma_zone_t newnfsnode_zone;
@@ -133,7 +131,6 @@ ncl_nget(struct mount *mntp, u_int8_t *fhp, int fhsize, struct nfsnode **npp,
 	}
 	vp = nvp;
 	KASSERT(vp->v_bufobj.bo_bsize != 0, ("ncl_nget: bo_bsize == 0"));
-	vp->v_bufobj.bo_ops = &buf_ops_newnfs;
 	vp->v_data = np;
 	np->n_vnode = vp;
 	/* 
@@ -156,8 +153,8 @@ ncl_nget(struct mount *mntp, u_int8_t *fhp, int fhsize, struct nfsnode **npp,
 	 * Are we getting the root? If so, make sure the vnode flags
 	 * are correct 
 	 */
-	if ((fhsize == nmp->nm_fhsize) &&
-	    !bcmp(fhp, nmp->nm_fh, fhsize)) {
+	if (fhsize == NFSX_FHMAX + 1 || (fhsize == nmp->nm_fhsize &&
+	    !bcmp(fhp, nmp->nm_fh, fhsize))) {
 		if (vp->v_type == VNON)
 			vp->v_type = VDIR;
 		vp->v_vflag |= VV_ROOT;
@@ -178,6 +175,7 @@ ncl_nget(struct mount *mntp, u_int8_t *fhp, int fhsize, struct nfsnode **npp,
 		uma_zfree(newnfsnode_zone, np);
 		return (error);
 	}
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
 	error = vfs_hash_insert(vp, hash, lkflags, 
 	    td, &nvp, newnfs_vncmpf, np->n_fhp);
 	if (error)
@@ -240,7 +238,6 @@ ncl_inactive(struct vop_inactive_args *ap)
 	struct vnode *vp = ap->a_vp;
 	struct nfsnode *np;
 	struct thread *td;
-	boolean_t retv;
 
 	td = curthread;
 	np = VTONFS(vp);
@@ -254,17 +251,9 @@ ncl_inactive(struct vop_inactive_args *ap)
 		 * buffers/pages must be flushed before the close, so that the
 		 * stateid is available for the writes.
 		 */
-		if (vp->v_object != NULL) {
-			VM_OBJECT_WLOCK(vp->v_object);
-			retv = vm_object_page_clean(vp->v_object, 0, 0,
-			    OBJPC_SYNC);
-			VM_OBJECT_WUNLOCK(vp->v_object);
-		} else
-			retv = TRUE;
-		if (retv == TRUE) {
-			(void)ncl_flush(vp, MNT_WAIT, td, 1, 0);
-			(void)nfsrpc_close(vp, 1, td);
-		}
+		vnode_pager_clean_sync(vp);
+		(void)ncl_flush(vp, MNT_WAIT, td, 1, 0);
+		(void)nfsrpc_close(vp, 1, td);
 	}
 
 	NFSLOCKNODE(np);

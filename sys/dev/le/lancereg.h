@@ -1,7 +1,7 @@
 /*	$NetBSD: lancereg.h,v 1.12 2005/12/11 12:21:27 christos Exp $	*/
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -61,8 +61,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)if_lereg.h	8.1 (Berkeley) 6/10/93
  */
 
 /*
@@ -115,7 +113,6 @@
  * valid on the LANCE.
  */
 
-/* $FreeBSD$ */
 
 #ifndef _DEV_LE_LANCEREG_H_
 #define	_DEV_LE_LANCEREG_H_

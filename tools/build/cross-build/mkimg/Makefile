@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 # allow building mkimg as a host tool.
 
 MKIMG_SRC = ${SRCTOP}/usr.bin/mkimg

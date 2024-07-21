@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 # Makefile for the FreeBSD specific LibUSB 2.0
 #
@@ -68,6 +67,7 @@ CFLAGS+=	-I ../../sys
 # LibUSB v1.0
 MLINKS += libusb.3 libusb_get_version.3
 MLINKS += libusb.3 libusb_init.3
+MLINKS += libusb.3 libusb_init_context.3
 MLINKS += libusb.3 libusb_exit.3
 MLINKS += libusb.3 libusb_has_capability.3
 MLINKS += libusb.3 libusb_strerror.3
@@ -137,6 +137,7 @@ MLINKS += libusb.3 libusb_lock_events.3
 MLINKS += libusb.3 libusb_unlock_events.3
 MLINKS += libusb.3 libusb_event_handling_ok.3
 MLINKS += libusb.3 libusb_event_handler_active.3
+MLINKS += libusb.3 libusb_interrupt_event_handler.3
 MLINKS += libusb.3 libusb_lock_event_waiters.3
 MLINKS += libusb.3 libusb_unlock_event_waiters.3
 MLINKS += libusb.3 libusb_wait_for_event.3

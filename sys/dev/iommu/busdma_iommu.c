@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2013 The FreeBSD Foundation
  *
@@ -27,9 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -359,9 +356,8 @@ static void iommu_bus_schedule_dmamap(struct iommu_unit *unit,
 static int
 iommu_bus_dma_tag_create(bus_dma_tag_t parent, bus_size_t alignment,
     bus_addr_t boundary, bus_addr_t lowaddr, bus_addr_t highaddr,
-    bus_dma_filter_t *filter, void *filterarg, bus_size_t maxsize,
-    int nsegments, bus_size_t maxsegsz, int flags, bus_dma_lock_t *lockfunc,
-    void *lockfuncarg, bus_dma_tag_t *dmat)
+    bus_size_t maxsize, int nsegments, bus_size_t maxsegsz, int flags,
+    bus_dma_lock_t *lockfunc, void *lockfuncarg, bus_dma_tag_t *dmat)
 {
 	struct bus_dma_tag_iommu *newtag, *oldtag;
 	int error;
@@ -369,9 +365,9 @@ iommu_bus_dma_tag_create(bus_dma_tag_t parent, bus_size_t alignment,
 	*dmat = NULL;
 	error = common_bus_dma_tag_create(parent != NULL ?
 	    &((struct bus_dma_tag_iommu *)parent)->common : NULL, alignment,
-	    boundary, lowaddr, highaddr, filter, filterarg, maxsize,
-	    nsegments, maxsegsz, flags, lockfunc, lockfuncarg,
-	    sizeof(struct bus_dma_tag_iommu), (void **)&newtag);
+	    boundary, lowaddr, highaddr, maxsize, nsegments, maxsegsz, flags,
+	    lockfunc, lockfuncarg, sizeof(struct bus_dma_tag_iommu),
+	    (void **)&newtag);
 	if (error != 0)
 		goto out;
 
@@ -398,33 +394,24 @@ iommu_bus_dma_tag_set_domain(bus_dma_tag_t dmat)
 static int
 iommu_bus_dma_tag_destroy(bus_dma_tag_t dmat1)
 {
-	struct bus_dma_tag_iommu *dmat, *parent;
-	struct bus_dma_tag_iommu *dmat_copy __unused;
+	struct bus_dma_tag_iommu *dmat;
 	int error;
 
 	error = 0;
-	dmat_copy = dmat = (struct bus_dma_tag_iommu *)dmat1;
+	dmat = (struct bus_dma_tag_iommu *)dmat1;
 
 	if (dmat != NULL) {
 		if (dmat->map_count != 0) {
 			error = EBUSY;
 			goto out;
 		}
-		while (dmat != NULL) {
-			parent = (struct bus_dma_tag_iommu *)dmat->common.parent;
-			if (atomic_fetchadd_int(&dmat->common.ref_count, -1) ==
-			    1) {
-				if (dmat == dmat->ctx->tag)
-					iommu_free_ctx(dmat->ctx);
-				free(dmat->segments, M_IOMMU_DMAMAP);
-				free(dmat, M_DEVBUF);
-				dmat = parent;
-			} else
-				dmat = NULL;
-		}
+		if (dmat == dmat->ctx->tag)
+			iommu_free_ctx(dmat->ctx);
+		free(dmat->segments, M_IOMMU_DMAMAP);
+		free(dmat, M_DEVBUF);
 	}
 out:
-	CTR3(KTR_BUSDMA, "%s tag %p error %d", __func__, dmat_copy, error);
+	CTR3(KTR_BUSDMA, "%s tag %p error %d", __func__, dmat, error);
 	return (error);
 }
 
@@ -519,7 +506,7 @@ iommu_bus_dmamem_alloc(bus_dma_tag_t dmat, void** vaddr, int flags,
 		    DOMAINSET_PREF(tag->common.domain), mflags);
 		map->flags |= BUS_DMAMAP_IOMMU_MALLOC;
 	} else {
-		*vaddr = (void *)kmem_alloc_attr_domainset(
+		*vaddr = kmem_alloc_attr_domainset(
 		    DOMAINSET_PREF(tag->common.domain), tag->common.maxsize,
 		    mflags, 0ul, BUS_SPACE_MAXADDR, attr);
 		map->flags |= BUS_DMAMAP_IOMMU_KMEM_ALLOC;
@@ -547,7 +534,7 @@ iommu_bus_dmamem_free(bus_dma_tag_t dmat, void *vaddr, bus_dmamap_t map1)
 	} else {
 		KASSERT((map->flags & BUS_DMAMAP_IOMMU_KMEM_ALLOC) != 0,
 		    ("iommu_bus_dmamem_free for non alloced map %p", map));
-		kmem_free((vm_offset_t)vaddr, tag->common.maxsize);
+		kmem_free(vaddr, tag->common.maxsize);
 		map->flags &= ~BUS_DMAMAP_IOMMU_KMEM_ALLOC;
 	}
 

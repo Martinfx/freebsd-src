@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /**
  ***************************************************************************
  * @file lac_sal_types.h
@@ -70,6 +69,17 @@ typedef enum {
 /**
  *****************************************************************************
  * @ingroup SalCtrl
+ *      Device generations
+ *
+ * @description
+ *      List in an enum all the QAT device generations.
+ *
+ *****************************************************************************/
+typedef enum { GEN2, GEN3, GEN4 } sal_generation_t;
+
+/**
+ *****************************************************************************
+ * @ingroup SalCtrl
  *      Generic Instance Container
  *
  * @description
@@ -128,6 +138,9 @@ typedef struct sal_service_s {
 
 	CpaBoolean integrityCrcCheck;
 	/** < True if the device supports end to end data integrity checks */
+
+	sal_generation_t gen;
+	/** Generation of devices */
 } sal_service_t;
 
 /**

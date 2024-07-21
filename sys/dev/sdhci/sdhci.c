@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Alexander Motin <mav@FreeBSD.org>
  * Copyright (c) 2017 Marius Strobl <marius@FreeBSD.org>
@@ -25,9 +25,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -419,6 +416,7 @@ sdhci_set_clock(struct sdhci_slot *slot, uint32_t clock)
 
 	if (clock == slot->clock)
 		return;
+	clock = SDHCI_SET_CLOCK(slot->bus, slot, clock);
 	slot->clock = clock;
 
 	/* Turn off the clock. */
@@ -1491,10 +1489,12 @@ sdhci_generic_tune(device_t brdev __unused, device_t reqdev, bool hs400)
 	case bus_timing_uhs_sdr50:
 		if (slot->opt & SDHCI_SDR50_NEEDS_TUNING)
 			break;
-		/* FALLTHROUGH */
-	default:
 		SDHCI_UNLOCK(slot);
 		return (0);
+	default:
+		slot_printf(slot, "Tuning requested but not required.\n");
+		SDHCI_UNLOCK(slot);
+		return (EINVAL);
 	}
 
 	tune_cmd = slot->tune_cmd;

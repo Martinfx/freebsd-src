@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999 Cameron Grant <cg@freebsd.org>
  * All rights reserved.
@@ -36,8 +36,6 @@
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-
-SND_DECLARE_FILE("$FreeBSD$");
 
 /* -------------------------------------------------------------------- */
 
@@ -919,8 +917,9 @@ tr_pci_attach(device_t dev)
 		goto bad;
 	}
 
-	snprintf(status, 64, "at io 0x%jx irq %jd %s",
-		 rman_get_start(tr->reg), rman_get_start(tr->irq),PCM_KLDSTRING(snd_t4dwave));
+	snprintf(status, SND_STATUSLEN, "port 0x%jx irq %jd on %s",
+		 rman_get_start(tr->reg), rman_get_start(tr->irq),
+		 device_get_nameunit(device_get_parent(dev)));
 
 	if (pcm_register(dev, tr, dacn, 1))
 		goto bad;

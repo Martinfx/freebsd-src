@@ -29,12 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)strerror.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #if defined(NLS)
 #include <nl_types.h>
 #endif
@@ -43,6 +37,8 @@ __FBSDID("$FreeBSD$");
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+
+#include <ssp/ssp.h>
 
 #include "errlst.h"
 #include "../locale/xlocale_private.h"
@@ -80,8 +76,8 @@ errstr(int num, const char *uprefix, char *buf, size_t len)
 	strlcat(buf, t, len);
 }
 
-static int
-strerror_rl(int errnum, char *strerrbuf, size_t buflen, locale_t locale)
+int
+__strerror_rl(int errnum, char *strerrbuf, size_t buflen, locale_t locale)
 {
 	int retval = 0;
 #if defined(NLS)
@@ -120,9 +116,9 @@ strerror_rl(int errnum, char *strerrbuf, size_t buflen, locale_t locale)
 }
 
 int
-strerror_r(int errnum, char *strerrbuf, size_t buflen)
+__ssp_real(strerror_r)(int errnum, char *strerrbuf, size_t buflen)
 {
-	return (strerror_rl(errnum, strerrbuf, buflen, __get_locale()));
+	return (__strerror_rl(errnum, strerrbuf, buflen, __get_locale()));
 }
 
 char *
@@ -130,7 +126,7 @@ strerror_l(int num, locale_t locale)
 {
 	static _Thread_local char ebuf[NL_TEXTMAX];
 
-	if (strerror_rl(num, ebuf, sizeof(ebuf), locale) != 0)
+	if (__strerror_rl(num, ebuf, sizeof(ebuf), locale) != 0)
 		errno = EINVAL;
 	return (ebuf);
 }
@@ -140,7 +136,7 @@ strerror(int num)
 {
 	static char ebuf[NL_TEXTMAX];
 
-	if (strerror_rl(num, ebuf, sizeof(ebuf), __get_locale()) != 0)
+	if (__strerror_rl(num, ebuf, sizeof(ebuf), __get_locale()) != 0)
 		errno = EINVAL;
 	return (ebuf);
 }

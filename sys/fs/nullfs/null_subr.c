@@ -30,10 +30,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)null_subr.c	8.7 (Berkeley) 5/14/95
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -262,6 +258,7 @@ null_nodeget(struct mount *mp, struct vnode *lowervp, struct vnode **vpp)
 	}
 
 	null_hashins(mp, xp);
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
 	rw_wunlock(&null_hash_lock);
 	*vpp = vp;
 

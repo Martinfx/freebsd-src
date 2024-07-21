@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c)1999 Citrus Project,
  * All rights reserved.
@@ -34,12 +34,11 @@
 __RCSID("$NetBSD: wcscat.c,v 1.1 2000/12/23 23:14:36 itojun Exp $");
 #endif /* LIBC_SCCS and not lint */
 #endif
-__FBSDID("$FreeBSD$");
-
 #include <wchar.h>
+#include <ssp/ssp.h>
 
 wchar_t *
-wcscat(wchar_t * __restrict s1, const wchar_t * __restrict s2)
+__ssp_real(wcscat)(wchar_t * __restrict s1, const wchar_t * __restrict s2)
 {
 	wchar_t *cp;
 

@@ -32,20 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1989, 1993, 1994\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)nfsd.c	8.9 (Berkeley) 3/29/95";
-#endif
-static const char rcsid[] =
-  "$FreeBSD$";
-#endif /* not lint */
-
 #include <sys/param.h>
 #include <sys/syslog.h>
 #include <sys/wait.h>
@@ -82,6 +68,7 @@ static const char rcsid[] =
 #include <getopt.h>
 
 static int	debug = 0;
+static int	nofork = 0;
 
 #define	NFSD_STABLERESTART	"/var/db/nfs-stablerestart"
 #define	NFSD_STABLEBACKUP	"/var/db/nfs-stablerestart.bak"
@@ -170,8 +157,8 @@ main(int argc, char **argv)
 	int udpflag, ecode, error, s;
 	int bindhostc, bindanyflag, rpcbreg, rpcbregcnt;
 	int nfssvc_addsock;
-	int longindex = 0;
-	size_t nfs_minvers_size;
+	int jailed, longindex = 0;
+	size_t jailed_size, nfs_minvers_size;
 	const char *lopt;
 	char **bindhost = NULL;
 	pid_t pid;
@@ -184,10 +171,10 @@ main(int argc, char **argv)
 	nfsdcnt = DEFNFSDCNT;
 	unregister = reregister = tcpflag = maxsock = 0;
 	bindanyflag = udpflag = connect_type_cnt = bindhostc = 0;
-	getopt_shortopts = "ah:n:rdtuep:m:V:";
+	getopt_shortopts = "ah:n:rdtuep:m:V:N";
 	getopt_usage =
 	    "usage:\n"
-	    "  nfsd [-ardtue] [-h bindip]\n"
+	    "  nfsd [-ardtueN] [-h bindip]\n"
 	    "       [-n numservers] [--minthreads #] [--maxthreads #]\n"
 	    "       [-p/--pnfs dsserver0:/dsserver0-mounted-on-dir,...,"
 	    "dsserverN:/dsserverN-mounted-on-dir] [-m mirrorlevel]\n"
@@ -243,6 +230,9 @@ main(int argc, char **argv)
 				errx(1, "Mirror level out of range 2<-->%d",
 				    NFSDEV_MAXMIRRORS);
 			nfsdargs.mirrorcnt = i;
+			break;
+		case 'N':
+			nofork = 1;
 			break;
 		case 0:
 			lopt = longopts[longindex].name;
@@ -425,7 +415,7 @@ main(int argc, char **argv)
 		}
 		exit (0);
 	}
-	if (debug == 0) {
+	if (debug == 0 && nofork == 0) {
 		daemon(0, 0);
 		(void)signal(SIGHUP, SIG_IGN);
 		(void)signal(SIGINT, SIG_IGN);
@@ -465,7 +455,21 @@ main(int argc, char **argv)
 	/* This system call will fail for old kernels, but that's ok. */
 	nfssvc(NFSSVC_BACKUPSTABLE, NULL);
 	if (nfssvc(NFSSVC_STABLERESTART, (caddr_t)&stablefd) < 0) {
-		syslog(LOG_ERR, "Can't read stable storage file: %m\n");
+		if (errno == EPERM) {
+			jailed = 0;
+			jailed_size = sizeof(jailed);
+			sysctlbyname("security.jail.jailed", &jailed,
+			    &jailed_size, NULL, 0);
+			if (jailed != 0)
+				syslog(LOG_ERR, "nfssvc stablerestart failed: "
+				    "allow.nfsd might not be configured");
+			else
+				syslog(LOG_ERR, "nfssvc stablerestart failed");
+		} else if (errno == ENXIO)
+			syslog(LOG_ERR, "nfssvc stablerestart failed: is nfsd "
+			    "already running?");
+		else
+			syslog(LOG_ERR, "Can't read stable storage file: %m\n");
 		exit(1);
 	}
 	nfssvc_addsock = NFSSVC_NFSDADDSOCK;

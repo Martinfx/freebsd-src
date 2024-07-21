@@ -27,15 +27,16 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_SCATTERLIST_H_
 #define	_LINUXKPI_LINUX_SCATTERLIST_H_
 
 #include <sys/types.h>
+#include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/sf_buf.h>
 
+#include <linux/err.h>
 #include <linux/page.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
@@ -158,7 +159,7 @@ sg_next(struct scatterlist *sg)
 static inline vm_paddr_t
 sg_phys(struct scatterlist *sg)
 {
-	return (VM_PAGE_TO_PHYS(sg_page(sg)) + sg->offset);
+	return (page_to_phys(sg_page(sg)) + sg->offset);
 }
 
 static inline void *
@@ -327,18 +328,40 @@ sg_alloc_table(struct sg_table *table, unsigned int nents, gfp_t gfp_mask)
 	return (ret);
 }
 
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+static inline struct scatterlist *
+__sg_alloc_table_from_pages(struct sg_table *sgt,
+    struct page **pages, unsigned int count,
+    unsigned long off, unsigned long size,
+    unsigned int max_segment,
+    struct scatterlist *prv, unsigned int left_pages,
+    gfp_t gfp_mask)
+#else
 static inline int
 __sg_alloc_table_from_pages(struct sg_table *sgt,
     struct page **pages, unsigned int count,
     unsigned long off, unsigned long size,
     unsigned int max_segment, gfp_t gfp_mask)
+#endif
 {
 	unsigned int i, segs, cur, len;
 	int rc;
-	struct scatterlist *s;
+	struct scatterlist *s, *sg_iter;
+
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+	if (prv != NULL) {
+		panic(
+		    "Support for prv != NULL not implemented in "
+		    "__sg_alloc_table_from_pages()");
+	}
+#endif
 
 	if (__predict_false(!max_segment || offset_in_page(max_segment)))
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+		return (ERR_PTR(-EINVAL));
+#else
 		return (-EINVAL);
+#endif
 
 	len = 0;
 	for (segs = i = 1; i < count; ++i) {
@@ -350,12 +373,24 @@ __sg_alloc_table_from_pages(struct sg_table *sgt,
 		}
 	}
 	if (__predict_false((rc = sg_alloc_table(sgt, segs, gfp_mask))))
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+		return (ERR_PTR(rc));
+#else
 		return (rc);
+#endif
 
 	cur = 0;
-	for_each_sg(sgt->sgl, s, sgt->orig_nents, i) {
+	for_each_sg(sgt->sgl, sg_iter, sgt->orig_nents, i) {
 		unsigned long seg_size;
 		unsigned int j;
+
+		/*
+		 * We need to make sure that when we exit this loop "s" has the
+		 * last sg in the chain so we can call sg_mark_end() on it.
+		 * Only set this inside the loop since sg_iter will be iterated
+		 * until it is NULL.
+		 */
+		s = sg_iter;
 
 		len = 0;
 		for (j = cur + 1; j < count; ++j) {
@@ -371,7 +406,16 @@ __sg_alloc_table_from_pages(struct sg_table *sgt,
 		off = 0;
 		cur = j;
 	}
+	KASSERT(s != NULL, ("s is NULL after loop in __sg_alloc_table_from_pages()"));
+
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+	if (left_pages == 0)
+		sg_mark_end(s);
+
+	return (s);
+#else
 	return (0);
+#endif
 }
 
 static inline int
@@ -381,8 +425,27 @@ sg_alloc_table_from_pages(struct sg_table *sgt,
     gfp_t gfp_mask)
 {
 
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+	return (PTR_ERR_OR_ZERO(__sg_alloc_table_from_pages(sgt, pages, count, off, size,
+	    SCATTERLIST_MAX_SEGMENT, NULL, 0, gfp_mask)));
+#else
 	return (__sg_alloc_table_from_pages(sgt, pages, count, off, size,
 	    SCATTERLIST_MAX_SEGMENT, gfp_mask));
+#endif
+}
+
+static inline int
+sg_alloc_table_from_pages_segment(struct sg_table *sgt,
+    struct page **pages, unsigned int count, unsigned int off,
+    unsigned long size, unsigned int max_segment, gfp_t gfp_mask)
+{
+#if defined(LINUXKPI_VERSION) && LINUXKPI_VERSION >= 51300
+	return (PTR_ERR_OR_ZERO(__sg_alloc_table_from_pages(sgt, pages, count, off, size,
+	    max_segment, NULL, 0, gfp_mask)));
+#else
+	return (__sg_alloc_table_from_pages(sgt, pages, count, off, size,
+	    max_segment, gfp_mask));
+#endif
 }
 
 static inline int
@@ -593,7 +656,7 @@ sg_pcopy_to_buffer(struct scatterlist *sgl, unsigned int nents,
 				break;
 			vaddr = (char *)sf_buf_kva(sf);
 		} else
-			vaddr = (char *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(page));
+			vaddr = (char *)PHYS_TO_DMAP(page_to_phys(page));
 		memcpy(buf, vaddr + sg->offset + offset, len);
 		if (!PMAP_HAS_DMAP)
 			sf_buf_free(sf);

@@ -32,16 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)acu.c	8.1 (Berkeley) 6/6/93";
-static const char rcsid[] = "$OpenBSD: acu.c,v 1.12 2006/03/17 14:43:06 moritz Exp $";
-#endif
-#endif /* not lint */
-
 #include "tip.h"
 
 static acu_t *acu = NOACU;
@@ -56,7 +46,7 @@ static jmp_buf jmpbuf;
  * The phone numbers are in PN, and the call unit is in CU.
  *
  * If the PN is an '@', then we consult the PHONES file for
- *   the phone numbers.  This file is /etc/phones, unless overriden
+ *   the phone numbers.  This file is /etc/phones, unless overridden
  *   by an exported shell variable.
  *
  * The data base files must be in the format:

@@ -19,8 +19,6 @@
  * IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
  * WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  *
- * $FreeBSD$
- *
  */
 
 /*
@@ -223,7 +221,7 @@ arp_ClearProxy(struct bundle *bundle, struct in_addr addr, int s)
 
 /*
  * arp_EtherAddr - get the hardware address of an interface on the
- * the same subnet as ipaddr.
+ * same subnet as ipaddr.
  */
 
 int

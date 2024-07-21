@@ -1,6 +1,3 @@
-#	@(#)Makefile	8.1 (Berkeley) 6/12/93
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PROG=	netstat
@@ -61,6 +58,17 @@ LIBADD=	kvm memstat xo util
 SRCS+=	netgraph.c
 LIBADD+=	netgraph
 CFLAGS+=-DNETGRAPH
+.endif
+
+.if ${MK_NETLINK_SUPPORT} != "no"
+SRCS+=	route_netlink.c
+.else
+CFLAGS+=-DWITHOUT_NETLINK
+.endif
+
+.if ${MK_JAIL} != "no" && !defined(RESCUE)
+CFLAGS+= -DJAIL
+LIBADD+= jail
 .endif
 
 .include <bsd.prog.mk>

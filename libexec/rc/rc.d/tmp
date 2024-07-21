@@ -24,7 +24,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 
 # PROVIDE: tmp
@@ -37,6 +36,9 @@ desc="Configure tmpfs"
 stop_cmd=':'
 
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: mounting
+tmp_svcj="NO"
 
 mount_tmpmfs()
 {

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE= runtime
@@ -19,18 +17,6 @@ MAN_SUB+= -e 's|%%THREADS%%||g'
 .else
 LIBADD=	md
 MAN_SUB+= -e 's|%%THREADS%%|\.\\"|g'
-.endif
-
-.if ${MK_NLS} != "no"
-NLS+=	hu_HU.ISO8859-2
-NLSSRCFILES= ${NLS:S@$@.msg@}
-MAN_SUB+= -e 's|%%NLS%%||g'
-.for lang in ${NLS}
-NLSSRCDIR_${lang}= ${.CURDIR}/nls
-.endfor
-.else
-CFLAGS+= -DWITHOUT_NLS
-MAN_SUB+= -e 's|%%NLS%%|\.\\"|g'
 .endif
 
 HAS_TESTS=

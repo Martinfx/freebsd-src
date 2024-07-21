@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/mgb
 
 KMOD	= if_mgb

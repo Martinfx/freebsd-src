@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 HAVE_ZFS=		${MK_LOADER_ZFS}
 
 LOADER_NET_SUPPORT?=	yes
@@ -24,7 +22,7 @@ VERSION_FILE=	${.CURDIR}/../loader/version
 # non-random survey suggests that 20k-25k is a good value for 'most' machines.
 # We also need to subtract maximum stack usage (20-25k).
 #
-# So 640k - 40k - 25k - 25k = 550k = 563,200 bytes, but use 550,000 below for
+# So 640k - 40k - 25k - 25k = 550k = 563,200 bytes, but use 560,000 below for
 # some extra buffer for more complex setups and/or wider BIOS lomem variation.
 #
 # Some systems use more stack or have BIOS reserve more RAM (or both), and will
@@ -34,18 +32,32 @@ VERSION_FILE=	${.CURDIR}/../loader/version
 #
 # will tell you how many kiB of lomem are available.
 #
-LOADERSIZE?=	550000		# Largest known safe size for loader.bin
+LOADERSIZE?=	560000		# Largest known safe size for loader.bin
 
 .PATH:		${BOOTSRC}/i386/loader
 
 # architecture-specific loader code
-SRCS=		main.c conf.c vers.c chain.c gfx_fb.c 8x16.c
+SRCS+=		chain.c
+SRCS+=		conf.c
+SRCS+=		gfx_bios.c
+SRCS+=		main.c
+SRCS+=		vers.c
+
+.if ${MK_LOADER_BIOS_TEXTONLY} == "no"
+SRCS+=		gfx_fb.c
+SRCS+=		8x16.c
 
 CFLAGS.gfx_fb.c += -I${.CURDIR}/../libi386
 CFLAGS.gfx_fb.c += -I$(SRCTOP)/sys/teken
 CFLAGS.gfx_fb.c += -I${SRCTOP}/sys/cddl/contrib/opensolaris/common/lz4
 CFLAGS.gfx_fb.c += -I${SRCTOP}/contrib/pnglite
 CFLAGS.gfx_fb.c += -DHAVE_MEMCPY -I${SRCTOP}/sys/contrib/zlib
+CFLAGS.gfx_bios.c += -I$(SRCTOP)/sys/teken
+CFLAGS.gfx_bios.c += -I${SRCTOP}/contrib/pnglite
+.else
+CFLAGS.gfx_bios.c += -DBIOS_TEXT_ONLY
+CFLAGS.conf.c	+= -DBIOS_TEXT_ONLY
+.endif
 
 # Include bcache code.
 HAVE_BCACHE=	yes
@@ -53,11 +65,6 @@ HAVE_BCACHE=	yes
 # Enable PnP and ISA-PnP code.
 HAVE_PNP=	yes
 HAVE_ISABUS=	yes
-
-.if ${MK_LOADER_FIREWIRE} == "yes"
-CFLAGS+=	-DLOADER_FIREWIRE_SUPPORT
-LIBFIREWIRE=	${BOOTOBJ}/i386/libfirewire/libfirewire.a
-.endif
 
 .if ${MK_LOADER_ZFS} == "yes"
 CFLAGS.main.c+=	-I${SYSDIR}/contrib/openzfs/include
@@ -67,6 +74,7 @@ CFLAGS.main.c+=	-I${SYSDIR}/contrib/openzfs/include/os/freebsd/zfs
 .if exists(${.CURDIR}/help.i386)
 HELP_FILES=	${.CURDIR}/help.i386
 .endif
+HELP_FILENAME=	loader.help.bios
 
 # Always add MI sources
 .include	"${BOOTSRC}/loader.mk"
@@ -127,8 +135,8 @@ FILESMODE_${LOADER}= ${BINMODE} -b
 # files.
 LDFLAGS+=	${BTXCRT}
 
-DPADD=	${LDR_INTERP32} ${LIBFIREWIRE} ${LIBI386} ${LIBSA32}
-LDADD=	${LDR_INTERP32} ${LIBFIREWIRE} ${LIBI386} ${LIBSA32}
+DPADD=	${LDR_INTERP32} ${LIBI386} ${LIBSA32}
+LDADD=	${LDR_INTERP32} ${LIBI386} ${LIBSA32}
 
 .if ${MACHINE_CPUARCH} == "amd64"
 CFLAGS+=	-DLOADER_PREFER_AMD64

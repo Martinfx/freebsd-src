@@ -1,4 +1,3 @@
-/* @(#)e_pow.c 1.5 04/04/22 SMI */
 /*
  * ====================================================
  * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
@@ -9,10 +8,7 @@
  * ====================================================
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-/* __ieee754_pow(x,y) return x**y
+/* pow(x,y) return x**y
  *
  *		      n
  * Method:  Let x =  2   * (1+f)
@@ -98,7 +94,7 @@ ivln2_h  =  1.44269502162933349609e+00, /* 0x3FF71547, 0x60000000 =24b 1/ln2*/
 ivln2_l  =  1.92596299112661746887e-08; /* 0x3E54AE0B, 0xF85DDF44 =1/ln2 tail*/
 
 double
-__ieee754_pow(double x, double y)
+pow(double x, double y)
 {
 	double z,ax,z_h,z_l,p_h,p_l;
 	double y1,t1,t2,r,s,t,u,v,w;
@@ -303,7 +299,11 @@ __ieee754_pow(double x, double y)
 	r  = (z*t1)/(t1-two)-(w+z*w);
 	z  = one-(r-z);
 	GET_HIGH_WORD(j,z);
-	j += (n<<20);
+    /*
+     * sign bit of z is 0.
+     * sign bit of j will indicate sign of 0x3ff-biased exponent.
+     */
+	j += (int32_t)((u_int32_t)n<<20);
 	if((j>>20)<=0) z = scalbn(z,n);	/* subnormal output */
 	else SET_HIGH_WORD(z,j);
 	return s*z;

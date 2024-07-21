@@ -1,6 +1,3 @@
-#	From: @(#)Makefile	8.1 (Berkeley) 5/31/93
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 SUBDIR= cat \
@@ -8,6 +5,7 @@ SUBDIR= cat \
 	chio \
 	chmod \
 	cp \
+	cpuset \
 	date \
 	dd \
 	df \
@@ -24,6 +22,7 @@ SUBDIR= cat \
 	ls \
 	mkdir \
 	mv \
+	nproc \
 	pax \
 	pkill \
 	ps \
@@ -38,6 +37,7 @@ SUBDIR= cat \
 	stty \
 	sync \
 	test \
+	timeout \
 	uuidgen
 
 SUBDIR.${MK_SENDMAIL}+=	rmail

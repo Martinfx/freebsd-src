@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 The FreeBSD Foundation
  *
@@ -255,7 +255,13 @@ static void
 fs_populate_path(const fsnode *cur, struct fs_populate_arg *arg,
     char *path, size_t sz, int *dirfdp)
 {
-	if (cur->root == NULL) {
+	if (cur->contents != NULL) {
+		size_t n;
+
+		*dirfdp = AT_FDCWD;
+		n = strlcpy(path, cur->contents, sz);
+		assert(n < sz);
+	} else if (cur->root == NULL) {
 		size_t n;
 
 		*dirfdp = SLIST_FIRST(&arg->dirs)->dirfd;
@@ -286,20 +292,39 @@ fs_open(const fsnode *cur, struct fs_populate_arg *arg, int flags)
 	return (fd);
 }
 
+static int
+fs_open_can_fail(const fsnode *cur, struct fs_populate_arg *arg, int flags)
+{
+	int fd;
+	char path[PATH_MAX];
+
+	fs_populate_path(cur, arg, path, sizeof(path), &fd);
+
+	return (openat(fd, path, flags));
+}
+
 static void
 fs_readlink(const fsnode *cur, struct fs_populate_arg *arg,
     char *buf, size_t bufsz)
 {
 	char path[PATH_MAX];
-	ssize_t n;
 	int fd;
 
-	fs_populate_path(cur, arg, path, sizeof(path), &fd);
+	if (cur->symlink != NULL) {
+		size_t n;
 
-	n = readlinkat(fd, path, buf, bufsz - 1);
-	if (n == -1)
-		err(1, "readlinkat(%s)", cur->name);
-	buf[n] = '\0';
+		n = strlcpy(buf, cur->symlink, bufsz);
+		assert(n < bufsz);
+	} else {
+		ssize_t n;
+
+		fs_populate_path(cur, arg, path, sizeof(path), &fd);
+
+		n = readlinkat(fd, path, buf, bufsz - 1);
+		if (n == -1)
+			err(1, "readlinkat(%s)", cur->name);
+		buf[n] = '\0';
+	}
 }
 
 static void
@@ -378,8 +403,8 @@ fs_populate_sattrs(struct fs_populate_arg *arg, const fsnode *cur,
 	}
 
 	daclcount = nitems(aces);
-	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_NO_EXECS_DENIED |
-	    ZFS_ARCHIVE | ZFS_AV_MODIFIED; /* XXX-MJ */
+	flags = ZFS_ACL_TRIVIAL | ZFS_ACL_AUTO_INHERIT | ZFS_ARCHIVE |
+	    ZFS_AV_MODIFIED;
 	gen = 1;
 	gid = sb->st_gid;
 	mode = sb->st_mode;
@@ -490,7 +515,7 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	uint64_t dnid;
 	ssize_t n;
 	size_t bufsz;
-	off_t size, target;
+	off_t nbytes, reqbytes, size;
 	int fd;
 
 	assert(cur->type == S_IFREG);
@@ -521,31 +546,30 @@ fs_populate_file(fsnode *cur, struct fs_populate_arg *arg)
 	bufsz = sizeof(zfs->filebuf);
 	size = cur->inode->st.st_size;
 	c = dnode_cursor_init(zfs, arg->fs->os, dnode, size, 0);
-	for (off_t foff = 0; foff < size; foff += target) {
+	for (off_t foff = 0; foff < size; foff += nbytes) {
 		off_t loc, sofar;
 
 		/*
 		 * Fill up our buffer, handling partial reads.
-		 *
-		 * It might be profitable to use copy_file_range(2) here.
 		 */
 		sofar = 0;
-		target = MIN(size - foff, (off_t)bufsz);
+		nbytes = MIN(size - foff, (off_t)bufsz);
 		do {
-			n = read(fd, buf + sofar, target);
+			n = read(fd, buf + sofar, nbytes);
 			if (n < 0)
 				err(1, "reading from '%s'", cur->name);
 			if (n == 0)
 				errx(1, "unexpected EOF reading '%s'",
 				    cur->name);
 			sofar += n;
-		} while (sofar < target);
+		} while (sofar < nbytes);
 
-		if (target < (off_t)bufsz)
-			memset(buf + target, 0, bufsz - target);
+		if (nbytes < (off_t)bufsz)
+			memset(buf + nbytes, 0, bufsz - nbytes);
 
-		loc = objset_space_alloc(zfs, arg->fs->os, &target);
-		vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, buf, target, loc,
+		reqbytes = foff == 0 ? nbytes : MAXBLOCKSIZE;
+		loc = objset_space_alloc(zfs, arg->fs->os, &reqbytes);
+		vdev_pwrite_dnode_indir(zfs, dnode, 0, 1, buf, reqbytes, loc,
 		    dnode_cursor_next(zfs, c, foff));
 	}
 	eclose(fd);
@@ -576,7 +600,12 @@ fs_populate_dir(fsnode *cur, struct fs_populate_arg *arg)
 	 */
 	if (!SLIST_EMPTY(&arg->dirs)) {
 		fs_populate_dirent(arg, cur, dnid);
-		dirfd = fs_open(cur, arg, O_DIRECTORY | O_RDONLY);
+		/*
+		 * We only need the directory fd if we're finding files in
+		 * it.  If it's just there for other directories or
+		 * files using contents= we don't need to succeed here.
+		 */
+		dirfd = fs_open_can_fail(cur, arg, O_DIRECTORY | O_RDONLY);
 	} else {
 		arg->rootdirid = dnid;
 		dirfd = arg->rootdirfd;

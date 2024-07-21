@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * All rights reserved.
@@ -38,8 +38,6 @@
 
 #define SND_USE_FXDIV
 #include "snd_fxdiv_gen.h"
-
-SND_DECLARE_FILE("$FreeBSD$");
 #endif
 
 typedef void (*feed_volume_t)(int *, int *, uint32_t, uint8_t *, uint32_t);
@@ -339,7 +337,7 @@ feeder_volume_apply_matrix(struct pcm_feeder *f, struct pcmchan_matrix *m)
 
 	info = f->data;
 
-	for (i = 0; i < (sizeof(info->matrix) / sizeof(info->matrix[0])); i++) {
+	for (i = 0; i < nitems(info->matrix); i++) {
 		if (i < m->channels)
 			info->matrix[i] = m->map[i].type;
 		else

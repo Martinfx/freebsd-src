@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 RPCDIR=	${DESTDIR}/usr/include/rpcsvc
 
 .PATH: ${SRCTOP}/usr.sbin/ypserv ${SRCTOP}/usr.bin/chpass \

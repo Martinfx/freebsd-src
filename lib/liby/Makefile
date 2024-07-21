@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=lib${LIB}
 LIB=	y
 SRCS=	main.c yyerror.c

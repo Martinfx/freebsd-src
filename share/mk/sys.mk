@@ -1,5 +1,3 @@
-#	from: @(#)sys.mk	8.2 (Berkeley) 3/21/94
-# $FreeBSD$
 
 unix		?=	We run FreeBSD, not UNIX.
 .FreeBSD	?=	true
@@ -13,7 +11,7 @@ unix		?=	We run FreeBSD, not UNIX.
 # and/or endian.  This is called MACHINE_CPU in NetBSD, but that's used
 # for something different in FreeBSD.
 #
-__TO_CPUARCH=C/arm(v[67])?/arm/:C/powerpc(64|64le|spe)/powerpc/:C/riscv64(sf)?/riscv/
+__TO_CPUARCH=C/arm(v[67])?/arm/:C/powerpc(64|64le|spe)/powerpc/:C/riscv64/riscv/
 MACHINE_CPUARCH=${MACHINE_ARCH:${__TO_CPUARCH}}
 .endif
 
@@ -33,6 +31,7 @@ __DEFAULT_NO_OPTIONS= \
 
 __DEFAULT_DEPENDENT_OPTIONS= \
 	AUTO_OBJ/DIRDEPS_BUILD \
+	META_ERROR_TARGET/DIRDEPS_BUILD \
 	META_MODE/DIRDEPS_BUILD \
 	STAGING/DIRDEPS_BUILD \
 	SYSROOT/DIRDEPS_BUILD
@@ -44,9 +43,6 @@ __ENV_ONLY_OPTIONS:= \
 
 # early include for customization
 # see local.sys.mk below
-# Not included when building in fmake compatibility mode (still needed
-# for older system support)
-.if defined(.PARSEDIR)
 .sinclude <local.sys.env.mk>
 
 .include <bsd.mkopt.mk>
@@ -57,27 +53,13 @@ MK_META_MODE=	no
 .endif
 
 .if ${MK_DIRDEPS_BUILD} == "yes"
-.sinclude <meta.sys.mk>
-.elif ${MK_META_MODE} == "yes"
-META_MODE+=	meta
-.if empty(.MAKEFLAGS:M-s)
-# verbose will show .MAKE.META.PREFIX for each target.
-META_MODE+=	verbose
+.-include <sys.dirdeps.mk>
 .endif
-.if !defined(NO_META_MISSING)
-META_MODE+=	missing-meta=yes
-.endif
-# silent will hide command output if a .meta file is created.
-.if !defined(NO_SILENT)
-META_MODE+=	silent=yes
-.endif
+.if ${MK_META_MODE} == "yes"
 .if !exists(/dev/filemon) || defined(NO_FILEMON)
 META_MODE+= nofilemon
 .endif
-# Require filemon data with bmake
-.if empty(META_MODE:Mnofilemon)
-META_MODE+= missing-filemon=yes
-.endif
+.-include <meta.sys.mk>
 .endif
 META_MODE?= normal
 .export META_MODE
@@ -123,9 +105,6 @@ NO_META_IGNORE_HOST_HEADERS=	1
 .sinclude <auto.obj.mk>
 .endif
 .endif	# ${MK_AUTO_OBJ} == "yes"
-.else # bmake
-.include <bsd.mkopt.mk>
-.endif
 
 # If the special target .POSIX appears (without prerequisites or
 # commands) before the first noncomment line in the makefile, make shall
@@ -173,6 +152,8 @@ CFLAGS		+=	-fno-strict-aliasing
 .endif
 IR_CFLAGS	?=	${STATIC_CFLAGS:N-O*} ${CFLAGS:N-O*}
 PO_CFLAGS	?=	${CFLAGS}
+
+HOST_CC		?=	${CC}
 
 # cp(1) is used to copy source files to ${.OBJDIR}, make sure it can handle
 # read-only files as non-root by passing -f.

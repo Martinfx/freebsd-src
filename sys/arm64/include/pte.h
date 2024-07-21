@@ -26,9 +26,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
+
+#ifdef __arm__
+#include <arm/pte.h>
+#else /* !__arm__ */
 
 #ifndef _MACHINE_PTE_H_
 #define	_MACHINE_PTE_H_
@@ -51,6 +53,14 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 #define	ATTR_MASK_H		UINT64_C(0xfffc000000000000)
 #define	ATTR_MASK_L		UINT64_C(0x0000000000000fff)
 #define	ATTR_MASK		(ATTR_MASK_H | ATTR_MASK_L)
+
+#define BASE_MASK		~ATTR_MASK
+#define BASE_ADDR(x)		((x) & BASE_MASK)
+
+#define PTE_TO_PHYS(pte)	BASE_ADDR(pte)
+/* Convert a phys addr to the output address field of a PTE */
+#define PHYS_TO_PTE(pa)		(pa)
+
 /* Bits 58:55 are reserved for software */
 #define	ATTR_SW_UNUSED1		(1UL << 58)
 #define	ATTR_SW_NO_PROMOTE	(1UL << 57)
@@ -70,6 +80,7 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 
 #define	ATTR_CONTIGUOUS		(1UL << 52)
 #define	ATTR_DBM		(1UL << 51)
+#define	ATTR_S1_GP		(1UL << 50)
 #define	ATTR_S1_nG		(1 << 11)
 #define	ATTR_AF			(1 << 10)
 #define	ATTR_SH(x)		((x) << 8)
@@ -108,6 +119,12 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 #define	ATTR_DESCR_TYPE_TABLE	2
 #define	ATTR_DESCR_TYPE_PAGE	2
 #define	ATTR_DESCR_TYPE_BLOCK	0
+
+/*
+ * Superpage promotion requires that the bits specified by the following
+ * mask all be identical in the constituent PTEs.
+ */
+#define	ATTR_PROMOTE	(ATTR_MASK & ~(ATTR_CONTIGUOUS | ATTR_AF))
 
 #if PAGE_SIZE == PAGE_SIZE_4K
 #define	L0_SHIFT	39
@@ -153,7 +170,11 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 	/* 0x2 also marks an invalid address */
 #define	L3_PAGE		0x3
 
-#define	PMAP_MAPDEV_EARLY_SIZE	(L2_SIZE * 8)
+/*
+ * A substantial portion of this is to make sure that we can cope with 4K
+ * framebuffers in early boot, assuming a common 4K resolution @ 32-bit depth.
+ */
+#define	PMAP_MAPDEV_EARLY_SIZE	(L2_SIZE * 20)
 
 #if PAGE_SIZE == PAGE_SIZE_4K
 #define	L0_ENTRIES_SHIFT 9
@@ -172,6 +193,26 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 #define	Ln_ADDR_MASK	(Ln_ENTRIES - 1)
 #define	Ln_TABLE_MASK	((1 << 12) - 1)
 
+/*
+ * The number of contiguous Level 3 entries (with ATTR_CONTIGUOUS set) that
+ * can be coalesced into a single TLB entry
+ */
+#if PAGE_SIZE == PAGE_SIZE_4K
+#define	L2C_ENTRIES	16
+#define	L3C_ENTRIES	16
+#elif PAGE_SIZE == PAGE_SIZE_16K
+#define	L2C_ENTRIES	32
+#define	L3C_ENTRIES	128
+#else
+#error Unsupported page size
+#endif
+
+#define	L2C_SIZE	(L2C_ENTRIES * L2_SIZE)
+#define	L2C_OFFSET	(L2C_SIZE - 1)
+
+#define	L3C_SIZE	(L3C_ENTRIES * L3_SIZE)
+#define	L3C_OFFSET	(L3C_SIZE - 1)
+
 #define	pmap_l0_index(va)	(((va) >> L0_SHIFT) & L0_ADDR_MASK)
 #define	pmap_l1_index(va)	(((va) >> L1_SHIFT) & Ln_ADDR_MASK)
 #define	pmap_l2_index(va)	(((va) >> L2_SHIFT) & Ln_ADDR_MASK)
@@ -180,3 +221,5 @@ typedef	uint64_t	pt_entry_t;		/* page table entry */
 #endif /* !_MACHINE_PTE_H_ */
 
 /* End of pte.h */
+
+#endif /* !__arm__ */

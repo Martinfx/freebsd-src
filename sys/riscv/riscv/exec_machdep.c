@@ -33,9 +33,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/exec.h>
@@ -58,6 +55,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/ucontext.h>
 
 #include <machine/cpu.h>
+#include <machine/fpe.h>
 #include <machine/kdb.h>
 #include <machine/pcb.h>
 #include <machine/pte.h>
@@ -69,10 +67,6 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_param.h>
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
-
-#ifdef FPE
-#include <machine/fpe.h>
-#endif
 
 static void get_fpcontext(struct thread *td, mcontext_t *mcp);
 static void set_fpcontext(struct thread *td, mcontext_t *mcp);
@@ -123,7 +117,6 @@ set_regs(struct thread *td, struct reg *regs)
 int
 fill_fpregs(struct thread *td, struct fpreg *regs)
 {
-#ifdef FPE
 	struct pcb *pcb;
 
 	pcb = td->td_pcb;
@@ -139,7 +132,6 @@ fill_fpregs(struct thread *td, struct fpreg *regs)
 		memcpy(regs->fp_x, pcb->pcb_x, sizeof(regs->fp_x));
 		regs->fp_fcsr = pcb->pcb_fcsr;
 	} else
-#endif
 		memset(regs, 0, sizeof(*regs));
 
 	return (0);
@@ -148,7 +140,6 @@ fill_fpregs(struct thread *td, struct fpreg *regs)
 int
 set_fpregs(struct thread *td, struct fpreg *regs)
 {
-#ifdef FPE
 	struct trapframe *frame;
 	struct pcb *pcb;
 
@@ -160,7 +151,6 @@ set_fpregs(struct thread *td, struct fpreg *regs)
 	pcb->pcb_fpflags |= PCB_FP_STARTED;
 	frame->tf_sstatus &= ~SSTATUS_FS_MASK;
 	frame->tf_sstatus |= SSTATUS_FS_CLEAN;
-#endif
 
 	return (0);
 }
@@ -274,7 +264,6 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 static void
 get_fpcontext(struct thread *td, mcontext_t *mcp)
 {
-#ifdef FPE
 	struct pcb *curpcb;
 
 	critical_enter();
@@ -300,20 +289,16 @@ get_fpcontext(struct thread *td, mcontext_t *mcp)
 	}
 
 	critical_exit();
-#endif
 }
 
 static void
 set_fpcontext(struct thread *td, mcontext_t *mcp)
 {
-#ifdef FPE
 	struct pcb *curpcb;
-#endif
 
 	td->td_frame->tf_sstatus &= ~SSTATUS_FS_MASK;
 	td->td_frame->tf_sstatus |= SSTATUS_FS_OFF;
 
-#ifdef FPE
 	critical_enter();
 
 	if ((mcp->mc_flags & _MC_FP_VALID) != 0) {
@@ -327,7 +312,6 @@ set_fpcontext(struct thread *td, mcontext_t *mcp)
 	}
 
 	critical_exit();
-#endif
 }
 
 int

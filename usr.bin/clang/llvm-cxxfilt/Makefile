@@ -1,10 +1,9 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PROG_CXX=	llvm-cxxfilt
 
 SRCDIR=		llvm/tools/llvm-cxxfilt
+SRCS+=		llvm-cxxfilt-driver.cpp
 SRCS+=		llvm-cxxfilt.cpp
 
 .include "${SRCTOP}/lib/clang/llvm.pre.mk"

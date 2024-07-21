@@ -27,8 +27,6 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /**
@@ -3675,7 +3673,7 @@ typedef struct {
 } sli4_cmd_rq_cfg_t;
 extern int32_t sli_cmd_reg_fcfi(sli4_t *, void *, size_t, uint16_t,
 				sli4_cmd_rq_cfg_t rq_cfg[SLI4_CMD_REG_FCFI_NUM_RQ_CFG], uint16_t);
-extern int32_t sli_cmd_reg_fcfi_mrq(sli4_t *, void *, size_t, uint8_t, uint16_t, uint16_t, uint8_t, uint8_t , uint16_t, sli4_cmd_rq_cfg_t *);
+extern int32_t sli_cmd_reg_fcfi_mrq(sli4_t *, void *, size_t, uint8_t, uint16_t, uint16_t, uint8_t, uint8_t , uint16_t, sli4_cmd_rq_cfg_t rq_cfg[SLI4_CMD_REG_FCFI_NUM_RQ_CFG]);
 
 extern int32_t sli_cmd_reg_rpi(sli4_t *, void *, size_t, uint32_t, uint16_t, uint16_t, ocs_dma_t *, uint8_t, uint8_t);
 extern int32_t sli_cmd_reg_vfi(sli4_t *, void *, size_t, ocs_domain_t *);
@@ -5347,7 +5345,7 @@ typedef struct sli4_fc_wqec_s {
 #define SLI4_FC_WCQE_STATUS_RX_ABORT_REQUEST	0x1b
 
 /* driver generated status codes; better not overlap with chip's status codes! */
-#define SLI4_FC_WCQE_STATUS_TARGET_WQE_TIMEOUT  0xff
+#define SLI4_FC_WCQE_STATUS_WQE_TIMEOUT		0xff
 #define SLI4_FC_WCQE_STATUS_SHUTDOWN		0xfe
 #define SLI4_FC_WCQE_STATUS_DISPATCH_ERROR	0xfd
 

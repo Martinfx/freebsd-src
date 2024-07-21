@@ -1,6 +1,4 @@
-# $FreeBSD$
-
-.PATH:	${SRCTOP}/sys/dev/iicbus
+.PATH:	${SRCTOP}/sys/dev/iicbus/rtc
 KMOD	= rtc8583
 SRCS	= rtc8583.c 
 

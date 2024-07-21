@@ -1,7 +1,3 @@
-/*
- * $FreeBSD$
- */
-
 FBSD_1.0 {
 	_Exit;
 	a64l;
@@ -49,7 +45,6 @@ FBSD_1.0 {
 	lfind;
 	mergesort;
 	putenv;
-	qsort_r;
 	qsort;
 	radixsort;
 	sradixsort;
@@ -94,11 +89,9 @@ FBSD_1.3 {
 	strtol_l;
 	strtold_l;
 	strtoll_l;
-	strtoq_l;
 	strtoul_l;
 	strtoull_l;
 	strtoumax_l;
-	strtouq_l;
 };
 
 FBSD_1.4 {
@@ -130,6 +123,8 @@ FBSD_1.6 {
 
 FBSD_1.7 {
 	clearenv;
+	qsort_r;
+	secure_getenv;
 };
 
 FBSDprivate_1.0 {

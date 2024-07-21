@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: routed dynamicrouting
@@ -13,6 +12,8 @@
 name="routed"
 desc="Network RIP and router discovery routing daemon"
 rcvar="routed_enable"
+
+: ${routed_svcj_options:="net_basic"}
 
 set_rcvar_obsolete router_enable routed_enable
 set_rcvar_obsolete router routed_program

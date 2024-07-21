@@ -92,7 +92,7 @@
  * will be loaded into memory and shouldn't take up an inordinate amount of
  * space. We settled on ~500000 entries, corresponding to roughly 128M.
  */
-unsigned long zfs_livelist_max_entries = 500000;
+uint64_t zfs_livelist_max_entries = 500000;
 
 /*
  * We can approximate how much of a performance gain a livelist will give us
@@ -173,8 +173,8 @@ dsl_deadlist_load_tree(dsl_deadlist_t *dl)
 		 * in parallel.  Then open them all in a second pass.
 		 */
 		dle->dle_bpobj.bpo_object = za.za_first_integer;
-		dmu_prefetch(dl->dl_os, dle->dle_bpobj.bpo_object,
-		    0, 0, 0, ZIO_PRIORITY_SYNC_READ);
+		dmu_prefetch_dnode(dl->dl_os, dle->dle_bpobj.bpo_object,
+		    ZIO_PRIORITY_SYNC_READ);
 
 		avl_add(&dl->dl_tree, dle);
 	}
@@ -235,8 +235,8 @@ dsl_deadlist_load_cache(dsl_deadlist_t *dl)
 		 * in parallel.  Then open them all in a second pass.
 		 */
 		dlce->dlce_bpobj = za.za_first_integer;
-		dmu_prefetch(dl->dl_os, dlce->dlce_bpobj,
-		    0, 0, 0, ZIO_PRIORITY_SYNC_READ);
+		dmu_prefetch_dnode(dl->dl_os, dlce->dlce_bpobj,
+		    ZIO_PRIORITY_SYNC_READ);
 		avl_add(&dl->dl_cache, dlce);
 	}
 	VERIFY3U(error, ==, ENOENT);
@@ -438,6 +438,18 @@ dle_enqueue_subobj(dsl_deadlist_t *dl, dsl_deadlist_entry_t *dle,
 	}
 }
 
+/*
+ * Prefetch metadata required for dle_enqueue_subobj().
+ */
+static void
+dle_prefetch_subobj(dsl_deadlist_t *dl, dsl_deadlist_entry_t *dle,
+    uint64_t obj)
+{
+	if (dle->dle_bpobj.bpo_object !=
+	    dmu_objset_pool(dl->dl_os)->dp_empty_bpobj)
+		bpobj_prefetch_subobj(&dle->dle_bpobj, obj);
+}
+
 void
 dsl_deadlist_insert(dsl_deadlist_t *dl, const blkptr_t *bp, boolean_t bp_freed,
     dmu_tx_t *tx)
@@ -462,7 +474,7 @@ dsl_deadlist_insert(dsl_deadlist_t *dl, const blkptr_t *bp, boolean_t bp_freed,
 	dl->dl_phys->dl_comp += sign * BP_GET_PSIZE(bp);
 	dl->dl_phys->dl_uncomp += sign * BP_GET_UCSIZE(bp);
 
-	dle_tofind.dle_mintxg = bp->blk_birth;
+	dle_tofind.dle_mintxg = BP_GET_LOGICAL_BIRTH(bp);
 	dle = avl_find(&dl->dl_tree, &dle_tofind, &where);
 	if (dle == NULL)
 		dle = avl_nearest(&dl->dl_tree, where, AVL_BEFORE);
@@ -471,7 +483,7 @@ dsl_deadlist_insert(dsl_deadlist_t *dl, const blkptr_t *bp, boolean_t bp_freed,
 
 	if (dle == NULL) {
 		zfs_panic_recover("blkptr at %p has invalid BLK_BIRTH %llu",
-		    bp, (longlong_t)bp->blk_birth);
+		    bp, (longlong_t)BP_GET_LOGICAL_BIRTH(bp));
 		dle = avl_first(&dl->dl_tree);
 	}
 
@@ -542,6 +554,7 @@ dsl_deadlist_remove_key(dsl_deadlist_t *dl, uint64_t mintxg, dmu_tx_t *tx)
 	dle = avl_find(&dl->dl_tree, &dle_tofind, NULL);
 	ASSERT3P(dle, !=, NULL);
 	dle_prev = AVL_PREV(&dl->dl_tree, dle);
+	ASSERT3P(dle_prev, !=, NULL);
 
 	dle_enqueue_subobj(dl, dle_prev, dle->dle_bpobj.bpo_object, tx);
 
@@ -809,6 +822,27 @@ dsl_deadlist_insert_bpobj(dsl_deadlist_t *dl, uint64_t obj, uint64_t birth,
 	dle_enqueue_subobj(dl, dle, obj, tx);
 }
 
+/*
+ * Prefetch metadata required for dsl_deadlist_insert_bpobj().
+ */
+static void
+dsl_deadlist_prefetch_bpobj(dsl_deadlist_t *dl, uint64_t obj, uint64_t birth)
+{
+	dsl_deadlist_entry_t dle_tofind;
+	dsl_deadlist_entry_t *dle;
+	avl_index_t where;
+
+	ASSERT(MUTEX_HELD(&dl->dl_lock));
+
+	dsl_deadlist_load_tree(dl);
+
+	dle_tofind.dle_mintxg = birth;
+	dle = avl_find(&dl->dl_tree, &dle_tofind, &where);
+	if (dle == NULL)
+		dle = avl_nearest(&dl->dl_tree, where, AVL_BEFORE);
+	dle_prefetch_subobj(dl, dle, obj);
+}
+
 static int
 dsl_deadlist_insert_cb(void *arg, const blkptr_t *bp, boolean_t bp_freed,
     dmu_tx_t *tx)
@@ -825,12 +859,12 @@ dsl_deadlist_insert_cb(void *arg, const blkptr_t *bp, boolean_t bp_freed,
 void
 dsl_deadlist_merge(dsl_deadlist_t *dl, uint64_t obj, dmu_tx_t *tx)
 {
-	zap_cursor_t zc;
-	zap_attribute_t za;
+	zap_cursor_t zc, pzc;
+	zap_attribute_t *za, *pza;
 	dmu_buf_t *bonus;
 	dsl_deadlist_phys_t *dlp;
 	dmu_object_info_t doi;
-	int error;
+	int error, perror, i;
 
 	VERIFY0(dmu_object_info(dl->dl_os, obj, &doi));
 	if (doi.doi_type == DMU_OT_BPOBJ) {
@@ -841,16 +875,36 @@ dsl_deadlist_merge(dsl_deadlist_t *dl, uint64_t obj, dmu_tx_t *tx)
 		return;
 	}
 
+	za = kmem_alloc(sizeof (*za), KM_SLEEP);
+	pza = kmem_alloc(sizeof (*pza), KM_SLEEP);
+
 	mutex_enter(&dl->dl_lock);
+	/*
+	 * Prefetch up to 128 deadlists first and then more as we progress.
+	 * The limit is a balance between ARC use and diminishing returns.
+	 */
+	for (zap_cursor_init(&pzc, dl->dl_os, obj), i = 0;
+	    (perror = zap_cursor_retrieve(&pzc, pza)) == 0 && i < 128;
+	    zap_cursor_advance(&pzc), i++) {
+		dsl_deadlist_prefetch_bpobj(dl, pza->za_first_integer,
+		    zfs_strtonum(pza->za_name, NULL));
+	}
 	for (zap_cursor_init(&zc, dl->dl_os, obj);
-	    (error = zap_cursor_retrieve(&zc, &za)) == 0;
+	    (error = zap_cursor_retrieve(&zc, za)) == 0;
 	    zap_cursor_advance(&zc)) {
-		uint64_t mintxg = zfs_strtonum(za.za_name, NULL);
-		dsl_deadlist_insert_bpobj(dl, za.za_first_integer, mintxg, tx);
-		VERIFY0(zap_remove_int(dl->dl_os, obj, mintxg, tx));
+		dsl_deadlist_insert_bpobj(dl, za->za_first_integer,
+		    zfs_strtonum(za->za_name, NULL), tx);
+		VERIFY0(zap_remove(dl->dl_os, obj, za->za_name, tx));
+		if (perror == 0) {
+			dsl_deadlist_prefetch_bpobj(dl, pza->za_first_integer,
+			    zfs_strtonum(pza->za_name, NULL));
+			zap_cursor_advance(&pzc);
+			perror = zap_cursor_retrieve(&pzc, pza);
+		}
 	}
 	VERIFY3U(error, ==, ENOENT);
 	zap_cursor_fini(&zc);
+	zap_cursor_fini(&pzc);
 
 	VERIFY0(dmu_bonus_hold(dl->dl_os, obj, FTAG, &bonus));
 	dlp = bonus->db_data;
@@ -858,6 +912,9 @@ dsl_deadlist_merge(dsl_deadlist_t *dl, uint64_t obj, dmu_tx_t *tx)
 	memset(dlp, 0, sizeof (*dlp));
 	dmu_buf_rele(bonus, FTAG);
 	mutex_exit(&dl->dl_lock);
+
+	kmem_free(za, sizeof (*za));
+	kmem_free(pza, sizeof (*pza));
 }
 
 /*
@@ -868,8 +925,9 @@ dsl_deadlist_move_bpobj(dsl_deadlist_t *dl, bpobj_t *bpo, uint64_t mintxg,
     dmu_tx_t *tx)
 {
 	dsl_deadlist_entry_t dle_tofind;
-	dsl_deadlist_entry_t *dle;
+	dsl_deadlist_entry_t *dle, *pdle;
 	avl_index_t where;
+	int i;
 
 	ASSERT(!dl->dl_oldfmt);
 
@@ -881,11 +939,23 @@ dsl_deadlist_move_bpobj(dsl_deadlist_t *dl, bpobj_t *bpo, uint64_t mintxg,
 	dle = avl_find(&dl->dl_tree, &dle_tofind, &where);
 	if (dle == NULL)
 		dle = avl_nearest(&dl->dl_tree, where, AVL_AFTER);
+	/*
+	 * Prefetch up to 128 deadlists first and then more as we progress.
+	 * The limit is a balance between ARC use and diminishing returns.
+	 */
+	for (pdle = dle, i = 0; pdle && i < 128; i++) {
+		bpobj_prefetch_subobj(bpo, pdle->dle_bpobj.bpo_object);
+		pdle = AVL_NEXT(&dl->dl_tree, pdle);
+	}
 	while (dle) {
 		uint64_t used, comp, uncomp;
 		dsl_deadlist_entry_t *dle_next;
 
 		bpobj_enqueue_subobj(bpo, dle->dle_bpobj.bpo_object, tx);
+		if (pdle) {
+			bpobj_prefetch_subobj(bpo, pdle->dle_bpobj.bpo_object);
+			pdle = AVL_NEXT(&dl->dl_tree, pdle);
+		}
 
 		VERIFY0(bpobj_space(&dle->dle_bpobj,
 		    &used, &comp, &uncomp));
@@ -930,8 +1000,6 @@ livelist_compare(const void *larg, const void *rarg)
 	/* if vdevs are equal, sort by offsets. */
 	uint64_t l_dva0_offset = DVA_GET_OFFSET(&l->blk_dva[0]);
 	uint64_t r_dva0_offset = DVA_GET_OFFSET(&r->blk_dva[0]);
-	if (l_dva0_offset == r_dva0_offset)
-		ASSERT3U(l->blk_birth, ==, r->blk_birth);
 	return (TREE_CMP(l_dva0_offset, r_dva0_offset));
 }
 
@@ -946,9 +1014,9 @@ struct livelist_iter_arg {
  * and used to match up ALLOC/FREE pairs. ALLOC'd blkptrs without a
  * corresponding FREE are stored in the supplied bplist.
  *
- * Note that multiple FREE and ALLOC entries for the same blkptr may
- * be encountered when dedup is involved. For this reason we keep a
- * refcount for all the FREE entries of each blkptr and ensure that
+ * Note that multiple FREE and ALLOC entries for the same blkptr may be
+ * encountered when dedup or block cloning is involved.  For this reason we
+ * keep a refcount for all the FREE entries of each blkptr and ensure that
  * each of those FREE entries has a corresponding ALLOC preceding it.
  */
 static int
@@ -967,6 +1035,12 @@ dsl_livelist_iterate(void *arg, const blkptr_t *bp, boolean_t bp_freed,
 	livelist_entry_t node;
 	node.le_bp = *bp;
 	livelist_entry_t *found = avl_find(avl, &node, NULL);
+	if (found) {
+		ASSERT3U(BP_GET_PSIZE(bp), ==, BP_GET_PSIZE(&found->le_bp));
+		ASSERT3U(BP_GET_CHECKSUM(bp), ==,
+		    BP_GET_CHECKSUM(&found->le_bp));
+		ASSERT3U(BP_GET_BIRTH(bp), ==, BP_GET_BIRTH(&found->le_bp));
+	}
 	if (bp_freed) {
 		if (found == NULL) {
 			/* first free entry for this blkptr */
@@ -976,10 +1050,10 @@ dsl_livelist_iterate(void *arg, const blkptr_t *bp, boolean_t bp_freed,
 			e->le_refcnt = 1;
 			avl_add(avl, e);
 		} else {
-			/* dedup block free */
-			ASSERT(BP_GET_DEDUP(bp));
-			ASSERT3U(BP_GET_CHECKSUM(bp), ==,
-			    BP_GET_CHECKSUM(&found->le_bp));
+			/*
+			 * Deduped or cloned block free.  We could assert D bit
+			 * for dedup, but there is no such one for cloning.
+			 */
 			ASSERT3U(found->le_refcnt + 1, >, found->le_refcnt);
 			found->le_refcnt++;
 		}
@@ -995,14 +1069,6 @@ dsl_livelist_iterate(void *arg, const blkptr_t *bp, boolean_t bp_freed,
 				/* all tracked free pairs have been matched */
 				avl_remove(avl, found);
 				kmem_free(found, sizeof (livelist_entry_t));
-			} else {
-				/*
-				 * This is definitely a deduped blkptr so
-				 * let's validate it.
-				 */
-				ASSERT(BP_GET_DEDUP(bp));
-				ASSERT3U(BP_GET_CHECKSUM(bp), ==,
-				    BP_GET_CHECKSUM(&found->le_bp));
 			}
 		}
 	}
@@ -1028,13 +1094,18 @@ dsl_process_sub_livelist(bpobj_t *bpobj, bplist_t *to_free, zthr_t *t,
 	    .t = t
 	};
 	int err = bpobj_iterate_nofree(bpobj, dsl_livelist_iterate, &arg, size);
+	VERIFY(err != 0 || avl_numnodes(&avl) == 0);
 
-	VERIFY0(avl_numnodes(&avl));
+	void *cookie = NULL;
+	livelist_entry_t *le = NULL;
+	while ((le = avl_destroy_nodes(&avl, &cookie)) != NULL) {
+		kmem_free(le, sizeof (livelist_entry_t));
+	}
 	avl_destroy(&avl);
 	return (err);
 }
 
-ZFS_MODULE_PARAM(zfs_livelist, zfs_livelist_, max_entries, ULONG, ZMOD_RW,
+ZFS_MODULE_PARAM(zfs_livelist, zfs_livelist_, max_entries, U64, ZMOD_RW,
 	"Size to start the next sub-livelist in a livelist");
 
 ZFS_MODULE_PARAM(zfs_livelist, zfs_livelist_, min_percent_shared, INT, ZMOD_RW,

@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /* Routines for mapping device memory. */
 
 #include "opt_ddb.h"
@@ -167,39 +165,25 @@ devmap_register_table(const struct devmap_entry *table)
 /*
  * Map all of the static regions in the devmap table, and remember the devmap
  * table so the mapdev, ptov, and vtop functions can do lookups later.
- *
- * If a non-NULL table pointer is given it is used unconditionally, otherwise
- * the previously-registered table is used.  This smooths transition from legacy
- * code that fills in a local table then calls this function passing that table,
- * and newer code that uses devmap_register_table() in platform-specific
- * code, then lets the common platform-specific init function call this function
- * with a NULL pointer.
  */
 void
-devmap_bootstrap(vm_offset_t l1pt, const struct devmap_entry *table)
+devmap_bootstrap(void)
 {
 	const struct devmap_entry *pd;
 
 	devmap_bootstrap_done = true;
 
 	/*
-	 * If given a table pointer, use it.  Otherwise, if a table was
-	 * previously registered, use it.  Otherwise, no work to do.
+	 * If a table was previously registered, use it.  Otherwise, no work to
+	 * do.
 	 */
-	if (table != NULL)
-		devmap_table = table;
-	else if (devmap_table == NULL)
+	if (devmap_table == NULL)
 		return;
 
 	for (pd = devmap_table; pd->pd_size != 0; ++pd) {
 #if defined(__arm__)
-#if __ARM_ARCH >= 6
 		pmap_preboot_map_attr(pd->pd_pa, pd->pd_va, pd->pd_size,
 		    VM_PROT_READ | VM_PROT_WRITE, VM_MEMATTR_DEVICE);
-#else
-		pmap_map_chunk(l1pt, pd->pd_va, pd->pd_pa, pd->pd_size,
-		    VM_PROT_READ | VM_PROT_WRITE, PTE_DEVICE);
-#endif
 #elif defined(__aarch64__) || defined(__riscv)
 		pmap_kenter_device(pd->pd_va, pd->pd_size, pd->pd_pa);
 #endif
@@ -281,6 +265,13 @@ pmap_mapdev(vm_paddr_t pa, vm_size_t size)
 		    ("Too many early devmap mappings"));
 	} else
 #endif
+#ifdef __aarch64__
+	if (size >= L2_SIZE && (pa & L2_OFFSET) == 0)
+		va = kva_alloc_aligned(size, L2_SIZE);
+	else if (size >= L3C_SIZE && (pa & L3C_OFFSET) == 0)
+		va = kva_alloc_aligned(size, L3C_SIZE);
+	else
+#endif
 		va = kva_alloc(size);
 	if (!va)
 		panic("pmap_mapdev: Couldn't alloc kernel virtual memory");
@@ -311,6 +302,13 @@ pmap_mapdev_attr(vm_paddr_t pa, vm_size_t size, vm_memattr_t ma)
 		KASSERT(va >= (VM_MAX_KERNEL_ADDRESS - (PMAP_MAPDEV_EARLY_SIZE)),
 		    ("Too many early devmap mappings 2"));
 	} else
+#ifdef __aarch64__
+	if (size >= L2_SIZE && (pa & L2_OFFSET) == 0)
+		va = kva_alloc_aligned(size, L2_SIZE);
+	else if (size >= L3C_SIZE && (pa & L3C_OFFSET) == 0)
+		va = kva_alloc_aligned(size, L3C_SIZE);
+	else
+#endif
 		va = kva_alloc(size);
 	if (!va)
 		panic("pmap_mapdev: Couldn't alloc kernel virtual memory");
@@ -325,14 +323,15 @@ pmap_mapdev_attr(vm_paddr_t pa, vm_size_t size, vm_memattr_t ma)
  * Unmap device memory and free the kva space.
  */
 void
-pmap_unmapdev(vm_offset_t va, vm_size_t size)
+pmap_unmapdev(void *p, vm_size_t size)
 {
-	vm_offset_t offset;
+	vm_offset_t offset, va;
 
 	/* Nothing to do if we find the mapping in the static table. */
-	if (devmap_vtop((void*)va, size) != DEVMAP_PADDR_NOTFOUND)
+	if (devmap_vtop(p, size) != DEVMAP_PADDR_NOTFOUND)
 		return;
 
+	va = (vm_offset_t)p;
 	offset = va & PAGE_MASK;
 	va = trunc_page(va);
 	size = round_page(size + offset);

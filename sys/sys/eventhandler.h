@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999 Michael Smith <msmith@freebsd.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_EVENTHANDLER_H_
@@ -184,7 +182,14 @@ eventhandler_tag vimage_eventhandler_register(struct eventhandler_list *list,
 #define	EVENTHANDLER_PRI_ANY	10000
 #define	EVENTHANDLER_PRI_LAST	20000
 
-/* Shutdown events */
+/*
+ * Successive shutdown events invoked by kern_reboot(9).
+ *
+ * Handlers will receive the 'howto' value as their second argument.
+ *
+ * All handlers must be prepared to be executed from a panic/debugger context;
+ * see the man page for details.
+ */
 typedef void (*shutdown_fn)(void *, int);
 
 #define	SHUTDOWN_PRI_FIRST	EVENTHANDLER_PRI_FIRST
@@ -320,5 +325,10 @@ EVENTHANDLER_DECLARE(device_nomatch, device_nomatch_fn);
 struct ifaddr;
 typedef void (*rt_addrmsg_fn)(void *, struct ifaddr *, int);
 EVENTHANDLER_DECLARE(rt_addrmsg, rt_addrmsg_fn);
+
+/* Kernel environment variable change event */
+typedef void (*env_change_fn)(void *, const char *);
+EVENTHANDLER_DECLARE(setenv, env_change_fn);
+EVENTHANDLER_DECLARE(unsetenv, env_change_fn);
 
 #endif /* _SYS_EVENTHANDLER_H_ */

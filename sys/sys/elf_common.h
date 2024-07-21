@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2017, 2018 Dell EMC
  * Copyright (c) 2000, 2001, 2008, 2011, David E. O'Brien
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS_ELF_COMMON_H_
@@ -46,7 +44,7 @@
  * not include the padding.
  */
 
-#ifndef LOCORE
+#if !defined(LOCORE) && !defined(__ASSEMBLER__)
 typedef struct {
 	u_int32_t	n_namesz;	/* Length of name. */
 	u_int32_t	n_descsz;	/* Length of descriptor. */
@@ -114,7 +112,7 @@ typedef Elf_Note Elf_Nhdr;
  * The header for GNU-style hash sections.
  */
 
-#ifndef LOCORE
+#if !defined(LOCORE) && !defined(__ASSEMBLER__)
 typedef struct {
 	u_int32_t	gh_nbuckets;	/* Number of hash buckets. */
 	u_int32_t	gh_symndx;	/* First visible symbol in .dynsym. */
@@ -332,6 +330,7 @@ typedef struct {
 #define	EF_ARM_EABI_VER3	0x03000000
 #define	EF_ARM_EABI_VER4	0x04000000
 #define	EF_ARM_EABI_VER5	0x05000000
+#define	EF_ARM_EABI_VERSION(x)	((x) & EF_ARM_EABIMASK)
 #define	EF_ARM_INTERWORK	0x00000004
 #define	EF_ARM_APCS_26		0x00000008
 #define	EF_ARM_APCS_FLOAT	0x00000010
@@ -884,6 +883,9 @@ typedef struct {
 #define	STV_SINGLETON	0x5
 #define	STV_ELIMINATE	0x6
 
+/* Architecture specific data - st_other */
+#define	STO_AARCH64_VARIANT_PCS 0x80
+
 /* Special symbol table indexes. */
 #define	STN_UNDEF	0	/* Undefined symbol index. */
 
@@ -986,8 +988,10 @@ typedef struct {
 #define	AT_PS_STRINGS	32	/* struct ps_strings */
 #define	AT_FXRNG	33	/* Pointer to root RNG seed version. */
 #define	AT_KPRELOAD	34	/* Base of vdso, preloaded by rtld */
+#define	AT_USRSTACKBASE	35	/* Top of user stack */
+#define	AT_USRSTACKLIM	36	/* Grow limit of user stack */
 
-#define	AT_COUNT	35	/* Count of defined aux entry types. */
+#define	AT_COUNT	37	/* Count of defined aux entry types. */
 
 /*
  * Relocation types.
@@ -1158,7 +1162,7 @@ typedef struct {
 #define	R_IA_64_PCREL22		0x7a	/* immediate22	S + A - P */
 #define	R_IA_64_PCREL64I	0x7b	/* immediate64	S + A - P */
 #define	R_IA_64_IPLTMSB		0x80	/* function descriptor MSB special */
-#define	R_IA_64_IPLTLSB		0x81	/* function descriptor LSB speciaal */
+#define	R_IA_64_IPLTLSB		0x81	/* function descriptor LSB special */
 #define	R_IA_64_SUB		0x85	/* immediate64	A - S */
 #define	R_IA_64_LTOFF22X	0x86	/* immediate22	special */
 #define	R_IA_64_LDXMOV		0x87	/* immediate22	special */
@@ -1361,8 +1365,6 @@ typedef struct {
 #define	R_RISCV_SUB16		38
 #define	R_RISCV_SUB32		39
 #define	R_RISCV_SUB64		40
-#define	R_RISCV_GNU_VTINHERIT	41
-#define	R_RISCV_GNU_VTENTRY	42
 #define	R_RISCV_ALIGN		43
 #define	R_RISCV_RVC_BRANCH	44
 #define	R_RISCV_RVC_JUMP	45
@@ -1501,5 +1503,6 @@ typedef struct {
 #define	R_X86_64_REX_GOTPCRELX	42
 
 #define	ELF_BSDF_SIGFASTBLK	0x0001	/* Kernel supports fast sigblock */
+#define	ELF_BSDF_VMNOOVERCOMMIT	0x0002
 
 #endif /* !_SYS_ELF_COMMON_H_ */

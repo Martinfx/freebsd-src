@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTS=	float
 CFLAGS+=-lm
 

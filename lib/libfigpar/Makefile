@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	dpv
 LIB=		figpar
 SHLIB_MAJOR=	0

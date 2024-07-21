@@ -1,7 +1,6 @@
-# $FreeBSD$
-
 .PATH: ${.CURDIR:H}/common_source
 
+PACKAGE=lp
 PROG=	chkprintcap
 MAN=	chkprintcap.8
 SRCS=	chkprintcap.c skimprintcap.c

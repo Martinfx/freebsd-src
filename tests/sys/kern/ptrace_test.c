@@ -23,9 +23,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/cpuset.h>
 #include <sys/elf.h>
@@ -34,7 +31,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/time.h>
 #include <sys/procctl.h>
 #include <sys/procdesc.h>
-#define	_WANT_MIPS_REGNUM
 #include <sys/ptrace.h>
 #include <sys/procfs.h>
 #include <sys/queue.h>
@@ -59,8 +55,7 @@ __FBSDID("$FreeBSD$");
  * Architectures with a user-visible breakpoint().
  */
 #if defined(__aarch64__) || defined(__amd64__) || defined(__arm__) ||	\
-    defined(__i386__) || defined(__mips__) || defined(__riscv) ||	\
-    defined(__sparc64__)
+    defined(__i386__) || defined(__riscv)
 #define	HAVE_BREAKPOINT
 #endif
 
@@ -74,15 +69,8 @@ __FBSDID("$FreeBSD$");
 #define	SKIP_BREAK(reg)
 #elif defined(__arm__)
 #define	SKIP_BREAK(reg)	((reg)->r_pc += 4)
-#elif defined(__mips__)
-#define	SKIP_BREAK(reg)	((reg)->r_regs[PC] += 4)
 #elif defined(__riscv)
 #define	SKIP_BREAK(reg)	((reg)->sepc += 4)
-#elif defined(__sparc64__)
-#define	SKIP_BREAK(reg)	do {						\
-	(reg)->r_tpc = (reg)->r_tnpc + 4;				\
-	(reg)->r_tnpc += 8;						\
-} while (0)
 #endif
 #endif
 
@@ -4327,9 +4315,107 @@ ATF_TC_BODY(ptrace__procdesc_reparent_wait_child, tc)
 	REQUIRE_EQ(close(pd), 0);
 }
 
+/*
+ * Try using PT_SC_REMOTE to get the PID of a traced child process.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__PT_SC_REMOTE_getpid);
+ATF_TC_BODY(ptrace__PT_SC_REMOTE_getpid, tc)
+{
+	struct ptrace_sc_remote pscr;
+	pid_t fpid, wpid;
+	int status;
+
+	ATF_REQUIRE((fpid = fork()) != -1);
+	if (fpid == 0) {
+		trace_me();
+		exit(0);
+	}
+
+	attach_child(fpid);
+
+	pscr.pscr_syscall = SYS_getpid;
+	pscr.pscr_nargs = 0;
+	pscr.pscr_args = NULL;
+	ATF_REQUIRE(ptrace(PT_SC_REMOTE, fpid, (caddr_t)&pscr, sizeof(pscr)) !=
+	    -1);
+	ATF_REQUIRE_MSG(pscr.pscr_ret.sr_error == 0,
+	    "remote getpid failed with error %d", pscr.pscr_ret.sr_error);
+	ATF_REQUIRE_MSG(pscr.pscr_ret.sr_retval[0] == fpid,
+	    "unexpected return value %jd instead of %d",
+	    (intmax_t)pscr.pscr_ret.sr_retval[0], fpid);
+
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	pscr.pscr_syscall = SYS_getppid;
+	pscr.pscr_nargs = 0;
+	pscr.pscr_args = NULL;
+	ATF_REQUIRE(ptrace(PT_SC_REMOTE, fpid, (caddr_t)&pscr, sizeof(pscr)) !=
+	    -1);
+	ATF_REQUIRE_MSG(pscr.pscr_ret.sr_error == 0,
+	    "remote getppid failed with error %d", pscr.pscr_ret.sr_error);
+	ATF_REQUIRE_MSG(pscr.pscr_ret.sr_retval[0] == getpid(),
+	    "unexpected return value %jd instead of %d",
+	    (intmax_t)pscr.pscr_ret.sr_retval[0], fpid);
+
+	wpid = waitpid(fpid, &status, 0);
+	REQUIRE_EQ(wpid, fpid);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	ATF_REQUIRE(ptrace(PT_DETACH, fpid, (caddr_t)1, 0) != -1);
+}
+
+/*
+ * Ensure that procctl(PROC_REAP_KILL) won't block forever waiting for a target
+ * process that stopped to report its status to a debugger.
+ */
+ATF_TC_WITHOUT_HEAD(ptrace__reap_kill_stopped);
+ATF_TC_BODY(ptrace__reap_kill_stopped, tc)
+{
+	struct procctl_reaper_kill prk;
+	pid_t debuggee, wpid;
+	int error, status;
+
+	REQUIRE_EQ(procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL), 0);
+
+	debuggee = fork();
+	ATF_REQUIRE(debuggee >= 0);
+	if (debuggee == 0) {
+		trace_me();
+		for (;;)
+			sleep(10);
+		_exit(0);
+	}
+	wpid = waitpid(debuggee, &status, 0);
+	REQUIRE_EQ(wpid, debuggee);
+	ATF_REQUIRE(WIFSTOPPED(status));
+	REQUIRE_EQ(WSTOPSIG(status), SIGSTOP);
+
+	/* Resume the child and ask it to stop during syscall exits. */
+	ATF_REQUIRE(ptrace(PT_TO_SCX, debuggee, (caddr_t)1, 0) != -1);
+
+	/* Give the debuggee some time to go to sleep. */
+	usleep(100000);
+
+	/*
+	 * Kill the child process.  procctl() may attempt to stop the target
+	 * process to prevent it from adding new children to the reaper subtree,
+	 * and this should not conflict with the child stopping itself for the
+	 * debugger.
+	 */
+	memset(&prk, 0, sizeof(prk));
+	prk.rk_sig = SIGTERM;
+	error = procctl(P_PID, getpid(), PROC_REAP_KILL, &prk);
+	REQUIRE_EQ(error, 0);
+	REQUIRE_EQ(1u, prk.rk_killed);
+	REQUIRE_EQ(-1, prk.rk_fpid);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
-
 	ATF_TP_ADD_TC(tp, ptrace__parent_wait_after_trace_me);
 	ATF_TP_ADD_TC(tp, ptrace__parent_wait_after_attach);
 	ATF_TP_ADD_TC(tp, ptrace__parent_sees_exit_after_child_debugger);
@@ -4393,6 +4479,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ptrace__proc_reparent);
 	ATF_TP_ADD_TC(tp, ptrace__procdesc_wait_child);
 	ATF_TP_ADD_TC(tp, ptrace__procdesc_reparent_wait_child);
+	ATF_TP_ADD_TC(tp, ptrace__PT_SC_REMOTE_getpid);
+	ATF_TP_ADD_TC(tp, ptrace__reap_kill_stopped);
 
 	return (atf_no_error());
 }

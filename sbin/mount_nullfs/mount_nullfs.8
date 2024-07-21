@@ -30,10 +30,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\"     @(#)mount_null.8	8.6 (Berkeley) 5/1/95
-.\" $FreeBSD$
-.\"
-.Dd May 6, 2022
+.Dd March 24, 2024
 .Dt MOUNT_NULLFS 8
 .Os
 .Sh NAME
@@ -48,7 +45,8 @@
 The
 .Nm
 utility creates a
-null layer, duplicating a sub-tree of the file system
+.Xr nullfs 4
+layer, duplicating a sub-tree of the file system
 name space under another part of the global file system namespace.
 This allows existing files and directories to be accessed
 using a different pathname.
@@ -61,6 +59,17 @@ may be mounted on the virtual copy without affecting the original.
 A different device number for the virtual copy is returned by
 .Xr stat 2 ,
 but in other respects it is indistinguishable from the original.
+.Pp
+The
+.Nm
+utility supports mounting both directories and single files.
+Both
+.Ar target
+and
+.Ar mount_point
+must be the same type.
+Mounting directories to files or files to
+directories is not supported.
 .Pp
 The
 .Nm
@@ -81,14 +90,20 @@ See the
 .Xr mount 8
 man page for possible options and their meanings.
 Additionally the following option is supported:
-.Bl -tag -width indent
+.Bl -tag -width nocache
 .It Cm nocache
 Disable metadata caching in the null layer.
 Some lower-layer file systems may force this option.
 Depending on the access pattern,
 this may result in increased lock contention.
+.It Cm cache
+Force enable metadata caching.
 .El
 .El
+.Pp
+The
+.Dv vfs.nullfs.cache_vnodes
+sysctl specifies global default for mount-specific cache/nocache option.
 .Pp
 The null layer has two purposes.
 First, it serves as a demonstration of layering by providing a layer
@@ -242,6 +257,7 @@ is that vnode arguments must be manually mapped.
 .\"
 .\"
 .Sh SEE ALSO
+.Xr nullfs 4 ,
 .Xr mount 8
 .Pp
 UCLA Technical Report CSD-910056,

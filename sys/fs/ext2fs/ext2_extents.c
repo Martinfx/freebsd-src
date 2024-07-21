@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 Zheng Liu <lz@freebsd.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -713,7 +711,7 @@ ext4_ext_tree_init(struct inode *ip)
 
 	ip->i_flag |= IN_E4EXTENTS;
 
-	memset(ip->i_data, 0, EXT2_NDADDR + EXT2_NIADDR);
+	memset(ip->i_data, 0, sizeof(ip->i_data));
 	ehp = (struct ext4_extent_header *)ip->i_data;
 	ehp->eh_magic = htole16(EXT4_EXT_MAGIC);
 	ehp->eh_max = htole16(ext4_ext_space_root(ip));
@@ -1099,8 +1097,10 @@ ext4_ext_grow_indepth(struct inode *ip, struct ext4_extent_path *path,
 		return (error);
 
 	bp = getblk(ip->i_devvp, fsbtodb(fs, newblk), fs->e2fs_bsize, 0, 0, 0);
-	if (!bp)
+	if (!bp) {
+		ext4_ext_blkfree(ip, newblk, 1, 0);
 		return (EIO);
+	}
 
 	/* Move top-level index/leaf into new block. */
 	memmove(bp->b_data, curpath->ep_header, sizeof(ip->i_data));
@@ -1116,8 +1116,10 @@ ext4_ext_grow_indepth(struct inode *ip, struct ext4_extent_path *path,
 
 	ext2_extent_blk_csum_set(ip, bp->b_data);
 	error = bwrite(bp);
-	if (error)
+	if (error) {
+		ext4_ext_blkfree(ip, newblk, 1, 0);
 		goto out;
+	}
 
 	bp = NULL;
 

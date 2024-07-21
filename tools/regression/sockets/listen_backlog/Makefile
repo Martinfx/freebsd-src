@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	listen_backlog
 MAN=
 

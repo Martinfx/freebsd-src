@@ -35,15 +35,11 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/bio.h>
-#include <sys/sysctl.h>
 #include <sys/proc.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -88,10 +84,8 @@ g_slice_free(struct g_geom *gp)
 	if (gsp == NULL)
 		return;
 	g_free(gsp->slices);
-	if (gsp->hotspot != NULL)
-		g_free(gsp->hotspot);
-	if (gsp->softc != NULL)
-		g_free(gsp->softc);
+	g_free(gsp->hotspot);
+	g_free(gsp->softc);
 	g_free(gsp);
 }
 

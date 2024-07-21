@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Ed Schouten <ed@FreeBSD.org>
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -37,11 +34,12 @@ __FBSDID("$FreeBSD$");
 #include <paths.h>
 #include <stdio.h>
 #include <string.h>
+#include <ssp/ssp.h>
 
 #define	LEN_PATH_DEV	(sizeof(_PATH_DEV) - 1)
 
 char *
-ctermid(char *s)
+__ssp_real(ctermid)(char *s)
 {
 	static char def[sizeof(_PATH_DEV) + SPECNAMELEN];
 	struct stat sb;
@@ -65,7 +63,7 @@ ctermid(char *s)
 }
 
 char *
-ctermid_r(char *s)
+__ssp_real(ctermid_r)(char *s)
 {
 
 	return (s != NULL ? ctermid(s) : NULL);

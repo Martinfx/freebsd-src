@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=		tests
 
 FILESYSTEM?=		${.CURDIR:T}

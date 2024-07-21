@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002-2009 Luigi Rizzo, Universita` di Pisa
  *
@@ -23,8 +23,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _IPFW2_H
@@ -298,6 +296,9 @@ enum ipfw_opcodes {		/* arguments (4 byte each)	*/
 	O_MAC_SRC_LOOKUP,	/* arg1=table number, u32=value */
 	O_MAC_DST_LOOKUP,	/* arg1=table number, u32=value */
 
+	O_SETMARK,		/* u32 = value */
+	O_MARK,			/* 2 u32 = value, bitmask */
+
 	O_LAST_OPCODE		/* not an opcode!		*/
 };
 
@@ -314,6 +315,7 @@ enum ipfw_table_lookup_type {
 	LOOKUP_DSCP,
 	LOOKUP_DST_MAC,
 	LOOKUP_SRC_MAC,
+	LOOKUP_MARK,
 };
 
 /*
@@ -790,6 +792,7 @@ struct _ipfw_dyn_rule {
 #define	IPFW_VTYPE_LIMIT	0x00000100	/* limit */
 #define	IPFW_VTYPE_NH4		0x00000200	/* IPv4 nexthop */
 #define	IPFW_VTYPE_NH6		0x00000400	/* IPv6 nexthop */
+#define	IPFW_VTYPE_MARK		0x00000800	/* [fw]mark */
 
 /* MAC/InfiniBand/etc address length */
 #define	IPFW_MAX_L2_ADDR_LEN	20
@@ -888,6 +891,7 @@ struct tflow_entry {
 	} a;
 };
 
+/* 64-byte structure representing multi-field table value */
 typedef struct _ipfw_table_value {
 	uint32_t	tag;		/* O_TAG/O_TAGGED */
 	uint32_t	pipe;		/* O_PIPE/O_QUEUE */
@@ -899,11 +903,12 @@ typedef struct _ipfw_table_value {
 	uint32_t	nh4;
 	uint8_t		dscp;
 	uint8_t		spare0;
-	uint16_t	spare1;
+	uint16_t	kidx;		/* value kernel index */
 	struct in6_addr	nh6;
 	uint32_t	limit;		/* O_LIMIT */
 	uint32_t	zoneid;		/* scope zone id for nh6 */
-	uint64_t	reserved;
+	uint32_t	mark;		/* O_SETMARK/O_MARK */
+	uint32_t	refcnt;		/* XXX 64-bit in kernel */
 } ipfw_table_value;
 
 /* Table entry TLV */
@@ -974,7 +979,7 @@ typedef struct _ipfw_range_tlv {
 #define	IPFW_RCFLAG_USER	(IPFW_RCFLAG_RANGE | IPFW_RCFLAG_ALL | \
 	IPFW_RCFLAG_SET | IPFW_RCFLAG_DYNAMIC)
 /* Internally used flags */
-#define	IPFW_RCFLAG_DEFAULT	0x0100	/* Do not skip defaul rule	*/
+#define	IPFW_RCFLAG_DEFAULT	0x0100	/* Do not skip default rule	*/
 
 typedef struct _ipfw_ta_tinfo {
 	uint32_t	flags;		/* Format flags			*/

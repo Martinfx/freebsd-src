@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/nctgpio
 KMOD=	nctgpio
 SRCS=	nctgpio.c

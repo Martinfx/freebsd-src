@@ -60,9 +60,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/buf.h>
 #include <sys/module.h>
@@ -289,7 +286,7 @@ fuse_vfsop_fhtovp(struct mount *mp, struct fid *fhp, int flags,
 		return (ESTALE);
 	}
 	*vpp = nvp;
-	vnode_create_vobject(*vpp, 0, curthread);
+	vnode_create_vobject(*vpp, VNODE_NO_SIZE, curthread);
 	return (0);
 }
 
@@ -543,7 +540,7 @@ fuse_vfsop_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	struct fuse_vnode_data *fvdat;
 	struct timespec now;
 	const char dot[] = ".";
-	enum vtype vtyp;
+	__enum_uint8(vtype) vtyp;
 	int error;
 
 	if (!(data->dataflags & FSESS_EXPORT_SUPPORT)) {
@@ -624,8 +621,7 @@ fuse_vfsop_root(struct mount *mp, int lkflags, struct vnode **vpp)
 				SDT_PROBE2(fusefs, , vfsops, trace, 1,
 					"root vnode race");
 				FUSE_UNLOCK();
-				VOP_UNLOCK(*vpp);
-				vrele(*vpp);
+				vput(*vpp);
 				vrecycle(*vpp);
 				*vpp = data->vroot;
 			} else

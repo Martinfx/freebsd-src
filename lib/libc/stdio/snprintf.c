@@ -37,12 +37,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)snprintf.c	8.1 (Berkeley) 6/4/93";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -50,6 +44,8 @@ __FBSDID("$FreeBSD$");
 #include "xlocale_private.h"
 
 #include "local.h"
+
+#undef snprintf	/* _FORTIFY_SOURCE */
 
 int
 snprintf(char * __restrict str, size_t n, char const * __restrict fmt, ...)

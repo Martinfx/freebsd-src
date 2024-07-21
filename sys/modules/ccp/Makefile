@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/crypto/ccp
 
 KMOD=	ccp

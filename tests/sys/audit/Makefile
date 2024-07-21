@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTSDIR=	${TESTSBASE}/sys/audit
 
 ATF_TESTS_C=	file-attribute-access

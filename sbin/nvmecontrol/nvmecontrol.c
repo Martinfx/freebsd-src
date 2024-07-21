@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2012-2013 Intel Corporation
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/ioccom.h>
@@ -148,9 +145,12 @@ read_namespace_data(int fd, uint32_t nsid, struct nvme_namespace_data *nsdata)
 int
 open_dev(const char *str, int *fd, int write, int exit_on_error)
 {
-	char		full_path[64];
+	char		full_path[MAXPATHLEN];
 
-	snprintf(full_path, sizeof(full_path), _PATH_DEV"%s", str);
+	if (str[0] == '/')	/* Full path */
+		strlcpy(full_path, str, sizeof(full_path));
+	else			/* Add /dev/ */
+		snprintf(full_path, sizeof(full_path), _PATH_DEV"%s", str);
 	*fd = open(full_path, write ? O_RDWR : O_RDONLY);
 	if (*fd < 0) {
 		if (exit_on_error) {

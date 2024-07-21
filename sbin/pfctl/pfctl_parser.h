@@ -29,8 +29,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _PFCTL_PARSER_H_
@@ -77,6 +75,7 @@ struct pfr_buffer;	/* forward definition */
 
 struct pfctl {
 	int dev;
+	struct pfctl_handle *h;
 	int opts;
 	int optimize;
 	int loadopt;
@@ -101,6 +100,7 @@ struct pfctl {
 	u_int32_t	 limit[PF_LIMIT_MAX];
 	u_int32_t	 debug;
 	u_int32_t	 hostid;
+	u_int32_t	 reassemble;
 	char		*ifname;
 	bool		 keep_counters;
 	u_int8_t	 syncookies;
@@ -112,6 +112,7 @@ struct pfctl {
 	u_int8_t	 debug_set;
 	u_int8_t	 hostid_set;
 	u_int8_t	 ifname_set;
+	u_int8_t	 reass_set;
 };
 
 struct node_if {
@@ -284,12 +285,13 @@ int	pfctl_add_pool(struct pfctl *, struct pfctl_pool *, sa_family_t);
 void	pfctl_move_pool(struct pfctl_pool *, struct pfctl_pool *);
 void	pfctl_clear_pool(struct pfctl_pool *);
 
-int	pfctl_set_timeout(struct pfctl *, const char *, int, int);
+int	pfctl_apply_timeout(struct pfctl *, const char *, int, int);
+int	pfctl_set_reassembly(struct pfctl *, int, int);
 int	pfctl_set_optimization(struct pfctl *, const char *);
-int	pfctl_set_limit(struct pfctl *, const char *, unsigned int);
+int	pfctl_apply_limit(struct pfctl *, const char *, unsigned int);
 int	pfctl_set_logif(struct pfctl *, char *);
 int	pfctl_set_hostid(struct pfctl *, u_int32_t);
-int	pfctl_set_debug(struct pfctl *, char *);
+int	pfctl_do_set_debug(struct pfctl *, char *);
 int	pfctl_set_interface_flags(struct pfctl *, char *, int, int);
 int	pfctl_cfg_syncookies(struct pfctl *, uint8_t, struct pfctl_watermarks *);
 
@@ -337,10 +339,10 @@ struct icmpcodeent {
 	u_int8_t code;
 };
 
-const struct icmptypeent *geticmptypebynumber(u_int8_t, u_int8_t);
-const struct icmptypeent *geticmptypebyname(char *, u_int8_t);
-const struct icmpcodeent *geticmpcodebynumber(u_int8_t, u_int8_t, u_int8_t);
-const struct icmpcodeent *geticmpcodebyname(u_long, char *, u_int8_t);
+const struct icmptypeent *geticmptypebynumber(u_int8_t, sa_family_t);
+const struct icmptypeent *geticmptypebyname(char *, sa_family_t);
+const struct icmpcodeent *geticmpcodebynumber(u_int8_t, u_int8_t, sa_family_t);
+const struct icmpcodeent *geticmpcodebyname(u_long, char *, sa_family_t);
 
 struct pf_timeout {
 	const char	*name;
@@ -359,6 +361,7 @@ extern const struct pf_timeout pf_timeouts[];
 void			 set_ipmask(struct node_host *, u_int8_t);
 int			 check_netmask(struct node_host *, sa_family_t);
 int			 unmask(struct pf_addr *, sa_family_t);
+struct node_host	*gen_dynnode(struct node_host *, sa_family_t);
 void			 ifa_load(void);
 int			 get_query_socket(void);
 struct node_host	*ifa_exists(char *);

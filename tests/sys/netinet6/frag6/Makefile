@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	tests
 
 TESTSDIR=	${TESTSBASE}/sys/netinet6/frag6
@@ -29,6 +27,8 @@ ATF_TESTS_SH=			\
 				frag6_18 \
 				frag6_19 \
 				frag6_20
+
+TEST_METADATA+=	is_exclusive=true
 
 ${PACKAGE}FILES+=		frag6.subr
 ${PACKAGE}FILES+=		sniffer.py

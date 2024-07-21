@@ -8,8 +8,6 @@
  * this stuff is worth it, you can buy me a beer in return.   Poul-Henning Kamp
  * ----------------------------------------------------------------------------
  *
- * $FreeBSD$
- *
  */
 
 #ifndef _SYS_DISK_H_
@@ -22,10 +20,6 @@
 #include <sys/socket.h>
 
 #ifdef _KERNEL
-
-#ifndef _SYS_CONF_H_
-#include <sys/conf.h>	/* XXX: temporary to avoid breakage */
-#endif
 
 void disk_err(struct bio *bp, const char *what, int blkdone, int nl);
 
@@ -84,7 +78,7 @@ void disk_err(struct bio *bp, const char *what, int blkdone, int nl);
 	 *   only if they point at exactly the same physical storage, this is
 	 *   the case for multipathing for example,
 	 * - GEOM classes that consumes single providers and provide single
-	 *   providers, like geli, gbde, should just attach class name to the
+	 *   providers, like geli, should just attach class name to the
 	 *   ident of the underlying provider,
 	 * - ident is an ASCII string (is printable),
 	 * - ident is optional and applications can't relay on its presence.

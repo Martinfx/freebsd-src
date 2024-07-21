@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Robert N. M. Watson
  * All rights reserved.
@@ -28,9 +28,6 @@
 /*
  * TrustedBSD: Utility functions for extended attributes.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include <sys/extattr.h>

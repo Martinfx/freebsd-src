@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007 Lukas Ertl
  * Copyright (c) 2007, 2009 Ulf Lilleengen
@@ -26,9 +26,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bio.h>
@@ -140,8 +137,7 @@ gv_create_drive(struct gv_softc *sc, struct gv_drive *d)
 			g_topology_unlock();
 			G_VINUM_DEBUG(0, "create drive '%s': unable to update "
 			    "access counts", d->name);
-			if (d->hdr != NULL)
-				g_free(d->hdr);
+			g_free(d->hdr);
 			g_free(d);
 			return (GV_ERR_CREATE);
 		}

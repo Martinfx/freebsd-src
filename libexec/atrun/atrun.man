@@ -1,4 +1,3 @@
-.\" $FreeBSD$
 .Dd June 22, 2015
 .Dt ATRUN 8
 .Os
@@ -17,7 +16,7 @@ runs jobs queued by
 The system
 .Xr crontab 5
 file
-.Pa /etc/crontab
+.Pa /etc/cron.d/at
 must contain the line
 .Bd -literal
 */5     *       *       *       *       root    /usr/libexec/atrun

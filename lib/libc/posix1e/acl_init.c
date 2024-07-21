@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1999, 2000, 2001 Robert N. M. Watson
  * All rights reserved.
@@ -29,9 +29,6 @@
  * acl_init -- return a fresh acl structure
  * acl_dup -- duplicate an acl and return the new copy
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #include "namespace.h"

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifdef __i386__
@@ -56,8 +54,8 @@ __curthread(void)
 {
 	struct thread *td;
 
-	__asm("movq %%gs:%P1,%0" : "=r" (td) : "n" (offsetof(struct pcpu,
-	    pc_curthread)));
+	__asm("movq %%gs:%c1,%0" : "=r" (td)
+	    : "i" (offsetof(struct pcpu, pc_curthread)));
 	return (td);
 }
 #define	curthread		(__curthread())

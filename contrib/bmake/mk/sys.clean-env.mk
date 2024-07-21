@@ -1,4 +1,6 @@
-# $Id: sys.clean-env.mk,v 1.24 2022/01/15 17:34:42 sjg Exp $
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# $Id: sys.clean-env.mk,v 1.26 2024/02/17 17:26:57 sjg Exp $
 #
 #	@(#) Copyright (c) 2009, Simon J. Gerraty
 #
@@ -68,7 +70,7 @@ MAKE_ENV_SAVE_VAR_LIST += \
 	USER \
 	${_env_vars:${MAKE_ENV_SAVE_EXCLUDE_LIST:${M_ListToSkip}}}
 
-_env_vars != env | egrep '^(${MAKE_ENV_SAVE_PREFIX_LIST:ts|})' | sed 's,=.*,,'; echo
+_env_vars != env | ${EGREP:Uegrep} '^(${MAKE_ENV_SAVE_PREFIX_LIST:ts|})' | sed 's,=.*,,'; echo
 
 _export_list =
 .for v in ${MAKE_ENV_SAVE_VAR_LIST:O:u}
@@ -125,6 +127,6 @@ MAKEOBJDIR = ${.CURDIR:S,${SRCTOP},${OBJTOP},}
 .endif
 #.info ${_tricky_env_vars:@v@${.newline}$v=${$v}@}
 #showenv:
-#	@env | egrep 'OBJ|SRC'
+#	@env | ${EGREP:Uegrep} 'OBJ|SRC'
 .endif				# MAKEOBJDIR
 .endif				# level 0

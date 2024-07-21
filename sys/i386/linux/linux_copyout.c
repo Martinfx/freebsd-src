@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 The FreeBSD Foundation
  *
@@ -28,16 +28,11 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include "opt_compat.h"
-
 #include <sys/param.h>
-#include <sys/systm.h>
 #include <sys/imgact.h>
 #include <sys/lock.h>
 #include <sys/sx.h>
+
 #include <vm/vm.h>
 #include <vm/vm_param.h>
 #include <vm/vm_extern.h>
@@ -46,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/atomic.h>
 #include <machine/md_var.h>
 
+#include <i386/linux/linux.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_futex.h>
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2019 Dell EMC Isilon
 #
@@ -150,6 +150,8 @@ test(void)
 	}
 	close(fd);
 	unlink(file);
+	if (success == 0)
+		fprintf(stderr, "No calls to fcntl() succeeded.\n");
 
 	_exit(0);
 }

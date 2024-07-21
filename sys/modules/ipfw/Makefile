@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/netpfil/ipfw
 
 KMOD=	ipfw

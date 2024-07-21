@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 David Schultz <das@FreeBSD.org>
  * All rights reserved.
@@ -26,13 +26,12 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <wchar.h>
+#include <ssp/ssp.h>
 
 wchar_t *
-wcpncpy(wchar_t * __restrict dst, const wchar_t * __restrict src, size_t n)
+__ssp_real(wcpncpy)(wchar_t * __restrict dst, const wchar_t * __restrict src,
+    size_t n)
 {
 
 	for (; n--; dst++, src++) {

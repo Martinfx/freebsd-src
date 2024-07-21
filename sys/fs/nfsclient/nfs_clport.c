@@ -34,8 +34,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 
@@ -79,7 +77,6 @@ extern u_int32_t newnfs_true, newnfs_false, newnfs_xdrneg1;
 extern struct vop_vector newnfs_vnodeops;
 extern struct vop_vector newnfs_fifoops;
 extern uma_zone_t newnfsnode_zone;
-extern struct buf_ops buf_ops_newnfs;
 extern uma_zone_t ncl_pbuf_zone;
 extern short nfsv4_cbport;
 extern int nfscl_enablecallb;
@@ -139,6 +136,19 @@ nfscl_nget(struct mount *mntp, struct vnode *dvp, struct nfsfh *nfhp,
 	nmp = VFSTONFS(mntp);
 	dnp = VTONFS(dvp);
 	*npp = NULL;
+
+	/*
+	 * If this is the mount point fh and NFSMNTP_FAKEROOT is set, replace
+	 * it with the fake fh.
+	 */
+	if ((nmp->nm_privflag & NFSMNTP_FAKEROOTFH) != 0 &&
+	    nmp->nm_fhsize > 0 && nmp->nm_fhsize == nfhp->nfh_len &&
+	    !NFSBCMP(nmp->nm_fh, nfhp->nfh_fh, nmp->nm_fhsize)) {
+		free(nfhp, M_NFSFH);
+		nfhp = malloc(sizeof(struct nfsfh) + NFSX_FHMAX + 1,
+		    M_NFSFH, M_WAITOK | M_ZERO);
+		nfhp->nfh_len = NFSX_FHMAX + 1;
+	}
 
 	hash = fnv_32_buf(nfhp->nfh_fh, nfhp->nfh_len, FNV1_32_INIT);
 
@@ -224,7 +234,6 @@ nfscl_nget(struct mount *mntp, struct vnode *dvp, struct nfsfh *nfhp,
 	}
 	vp = nvp;
 	KASSERT(vp->v_bufobj.bo_bsize != 0, ("nfscl_nget: bo_bsize == 0"));
-	vp->v_bufobj.bo_ops = &buf_ops_newnfs;
 	vp->v_data = np;
 	np->n_vnode = vp;
 	/* 
@@ -241,8 +250,9 @@ nfscl_nget(struct mount *mntp, struct vnode *dvp, struct nfsfh *nfhp,
 	 * Are we getting the root? If so, make sure the vnode flags
 	 * are correct 
 	 */
-	if ((nfhp->nfh_len == nmp->nm_fhsize) &&
-	    !bcmp(nfhp->nfh_fh, nmp->nm_fh, nfhp->nfh_len)) {
+	if (nfhp->nfh_len == NFSX_FHMAX + 1 ||
+	    (nfhp->nfh_len == nmp->nm_fhsize &&
+	     !bcmp(nfhp->nfh_fh, nmp->nm_fh, nfhp->nfh_len))) {
 		if (vp->v_type == VNON)
 			vp->v_type = VDIR;
 		vp->v_vflag |= VV_ROOT;
@@ -252,10 +262,10 @@ nfscl_nget(struct mount *mntp, struct vnode *dvp, struct nfsfh *nfhp,
 
 	np->n_fhp = nfhp;
 	/*
-	 * For NFSv4, we have to attach the directory file handle and
+	 * For NFSv4.0, we have to attach the directory file handle and
 	 * file name, so that Open Ops can be done later.
 	 */
-	if (nmp->nm_flag & NFSMNT_NFSV4) {
+	if (NFSHASNFSV4(nmp) && !NFSHASNFSV4N(nmp)) {
 		np->n_v4 = malloc(sizeof (struct nfsv4node)
 		    + dnp->n_fhp->nfh_len + cnp->cn_namelen - 1, M_NFSV4NODE,
 		    M_WAITOK);
@@ -286,6 +296,7 @@ nfscl_nget(struct mount *mntp, struct vnode *dvp, struct nfsfh *nfhp,
 		uma_zfree(newnfsnode_zone, np);
 		return (error);
 	}
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
 	error = vfs_hash_insert(vp, hash, lkflags, 
 	    td, &nvp, newnfs_vncmpf, nfhp);
 	if (error)
@@ -492,9 +503,15 @@ nfscl_loadattrcache(struct vnode **vpp, struct nfsvattr *nap, void *nvaper,
 		 * this reliably with Clang and .c files during parallel build.
 		 * A pcap revealed packet fragmentation and GETATTR RPC
 		 * responses with wholly wrong fileids.
+		 * For the case where the file handle is a fake one
+		 * generated via the "syskrb5" mount option and
+		 * the old fileid is 2, ignore the test, since this might
+		 * be replacing the fake attributes with correct ones.
 		 */
 		if ((np->n_vattr.na_fileid != 0 &&
-		     np->n_vattr.na_fileid != nap->na_fileid) ||
+		     np->n_vattr.na_fileid != nap->na_fileid &&
+		     (np->n_vattr.na_fileid != 2 || !NFSHASSYSKRB5(nmp) ||
+		      np->n_fhp->nfh_len != NFSX_FHMAX + 1)) ||
 		    force_fid_err) {
 			nfscl_warn_fileid(nmp, &np->n_vattr, nap);
 			error = EIDRM;
@@ -1014,18 +1031,18 @@ nfscl_getmyip(struct nfsmount *nmp, struct in6_addr *paddr, int *isinet6p)
 		NET_EPOCH_ENTER(et);
 		CURVNET_SET(CRED_TO_VNET(nmp->nm_sockreq.nr_cred));
 		nh = fib4_lookup(fibnum, sin->sin_addr, 0, NHR_NONE, 0);
-		CURVNET_RESTORE();
-		if (nh != NULL)
+		if (nh != NULL) {
 			addr = IA_SIN(ifatoia(nh->nh_ifa))->sin_addr;
+			if (IN_LOOPBACK(ntohl(addr.s_addr))) {
+				/* Ignore loopback addresses */
+				nh = NULL;
+			}
+		}
+		CURVNET_RESTORE();
 		NET_EPOCH_EXIT(et);
+
 		if (nh == NULL)
 			return (NULL);
-
-		if (IN_LOOPBACK(ntohl(addr.s_addr))) {
-			/* Ignore loopback addresses */
-			return (NULL);
-		}
-
 		*isinet6p = 0;
 		*((struct in_addr *)paddr) = addr;
 
@@ -1179,7 +1196,6 @@ nfscl_maperr(struct thread *td, int error, uid_t uid, gid_t gid)
 	case NFSERR_FHEXPIRED:
 	case NFSERR_RESOURCE:
 	case NFSERR_MOVED:
-	case NFSERR_NOFILEHANDLE:
 	case NFSERR_MINORVERMISMATCH:
 	case NFSERR_OLDSTATEID:
 	case NFSERR_BADSEQID:
@@ -1189,6 +1205,14 @@ nfscl_maperr(struct thread *td, int error, uid_t uid, gid_t gid)
 	case NFSERR_OPILLEGAL:
 		printf("nfsv4 client/server protocol prob err=%d\n",
 		    error);
+		return (EIO);
+	case NFSERR_NOFILEHANDLE:
+		printf("nfsv4 no file handle: usually means the file "
+		    "system is not exported on the NFSv4 server\n");
+		return (EIO);
+	case NFSERR_WRONGSEC:
+		tprintf(p, LOG_INFO, "NFSv4 error WrongSec: You probably need a"
+		    " Kerberos TGT\n");
 		return (EIO);
 	default:
 		tprintf(p, LOG_INFO, "nfsv4 err=%d\n", error);
@@ -1268,10 +1292,11 @@ nfssvc_nfscl(struct thread *td, struct nfssvc_args *uap)
 	struct mount *mp;
 	struct nfsmount *nmp;
 
+	NFSD_CURVNET_SET(NFSD_TD_TO_VNET(td));
 	if (uap->flag & NFSSVC_CBADDSOCK) {
 		error = copyin(uap->argp, (caddr_t)&nfscbdarg, sizeof(nfscbdarg));
 		if (error)
-			return (error);
+			goto out;
 		/*
 		 * Since we don't know what rights might be required,
 		 * pretend that we need them all. It is better to be too
@@ -1280,10 +1305,11 @@ nfssvc_nfscl(struct thread *td, struct nfssvc_args *uap)
 		error = fget(td, nfscbdarg.sock,
 		    cap_rights_init_one(&rights, CAP_SOCK_CLIENT), &fp);
 		if (error)
-			return (error);
+			goto out;
 		if (fp->f_type != DTYPE_SOCKET) {
 			fdrop(fp, td);
-			return (EPERM);
+			error = EPERM;
+			goto out;
 		}
 		error = nfscbd_addsock(fp);
 		fdrop(fp, td);
@@ -1292,12 +1318,14 @@ nfssvc_nfscl(struct thread *td, struct nfssvc_args *uap)
 			nfscl_enablecallb = 1;
 		}
 	} else if (uap->flag & NFSSVC_NFSCBD) {
-		if (uap->argp == NULL) 
-			return (EINVAL);
+		if (uap->argp == NULL) {
+			error = EINVAL;
+			goto out;
+		}
 		error = copyin(uap->argp, (caddr_t)&nfscbdarg2,
 		    sizeof(nfscbdarg2));
 		if (error)
-			return (error);
+			goto out;
 		error = nfscbd_nfsd(td, &nfscbdarg2);
 	} else if (uap->flag & NFSSVC_DUMPMNTOPTS) {
 		error = copyin(uap->argp, &dumpmntopts, sizeof(dumpmntopts));
@@ -1383,6 +1411,8 @@ nfssvc_nfscl(struct thread *td, struct nfssvc_args *uap)
 	} else {
 		error = EINVAL;
 	}
+out:
+	NFSD_CURVNET_RESTORE();
 	return (error);
 }
 

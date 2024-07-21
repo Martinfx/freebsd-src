@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2018 Dell EMC Isilon
 #
@@ -28,6 +28,11 @@
 #
 
 # Simple AESNI(4) test.
+
+if [ $(uname -m) != "amd64" -a $(uname -m) != "i386" ]; then
+    echo "This test requires an x86 system."
+    exit 0
+fi
 
 kldstat -v | grep -qw aesni  || { kldload aesni.ko; loaded=1; }
 

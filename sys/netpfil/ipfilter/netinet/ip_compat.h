@@ -2,9 +2,6 @@
  * Copyright (C) 2012 by Darren Reed.
  *
  * See the IPFILTER.LICENCE file for details on licencing.
- *
- * @(#)ip_compat.h	1.8 1/14/96
- * $FreeBSD$
  * Id: ip_compat.h,v 2.142.2.57 2007/10/10 09:51:42 darrenr Exp $
  */
 
@@ -135,6 +132,7 @@
 						rw_runlock(&(x)->ipf_lk); \
 					} while (0)
 # include <net/if_var.h>
+# include <net/if_private.h>
 # define	GETKTIME(x)	microtime((struct timeval *)x)
 # define	if_addrlist	if_addrhead
 
@@ -688,12 +686,6 @@ typedef	struct	tcpiphdr	tcpiphdr_t;
 #endif
 #ifndef	IP_HL_A
 # define	IP_HL_A(x,y)	(x)->ip_hl = ((y) & 0xf)
-#endif
-#ifndef	TCP_X2
-# define	TCP_X2(x)	(x)->th_x2
-#endif
-#ifndef	TCP_X2_A
-# define	TCP_X2_A(x,y)	(x)->th_x2 = (y)
 #endif
 #ifndef	TCP_OFF
 # define	TCP_OFF(x)	(x)->th_off

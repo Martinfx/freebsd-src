@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005, Bosko Milekic <bmilekic@FreeBSD.org>.
  * Copyright (c) 2010 Isilon Systems, Inc. (http://www.isilon.com/)
@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * MemGuard is a simple replacement allocator for debugging only
  * which provides ElectricFence-style memory barrier protection on

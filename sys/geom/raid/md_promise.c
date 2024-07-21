@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Alexander Motin <mav@FreeBSD.org>
  * Copyright (c) 2000 - 2008 Søren Schmidt <sos@FreeBSD.org>
@@ -26,9 +26,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/bio.h>
@@ -1765,8 +1762,9 @@ g_raid_md_write_promise(struct g_raid_md_object *md, struct g_raid_volume *tvol,
 		meta->total_disks = vol->v_disks_count;
 		meta->stripe_shift = ffs(vol->v_strip_size / 1024);
 		meta->array_width = vol->v_disks_count;
-		if (vol->v_raid_level == G_RAID_VOLUME_RL_RAID1 ||
-		    vol->v_raid_level == G_RAID_VOLUME_RL_RAID1E)
+		if (vol->v_raid_level == G_RAID_VOLUME_RL_RAID1)
+			meta->array_width = 1;
+		else if (vol->v_raid_level == G_RAID_VOLUME_RL_RAID1E)
 			meta->array_width /= 2;
 		meta->array_number = vol->v_global_id;
 		meta->total_sectors = vol->v_mediasize / 512;

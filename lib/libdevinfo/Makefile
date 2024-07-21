@@ -1,5 +1,4 @@
-# $FreeBSD$
-
+PACKAGE=	devmatch
 LIB=	devinfo
 SRCS=	devinfo.c
 INCS=	devinfo.h

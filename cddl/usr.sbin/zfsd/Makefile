@@ -1,9 +1,8 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 .include "Makefile.common"
 
+PACKAGE=	zfs
 PROG_CXX=	zfsd
 MAN=		zfsd.8
 

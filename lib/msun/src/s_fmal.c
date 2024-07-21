@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2011 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <fenv.h>
 #include <float.h>
@@ -206,17 +203,17 @@ fmal(long double x, long double y, long double z)
 		case FE_TONEAREST:
 			return (z);
 		case FE_TOWARDZERO:
-			if (x > 0.0 ^ y < 0.0 ^ z < 0.0)
+			if ((x > 0.0) ^ (y < 0.0) ^ (z < 0.0))
 				return (z);
 			else
 				return (nextafterl(z, 0));
 		case FE_DOWNWARD:
-			if (x > 0.0 ^ y < 0.0)
+			if ((x > 0.0) ^ (y < 0.0))
 				return (z);
 			else
 				return (nextafterl(z, -INFINITY));
 		default:	/* FE_UPWARD */
-			if (x > 0.0 ^ y < 0.0)
+			if ((x > 0.0) ^ (y < 0.0))
 				return (nextafterl(z, INFINITY));
 			else
 				return (z);
@@ -228,7 +225,7 @@ fmal(long double x, long double y, long double z)
 		zs = copysignl(LDBL_MIN, zs);
 
 	fesetround(FE_TONEAREST);
-	/* work around clang bug 8100 */
+	/* work around clang issue #8472 */
 	volatile long double vxs = xs;
 
 	/*
@@ -260,7 +257,7 @@ fmal(long double x, long double y, long double z)
 		 * rounding modes.
 		 */
 		fesetround(oround);
-		/* work around clang bug 8100 */
+		/* work around clang issue #8472 */
 		volatile long double vrlo = r.lo;
 		adj = vrlo + xy.lo;
 		return (ldexpl(r.hi + adj, spread));

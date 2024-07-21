@@ -27,13 +27,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)kern_time.c	8.1 (Berkeley) 6/10/93
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ktrace.h"
 
 #include <sys/param.h>
@@ -62,6 +58,7 @@ __FBSDID("$FreeBSD$");
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
+#include <vm/uma.h>
 
 #define MAX_CLOCKS 	(CLOCK_MONOTONIC+1)
 #define CPUCLOCK_BIT		0x80000000
@@ -1098,21 +1095,21 @@ ratecheck(struct timeval *lasttime, const struct timeval *mininterval)
 }
 
 /*
- * ppsratecheck(): packets (or events) per second limitation.
+ * eventratecheck(): events per second limitation.
  *
  * Return 0 if the limit is to be enforced (e.g. the caller
- * should drop a packet because of the rate limitation).
+ * should ignore the event because of the rate limitation).
  *
- * maxpps of 0 always causes zero to be returned.  maxpps of -1
+ * maxeps of 0 always causes zero to be returned.  maxeps of -1
  * always causes 1 to be returned; this effectively defeats rate
  * limiting.
  *
  * Note that we maintain the struct timeval for compatibility
  * with other bsd systems.  We reuse the storage and just monitor
- * clock ticks for minimal overhead.  
+ * clock ticks for minimal overhead.
  */
 int
-ppsratecheck(struct timeval *lasttime, int *curpps, int maxpps)
+eventratecheck(struct timeval *lasttime, int *cureps, int maxeps)
 {
 	int now;
 
@@ -1124,11 +1121,11 @@ ppsratecheck(struct timeval *lasttime, int *curpps, int maxpps)
 	now = ticks;
 	if (lasttime->tv_sec == 0 || (u_int)(now - lasttime->tv_sec) >= hz) {
 		lasttime->tv_sec = now;
-		*curpps = 1;
-		return (maxpps != 0);
+		*cureps = 1;
+		return (maxeps != 0);
 	} else {
-		(*curpps)++;		/* NB: ignore potential overflow */
-		return (maxpps < 0 || *curpps <= maxpps);
+		(*cureps)++;		/* NB: ignore potential overflow */
+		return (maxeps < 0 || *cureps <= maxeps);
 	}
 }
 

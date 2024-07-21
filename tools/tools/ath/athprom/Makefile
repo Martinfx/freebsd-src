@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	athprom
 
 .include <../Makefile.inc>

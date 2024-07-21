@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011, Bryan Venteicher <bryanv@FreeBSD.org>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _IF_VTNETVAR_H
@@ -142,7 +140,7 @@ struct vtnet_txq {
 
 struct vtnet_softc {
 	device_t		 vtnet_dev;
-	struct ifnet		*vtnet_ifp;
+	if_t			 vtnet_ifp;
 	struct vtnet_rxq	*vtnet_rxqs;
 	struct vtnet_txq	*vtnet_txqs;
 	pfil_head_t		 vtnet_pfil;
@@ -234,7 +232,13 @@ vtnet_software_lro(struct vtnet_softc *sc)
  */
 #define VTNET_VLAN_FILTER_NWORDS	(4096 / 32)
 
-/* We depend on these being the same size (and same layout). */
+/*
+ * We depend on all of the hdr structures being even, and matching the standard
+ * length. As well, we depend on two being identally sized (with the same
+ * layout).
+ */
+CTASSERT(sizeof(struct virtio_net_hdr_v1) == 12);
+CTASSERT(sizeof(struct virtio_net_hdr) == 10);
 CTASSERT(sizeof(struct virtio_net_hdr_mrg_rxbuf) ==
     sizeof(struct virtio_net_hdr_v1));
 

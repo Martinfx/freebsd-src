@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2007-2008 Sam Leffler, Errno Consulting
  * All rights reserved.
@@ -25,11 +25,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-__FBSDID("$FreeBSD$");
-#endif
-
 /*
  * IEEE 802.11 Station mode support.
  */
@@ -54,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if_llc.h>
 #include <net/if_dl.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/ethernet.h>
 
 #include <net/bpf.h>
@@ -600,7 +596,7 @@ sta_input(struct ieee80211_node *ni, struct mbuf *m,
 		 */
 		type = IEEE80211_FC0_TYPE_DATA;
 		dir = wh->i_fc[1] & IEEE80211_FC1_DIR_MASK;
-		subtype = IEEE80211_FC0_SUBTYPE_QOS;
+		subtype = IEEE80211_FC0_SUBTYPE_QOS_DATA;
 		hdrspace = ieee80211_hdrspace(ic, wh);	/* XXX optimize? */
 		goto resubmit_ampdu;
 	}
@@ -794,7 +790,7 @@ sta_input(struct ieee80211_node *ni, struct mbuf *m,
 		/*
 		 * Save QoS bits for use below--before we strip the header.
 		 */
-		if (subtype == IEEE80211_FC0_SUBTYPE_QOS)
+		if (subtype == IEEE80211_FC0_SUBTYPE_QOS_DATA)
 			qos = ieee80211_getqos(wh)[0];
 		else
 			qos = 0;
@@ -1524,7 +1520,7 @@ sta_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0, int subtype,
 				do_ht = 1;
 			}
 			if (scan.vhtcap != NULL && scan.vhtopmode != NULL &&
-			    (vap->iv_flags_vht & IEEE80211_FVHT_VHT)) {
+			    (vap->iv_vht_flags & IEEE80211_FVHT_VHT)) {
 				/* XXX state changes? */
 				ieee80211_vht_updateparams(ni,
 				    scan.vhtcap, scan.vhtopmode);
@@ -1870,7 +1866,7 @@ sta_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0, int subtype,
 			ieee80211_ht_updateparams(ni, htcap, htinfo);
 
 			if ((vhtcap != NULL) && (vhtopmode != NULL) &
-			    (vap->iv_flags_vht & IEEE80211_FVHT_VHT)) {
+			    (vap->iv_vht_flags & IEEE80211_FVHT_VHT)) {
 				/*
 				 * Log if we get a VHT assoc/reassoc response.
 				 * We aren't ready for 2GHz VHT support.

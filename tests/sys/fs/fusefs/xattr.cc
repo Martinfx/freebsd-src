@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 The FreeBSD Foundation
  *
@@ -26,8 +26,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /* Tests for all things relating to extended attributes and FUSE */
@@ -352,7 +350,7 @@ TEST_F(Listxattr, enotsup)
  * On Linux, however, the file system is supposed to return ERANGE if an
  * insufficiently large buffer is passed to listxattr(2).
  *
- * fusefs(5) must guarantee the usual FreeBSD behavior.
+ * fusefs(4) must guarantee the usual FreeBSD behavior.
  */
 TEST_F(Listxattr, erange)
 {

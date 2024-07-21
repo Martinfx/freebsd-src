@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 David Schultz <das@FreeBSD.ORG>
  * Copyright (c) 2013 Andrew Turner <andrew@FreeBSD.ORG>
@@ -25,18 +25,12 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #define	__fenv_static
 #include "fenv.h"
 
 #include <machine/acle-compat.h>
-
-#if __ARM_ARCH >= 6
-#define FENV_ARMv6
-#endif
 
 /* When SOFTFP_ABI is defined we are using the softfp ABI. */
 #if defined(__VFP_FP__) && !defined(__ARM_PCS_VFP)
@@ -54,7 +48,7 @@ const fenv_t __fe_dfl_env = 0;
 
 
 /* If this is a non-mangled softfp version special processing is required */
-#if defined(FENV_MANGLE) || !defined(SOFTFP_ABI) || !defined(FENV_ARMv6)
+#if defined(FENV_MANGLE) || !defined(SOFTFP_ABI)
 
 /*
  * The following macros map between the softfloat emulator's flags and

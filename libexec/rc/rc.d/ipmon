@@ -1,6 +1,5 @@
 #!/bin/sh
 #
-# $FreeBSD$
 #
 
 # PROVIDE: ipmon
@@ -15,6 +14,9 @@ desc="Monitors /dev/ipl for logged packets"
 rcvar="ipmon_enable"
 command="/sbin/${name}"
 start_precmd="ipmon_precmd"
+
+# no svcj options needed
+: ${ipmon_svcj_options:=""}
 
 ipmon_precmd()
 {

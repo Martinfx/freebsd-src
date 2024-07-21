@@ -22,8 +22,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_ASM_ATOMIC64_H_
 #define	_LINUXKPI_ASM_ATOMIC64_H_
@@ -125,8 +123,7 @@ atomic64_fetch_add_unless(atomic64_t *v, int64_t a, int64_t u)
 static inline int64_t
 atomic64_xchg(atomic64_t *v, int64_t i)
 {
-#if !((defined(__mips__) && !(defined(__mips_n32) || defined(__mips_n64))) || \
-    (defined(__powerpc__) && !defined(__powerpc64__)))
+#if !(defined(__powerpc__) && !defined(__powerpc64__))
 	return (atomic_swap_64(&v->counter, i));
 #else
 	int64_t ret = atomic64_read(v);

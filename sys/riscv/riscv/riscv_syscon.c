@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Kyle Evans <kevans@FreeBSD.org>
  * Copyright (c) 2020 Jessica Clarke <jrtc27@FreeBSD.org>
@@ -31,9 +31,6 @@
  * describing the SiFive test finisher as a power and reset controller.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -46,8 +43,8 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dev/extres/syscon/syscon.h>
-#include <dev/extres/syscon/syscon_generic.h>
+#include <dev/syscon/syscon.h>
+#include <dev/syscon/syscon_generic.h>
 
 static struct ofw_compat_data compat_data[] = {
 	{"sifive,test0",	1},

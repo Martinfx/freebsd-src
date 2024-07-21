@@ -24,12 +24,9 @@
  *
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_rss.h"
-#include "opt_tcpdebug.h"
 
 /**
  * Some notes about usage.
@@ -50,7 +47,7 @@ __FBSDID("$FreeBSD$");
  *
  * tcp_hpts_insert(tp, HPTS_USEC_TO_SLOTS(550));
  *
- * The above would schedule tcp_ouput() to be called in 550 useconds.
+ * The above would schedule tcp_output() to be called in 550 useconds.
  * Note that if using this mechanism the stack will want to add near
  * its top a check to prevent unwanted calls (from user land or the
  * arrival of incoming ack's). So it would add something like:
@@ -93,9 +90,8 @@ __FBSDID("$FreeBSD$");
  *
  * There is a common functions within the rack_bbr_common code
  * version i.e. ctf_do_queued_segments(). This function
- * knows how to take the input queue of packets from
- * tp->t_in_pkts and process them digging out
- * all the arguments, calling any bpf tap and
+ * knows how to take the input queue of packets from tp->t_inqueue
+ * and process them digging out all the arguments, calling any bpf tap and
  * calling into tfb_do_segment_nounlock(). The common
  * function (ctf_do_queued_segments())  requires that
  * you have defined the tfb_do_segment_nounlock() as
@@ -157,9 +153,6 @@ __FBSDID("$FreeBSD$");
 #include <netinet/tcp_hpts.h>
 #include <netinet/tcp_log_buf.h>
 
-#ifdef tcpdebug
-#include <netinet/tcp_debug.h>
-#endif				/* tcpdebug */
 #ifdef tcp_offload
 #include <netinet/tcp_offload.h>
 #endif
@@ -200,11 +193,12 @@ struct tcp_hpts_entry {
 	uint8_t p_direct_wake :1, /* boolean */
 		p_on_min_sleep:1, /* boolean */
 		p_hpts_wake_scheduled:1, /* boolean */
-		p_avail:5;
+		hit_callout_thresh:1,
+		p_avail:4;
 	uint8_t p_fill[3];	  /* Fill to 32 bits */
 	/* Cache line 0x40 */
 	struct hptsh {
-		TAILQ_HEAD(, inpcb)	head;
+		TAILQ_HEAD(, tcpcb)	head;
 		uint32_t		count;
 		uint32_t		gencnt;
 	} *p_hptss;			/* Hptsi wheel */
@@ -236,19 +230,17 @@ static struct tcp_hptsi {
 	uint32_t rp_num_hptss;	/* Number of hpts threads */
 } tcp_pace;
 
-MALLOC_DEFINE(M_TCPHPTS, "tcp_hpts", "TCP hpts");
+static MALLOC_DEFINE(M_TCPHPTS, "tcp_hpts", "TCP hpts");
 #ifdef RSS
 static int tcp_bind_threads = 1;
 #else
 static int tcp_bind_threads = 2;
 #endif
 static int tcp_use_irq_cpu = 0;
-static uint32_t *cts_last_ran;
 static int hpts_does_tp_logging = 0;
 
 static int32_t tcp_hptsi(struct tcp_hpts_entry *hpts, int from_callout);
 static void tcp_hpts_thread(void *ctx);
-static void tcp_init_hptsi(void *st);
 
 int32_t tcp_min_hptsi_time = DEFAULT_MIN_SLEEP;
 static int conn_cnt_thresh = DEFAULT_CONNECTION_THESHOLD;
@@ -277,12 +269,6 @@ static struct hpts_domain_info {
 	int count;
 	int cpu[MAXCPU];
 } hpts_domains[MAXMEMDOM];
-
-enum {
-	IHPTS_NONE = 0,
-	IHPTS_ONQUEUE,
-	IHPTS_MOVING,
-};
 
 counter_u64_t hpts_hopelessly_behind;
 
@@ -431,6 +417,17 @@ SYSCTL_INT(_net_inet_tcp_hpts, OID_AUTO, nowake_over_thresh, CTLFLAG_RW,
     &tcp_hpts_no_wake_over_thresh, 0,
     "When we are over the threshold on the pacer do we prohibit wakeups?");
 
+static uint16_t
+hpts_random_cpu(void)
+{
+	uint16_t cpuid;
+	uint32_t ran;
+
+	ran = arc4random();
+	cpuid = (((ran & 0xffff) % mp_ncpus) % tcp_pace.rp_num_hptss);
+	return (cpuid);
+}
+
 static void
 tcp_hpts_log(struct tcp_hpts_entry *hpts, struct tcpcb *tp, struct timeval *tv,
 	     int slots_to_run, int idx, int from_callout)
@@ -463,8 +460,8 @@ tcp_hpts_log(struct tcp_hpts_entry *hpts, struct tcpcb *tp, struct timeval *tv,
 	log.u_bbr.pkt_epoch = hpts->p_runningslot;
 	log.u_bbr.use_lt_bw = 1;
 	TCP_LOG_EVENTP(tp, NULL,
-		       &tp->t_inpcb->inp_socket->so_rcv,
-		       &tp->t_inpcb->inp_socket->so_snd,
+		       &tptosocket(tp)->so_rcv,
+		       &tptosocket(tp)->so_snd,
 		       BBR_LOG_HPTSDIAG, 0,
 		       0, &log, false, tv);
 }
@@ -494,52 +491,73 @@ hpts_timeout_swi(void *arg)
 }
 
 static void
-inp_hpts_insert(struct inpcb *inp, struct tcp_hpts_entry *hpts)
+tcp_hpts_insert_internal(struct tcpcb *tp, struct tcp_hpts_entry *hpts)
 {
+	struct inpcb *inp = tptoinpcb(tp);
 	struct hptsh *hptsh;
 
 	INP_WLOCK_ASSERT(inp);
 	HPTS_MTX_ASSERT(hpts);
-	MPASS(hpts->p_cpu == inp->inp_hpts_cpu);
-	MPASS(!(inp->inp_flags & (INP_DROPPED|INP_TIMEWAIT)));
+	MPASS(hpts->p_cpu == tp->t_hpts_cpu);
+	MPASS(!(inp->inp_flags & INP_DROPPED));
 
-	hptsh = &hpts->p_hptss[inp->inp_hptsslot];
+	hptsh = &hpts->p_hptss[tp->t_hpts_slot];
 
-	if (inp->inp_in_hpts == IHPTS_NONE) {
-		inp->inp_in_hpts = IHPTS_ONQUEUE;
+	if (tp->t_in_hpts == IHPTS_NONE) {
+		tp->t_in_hpts = IHPTS_ONQUEUE;
 		in_pcbref(inp);
-	} else if (inp->inp_in_hpts == IHPTS_MOVING) {
-		inp->inp_in_hpts = IHPTS_ONQUEUE;
+	} else if (tp->t_in_hpts == IHPTS_MOVING) {
+		tp->t_in_hpts = IHPTS_ONQUEUE;
 	} else
-		MPASS(inp->inp_in_hpts == IHPTS_ONQUEUE);
-	inp->inp_hpts_gencnt = hptsh->gencnt;
+		MPASS(tp->t_in_hpts == IHPTS_ONQUEUE);
+	tp->t_hpts_gencnt = hptsh->gencnt;
 
-	TAILQ_INSERT_TAIL(&hptsh->head, inp, inp_hpts);
+	TAILQ_INSERT_TAIL(&hptsh->head, tp, t_hpts);
 	hptsh->count++;
 	hpts->p_on_queue_cnt++;
 }
 
 static struct tcp_hpts_entry *
-tcp_hpts_lock(struct inpcb *inp)
+tcp_hpts_lock(struct tcpcb *tp)
 {
 	struct tcp_hpts_entry *hpts;
 
-	INP_LOCK_ASSERT(inp);
+	INP_LOCK_ASSERT(tptoinpcb(tp));
 
-	hpts = tcp_pace.rp_ent[inp->inp_hpts_cpu];
+	hpts = tcp_pace.rp_ent[tp->t_hpts_cpu];
 	HPTS_LOCK(hpts);
 
 	return (hpts);
 }
 
 static void
-inp_hpts_release(struct inpcb *inp)
+tcp_hpts_release(struct tcpcb *tp)
 {
 	bool released __diagused;
 
-	inp->inp_in_hpts = IHPTS_NONE;
-	released = in_pcbrele_wlocked(inp);
+	tp->t_in_hpts = IHPTS_NONE;
+	released = in_pcbrele_wlocked(tptoinpcb(tp));
 	MPASS(released == false);
+}
+
+/*
+ * Initialize tcpcb to get ready for use with HPTS.  We will know which CPU
+ * is preferred on the first incoming packet.  Before that avoid crowding
+ * a single CPU with newborn connections and use a random one.
+ * This initialization is normally called on a newborn tcpcb, but potentially
+ * can be called once again if stack is switched.  In that case we inherit CPU
+ * that the previous stack has set, be it random or not.  In extreme cases,
+ * e.g. syzkaller fuzzing, a tcpcb can already be in HPTS in IHPTS_MOVING state
+ * and has never received a first packet.
+ */
+void
+tcp_hpts_init(struct tcpcb *tp)
+{
+
+	if (__predict_true(tp->t_hpts_cpu == HPTS_CPU_NONE)) {
+		tp->t_hpts_cpu = hpts_random_cpu();
+		MPASS(!(tp->t_flags2 & TF2_HPTS_CPU_SET));
+	}
 }
 
 /*
@@ -549,39 +567,39 @@ inp_hpts_release(struct inpcb *inp)
  * INP lock and then get the hpts lock.
  */
 void
-tcp_hpts_remove(struct inpcb *inp)
+tcp_hpts_remove(struct tcpcb *tp)
 {
 	struct tcp_hpts_entry *hpts;
 	struct hptsh *hptsh;
 
-	INP_WLOCK_ASSERT(inp);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
 
-	hpts = tcp_hpts_lock(inp);
-	if (inp->inp_in_hpts == IHPTS_ONQUEUE) {
-		hptsh = &hpts->p_hptss[inp->inp_hptsslot];
-		inp->inp_hpts_request = 0;
-		if (__predict_true(inp->inp_hpts_gencnt == hptsh->gencnt)) {
-			TAILQ_REMOVE(&hptsh->head, inp, inp_hpts);
+	hpts = tcp_hpts_lock(tp);
+	if (tp->t_in_hpts == IHPTS_ONQUEUE) {
+		hptsh = &hpts->p_hptss[tp->t_hpts_slot];
+		tp->t_hpts_request = 0;
+		if (__predict_true(tp->t_hpts_gencnt == hptsh->gencnt)) {
+			TAILQ_REMOVE(&hptsh->head, tp, t_hpts);
 			MPASS(hptsh->count > 0);
 			hptsh->count--;
 			MPASS(hpts->p_on_queue_cnt > 0);
 			hpts->p_on_queue_cnt--;
-			inp_hpts_release(inp);
+			tcp_hpts_release(tp);
 		} else {
 			/*
 			 * tcp_hptsi() now owns the TAILQ head of this inp.
 			 * Can't TAILQ_REMOVE, just mark it.
 			 */
 #ifdef INVARIANTS
-			struct inpcb *tmp;
+			struct tcpcb *tmp;
 
-			TAILQ_FOREACH(tmp, &hptsh->head, inp_hpts)
-				MPASS(tmp != inp);
+			TAILQ_FOREACH(tmp, &hptsh->head, t_hpts)
+				MPASS(tmp != tp);
 #endif
-			inp->inp_in_hpts = IHPTS_MOVING;
-			inp->inp_hptsslot = -1;
+			tp->t_in_hpts = IHPTS_MOVING;
+			tp->t_hpts_slot = -1;
 		}
-	} else if (inp->inp_in_hpts == IHPTS_MOVING) {
+	} else if (tp->t_in_hpts == IHPTS_MOVING) {
 		/*
 		 * Handle a special race condition:
 		 * tcp_hptsi() moves inpcb to detached tailq
@@ -590,16 +608,9 @@ tcp_hpts_remove(struct inpcb *inp)
 		 * tcp_hpts_remove() again (we are here!), then in_pcbdrop()
 		 * tcp_hptsi() finds pcb with meaningful slot and INP_DROPPED
 		 */
-		inp->inp_hptsslot = -1;
+		tp->t_hpts_slot = -1;
 	}
 	HPTS_UNLOCK(hpts);
-}
-
-bool
-tcp_in_hpts(struct inpcb *inp)
-{
-
-	return (inp->inp_in_hpts == IHPTS_ONQUEUE);
 }
 
 static inline int
@@ -731,7 +742,7 @@ max_slots_available(struct tcp_hpts_entry *hpts, uint32_t wheel_slot, uint32_t *
 	}
 	/*
 	 * To get the number left we can insert into we simply
-	 * subract the distance the pacer has to run from how
+	 * subtract the distance the pacer has to run from how
 	 * many slots there are.
 	 */
 	avail_on_wheel = NUM_OF_HPTSI_SLOTS - dis_to_travel;
@@ -748,7 +759,8 @@ max_slots_available(struct tcp_hpts_entry *hpts, uint32_t wheel_slot, uint32_t *
 		 * "0".
 		 */
 		counter_u64_add(combined_wheel_wrap, 1);
-		*target_slot = hpts->p_nxt_slot;
+		if (target_slot)
+			*target_slot = hpts->p_nxt_slot;
 		return (0);
 	} else {
 		/*
@@ -767,15 +779,15 @@ max_slots_available(struct tcp_hpts_entry *hpts, uint32_t wheel_slot, uint32_t *
 
 #ifdef INVARIANTS
 static void
-check_if_slot_would_be_wrong(struct tcp_hpts_entry *hpts, struct inpcb *inp, uint32_t inp_hptsslot, int line)
+check_if_slot_would_be_wrong(struct tcp_hpts_entry *hpts, struct tcpcb *tp,
+    uint32_t hptsslot, int line)
 {
 	/*
 	 * Sanity checks for the pacer with invariants
 	 * on insert.
 	 */
-	KASSERT(inp_hptsslot < NUM_OF_HPTSI_SLOTS,
-		("hpts:%p inp:%p slot:%d > max",
-		 hpts, inp, inp_hptsslot));
+	KASSERT(hptsslot < NUM_OF_HPTSI_SLOTS,
+		("hpts:%p tp:%p slot:%d > max", hpts, tp, hptsslot));
 	if ((hpts->p_hpts_active) &&
 	    (hpts->p_wheel_complete == 0)) {
 		/*
@@ -786,22 +798,21 @@ check_if_slot_would_be_wrong(struct tcp_hpts_entry *hpts, struct inpcb *inp, uin
 		 */
 		int distance, yet_to_run;
 
-		distance = hpts_slots_diff(hpts->p_runningslot, inp_hptsslot);
+		distance = hpts_slots_diff(hpts->p_runningslot, hptsslot);
 		if (hpts->p_runningslot != hpts->p_cur_slot)
 			yet_to_run = hpts_slots_diff(hpts->p_runningslot, hpts->p_cur_slot);
 		else
 			yet_to_run = 0;	/* processing last slot */
-		KASSERT(yet_to_run <= distance,
-			("hpts:%p inp:%p slot:%d distance:%d yet_to_run:%d rs:%d cs:%d",
-			 hpts, inp, inp_hptsslot,
-			 distance, yet_to_run,
-			 hpts->p_runningslot, hpts->p_cur_slot));
+		KASSERT(yet_to_run <= distance, ("hpts:%p tp:%p slot:%d "
+		    "distance:%d yet_to_run:%d rs:%d cs:%d", hpts, tp,
+		    hptsslot, distance, yet_to_run, hpts->p_runningslot,
+		    hpts->p_cur_slot));
 	}
 }
 #endif
 
 uint32_t
-tcp_hpts_insert_diag(struct inpcb *inp, uint32_t slot, int32_t line, struct hpts_diag *diag)
+tcp_hpts_insert_diag(struct tcpcb *tp, uint32_t slot, int32_t line, struct hpts_diag *diag)
 {
 	struct tcp_hpts_entry *hpts;
 	struct timeval tv;
@@ -809,16 +820,16 @@ tcp_hpts_insert_diag(struct inpcb *inp, uint32_t slot, int32_t line, struct hpts
 	int32_t wheel_slot, maxslots;
 	bool need_wakeup = false;
 
-	INP_WLOCK_ASSERT(inp);
-	MPASS(!tcp_in_hpts(inp));
-	MPASS(!(inp->inp_flags & (INP_DROPPED|INP_TIMEWAIT)));
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
+	MPASS(!(tptoinpcb(tp)->inp_flags & INP_DROPPED));
+	MPASS(!(tp->t_in_hpts == IHPTS_ONQUEUE));
 
 	/*
 	 * We now return the next-slot the hpts will be on, beyond its
 	 * current run (if up) or where it was when it stopped if it is
 	 * sleeping.
 	 */
-	hpts = tcp_hpts_lock(inp);
+	hpts = tcp_hpts_lock(tp);
 	microuptime(&tv);
 	if (diag) {
 		memset(diag, 0, sizeof(struct hpts_diag));
@@ -835,20 +846,20 @@ tcp_hpts_insert_diag(struct inpcb *inp, uint32_t slot, int32_t line, struct hpts
 	}
 	if (slot == 0) {
 		/* Ok we need to set it on the hpts in the current slot */
-		inp->inp_hpts_request = 0;
+		tp->t_hpts_request = 0;
 		if ((hpts->p_hpts_active == 0) || (hpts->p_wheel_complete)) {
 			/*
 			 * A sleeping hpts we want in next slot to run
 			 * note that in this state p_prev_slot == p_cur_slot
 			 */
-			inp->inp_hptsslot = hpts_slot(hpts->p_prev_slot, 1);
+			tp->t_hpts_slot = hpts_slot(hpts->p_prev_slot, 1);
 			if ((hpts->p_on_min_sleep == 0) &&
 			    (hpts->p_hpts_active == 0))
 				need_wakeup = true;
 		} else
-			inp->inp_hptsslot = hpts->p_runningslot;
-		if (__predict_true(inp->inp_in_hpts != IHPTS_MOVING))
-			inp_hpts_insert(inp, hpts);
+			tp->t_hpts_slot = hpts->p_runningslot;
+		if (__predict_true(tp->t_in_hpts != IHPTS_MOVING))
+			tcp_hpts_insert_internal(tp, hpts);
 		if (need_wakeup) {
 			/*
 			 * Activate the hpts if it is sleeping and its
@@ -885,28 +896,28 @@ tcp_hpts_insert_diag(struct inpcb *inp, uint32_t slot, int32_t line, struct hpts
 			 */
 			slot--;
 		}
-		inp->inp_hptsslot = last_slot;
-		inp->inp_hpts_request = slot;
+		tp->t_hpts_slot = last_slot;
+		tp->t_hpts_request = slot;
 	} else 	if (maxslots >= slot) {
 		/* It all fits on the wheel */
-		inp->inp_hpts_request = 0;
-		inp->inp_hptsslot = hpts_slot(wheel_slot, slot);
+		tp->t_hpts_request = 0;
+		tp->t_hpts_slot = hpts_slot(wheel_slot, slot);
 	} else {
 		/* It does not fit */
-		inp->inp_hpts_request = slot - maxslots;
-		inp->inp_hptsslot = last_slot;
+		tp->t_hpts_request = slot - maxslots;
+		tp->t_hpts_slot = last_slot;
 	}
 	if (diag) {
-		diag->slot_remaining = inp->inp_hpts_request;
-		diag->inp_hptsslot = inp->inp_hptsslot;
+		diag->slot_remaining = tp->t_hpts_request;
+		diag->inp_hptsslot = tp->t_hpts_slot;
 	}
 #ifdef INVARIANTS
-	check_if_slot_would_be_wrong(hpts, inp, inp->inp_hptsslot, line);
+	check_if_slot_would_be_wrong(hpts, tp, tp->t_hpts_slot, line);
 #endif
-	if (__predict_true(inp->inp_in_hpts != IHPTS_MOVING))
-		inp_hpts_insert(inp, hpts);
+	if (__predict_true(tp->t_in_hpts != IHPTS_MOVING))
+		tcp_hpts_insert_internal(tp, hpts);
 	if ((hpts->p_hpts_active == 0) &&
-	    (inp->inp_hpts_request == 0) &&
+	    (tp->t_hpts_request == 0) &&
 	    (hpts->p_on_min_sleep == 0)) {
 		/*
 		 * The hpts is sleeping and NOT on a minimum
@@ -977,54 +988,35 @@ tcp_hpts_insert_diag(struct inpcb *inp, uint32_t slot, int32_t line, struct hpts
 	return (slot_on);
 }
 
-uint16_t
-hpts_random_cpu(struct inpcb *inp){
-	/*
-	 * No flow type set distribute the load randomly.
-	 */
-	uint16_t cpuid;
-	uint32_t ran;
-
-	/*
-	 * Shortcut if it is already set. XXXGL: does it happen?
-	 */
-	if (inp->inp_hpts_cpu_set) {
-		return (inp->inp_hpts_cpu);
-	}
-	/* Nothing set use a random number */
-	ran = arc4random();
-	cpuid = (((ran & 0xffff) % mp_ncpus) % tcp_pace.rp_num_hptss);
-	return (cpuid);
-}
-
 static uint16_t
-hpts_cpuid(struct inpcb *inp, int *failed)
+hpts_cpuid(struct tcpcb *tp, int *failed)
 {
+	struct inpcb *inp = tptoinpcb(tp);
 	u_int cpuid;
 #ifdef NUMA
 	struct hpts_domain_info *di;
 #endif
 
 	*failed = 0;
-	if (inp->inp_hpts_cpu_set) {
-		return (inp->inp_hpts_cpu);
+	if (tp->t_flags2 & TF2_HPTS_CPU_SET) {
+		return (tp->t_hpts_cpu);
 	}
 	/*
 	 * If we are using the irq cpu set by LRO or
 	 * the driver then it overrides all other domains.
 	 */
 	if (tcp_use_irq_cpu) {
-		if (inp->inp_irq_cpu_set == 0) {
+		if (tp->t_lro_cpu == HPTS_CPU_NONE) {
 			*failed = 1;
-			return(0);
+			return (0);
 		}
-		return(inp->inp_irq_cpu);
+		return (tp->t_lro_cpu);
 	}
 	/* If one is set the other must be the same */
 #ifdef RSS
 	cpuid = rss_hash2cpuid(inp->inp_flowid, inp->inp_flowtype);
 	if (cpuid == NETISR_CPUID_NONE)
-		return (hpts_random_cpu(inp));
+		return (hpts_random_cpu());
 	else
 		return (cpuid);
 #endif
@@ -1035,7 +1027,7 @@ hpts_cpuid(struct inpcb *inp, int *failed)
 	 */
 	if (inp->inp_flowtype == M_HASHTYPE_NONE) {
 		counter_u64_add(cpu_uses_random, 1);
-		return (hpts_random_cpu(inp));
+		return (hpts_random_cpu());
 	}
 	/*
 	 * Hash to a thread based on the flowid.  If we are using numa,
@@ -1057,27 +1049,6 @@ hpts_cpuid(struct inpcb *inp, int *failed)
 	counter_u64_add(cpu_uses_flowid, 1);
 	return (cpuid);
 }
-
-#ifdef not_longer_used_gleb
-static void
-tcp_drop_in_pkts(struct tcpcb *tp)
-{
-	struct mbuf *m, *n;
-
-	m = tp->t_in_pkt;
-	if (m)
-		n = m->m_nextpkt;
-	else
-		n = NULL;
-	tp->t_in_pkt = NULL;
-	while (m) {
-		m_freem(m);
-		m = n;
-		if (m)
-			n = m->m_nextpkt;
-	}
-}
-#endif
 
 static void
 tcp_hpts_set_max_sleep(struct tcp_hpts_entry *hpts, int wrap_loop_cnt)
@@ -1107,12 +1078,10 @@ static int32_t
 tcp_hptsi(struct tcp_hpts_entry *hpts, int from_callout)
 {
 	struct tcpcb *tp;
-	struct inpcb *inp;
 	struct timeval tv;
 	int32_t slots_to_run, i, error;
 	int32_t loop_cnt = 0;
 	int32_t did_prefetch = 0;
-	int32_t prefetch_ninp = 0;
 	int32_t prefetch_tp = 0;
 	int32_t wrap_loop_cnt = 0;
 	int32_t slot_pos_of_endpoint = 0;
@@ -1129,7 +1098,7 @@ tcp_hptsi(struct tcp_hpts_entry *hpts, int from_callout)
 
 	hpts->p_lasttick = hpts->p_curtick;
 	hpts->p_curtick = tcp_gethptstick(&tv);
-	cts_last_ran[hpts->p_num] = tcp_tv_to_usectick(&tv);
+	tcp_pace.cts_last_ran[hpts->p_num] = tcp_tv_to_usectick(&tv);
 	orig_exit_slot = hpts->p_cur_slot = tick_to_wheel(hpts->p_curtick);
 	if ((hpts->p_on_queue_cnt == 0) ||
 	    (hpts->p_lasttick == hpts->p_curtick)) {
@@ -1180,25 +1149,25 @@ again:
 		 * run them, the extra 10usecs of late (by being
 		 * put behind) does not really matter in this situation.
 		 */
-		TAILQ_FOREACH(inp, &hpts->p_hptss[hpts->p_nxt_slot].head,
-		    inp_hpts) {
-			MPASS(inp->inp_hptsslot == hpts->p_nxt_slot);
-			MPASS(inp->inp_hpts_gencnt ==
+		TAILQ_FOREACH(tp, &hpts->p_hptss[hpts->p_nxt_slot].head,
+		    t_hpts) {
+			MPASS(tp->t_hpts_slot == hpts->p_nxt_slot);
+			MPASS(tp->t_hpts_gencnt ==
 			    hpts->p_hptss[hpts->p_nxt_slot].gencnt);
-			MPASS(inp->inp_in_hpts == IHPTS_ONQUEUE);
+			MPASS(tp->t_in_hpts == IHPTS_ONQUEUE);
 
 			/*
 			 * Update gencnt and nextslot accordingly to match
 			 * the new location. This is safe since it takes both
 			 * the INP lock and the pacer mutex to change the
-			 * inp_hptsslot and inp_hpts_gencnt.
+			 * t_hptsslot and t_hpts_gencnt.
 			 */
-			inp->inp_hpts_gencnt =
+			tp->t_hpts_gencnt =
 			    hpts->p_hptss[hpts->p_runningslot].gencnt;
-			inp->inp_hptsslot = hpts->p_runningslot;
+			tp->t_hpts_slot = hpts->p_runningslot;
 		}
 		TAILQ_CONCAT(&hpts->p_hptss[hpts->p_runningslot].head,
-		    &hpts->p_hptss[hpts->p_nxt_slot].head, inp_hpts);
+		    &hpts->p_hptss[hpts->p_nxt_slot].head, t_hpts);
 		hpts->p_hptss[hpts->p_runningslot].count +=
 		    hpts->p_hptss[hpts->p_nxt_slot].count;
 		hpts->p_hptss[hpts->p_nxt_slot].count = 0;
@@ -1217,8 +1186,8 @@ again:
 		goto no_one;
 	}
 	for (i = 0; i < slots_to_run; i++) {
-		struct inpcb *inp, *ninp;
-		TAILQ_HEAD(, inpcb) head = TAILQ_HEAD_INITIALIZER(head);
+		struct tcpcb *tp, *ntp;
+		TAILQ_HEAD(, tcpcb) head = TAILQ_HEAD_INITIALIZER(head);
 		struct hptsh *hptsh;
 		uint32_t runningslot;
 
@@ -1231,152 +1200,26 @@ again:
 
 		runningslot = hpts->p_runningslot;
 		hptsh = &hpts->p_hptss[runningslot];
-		TAILQ_SWAP(&head, &hptsh->head, inpcb, inp_hpts);
+		TAILQ_SWAP(&head, &hptsh->head, tcpcb, t_hpts);
 		hpts->p_on_queue_cnt -= hptsh->count;
 		hptsh->count = 0;
 		hptsh->gencnt++;
 
 		HPTS_UNLOCK(hpts);
 
-		TAILQ_FOREACH_SAFE(inp, &head, inp_hpts, ninp) {
+		TAILQ_FOREACH_SAFE(tp, &head, t_hpts, ntp) {
+			struct inpcb *inp = tptoinpcb(tp);
 			bool set_cpu;
 
-			if (ninp != NULL) {
-				/* We prefetch the next inp if possible */
-				kern_prefetch(ninp, &prefetch_ninp);
-				prefetch_ninp = 1;
-			}
-
-			/* For debugging */
-			if (seen_endpoint == 0) {
-				seen_endpoint = 1;
-				orig_exit_slot = slot_pos_of_endpoint =
-				    runningslot;
-			} else if (completed_measure == 0) {
-				/* Record the new position */
-				orig_exit_slot = runningslot;
-			}
-
-			INP_WLOCK(inp);
-			if (inp->inp_hpts_cpu_set == 0) {
-				set_cpu = true;
-			} else {
-				set_cpu = false;
-			}
-
-			if (__predict_false(inp->inp_in_hpts == IHPTS_MOVING)) {
-				if (inp->inp_hptsslot == -1) {
-					inp->inp_in_hpts = IHPTS_NONE;
-					if (in_pcbrele_wlocked(inp) == false)
-						INP_WUNLOCK(inp);
-				} else {
-					HPTS_LOCK(hpts);
-					inp_hpts_insert(inp, hpts);
-					HPTS_UNLOCK(hpts);
-					INP_WUNLOCK(inp);
-				}
-				continue;
-			}
-
-			MPASS(inp->inp_in_hpts == IHPTS_ONQUEUE);
-			MPASS(!(inp->inp_flags & (INP_DROPPED|INP_TIMEWAIT)));
-			KASSERT(runningslot == inp->inp_hptsslot,
-				("Hpts:%p inp:%p slot mis-aligned %u vs %u",
-				 hpts, inp, runningslot, inp->inp_hptsslot));
-
-			if (inp->inp_hpts_request) {
+			if (ntp != NULL) {
 				/*
-				 * This guy is deferred out further in time
-				 * then our wheel had available on it.
-				 * Push him back on the wheel or run it
-				 * depending.
-				 */
-				uint32_t maxslots, last_slot, remaining_slots;
-
-				remaining_slots = slots_to_run - (i + 1);
-				if (inp->inp_hpts_request > remaining_slots) {
-					HPTS_LOCK(hpts);
-					/*
-					 * How far out can we go?
-					 */
-					maxslots = max_slots_available(hpts,
-					    hpts->p_cur_slot, &last_slot);
-					if (maxslots >= inp->inp_hpts_request) {
-						/* We can place it finally to
-						 * be processed.  */
-						inp->inp_hptsslot = hpts_slot(
-						    hpts->p_runningslot,
-						    inp->inp_hpts_request);
-						inp->inp_hpts_request = 0;
-					} else {
-						/* Work off some more time */
-						inp->inp_hptsslot = last_slot;
-						inp->inp_hpts_request -=
-						    maxslots;
-					}
-					inp_hpts_insert(inp, hpts);
-					HPTS_UNLOCK(hpts);
-					INP_WUNLOCK(inp);
-					continue;
-				}
-				inp->inp_hpts_request = 0;
-				/* Fall through we will so do it now */
-			}
-
-			inp_hpts_release(inp);
-			tp = intotcpcb(inp);
-			MPASS(tp);
-			if (set_cpu) {
-				/*
-				 * Setup so the next time we will move to
-				 * the right CPU. This should be a rare
-				 * event. It will sometimes happens when we
-				 * are the client side (usually not the
-				 * server). Somehow tcp_output() gets called
-				 * before the tcp_do_segment() sets the
-				 * intial state. This means the r_cpu and
-				 * r_hpts_cpu is 0. We get on the hpts, and
-				 * then tcp_input() gets called setting up
-				 * the r_cpu to the correct value. The hpts
-				 * goes off and sees the mis-match. We
-				 * simply correct it here and the CPU will
-				 * switch to the new hpts nextime the tcb
-				 * gets added to the the hpts (not this one)
-				 * :-)
-				 */
-				tcp_set_hpts(inp);
-			}
-			CURVNET_SET(inp->inp_vnet);
-			/* Lets do any logging that we might want to */
-			if (hpts_does_tp_logging && (tp->t_logstate != TCP_LOG_STATE_OFF)) {
-				tcp_hpts_log(hpts, tp, &tv, slots_to_run, i, from_callout);
-			}
-
-			if (tp->t_fb_ptr != NULL) {
-				kern_prefetch(tp->t_fb_ptr, &did_prefetch);
-				did_prefetch = 1;
-			}
-			if ((inp->inp_flags2 & INP_SUPPORTS_MBUFQ) && tp->t_in_pkt) {
-				error = (*tp->t_fb->tfb_do_queued_segments)(inp->inp_socket, tp, 0);
-				if (error) {
-					/* The input killed the connection */
-					goto skip_pacing;
-				}
-			}
-			inp->inp_hpts_calls = 1;
-			error = tcp_output(tp);
-			if (error < 0)
-				goto skip_pacing;
-			inp->inp_hpts_calls = 0;
-			if (ninp && ninp->inp_ppcb) {
-				/*
-				 * If we have a nxt inp, see if we can
-				 * prefetch its ppcb. Note this may seem
+				 * If we have a next tcpcb, see if we can
+				 * prefetch it. Note this may seem
 				 * "risky" since we have no locks (other
 				 * than the previous inp) and there no
-				 * assurance that ninp was not pulled while
-				 * we were processing inp and freed. If this
-				 * occured it could mean that either:
+				 * assurance that ntp was not pulled while
+				 * we were processing tp and freed. If this
+				 * occurred it could mean that either:
 				 *
 				 * a) Its NULL (which is fine we won't go
 				 * here) <or> b) Its valid (which is cool we
@@ -1399,10 +1242,149 @@ again:
 				 * TLB hit, and instead if <c> occurs just
 				 * cause us to load cache with a useless
 				 * address (to us).
+				 *
+				 * XXXGL: this comment and the prefetch action
+				 * could be outdated after tp == inp change.
 				 */
-				kern_prefetch(ninp->inp_ppcb, &prefetch_tp);
+				kern_prefetch(ntp, &prefetch_tp);
 				prefetch_tp = 1;
 			}
+
+			/* For debugging */
+			if (seen_endpoint == 0) {
+				seen_endpoint = 1;
+				orig_exit_slot = slot_pos_of_endpoint =
+				    runningslot;
+			} else if (completed_measure == 0) {
+				/* Record the new position */
+				orig_exit_slot = runningslot;
+			}
+
+			INP_WLOCK(inp);
+			if ((tp->t_flags2 & TF2_HPTS_CPU_SET) == 0) {
+				set_cpu = true;
+			} else {
+				set_cpu = false;
+			}
+
+			if (__predict_false(tp->t_in_hpts == IHPTS_MOVING)) {
+				if (tp->t_hpts_slot == -1) {
+					tp->t_in_hpts = IHPTS_NONE;
+					if (in_pcbrele_wlocked(inp) == false)
+						INP_WUNLOCK(inp);
+				} else {
+					HPTS_LOCK(hpts);
+					tcp_hpts_insert_internal(tp, hpts);
+					HPTS_UNLOCK(hpts);
+					INP_WUNLOCK(inp);
+				}
+				continue;
+			}
+
+			MPASS(tp->t_in_hpts == IHPTS_ONQUEUE);
+			MPASS(!(inp->inp_flags & INP_DROPPED));
+			KASSERT(runningslot == tp->t_hpts_slot,
+				("Hpts:%p inp:%p slot mis-aligned %u vs %u",
+				 hpts, inp, runningslot, tp->t_hpts_slot));
+
+			if (tp->t_hpts_request) {
+				/*
+				 * This guy is deferred out further in time
+				 * then our wheel had available on it.
+				 * Push him back on the wheel or run it
+				 * depending.
+				 */
+				uint32_t maxslots, last_slot, remaining_slots;
+
+				remaining_slots = slots_to_run - (i + 1);
+				if (tp->t_hpts_request > remaining_slots) {
+					HPTS_LOCK(hpts);
+					/*
+					 * How far out can we go?
+					 */
+					maxslots = max_slots_available(hpts,
+					    hpts->p_cur_slot, &last_slot);
+					if (maxslots >= tp->t_hpts_request) {
+						/* We can place it finally to
+						 * be processed.  */
+						tp->t_hpts_slot = hpts_slot(
+						    hpts->p_runningslot,
+						    tp->t_hpts_request);
+						tp->t_hpts_request = 0;
+					} else {
+						/* Work off some more time */
+						tp->t_hpts_slot = last_slot;
+						tp->t_hpts_request -=
+						    maxslots;
+					}
+					tcp_hpts_insert_internal(tp, hpts);
+					HPTS_UNLOCK(hpts);
+					INP_WUNLOCK(inp);
+					continue;
+				}
+				tp->t_hpts_request = 0;
+				/* Fall through we will so do it now */
+			}
+
+			tcp_hpts_release(tp);
+			if (set_cpu) {
+				/*
+				 * Setup so the next time we will move to
+				 * the right CPU. This should be a rare
+				 * event. It will sometimes happens when we
+				 * are the client side (usually not the
+				 * server). Somehow tcp_output() gets called
+				 * before the tcp_do_segment() sets the
+				 * intial state. This means the r_cpu and
+				 * r_hpts_cpu is 0. We get on the hpts, and
+				 * then tcp_input() gets called setting up
+				 * the r_cpu to the correct value. The hpts
+				 * goes off and sees the mis-match. We
+				 * simply correct it here and the CPU will
+				 * switch to the new hpts nextime the tcb
+				 * gets added to the hpts (not this one)
+				 * :-)
+				 */
+				tcp_set_hpts(tp);
+			}
+			CURVNET_SET(inp->inp_vnet);
+			/* Lets do any logging that we might want to */
+			if (hpts_does_tp_logging && tcp_bblogging_on(tp)) {
+				tcp_hpts_log(hpts, tp, &tv, slots_to_run, i, from_callout);
+			}
+
+			if (tp->t_fb_ptr != NULL) {
+				kern_prefetch(tp->t_fb_ptr, &did_prefetch);
+				did_prefetch = 1;
+			}
+			/*
+			 * We set TF2_HPTS_CALLS before any possible output.
+			 * The contract with the transport is that if it cares
+			 * about hpts calling it should clear the flag. That
+			 * way next time it is called it will know it is hpts.
+			 *
+			 * We also only call tfb_do_queued_segments() <or>
+			 * tcp_output().  It is expected that if segments are
+			 * queued and come in that the final input mbuf will
+			 * cause a call to output if it is needed so we do
+			 * not need a second call to tcp_output(). So we do
+			 * one or the other but not both.
+			 */
+			tp->t_flags2 |= TF2_HPTS_CALLS;
+			if ((tp->t_flags2 & TF2_SUPPORTS_MBUFQ) &&
+			    !STAILQ_EMPTY(&tp->t_inqueue)) {
+				error = (*tp->t_fb->tfb_do_queued_segments)(tp, 0);
+				/*
+				 * A non-zero return for input queue processing
+				 * is the lock is released and most likely the
+				 * inp is gone.
+				 */
+				if (error)
+					goto skip_pacing;
+			} else
+				error = tcp_output(tp);
+			if (error < 0)
+				goto skip_pacing;
 			INP_WUNLOCK(inp);
 		skip_pacing:
 			CURVNET_RESTORE();
@@ -1464,7 +1446,7 @@ no_one:
 		goto again;
 	}
 no_run:
-	cts_last_ran[hpts->p_num] = tcp_tv_to_usectick(&tv);
+	tcp_pace.cts_last_ran[hpts->p_num] = tcp_tv_to_usectick(&tv);
 	/*
 	 * Set flag to tell that we are done for
 	 * any slot input that happens during
@@ -1504,26 +1486,71 @@ no_run:
 }
 
 void
-__tcp_set_hpts(struct inpcb *inp, int32_t line)
+__tcp_set_hpts(struct tcpcb *tp, int32_t line)
 {
 	struct tcp_hpts_entry *hpts;
 	int failed;
 
-	INP_WLOCK_ASSERT(inp);
-	hpts = tcp_hpts_lock(inp);
-	if ((inp->inp_in_hpts == 0) &&
-	    (inp->inp_hpts_cpu_set == 0)) {
-		inp->inp_hpts_cpu = hpts_cpuid(inp, &failed);
+	INP_WLOCK_ASSERT(tptoinpcb(tp));
+
+	hpts = tcp_hpts_lock(tp);
+	if (tp->t_in_hpts == IHPTS_NONE && !(tp->t_flags2 & TF2_HPTS_CPU_SET)) {
+		tp->t_hpts_cpu = hpts_cpuid(tp, &failed);
 		if (failed == 0)
-			inp->inp_hpts_cpu_set = 1;
+			tp->t_flags2 |= TF2_HPTS_CPU_SET;
 	}
 	mtx_unlock(&hpts->p_mtx);
 }
 
-static void
-__tcp_run_hpts(struct tcp_hpts_entry *hpts)
+static struct tcp_hpts_entry *
+tcp_choose_hpts_to_run(void)
 {
+	int i, oldest_idx, start, end;
+	uint32_t cts, time_since_ran, calc;
+
+	cts = tcp_get_usecs(NULL);
+	time_since_ran = 0;
+	/* Default is all one group */
+	start = 0;
+	end = tcp_pace.rp_num_hptss;
+	/*
+	 * If we have more than one L3 group figure out which one
+	 * this CPU is in.
+	 */
+	if (tcp_pace.grp_cnt > 1) {
+		for (i = 0; i < tcp_pace.grp_cnt; i++) {
+			if (CPU_ISSET(curcpu, &tcp_pace.grps[i]->cg_mask)) {
+				start = tcp_pace.grps[i]->cg_first;
+				end = (tcp_pace.grps[i]->cg_last + 1);
+				break;
+			}
+		}
+	}
+	oldest_idx = -1;
+	for (i = start; i < end; i++) {
+		if (TSTMP_GT(cts, tcp_pace.cts_last_ran[i]))
+			calc = cts - tcp_pace.cts_last_ran[i];
+		else
+			calc = 0;
+		if (calc > time_since_ran) {
+			oldest_idx = i;
+			time_since_ran = calc;
+		}
+	}
+	if (oldest_idx >= 0)
+		return(tcp_pace.rp_ent[oldest_idx]);
+	else
+		return(tcp_pace.rp_ent[(curcpu % tcp_pace.rp_num_hptss)]);
+}
+
+static void
+__tcp_run_hpts(void)
+{
+	struct epoch_tracker et;
+	struct tcp_hpts_entry *hpts;
 	int ticks_ran;
+
+	hpts = tcp_choose_hpts_to_run();
 
 	if (hpts->p_hpts_active) {
 		/* Already active */
@@ -1533,6 +1560,7 @@ __tcp_run_hpts(struct tcp_hpts_entry *hpts)
 		/* Someone else got the lock */
 		return;
 	}
+	NET_EPOCH_ENTER(et);
 	if (hpts->p_hpts_active)
 		goto out_with_mtx;
 	hpts->syscall_cnt++;
@@ -1550,6 +1578,7 @@ __tcp_run_hpts(struct tcp_hpts_entry *hpts)
 				hpts->p_mysleep.tv_usec = dynamic_min_sleep;
 			/* Reschedule with new to value */
 			tcp_hpts_set_max_sleep(hpts, 0);
+			tv.tv_sec = 0;
 			tv.tv_usec = hpts->p_hpts_sleep_time * HPTS_TICKS_PER_SLOT;
 			/* Validate its in the right ranges */
 			if (tv.tv_usec < hpts->p_mysleep.tv_usec) {
@@ -1584,62 +1613,8 @@ __tcp_run_hpts(struct tcp_hpts_entry *hpts)
 out_with_mtx:
 	HPTS_MTX_ASSERT(hpts);
 	mtx_unlock(&hpts->p_mtx);
-}
-
-static struct tcp_hpts_entry *
-tcp_choose_hpts_to_run(void)
-{
-	int i, oldest_idx, start, end;
-	uint32_t cts, time_since_ran, calc;
-
-	cts = tcp_get_usecs(NULL);
-	time_since_ran = 0;
-	/* Default is all one group */
-	start = 0;
-	end = tcp_pace.rp_num_hptss;
-	/*
-	 * If we have more than one L3 group figure out which one
-	 * this CPU is in.
-	 */
-	if (tcp_pace.grp_cnt > 1) {
-		for (i = 0; i < tcp_pace.grp_cnt; i++) {
-			if (CPU_ISSET(curcpu, &tcp_pace.grps[i]->cg_mask)) {
-				start = tcp_pace.grps[i]->cg_first;
-				end = (tcp_pace.grps[i]->cg_last + 1);
-				break;
-			}
-		}
-	}
-	oldest_idx = -1;
-	for (i = start; i < end; i++) {
-		if (TSTMP_GT(cts, cts_last_ran[i]))
-			calc = cts - cts_last_ran[i];
-		else
-			calc = 0;
-		if (calc > time_since_ran) {
-			oldest_idx = i;
-			time_since_ran = calc;
-		}
-	}
-	if (oldest_idx >= 0)
-		return(tcp_pace.rp_ent[oldest_idx]);
-	else
-		return(tcp_pace.rp_ent[(curcpu % tcp_pace.rp_num_hptss)]);
-}
-
-
-void
-tcp_run_hpts(void)
-{
-	static struct tcp_hpts_entry *hpts;
-	struct epoch_tracker et;
-
-	NET_EPOCH_ENTER(et);
-	hpts = tcp_choose_hpts_to_run();
-	__tcp_run_hpts(hpts);
 	NET_EPOCH_EXIT(et);
 }
-
 
 static void
 tcp_hpts_thread(void *ctx)
@@ -1676,6 +1651,7 @@ tcp_hpts_thread(void *ctx)
 		 * enough activity in the system that we don't need to
 		 * run as often (if we were not directly woken).
 		 */
+		tv.tv_sec = 0;
 		if (hpts->p_direct_wake == 0) {
 			counter_u64_add(hpts_back_tosleep, 1);
 			if (hpts->p_on_queue_cnt >= conn_cnt_thresh) {
@@ -1700,7 +1676,6 @@ tcp_hpts_thread(void *ctx)
 			 * Directly woken most likely to reset the
 			 * callout time.
 			 */
-			tv.tv_sec = 0;
 			tv.tv_usec = hpts->p_mysleep.tv_usec;
 		}
 		goto back_to_sleep;
@@ -1710,6 +1685,13 @@ tcp_hpts_thread(void *ctx)
 	ticks_ran = tcp_hptsi(hpts, 1);
 	tv.tv_sec = 0;
 	tv.tv_usec = hpts->p_hpts_sleep_time * HPTS_TICKS_PER_SLOT;
+	if ((hpts->p_on_queue_cnt > conn_cnt_thresh) && (hpts->hit_callout_thresh == 0)) {
+		hpts->hit_callout_thresh = 1;
+		atomic_add_int(&hpts_that_need_softclock, 1);
+	} else if ((hpts->p_on_queue_cnt <= conn_cnt_thresh) && (hpts->hit_callout_thresh == 1)) {
+		hpts->hit_callout_thresh = 0;
+		atomic_subtract_int(&hpts_that_need_softclock, 1);
+	}
 	if (hpts->p_on_queue_cnt >= conn_cnt_thresh) {
 		if(hpts->p_direct_wake == 0) {
 			/*
@@ -1825,7 +1807,7 @@ hpts_gather_grps(struct cpu_group **grps, int32_t *at, int32_t max, struct cpu_g
 }
 
 static void
-tcp_init_hptsi(void *st)
+tcp_hpts_mod_load(void)
 {
 	struct cpu_group *cpu_top;
 	int32_t error __diagused;
@@ -1860,7 +1842,7 @@ tcp_init_hptsi(void *st)
 	sz = (tcp_pace.rp_num_hptss * sizeof(struct tcp_hpts_entry *));
 	tcp_pace.rp_ent = malloc(sz, M_TCPHPTS, M_WAITOK | M_ZERO);
 	sz = (sizeof(uint32_t) * tcp_pace.rp_num_hptss);
-	cts_last_ran = malloc(sz, M_TCPHPTS, M_WAITOK);
+	tcp_pace.cts_last_ran = malloc(sz, M_TCPHPTS, M_WAITOK);
 	tcp_pace.grp_cnt = 0;
 	if (cpu_top == NULL) {
 		tcp_pace.grp_cnt = 1;
@@ -1946,7 +1928,7 @@ tcp_init_hptsi(void *st)
 		SYSCTL_ADD_UINT(&hpts->hpts_ctx,
 		    SYSCTL_CHILDREN(hpts->hpts_root),
 		    OID_AUTO, "lastran", CTLFLAG_RD,
-		    &cts_last_ran[i], 0,
+		    &tcp_pace.cts_last_ran[i], 0,
 		    "The last usec tick that this hpts ran");
 		SYSCTL_ADD_LONG(&hpts->hpts_ctx,
 		    SYSCTL_CHILDREN(hpts->hpts_root),
@@ -1967,7 +1949,7 @@ tcp_init_hptsi(void *st)
 		hpts->p_hpts_sleep_time = hpts_sleep_max;
 		hpts->p_num = i;
 		hpts->p_curtick = tcp_gethptstick(&tv);
-		cts_last_ran[i] = tcp_tv_to_usectick(&tv);
+		tcp_pace.cts_last_ran[i] = tcp_tv_to_usectick(&tv);
 		hpts->p_prev_slot = hpts->p_cur_slot = tick_to_wheel(hpts->p_curtick);
 		hpts->p_cpu = 0xffff;
 		hpts->p_nxt_slot = hpts_slot(hpts->p_cur_slot, 1);
@@ -2031,13 +2013,86 @@ tcp_init_hptsi(void *st)
 			break;
 		}
 	}
+	tcp_hpts_softclock = __tcp_run_hpts;
+	tcp_lro_hpts_init();
 	printf("TCP Hpts created %d swi interrupt threads and bound %d to %s\n",
 	    created, bound,
 	    tcp_bind_threads == 2 ? "NUMA domains" : "cpus");
-#ifdef INVARIANTS
-	printf("HPTS is in INVARIANT mode!!\n");
-#endif
 }
 
-SYSINIT(tcphptsi, SI_SUB_SOFTINTR, SI_ORDER_ANY, tcp_init_hptsi, NULL);
+static void
+tcp_hpts_mod_unload(void)
+{
+	int rv __diagused;
+
+	tcp_lro_hpts_uninit();
+	atomic_store_ptr(&tcp_hpts_softclock, NULL);
+
+	for (int i = 0; i < tcp_pace.rp_num_hptss; i++) {
+		struct tcp_hpts_entry *hpts = tcp_pace.rp_ent[i];
+
+		rv = callout_drain(&hpts->co);
+		MPASS(rv != 0);
+
+		rv = swi_remove(hpts->ie_cookie);
+		MPASS(rv == 0);
+
+		rv = sysctl_ctx_free(&hpts->hpts_ctx);
+		MPASS(rv == 0);
+
+		mtx_destroy(&hpts->p_mtx);
+		free(hpts->p_hptss, M_TCPHPTS);
+		free(hpts, M_TCPHPTS);
+	}
+
+	free(tcp_pace.rp_ent, M_TCPHPTS);
+	free(tcp_pace.cts_last_ran, M_TCPHPTS);
+#ifdef SMP
+	free(tcp_pace.grps, M_TCPHPTS);
+#endif
+
+	counter_u64_free(hpts_hopelessly_behind);
+	counter_u64_free(hpts_loops);
+	counter_u64_free(back_tosleep);
+	counter_u64_free(combined_wheel_wrap);
+	counter_u64_free(wheel_wrap);
+	counter_u64_free(hpts_wake_timeout);
+	counter_u64_free(hpts_direct_awakening);
+	counter_u64_free(hpts_back_tosleep);
+	counter_u64_free(hpts_direct_call);
+	counter_u64_free(cpu_uses_flowid);
+	counter_u64_free(cpu_uses_random);
+}
+
+static int
+tcp_hpts_modevent(module_t mod, int what, void *arg)
+{
+
+	switch (what) {
+	case MOD_LOAD:
+		tcp_hpts_mod_load();
+		return (0);
+	case MOD_QUIESCE:
+		/*
+		 * Since we are a dependency of TCP stack modules, they should
+		 * already be unloaded, and the HPTS ring is empty.  However,
+		 * function pointer manipulations aren't 100% safe.  Although,
+		 * tcp_hpts_mod_unload() use atomic(9) the userret() doesn't.
+		 * Thus, allow only forced unload of HPTS.
+		 */
+		return (EBUSY);
+	case MOD_UNLOAD:
+		tcp_hpts_mod_unload();
+		return (0);
+	default:
+		return (EINVAL);
+	};
+}
+
+static moduledata_t tcp_hpts_module = {
+	.name = "tcphpts",
+	.evhand = tcp_hpts_modevent,
+};
+
+DECLARE_MODULE(tcphpts, tcp_hpts_module, SI_SUB_SOFTINTR, SI_ORDER_ANY);
 MODULE_VERSION(tcphpts, 1);

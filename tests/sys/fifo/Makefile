@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTSDIR=	${TESTSBASE}/sys/fifo
 
 PLAIN_TESTS_C+=	fifo_create

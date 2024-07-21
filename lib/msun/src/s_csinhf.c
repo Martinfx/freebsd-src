@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005 Bruce D. Evans and Steven G. Kargl
  * All rights reserved.
@@ -29,9 +29,6 @@
 /*
  * Float version of csinh().  See s_csinh.c for details.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <complex.h>
 #include <math.h>

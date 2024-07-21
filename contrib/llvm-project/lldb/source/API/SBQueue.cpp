@@ -27,12 +27,9 @@ namespace lldb_private {
 
 class QueueImpl {
 public:
-  QueueImpl() {}
+  QueueImpl() = default;
 
-  QueueImpl(const lldb::QueueSP &queue_sp)
-      : m_thread_list_fetched(false), m_pending_items_fetched(false) {
-    m_queue_wp = queue_sp;
-  }
+  QueueImpl(const lldb::QueueSP &queue_sp) { m_queue_wp = queue_sp; }
 
   QueueImpl(const QueueImpl &rhs) {
     if (&rhs == this)
@@ -80,12 +77,10 @@ public:
   }
 
   const char *GetName() const {
-    const char *name = nullptr;
     lldb::QueueSP queue_sp = m_queue_wp.lock();
-    if (queue_sp.get()) {
-      name = queue_sp->GetName();
-    }
-    return name;
+    if (!queue_sp)
+      return nullptr;
+    return ConstString(queue_sp->GetName()).GetCString();
   }
 
   void FetchThreads() {

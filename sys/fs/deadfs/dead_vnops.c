@@ -27,9 +27,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)dead_vnops.c	8.1 (Berkeley) 6/10/93
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -82,7 +79,7 @@ struct vop_vector dead_vnodeops = {
 	.vop_unset_text =	dead_unset_text,
 	.vop_write =		dead_write,
 	.vop_fplookup_vexec =	VOP_EOPNOTSUPP,
-	.vop_fplookup_symlink =	VOP_EAGAIN,
+	.vop_fplookup_symlink =	VOP_EOPNOTSUPP,
 };
 VFS_VOP_VECTOR_REGISTER(dead_vnodeops);
 

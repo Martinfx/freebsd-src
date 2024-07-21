@@ -27,18 +27,12 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
-#include "opt_compat.h"
 
 #include <sys/param.h>
-#include <sys/errno.h>
+#include <sys/proc.h>
 #include <sys/signal.h>
 #include <sys/syscallsubr.h>
-#include <sys/systm.h>
 #include <sys/time.h>
-#include <sys/types.h>
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -47,10 +41,10 @@ __FBSDID("$FreeBSD$");
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
 #endif
-#include <compat/linux/linux_timer.h>
+#include <compat/linux/linux_time.h>
 
-static int
-linux_convert_l_sigevent(struct l_sigevent *l_sig, struct sigevent *sig)
+int
+linux_convert_l_sigevent(const struct l_sigevent *l_sig, struct sigevent *sig)
 {
 
 	CP(*l_sig, *sig, sigev_notify);

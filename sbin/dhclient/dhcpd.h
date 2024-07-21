@@ -39,8 +39,6 @@
  * Enterprises.  To learn more about the Internet Software Consortium,
  * see ``http://www.vix.com/isc''.  To learn more about Vixie
  * Enterprises, see ``http://www.vix.com''.
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -159,6 +157,7 @@ struct client_config {
 	u_int8_t		 required_options[256];
 	u_int8_t		 requested_options[256];
 	int			 requested_option_count;
+	u_int8_t		 ignored_options[256];
 	u_int			 vlan_pcp;
 	time_t			 timeout;
 	time_t			 initial_interval;
@@ -200,7 +199,6 @@ struct client_state {
 struct interface_info {
 	struct interface_info	*next;
 	struct hardware		 hw_address;
-	struct in_addr		 primary_address;
 	char			 name[IFNAMSIZ];
 	int			 rfdesc;
 	int			 wfdesc;

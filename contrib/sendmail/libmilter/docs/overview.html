@@ -60,7 +60,7 @@ returns to <CODE>MESSAGE</CODE>.
 For each of N connections
 {
 	For each filter
-		egotiate MTA/milter capabilities/requirements (<A HREF="xxfi_negotiate.html">xxfi_negotiate</A>)
+		negotiate MTA/milter capabilities/requirements (<A HREF="xxfi_negotiate.html">xxfi_negotiate</A>)
 	For each filter
 		process connection (<A HREF="xxfi_connect.html">xxfi_connect</A>)
 	For each filter
@@ -75,8 +75,9 @@ MESSAGE:For each message in this connection (sequentially)
 				process recipient (<A HREF="xxfi_envrcpt.html">xxfi_envrcpt</A>)
 		}
 		For each filter
-		{
 			process DATA (<A HREF="xxfi_data.html">xxfi_data</A>)
+		For each filter
+		{
 			For each header
 				process header (<A HREF="xxfi_header.html">xxfi_header</A>)
 			process end of headers (<A HREF="xxfi_eoh.html">xxfi_eoh</A>)

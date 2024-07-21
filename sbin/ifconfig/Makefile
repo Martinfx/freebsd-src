@@ -1,6 +1,3 @@
-#	From: @(#)Makefile	8.1 (Berkeley) 6/5/93
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 PACKAGE=runtime
@@ -71,10 +68,15 @@ LIBADD+=	jail
 .endif
 LIBADD+=	nv
 
+.if ${MK_NETLINK_SUPPORT} != "no"
+SRCS+=	ifconfig_netlink.c
+.else
+CFLAGS+=-DWITHOUT_NETLINK
+.endif
+
 MAN=	ifconfig.8
 
 CFLAGS+= -Wall -Wmissing-prototypes -Wcast-qual -Wwrite-strings -Wnested-externs
-WARNS?=	2
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests

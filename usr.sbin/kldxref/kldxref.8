@@ -1,6 +1,6 @@
 .\"-
 .\" Copyright (c) 2001 Boris Popov
-.\" Copyright (c) 2001 Dag-Erling Coïdan Smørgrav
+.\" Copyright (c) 2001 Dag-Erling Smørgrav
 .\" All rights reserved.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
@@ -24,9 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd October 9, 2001
+.Dd February 25, 2023
 .Dt KLDXREF 8
 .Os
 .Sh NAME
@@ -50,6 +48,14 @@ command line that contains modules.
 If no hint records are generated for a particular directory, no hint
 file is created, and the preexisting hint file (if there was one in
 that directory) is removed.
+.Pp
+.Nm
+only processes files that either have no dots in their name like
+.Pa kernel
+or that end in
+.Dq .ko
+like
+.Pa foo.ko .
 .Pp
 The following options are available:
 .Bl -tag -width indent

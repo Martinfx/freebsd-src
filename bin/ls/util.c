@@ -32,14 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)util.c	8.3 (Berkeley) 4/2/94";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -227,9 +219,9 @@ usage(void)
 {
 	(void)fprintf(stderr,
 #ifdef COLORLS
-	"usage: ls [-ABCFGHILPRSTUWZabcdfghiklmnopqrstuwxy1,] [--color=when] [-D format]"
+	"usage: ls [-ABCFGHILPRSTUWZabcdfghiklmnopqrstuvwxy1,] [--color=when] [-D format]"
 #else
-	"usage: ls [-ABCFHILPRSTUWZabcdfghiklmnopqrstuwxy1,] [-D format]"
+	"usage: ls [-ABCFHILPRSTUWZabcdfghiklmnopqrstuvwxy1,] [-D format]"
 #endif
 		      " [file ...]\n");
 	exit(1);

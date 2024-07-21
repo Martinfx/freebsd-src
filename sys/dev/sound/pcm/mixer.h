@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * Copyright (c) 1999 Cameron Grant <cg@FreeBSD.org>
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _PCM_MIXER_H_
@@ -70,8 +68,6 @@ u_int32_t mix_getparent(struct snd_mixer *m, u_int32_t dev);
 u_int32_t mix_getchild(struct snd_mixer *m, u_int32_t dev);
 void *mix_getdevinfo(struct snd_mixer *m);
 struct mtx *mixer_get_lock(struct snd_mixer *m);
-
-extern int mixer_count;
 
 #define MIXER_CMD_DIRECT	0	/* send command within driver   */
 #define MIXER_CMD_CDEV		1	/* send command from cdev/ioctl */

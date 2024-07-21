@@ -24,9 +24,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Simple commandline interpreter, toplevel and misc.
  */
@@ -36,6 +33,11 @@ __FBSDID("$FreeBSD$");
 #include "bootstrap.h"
 
 INTERP_DEFINE("simp");
+
+void
+interp_preinit(void)
+{
+}
 
 void
 interp_init(void)
@@ -199,4 +201,12 @@ interp_include(const char *filename)
 		free(se);
 	}
 	return(res);
+}
+
+/*
+ * There's no graphics commands for the simple interpreter.
+ */
+void
+gfx_interp_ref(void)
+{
 }

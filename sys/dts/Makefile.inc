@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SYSDIR?=${SRCTOP}/sys
 
 test-dts:

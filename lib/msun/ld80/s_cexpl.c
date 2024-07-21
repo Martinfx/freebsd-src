@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 David Schultz <das@FreeBSD.ORG>
  * All rights reserved.
@@ -27,9 +27,6 @@
  *
  * src/s_cexp.c converted to long double complex by Steven G. Kargl
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <complex.h>
 #include <float.h>

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.own.mk>
 
 TEST_DIR=	${SRCTOP}/contrib/byacc/test

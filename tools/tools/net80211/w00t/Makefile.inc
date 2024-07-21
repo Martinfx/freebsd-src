@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 W00T=	../libw00t
 # NB: we get crc32 from -lz
 DPADD=	${W00T}/libw00t.a

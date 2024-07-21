@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	watch
 MAN=	watch.8
 

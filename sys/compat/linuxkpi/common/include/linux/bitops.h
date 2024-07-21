@@ -25,8 +25,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 #ifndef	_LINUXKPI_LINUX_BITOPS_H_
 #define	_LINUXKPI_LINUX_BITOPS_H_
@@ -56,6 +54,7 @@
 #define	GENMASK_ULL(h, l)	(((~0ULL) >> (BITS_PER_LONG_LONG - (h) - 1)) & ((~0ULL) << (l)))
 #define	BITS_PER_BYTE		8
 #define	BITS_PER_TYPE(t)	(sizeof(t) * BITS_PER_BYTE)
+#define	BITS_TO_BYTES(n)	howmany((n), BITS_PER_BYTE)
 
 #define	hweight8(x)	bitcount((uint8_t)(x))
 #define	hweight16(x)	bitcount16(x)

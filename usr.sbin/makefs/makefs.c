@@ -37,9 +37,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <assert.h>
@@ -100,7 +97,7 @@ main(int argc, char *argv[])
 	fstype_t	*fstype;
 	fsinfo_t	 fsoptions;
 	fsnode		*root;
-	int	 	 ch, i, len;
+	int		 ch, i, len;
 	const char	*subtree;
 	const char	*specfile;
 
@@ -167,7 +164,7 @@ main(int argc, char *argv[])
 			break;
 
 		case 'D':
-			dupsok = 1;
+			dupsok++;
 			break;
 
 		case 'd':
@@ -273,7 +270,6 @@ main(int argc, char *argv[])
 			fsoptions.sparse = 1;
 			break;
 
-		case '?':
 		default:
 			usage(fstype, &fsoptions);
 			/* NOTREACHED */

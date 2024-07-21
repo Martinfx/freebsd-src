@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003, 2004, 2005, 2009 Silicon Graphics International Corp.
  * Copyright (c) 2014-2015 Alexander Motin <mav@FreeBSD.org>
@@ -31,7 +31,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_cmd_table.c#4 $
- * $FreeBSD$
  */
 /*
  * CAM Target Layer command table.
@@ -39,7 +38,6 @@
  * Author: Ken Merry <ken@FreeBSD.org>, Kim Le
  */
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -946,6 +944,7 @@ const struct ctl_cmd_entry ctl_cmd_table[256] =
 /* 08 READ(6) */
 {ctl_read_write, CTL_SERIDX_READ, CTL_CMD_FLAG_OK_ON_DIRECT |
 				  CTL_FLAG_DATA_IN |
+				  CTL_CMD_FLAG_OK_ON_CDROM |
 				  CTL_CMD_FLAG_ALLOW_ON_PR_WRESV,
  CTL_LUN_PAT_READ | CTL_LUN_PAT_RANGE, 6, {0x1f, 0xff, 0xff, 0xff, 0x07}},
 
@@ -1229,7 +1228,7 @@ const struct ctl_cmd_entry ctl_cmd_table[256] =
 					  CTL_CMD_FLAG_ALLOW_ON_PR_RESV |
 					  CTL_FLAG_DATA_IN,
  CTL_LUN_PAT_NONE,
- 10, {0x02, 0x01, 0, 0, 0, 0xff, 0xff, 0xff, 0x07}},
+ 10, {0xe1, 0, 0, 0x7e, 0, 0, 0xff, 0xff, 0x07}},
 
 /* 4B PAUSE/RESUME */
 {NULL, CTL_SERIDX_INVLD, CTL_CMD_FLAG_NONE, CTL_LUN_PAT_NONE},

@@ -1,4 +1,3 @@
-/*	$FreeBSD$	*/
 /*	$KAME: keydb.h,v 1.14 2000/08/02 17:58:26 sakane Exp $	*/
 
 /*-
@@ -37,9 +36,11 @@
 
 #ifdef _KERNEL
 #include <sys/counter.h>
+#include <sys/ck.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/rmlock.h>
+#include <sys/_task.h>
 
 #include <netipsec/key_var.h>
 #include <opencrypto/_cryptodev.h>
@@ -126,6 +127,7 @@ struct xformsw;
 struct enc_xform;
 struct auth_hash;
 struct comp_algo;
+struct ifp_handle_sav;
 
 /*
  * Security Association
@@ -186,7 +188,18 @@ struct secasvar {
 
 	uint64_t cntr;			/* counter for GCM and CTR */
 	volatile u_int refcnt;		/* reference count */
+	CK_LIST_HEAD(, ifp_handle_sav) accel_ifps;
+	uintptr_t	accel_forget_tq;
+	const char	*accel_ifname;
+	uint32_t	accel_flags;
+	counter_u64_t	accel_lft_sw;
+	uint64_t	accel_hw_allocs;
+	uint64_t	accel_hw_octets;
+	uint64_t	accel_firstused;
 };
+
+#define	SADB_KEY_ACCEL_INST	0x00000001
+#define	SADB_KEY_ACCEL_DEINST	0x00000002
 
 #define	SECASVAR_RLOCK_TRACKER		struct rm_priotracker _secas_tracker
 #define	SECASVAR_RLOCK(_sav)		rm_rlock((_sav)->lock, &_secas_tracker)
@@ -200,6 +213,8 @@ struct secasvar {
 			(_sav)->alg_enc == SADB_X_EALG_AESGCM12 ||	\
 			(_sav)->alg_enc == SADB_X_EALG_AESGCM16)
 #define	SAV_ISCTR(_sav) ((_sav)->alg_enc == SADB_X_EALG_AESCTR)
+#define	SAV_ISCHACHA(_sav)	\
+    ((_sav)->alg_enc == SADB_X_EALG_CHACHA20POLY1305)
 #define SAV_ISCTRORGCM(_sav)	(SAV_ISCTR((_sav)) || SAV_ISGCM((_sav)))
 
 #define	IPSEC_SEQH_SHIFT	32

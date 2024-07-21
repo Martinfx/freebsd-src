@@ -1,5 +1,4 @@
 /*	$NetBSD: rpcb_svc_com.c,v 1.9 2002/11/08 00:16:39 fvdl Exp $	*/
-/*	$FreeBSD$ */
 
 /*-
  * SPDX-License-Identifier: BSD-3-Clause
@@ -33,8 +32,6 @@
 /*
  * Copyright (c) 1986 - 1991 by Sun Microsystems, Inc.
  */
-
-/* #ident	"@(#)rpcb_svc_com.c	1.18	94/05/02 SMI" */
 
 /*
  * rpcb_svc_com.c
@@ -1225,7 +1222,6 @@ send_svcsyserr(SVCXPRT *xprt, struct finfo *fi)
 		xprt_set_caller(xprt, fi);
 		svcerr_systemerr(xprt);
 	}
-	return;
 }
 
 static void
@@ -1318,7 +1314,6 @@ done:
 #endif
 	} else
 		(void) free_slot_by_xid(reply_msg.rm_xid);
-	return;
 }
 
 static void
@@ -1344,7 +1339,6 @@ find_versions(rpcprog_t prog, char *netid, rpcvers_t *lowvp, rpcvers_t *highvp)
 	}
 	*lowvp = lowv;
 	*highvp = highv;
-	return;
 }
 
 /*

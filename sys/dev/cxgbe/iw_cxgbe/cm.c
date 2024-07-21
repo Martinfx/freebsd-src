@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009-2013, 2016 Chelsio, Inc. All rights reserved.
  *
@@ -32,8 +32,6 @@
  * SOFTWARE.
  */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 
 #ifdef TCP_OFFLOAD
@@ -68,7 +66,7 @@ struct cpl_set_tcb_rpl;
 #include "offload.h"
 #include "tom/t4_tom.h"
 
-#define TOEPCB(so)  ((struct toepcb *)(so_sototcpcb((so))->t_toe))
+#define TOEPCB(so)  ((struct toepcb *)(sototcpcb((so))->t_toe))
 
 #include "iw_cxgbe.h"
 #include <linux/module.h>
@@ -128,7 +126,7 @@ static int rem_ep_from_listenlist(struct c4iw_listen_ep *lep);
 static struct c4iw_listen_ep *
 find_real_listen_ep(struct c4iw_listen_ep *master_lep, struct socket *so);
 static int get_ifnet_from_raddr(struct sockaddr_storage *raddr,
-		struct ifnet **ifp);
+		if_t *ifp);
 static void process_newconn(struct c4iw_listen_ep *master_lep,
 		struct socket *new_so);
 #define START_EP_TIMER(ep) \
@@ -147,30 +145,24 @@ static void process_newconn(struct c4iw_listen_ep *master_lep,
 
 #define GET_LOCAL_ADDR(pladdr, so) \
 	do { \
-		struct sockaddr_storage *__a = NULL; \
 		struct  inpcb *__inp = sotoinpcb(so); \
 		KASSERT(__inp != NULL, \
 		   ("GET_LOCAL_ADDR(%s):so:%p, inp = NULL", __func__, so)); \
 		if (__inp->inp_vflag & INP_IPV4) \
-			in_getsockaddr(so, (struct sockaddr **)&__a); \
+			in_getsockaddr(so, (struct sockaddr *)pladdr); \
 		else \
-			in6_getsockaddr(so, (struct sockaddr **)&__a); \
-		*(pladdr) = *__a; \
-		free(__a, M_SONAME); \
+			in6_getsockaddr(so, (struct sockaddr *)pladdr); \
 	} while (0)
 
 #define GET_REMOTE_ADDR(praddr, so) \
 	do { \
-		struct sockaddr_storage *__a = NULL; \
 		struct  inpcb *__inp = sotoinpcb(so); \
 		KASSERT(__inp != NULL, \
 		   ("GET_REMOTE_ADDR(%s):so:%p, inp = NULL", __func__, so)); \
 		if (__inp->inp_vflag & INP_IPV4) \
-			in_getpeeraddr(so, (struct sockaddr **)&__a); \
+			in_getpeeraddr(so, (struct sockaddr *)praddr); \
 		else \
-			in6_getpeeraddr(so, (struct sockaddr **)&__a); \
-		*(praddr) = *__a; \
-		free(__a, M_SONAME); \
+			in6_getpeeraddr(so, (struct sockaddr *)praddr); \
 	} while (0)
 
 static char *states[] = {
@@ -234,8 +226,8 @@ struct listen_port_info {
  *   |listen_port_list  |
  *   |------------------|
  *            |
- *            |              |-----------|       |-----------|  
- *            |              | port_num:X|       | port_num:X|  
+ *            |              |-----------|       |-----------|
+ *            |              | port_num:X|       | port_num:X|
  *            |--------------|-list------|-------|-list------|-------....
  *                           | lep_list----|     | lep_list----|
  *                           | refcnt    | |     | refcnt    | |
@@ -245,13 +237,13 @@ struct listen_port_info {
  *                                         |                   |
  *                                         |                   |
  *                                         |                   |
- *                                         |                   |         lep1                  lep2         
+ *                                         |                   |         lep1                  lep2
  *                                         |                   |    |----------------|    |----------------|
  *                                         |                   |----| listen_ep_list |----| listen_ep_list |
  *                                         |                        |----------------|    |----------------|
  *                                         |
  *                                         |
- *                                         |        lep1                  lep2         
+ *                                         |        lep1                  lep2
  *                                         |   |----------------|    |----------------|
  *                                         |---| listen_ep_list |----| listen_ep_list |
  *                                             |----------------|    |----------------|
@@ -260,7 +252,7 @@ struct listen_port_info {
  * each TCP port number.
  *
  * Here 'lep1' is always marked as Master lep, because solisten() is always
- * called through first lep. 
+ * called through first lep.
  *
  */
 static struct listen_port_info *
@@ -337,7 +329,7 @@ find_real_listen_ep(struct c4iw_listen_ep *master_lep, struct socket *so)
 {
 	struct adapter *adap = NULL;
 	struct c4iw_listen_ep *lep = NULL;
-	struct ifnet *ifp = NULL, *hw_ifp = NULL;
+	if_t ifp = NULL, hw_ifp = NULL;
 	struct listen_port_info *port_info = NULL;
 	int i = 0, found_portinfo = 0, found_lep = 0;
 	uint16_t port;
@@ -348,7 +340,7 @@ find_real_listen_ep(struct c4iw_listen_ep *master_lep, struct socket *so)
 	 * TBD: lagg support, lagg + vlan support.
 	 */
 	ifp = TOEPCB(so)->l2te->ifp;
-	if (ifp->if_type == IFT_L2VLAN) {
+	if (if_gettype(ifp) == IFT_L2VLAN) {
 		hw_ifp = VLAN_TRUNKDEV(ifp);
 		if (hw_ifp == NULL) {
 			CTR4(KTR_IW_CXGBE, "%s: Failed to get parent ifnet of "
@@ -533,7 +525,7 @@ done:
 
 }
 static int
-get_ifnet_from_raddr(struct sockaddr_storage *raddr, struct ifnet **ifp)
+get_ifnet_from_raddr(struct sockaddr_storage *raddr, if_t *ifp)
 {
 	int err = 0;
 	struct nhop_object *nh;
@@ -933,7 +925,7 @@ err:
 	return;
 }
 
-static inline int c4iw_zero_addr(struct sockaddr *addr)
+static inline bool c4iw_zero_addr(struct sockaddr *addr)
 {
 	struct in6_addr *ip6;
 
@@ -946,19 +938,29 @@ static inline int c4iw_zero_addr(struct sockaddr *addr)
 	}
 }
 
-static inline int c4iw_loopback_addr(struct sockaddr *addr)
+#define _IN_LOOPBACK(i)	(((in_addr_t)(i) & 0xff000000) == 0x7f000000)
+static inline bool c4iw_loopback_addr(struct sockaddr *addr, struct vnet *vnet)
 {
-	if (addr->sa_family == AF_INET)
-		return IN_LOOPBACK(
-			ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr));
-	else
-		return IN6_IS_ADDR_LOOPBACK(
-				&((struct sockaddr_in6 *) addr)->sin6_addr);
-}
+	bool ret;
 
-static inline int c4iw_any_addr(struct sockaddr *addr)
+	if (addr->sa_family == AF_INET) {
+		if (vnet == NULL)
+			ret = _IN_LOOPBACK(ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr));
+		else {
+			CURVNET_SET_QUIET(vnet);
+			ret = IN_LOOPBACK(ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr));
+			CURVNET_RESTORE();
+		}
+	} else {
+		ret = IN6_IS_ADDR_LOOPBACK(&((struct sockaddr_in6 *) addr)->sin6_addr);
+	}
+	return (ret);
+}
+#undef _IN_LOOPBACK
+
+static inline bool c4iw_any_addr(struct sockaddr *addr, struct vnet *vnet)
 {
-	return c4iw_zero_addr(addr) || c4iw_loopback_addr(addr);
+	return c4iw_zero_addr(addr) || c4iw_loopback_addr(addr, vnet);
 }
 
 static void
@@ -966,12 +968,13 @@ process_newconn(struct c4iw_listen_ep *master_lep, struct socket *new_so)
 {
 	struct c4iw_listen_ep *real_lep = NULL;
 	struct c4iw_ep *new_ep = NULL;
-	struct sockaddr_in *remote = NULL;
+	struct sockaddr_storage remote = { .ss_len = sizeof(remote) };
 	int ret = 0;
 
 	MPASS(new_so != NULL);
 
-	if (c4iw_any_addr((struct sockaddr *)&master_lep->com.local_addr)) {
+	if (c4iw_any_addr((struct sockaddr *)&master_lep->com.local_addr,
+	    new_so->so_vnet)) {
 		/* Here we need to find the 'real_lep' that belongs to the
 		 * incomming socket's network interface, such that the newly
 		 * created 'ep' can be attached to the real 'lep'.
@@ -1010,19 +1013,16 @@ process_newconn(struct c4iw_listen_ep *master_lep, struct socket *new_so)
 	new_ep->com.state = MPA_REQ_WAIT;
 
 	setiwsockopt(new_so);
-	ret = soaccept(new_so, (struct sockaddr **)&remote);
+	ret = soaccept(new_so, (struct sockaddr *)&remote);
 	if (ret != 0) {
 		CTR4(KTR_IW_CXGBE,
 				"%s:listen sock:%p, new sock:%p, ret:%d",
 				__func__, master_lep->com.so, new_so, ret);
-		if (remote != NULL)
-			free(remote, M_SONAME);
 		soclose(new_so);
 		c4iw_put_ep(&new_ep->com);
 		c4iw_put_ep(&real_lep->com);
 		return;
 	}
-	free(remote, M_SONAME);
 
 	START_EP_TIMER(new_ep);
 
@@ -1117,7 +1117,7 @@ process_socket_event(struct c4iw_ep *ep)
 
 	if (ep->com.state == DEAD) {
 		CTR3(KTR_IW_CXGBE, "%s: Pending socket event discarded "
-			"ep %p ep_state %s", __func__, ep, states[state]); 
+		    "ep %p ep_state %s", __func__, ep, states[state]);
 		return;
 	}
 
@@ -2593,7 +2593,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	int err = 0;
 	struct c4iw_dev *dev = to_c4iw_dev(cm_id->device);
 	struct c4iw_ep *ep = NULL;
-	struct ifnet    *nh_ifp;        /* Logical egress interface */
+	if_t nh_ifp;        /* Logical egress interface */
 	struct epoch_tracker et;
 #ifdef VIMAGE
 	struct rdma_cm_id *rdma_id = (struct rdma_cm_id*)cm_id->context;
@@ -2659,7 +2659,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		return err;
 	}
 
-	if (!(nh_ifp->if_capenable & IFCAP_TOE) ||
+	if (!(if_getcapenable(nh_ifp) & IFCAP_TOE) ||
 	    TOEDEV(nh_ifp) == NULL) {
 		err = -ENOPROTOOPT;
 		goto fail;
@@ -2734,7 +2734,7 @@ c4iw_create_listen(struct iw_cm_id *cm_id, int backlog)
 	 * invoke solisten() as first listener callback has already created
 	 * listeners for all other devices(via solisten).
 	 */
-	if (c4iw_any_addr((struct sockaddr *)&lep->com.local_addr)) {
+	if (c4iw_any_addr((struct sockaddr *)&lep->com.local_addr, NULL)) {
 		port_info = add_ep_to_listenlist(lep);
 		/* skip solisten() if refcnt > 1, as the listeners were
 		 * already created by 'Master lep'
@@ -2788,7 +2788,8 @@ c4iw_destroy_listen(struct iw_cm_id *cm_id)
 	    states[lep->com.state]);
 
 	lep->com.state = DEAD;
-	if (c4iw_any_addr((struct sockaddr *)&lep->com.local_addr)) {
+	if (c4iw_any_addr((struct sockaddr *)&lep->com.local_addr,
+	    lep->com.so->so_vnet)) {
 		/* if no refcount then close listen socket */
 		if (!rem_ep_from_listenlist(lep))
 			close_socket(lep->com.so);

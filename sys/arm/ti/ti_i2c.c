@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 Ben Gray <ben.r.gray@gmail.com>.
  * Copyright (c) 2014 Luiz Otavio O Souza <loos@freebsd.org>.
@@ -40,9 +40,6 @@
  * larger than a certain size the DMA engine is used, for anything less the
  * normal interrupt/fifo driven option is used.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>

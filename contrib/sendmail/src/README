@@ -8,9 +8,6 @@
 # forth in the LICENSE file which can be found at the top level of
 # the sendmail distribution.
 #
-#
-#	$Id: README,v 8.393 2013-11-22 20:51:54 ca Exp $
-#
 
 This directory contains the source files for sendmail(TM).
 
@@ -133,8 +130,7 @@ MAP_REGEX	Regular Expression support.  You will need to use an
 		routines or install a regexp library such as libregex from
 		the Free Software Foundation.
 DNSMAP		DNS map support.  Requires NAMED_BIND.
-PH_MAP		PH map support.  You will need the libphclient library from
-		the nph package (http://www-dev.cites.uiuc.edu/ph/nph/).
+PH_MAP		PH map support.
 MAP_NSD		nsd map support (IRIX 6.5 and later).
 SOCKETMAP	Support for a trivial query protocol over UNIX domain or TCP
 		sockets.
@@ -236,8 +232,8 @@ HASFLOCK	Set this if you prefer to use the flock(2) system call
 		rather than using fcntl-based locking.  Fcntl locking
 		has some semantic gotchas, but many vendor systems
 		also interface it to lockd(8) to do NFS-style locking.
-		Unfortunately, may vendors implementations of fcntl locking
-		is just plain broken (e.g., locks are never released,
+		Unfortunately, many vendor implementations of fcntl locking
+		are just plain broken (e.g., locks are never released,
 		causing your sendmail to deadlock; when the kernel runs
 		out of locks your system crashes).  For this reason, I
 		recommend always defining this unless you are absolutely
@@ -313,9 +309,9 @@ HASSTRERROR	Define this if you have the libc strerror(3) function (which
 HASCLOSEFROM	Define this if your system has closefrom(3).
 HASFDWALK	Define this if your system has fdwalk(3).
 SM_CONF_GETOPT	Define this as 0 if you need a reimplementation of getopt(3).
-		On some systems, getopt does very odd things if called
+		On some systems, getopt() does very odd things if called
 		to scan the arguments twice.  This flag will ask sendmail
-		to compile in a local version of getopt that works
+		to compile in a local version of getopt() that works
 		properly.  You may also need this if you build with
 		another library that introduces a non-standard getopt(3).
 NEEDSTRTOL	Define this if your standard C library does not define
@@ -337,6 +333,8 @@ NEEDPUTENV	Define this if your system needs am emulation of the
 NOFTRUNCATE	Define this if you don't have the ftruncate(2) syscall.
 		If you don't have this system call, there is an unavoidable
 		race condition that occurs when creating alias databases.
+NO_EOH_FIELDS	Define this to disable the special handling of the headers
+		Message: and Text: to denote the end of the message header.
 GIDSET_T	The type of entries in a gidset passed as the second
 		argument to getgroups(2).  Historically this has been an
 		int, so this is the default, but some systems (such as
@@ -627,7 +625,7 @@ SHARE_V1	Support for the fair share scheduler, version 1.  Setting to
 		resource limitations.  So far as I know, this is only
 		supported on ConvexOS.
 SASL		Enables SMTP AUTH (RFC 2554).  This requires the Cyrus SASL
-		library (ftp://ftp.andrew.cmu.edu/pub/cyrus-mail/).  Please
+		library (https://github.com/cyrusimap/cyrus-sasl).  Please
 		install at least version 1.5.13.  See below for further
 		information: SASL COMPILATION AND CONFIGURATION.  If your
 		SASL library is older than 1.5.10, you have to set this
@@ -642,7 +640,9 @@ EGD		Define this if your system has EGD installed, see
 		http://egd.sourceforge.net/ .  It should be used to
 		seed the PRNG for STARTTLS if HASURANDOMDEV is not defined.
 STARTTLS	Enables SMTP STARTTLS (RFC 2487).  This requires OpenSSL
-		(http://www.OpenSSL.org/); use OpenSSL 0.9.8zc or later.
+		(http://www.OpenSSL.org/); use an OpenSSL version
+		which is supported by sendmail and preferably your
+		OS distribution or OpenSSL.
 		See STARTTLS COMPILATION AND CONFIGURATION for further
 		information.
 TLS_EC		Enable use of elliptic curve cryptography in STARTTLS.
@@ -767,25 +767,27 @@ From: Garrett Wollman <wollman@lcs.mit.edu>
     certificate authentication -- even some of those which already support
     SSL/TLS for confidentiality.
 
-Further information can be found via:
-http://www.sendmail.org/tips/
-
+OpenSSL 3 deprecated a lot of functionality which sendmail uses by
+default. However, the code can be disabled via compile time options
+if needed:
+-DNO_DH: related to DH and DSA.
 
 +------------------------------------+
 | SASL COMPILATION AND CONFIGURATION |
 +------------------------------------+
 
 Please read the documentation accompanying the Cyrus SASL library
-(INSTALL and README).  If you use Berkeley DB for Cyrus SASL then
-you must compile sendmail with the same version of Berkeley DB.
-See devtools/README for how to set the correct compile time parameters;
-you should at least set the following variables:
+(INSTALL and README, especially about Sendmail.conf).  If you use
+Berkeley DB for Cyrus SASL then you must compile sendmail with the
+same version of Berkeley DB.  See devtools/README for how to set
+the correct compile time parameters; you should at least set the
+following variables:
 
-APPENDDEF(`conf_sendmail_ENVDEF', `-DSASL')
-APPENDDEF(`conf_sendmail_LIBS', `-lsasl')
+APPENDDEF(`conf_sendmail_ENVDEF', `-DSASL=2')
+APPENDDEF(`conf_sendmail_LIBS', `-lsasl2')
 
 If you have installed the Cyrus SASL library and include files in
-a location that your C compiler doesn't use by default you should
+a location which your C compiler doesn't use by default you should
 set confINCDIRS and confLIBDIRS as explained in the first section:
 BUILDING SENDMAIL.
 
@@ -794,7 +796,8 @@ sendmail where to find the sasl library and the include files (see
 devtools/README for the parameters to set).  Set up the required
 users and passwords as explained in the SASL documentation.  See
 also cf/README for authentication related options (especially
-DefaultAuthInfo if you want authentication between MTAs).
+"Providing SMTP AUTH Data when sendmail acts as Client"
+if you want authentication between MTAs).
 
 To perform an initial test, connect to your sendmail daemon
 (telnet localhost 25) and issue a EHLO localhost and see whether
@@ -803,9 +806,6 @@ is in the response.  If it isn't, run the daemon with
 -O LogLevel=14
 and try again.  Then take a look at the logfile and see whether
 there are any security related problems listed (unsafe files).
-
-Further information can be found via:
-http://www.sendmail.org/tips/
 
 
 +-------------------------------------+
@@ -1179,10 +1179,6 @@ IRIX
 		preempts that definition in /usr/lib32/mips3/libc.so.
 
 	These are unavoidable and innocuous -- just ignore them.
-
-	According to Dave Sill <de5@ornl.gov>, there is a version of the
-	Berkeley DB library patched to run on Irix 6.2 available from
-	http://reality.sgi.com/ariel/freeware/#db .
 
 IRIX 6.x
 	If you are using XFS filesystem, avoid using the -32 ABI switch to
@@ -1580,7 +1576,6 @@ Darwin/Mac OS X (10.X.X)
 
 	From scratch here is what Darwin users need to do to the standard
 	10.0.0, 10.0.1 install to get sendmail working.
-	From http://www.macosx.com/forums/showthread.php?s=6dac0e9e1f3fd118a4870a8a9b559491&threadid=2242:
 	1. chmod g-w / /private /private/etc
 	2. Properly set HOSTNAME in /etc/hostconfig to your FQDN:
 	   HOSTNAME=-my.domain.com-
@@ -1695,8 +1690,7 @@ Listproc 6.0c
 	as well. :)
 
 PH
-	PH support is provided by Mark Roth <roth@uiuc.edu>.  The map is
-	described at http://www-dev.cites.uiuc.edu/sendmail/ .
+	PH support is provided by Mark Roth <roth@uiuc.edu>.
 
 	NOTE: The "spacedname" pseudo-field which was used by earlier
 	versions of the PH map code is no longer supported!  See the URL
@@ -1816,6 +1810,7 @@ conf.h		Configuration that must be known everywhere.
 control.c	Routines to implement control socket.
 convtime.c	A routine to sanely process times.
 daemon.c	Routines to implement daemon mode.
+daemon.h	Header file for daemon.c.
 deliver.c	Routines to deliver mail.
 domain.c	Routines that interface with DNS (the Domain Name
 		System).
@@ -1830,17 +1825,21 @@ main.c		The main routine to sendmail.  This file also
 		contains some miscellaneous routines.
 makesendmail	A convenience for calling ./Build.
 map.c		Support for database maps.
+map.h		Header file for map.c.
 mci.c		Routines that handle mail connection information caching.
 milter.c	MTA portions of the mail filter API.
 mime.c		MIME conversion routines.
 newaliases.1	Man page for the newaliases command.
 parseaddr.c	The routines which do address parsing.
 queue.c		Routines to implement message queueing.
+ratectrl.c	Routines for rate/connnection control.
+ratectrl.h	Header file for rate/connnection control.
 readcf.c	The routine that reads the configuration file and
 		translates it to internal form.
 recipient.c	Routines that manipulate the recipient list.
 sasl.c		Routines to interact with Cyrys-SASL.
 savemail.c	Routines which save the letter on processing errors.
+sched.c		Routines for scheduling queue management.
 sendmail.8	Man page for the sendmail command.
 sendmail.h	Main header file for sendmail.
 sfsasl.c	I/O interface between SASL/TLS and the MTA.
@@ -1858,6 +1857,8 @@ sysexits.h	List of error codes for systems that lack their own.
 timers.c	Routines to provide microtimers.
 timers.h	Data structure and function declarations for timers.h.
 tls.c		Routines for TLS.
+tls.h		Header file for tls*.c
+tlsh.c		Helper routines for TLS, mostly DANE.
 trace.c		The trace package.  These routines allow setting and
 		testing of trace flags with a high granularity.
 udb.c		The user database interface module.
@@ -1866,4 +1867,30 @@ util.c		Some general purpose routines used by sendmail.
 version.c	The version number and information about this
 		version of sendmail.
 
-(Version $Revision: 8.393 $, last update $Date: 2013-11-22 20:51:54 $ )
+
++---------------------------+
+| SOME NOTES ABOUT THE CODE |
++---------------------------+
+
+Some things are not easy to understand by just reading the source
+code, so this section has some notes which might be interesting for
+those who want to enhance sendmail.  These notes are not exhaustive
+but just cover some things which might be interesting.
+
+Address format: sendmail uses a range of 8 bit characters for its
+internal purposes as noted in sendmail.h:
+
+**  Special characters in rewriting rules.
+**	These are used internally only.
+
+To handle all 8 bit characters, sendmail uses two address formats:
+internal and external -- for details see the comments in cataddr()
+as well as the functions quote_internal_chars() and
+dequote_internal_chars() in libsm/util.c.
+
+These formats are marked in many places with [i] and [x] respectively.
+Some functions only work on one kind of those formats, so it is
+important to mark the strings accordingly. In some cases the marker
+[A] is used to denote that the string format does not matter (which
+is the default) -- this is only used in cases where there might be
+some confusion about any format requirements.

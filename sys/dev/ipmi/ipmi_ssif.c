@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 IronPort Systems Inc. <ambrisko@ironport.com>
  * All rights reserved.
@@ -25,9 +25,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -202,7 +199,7 @@ read_start:
 		goto fail;
 	}
 #ifdef SSIF_DEBUG
-	device_printf("SSIF: READ_START: ok\n");
+	device_printf(dev, "SSIF: READ_START: ok\n");
 #endif
 
 	/*

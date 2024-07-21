@@ -2,10 +2,9 @@
  * Public domain.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <string.h>
+
+#undef bzero	/* _FORTIFY_SOURCE */
 
 void
 bzero(void *b, size_t len)

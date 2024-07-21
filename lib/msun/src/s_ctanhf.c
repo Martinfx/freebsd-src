@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 David Schultz
  * All rights reserved.
@@ -29,9 +29,6 @@
 /*
  * Hyperbolic tangent of a complex argument z.  See s_ctanh.c for details.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <complex.h>
 #include <math.h>

@@ -14,6 +14,7 @@
 
 #include "lldb/Utility/Flags.h"
 
+#include "lldb/Core/FormatEntity.h"
 #include "lldb/Core/ValueObjectList.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Target/ExecutionContextScope.h"
@@ -202,7 +203,7 @@ public:
   ///   frames may be unable to provide this value; they will return false.
   bool GetFrameBaseValue(Scalar &value, Status *error_ptr);
 
-  /// Get the DWARFExpression corresponding to the Canonical Frame Address.
+  /// Get the DWARFExpressionList corresponding to the Canonical Frame Address.
   ///
   /// Often a register (bp), but sometimes a register + offset.
   ///
@@ -212,7 +213,7 @@ public:
   ///
   /// \return
   ///   Returns the corresponding DWARF expression, or NULL.
-  DWARFExpression *GetFrameBaseExpression(Status *error_ptr);
+  DWARFExpressionList *GetFrameBaseExpression(Status *error_ptr);
 
   /// Get the current lexical scope block for this StackFrame, if possible.
   ///
@@ -254,9 +255,14 @@ public:
   ///     that are visible to the entire compilation unit (e.g. file
   ///     static in C, globals that are homed in this CU).
   ///
+  /// \param [out] error_ptr
+  ///   If there is an error in the debug information that prevents variables
+  ///   from being fetched. \see SymbolFile::GetFrameVariableError() for full
+  ///   details.
+  ///
   /// \return
   ///     A pointer to a list of variables.
-  VariableList *GetVariableList(bool get_file_globals);
+  VariableList *GetVariableList(bool get_file_globals, Status *error_ptr);
 
   /// Retrieve the list of variables that are in scope at this StackFrame's
   /// pc.
@@ -319,8 +325,23 @@ public:
   ///    C string with the assembly instructions for this function.
   const char *Disassemble();
 
+  /// Print a description of this frame using the provided frame format.
+  ///
+  /// \param[out] strm
+  ///   The Stream to print the description to.
+  ///
+  /// \param[in] frame_marker
+  ///   Optional string that will be prepended to the frame output description.
+  ///
+  /// \return
+  ///   \b true if and only if dumping with the given \p format worked.
+  bool DumpUsingFormat(Stream &strm,
+                       const lldb_private::FormatEntity::Entry *format,
+                       llvm::StringRef frame_marker = {});
+
   /// Print a description for this frame using the frame-format formatter
-  /// settings.
+  /// settings. If the current frame-format settings are invalid, then the
+  /// default formatter will be used (see \a StackFrame::Dump()).
   ///
   /// \param [in] strm
   ///   The Stream to print the description to.

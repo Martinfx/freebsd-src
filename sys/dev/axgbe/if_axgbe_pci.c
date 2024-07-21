@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Advanced Micro Devices, Inc.
  *
@@ -29,9 +29,6 @@
  * Shreyank Amartya <Shreyank.Amartya@amd.com>
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -39,6 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/rman.h>
+#include <sys/smp.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -59,6 +57,12 @@ __FBSDID("$FreeBSD$");
 #include "ifdi_if.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
+#include "opt_rss.h"
+
+#ifdef RSS
+#include <net/rss_config.h>
+#include <netinet/in_rss.h>
+#endif
 
 MALLOC_DEFINE(M_AXGBE, "axgbe", "axgbe data");
 
@@ -106,6 +110,7 @@ static bool axgbe_if_needs_restart(if_ctx_t, enum iflib_restart_event);
 #endif
 static void axgbe_set_counts(if_ctx_t);
 static void axgbe_init_iflib_softc_ctx(struct axgbe_if_softc *);
+static void axgbe_initialize_rss_mapping(struct xgbe_prv_data *);
 
 /* MII interface registered functions */
 static int axgbe_miibus_readreg(device_t, int, int);
@@ -139,7 +144,7 @@ static struct resource_spec axgbe_pci_mac_spec[] = {
 	{ -1, 0 }
 };
 
-static pci_vendor_info_t axgbe_vendor_info_array[] =
+static const pci_vendor_info_t axgbe_vendor_info_array[] =
 {
 	PVID(0x1022, 0x1458,  "AMD 10 Gigabit Ethernet Driver"),
 	PVID(0x1022, 0x1459,  "AMD 10 Gigabit Ethernet Driver"),
@@ -280,11 +285,11 @@ axgbe_register(device_t dev)
 		 * No tunable found, generate one with default values
 		 * Note: only a reboot will reveal the new kenv
 		 */
-		error = kern_setenv("dev.ax.sph_enable", "1");
+		error = kern_setenv("dev.ax.sph_enable", "0");
 		if (error) {
 			printf("Error setting tunable, using default driver values\n");
 		}
-		axgbe_sph_enable = 1;
+		axgbe_sph_enable = 0;
 	}
 
 	if (!axgbe_sph_enable) {
@@ -342,14 +347,14 @@ axgbe_miibus_statchg(device_t dev)
         struct axgbe_if_softc   *sc = iflib_get_softc(device_get_softc(dev));
         struct xgbe_prv_data    *pdata = &sc->pdata;
 	struct mii_data		*mii = device_get_softc(pdata->axgbe_miibus);
-	struct ifnet		*ifp = pdata->netdev;
+	if_t			 ifp = pdata->netdev;
 	int bmsr;
 
 	axgbe_printf(2, "%s: Link %d/%d\n", __func__, pdata->phy.link,
 	    pdata->phy_link);
 
 	if (mii == NULL || ifp == NULL ||
-	    (ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
+	    (if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
 		return;
 
 	if ((mii->mii_media_status & (IFM_ACTIVE | IFM_AVALID)) ==
@@ -392,6 +397,7 @@ axgbe_if_attach_pre(if_ctx_t ctx)
 	if_softc_ctx_t		scctx;
 	if_shared_ctx_t		sctx;
 	device_t		dev;
+	device_t		rdev;
 	unsigned int		ma_lo, ma_hi;
 	unsigned int		reg;
 	int			ret;
@@ -433,9 +439,23 @@ axgbe_if_attach_pre(if_ctx_t ctx)
         sc->pdata.xgmac_res = mac_res[0];
         sc->pdata.xpcs_res = mac_res[1];
 
-        /* Set the PCS indirect addressing definition registers*/
-	pdata->xpcs_window_def_reg = PCS_V2_WINDOW_DEF;
-	pdata->xpcs_window_sel_reg = PCS_V2_WINDOW_SELECT;
+	/*
+	 * Set the PCS indirect addressing definition registers.
+	 * A newer version of the hardware is using the same PCI ids
+	 * for the network device but has altered register definitions
+	 * for determining the window settings for the indirect PCS access.
+	 * This code checks hardware usage and uses the register values
+	 * accordingly.
+	 */
+	rdev = pci_find_dbsf(0, 0, 0, 0);
+	if (rdev && pci_get_device(rdev) == 0x15d0
+		&& pci_get_vendor(rdev) == 0x1022) {
+		pdata->xpcs_window_def_reg = PCS_V2_RV_WINDOW_DEF;
+		pdata->xpcs_window_sel_reg = PCS_V2_RV_WINDOW_SELECT;
+	} else {
+		pdata->xpcs_window_def_reg = PCS_V2_WINDOW_DEF;
+		pdata->xpcs_window_sel_reg = PCS_V2_WINDOW_SELECT;
+	}
 
         /* Configure the PCS indirect addressing support */
 	reg = XPCS32_IOREAD(pdata, pdata->xpcs_window_def_reg);
@@ -588,11 +608,9 @@ xgbe_init_all_fptrs(struct xgbe_prv_data *pdata)
 static void
 axgbe_set_counts(if_ctx_t ctx)
 {
-	struct axgbe_if_softc *sc = iflib_get_softc(ctx);;
+	struct axgbe_if_softc *sc = iflib_get_softc(ctx);
 	struct xgbe_prv_data *pdata = &sc->pdata;
 	cpuset_t lcpus;
-	int cpu_count, err;
-	size_t len;
 
 	/* Set all function pointers */
 	xgbe_init_all_fptrs(pdata);
@@ -619,21 +637,12 @@ axgbe_set_counts(if_ctx_t ctx)
 	 *   number of Rx queues or maximum allowed
 	 */
 
-	/* Get cpu count from sysctl */
-	len = sizeof(cpu_count);
-	err = kernel_sysctlbyname(curthread, "hw.ncpu", &cpu_count, &len, NULL,
-	    0, NULL, 0);
-	if (err) {
-		axgbe_error("Unable to fetch number of cpus\n");
-		cpu_count = 1;
-	}
-
 	if (bus_get_cpus(pdata->dev, INTR_CPUS, sizeof(lcpus), &lcpus) != 0) {
                 axgbe_error("Unable to fetch CPU list\n");
                 /* TODO - handle CPU_COPY(&all_cpus, &lcpus); */
         }
 
-	DBGPR("ncpu %d intrcpu %d\n", cpu_count, CPU_COUNT(&lcpus));
+	DBGPR("ncpu %d intrcpu %d\n", mp_ncpus, CPU_COUNT(&lcpus));
 
 	pdata->tx_ring_count = min(CPU_COUNT(&lcpus), pdata->hw_feat.tx_ch_cnt);
 	pdata->tx_ring_count = min(pdata->tx_ring_count,
@@ -715,6 +724,47 @@ axgbe_init_iflib_softc_ctx(struct axgbe_if_softc *sc)
 	scctx->isc_nrxqsets_max = XGBE_MAX_QUEUES;
 
 	scctx->isc_txrx = &axgbe_txrx;
+}
+
+static void
+axgbe_initialize_rss_mapping(struct xgbe_prv_data *pdata)
+{
+	int i;
+
+	/* Get RSS key */
+#ifdef	RSS
+	int	qid;
+	uint32_t	rss_hash_config = 0;
+
+	rss_getkey((uint8_t *)&pdata->rss_key);
+
+	rss_hash_config = rss_gethashconfig();
+
+	if (rss_hash_config & RSS_HASHTYPE_RSS_IPV4)
+		XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, IP2TE, 1);
+	if (rss_hash_config & RSS_HASHTYPE_RSS_TCP_IPV4)
+		XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
+	if (rss_hash_config & RSS_HASHTYPE_RSS_UDP_IPV4)
+		XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, UDP4TE, 1);
+#else
+	arc4rand(&pdata->rss_key, ARRAY_SIZE(pdata->rss_key), 0);
+
+	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, IP2TE, 1);
+	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
+	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, UDP4TE, 1);
+#endif
+
+	/* Setup RSS lookup table */
+	for (i = 0; i < XGBE_RSS_MAX_TABLE_SIZE; i++) {
+#ifdef	RSS
+		qid = rss_get_indirection_to_bucket(i) % pdata->rx_ring_count;
+		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH, qid);
+#else
+		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH,
+				i % pdata->rx_ring_count);
+#endif
+	}
+
 }
 
 static int
@@ -1339,11 +1389,9 @@ xgbe_default_config(struct xgbe_prv_data *pdata)
         pdata->tx_sf_mode = MTL_TSF_ENABLE;
         pdata->tx_threshold = MTL_TX_THRESHOLD_64;
         pdata->tx_osp_mode = DMA_OSP_ENABLE;
-        pdata->rx_sf_mode = MTL_RSF_DISABLE;
+        pdata->rx_sf_mode = MTL_RSF_ENABLE;
         pdata->rx_threshold = MTL_RX_THRESHOLD_64;
         pdata->pause_autoneg = 1;
-        pdata->tx_pause = 1;
-        pdata->rx_pause = 1;
         pdata->phy_speed = SPEED_UNKNOWN;
         pdata->power_down = 0;
         pdata->enable_rss = 1;
@@ -1354,11 +1402,11 @@ axgbe_if_attach_post(if_ctx_t ctx)
 {
 	struct axgbe_if_softc	*sc = iflib_get_softc(ctx);
 	struct xgbe_prv_data	*pdata = &sc->pdata;
-	struct ifnet		*ifp = pdata->netdev;
+	if_t			 ifp = pdata->netdev;
         struct xgbe_phy_if	*phy_if = &pdata->phy_if;
 	struct xgbe_hw_if 	*hw_if = &pdata->hw_if;
 	if_softc_ctx_t		scctx = sc->scctx;
-	int i, ret;
+	int ret;
 
 	/* set split header support based on tunable */
 	pdata->sph_enable = axgbe_sph_enable;
@@ -1375,6 +1423,8 @@ axgbe_if_attach_post(if_ctx_t ctx)
 	ret = hw_if->exit(&sc->pdata);
 	if (ret)
 		axgbe_error("%s: exit error %d\n", __func__, ret);
+
+	axgbe_sysctl_init(pdata);
 
 	/* Configure the defaults */
 	xgbe_default_config(pdata);
@@ -1411,15 +1461,7 @@ axgbe_if_attach_post(if_ctx_t ctx)
 	    scctx->isc_nrxqsets);
 	DBGPR("Channel count set to: %u\n", pdata->channel_count);
 
-	/* Get RSS key */
-#ifdef	RSS
-	rss_getkey((uint8_t *)pdata->rss_key);
-#else
-	arc4rand(&pdata->rss_key, ARRAY_SIZE(pdata->rss_key), 0);
-#endif
-	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, IP2TE, 1);
-	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
-	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, UDP4TE, 1);
+	axgbe_initialize_rss_mapping(pdata);
 
 	/* Initialize the PHY device */
 	pdata->sysctl_an_cdr_workaround = pdata->vdata->an_cdr_workaround;
@@ -1455,11 +1497,6 @@ axgbe_if_attach_post(if_ctx_t ctx)
 	pdata->rx_buf_size = ret;
 	DBGPR("%s: rx_buf_size %d\n", __func__, ret);
 
-	/* Setup RSS lookup table */
-	for (i = 0; i < XGBE_RSS_MAX_TABLE_SIZE; i++)
-		XGMAC_SET_BITS(pdata->rss_table[i], MAC_RSSDR, DMCH,
-				i % pdata->rx_ring_count);
-
 	/* 
 	 * Mark the device down until it is initialized, which happens
 	 * when the device is accessed first (for configuring the iface,
@@ -1467,11 +1504,9 @@ axgbe_if_attach_post(if_ctx_t ctx)
 	 */
 	set_bit(XGBE_DOWN, &pdata->dev_state);
 
-	DBGPR("mtu %d\n", ifp->if_mtu);
-	scctx->isc_max_frame_size = ifp->if_mtu + 18;
+	DBGPR("mtu %d\n", if_getmtu(ifp));
+	scctx->isc_max_frame_size = if_getmtu(ifp) + 18;
 	scctx->isc_min_frame_size = XGMAC_MIN_PACKET;
-
-	axgbe_sysctl_init(pdata);
 
 	axgbe_pci_init(pdata);
 
@@ -1537,6 +1572,7 @@ axgbe_if_detach(if_ctx_t ctx)
 	mac_res[0] = pdata->xgmac_res;
 	mac_res[1] = pdata->xpcs_res;
 
+	phy_if->phy_stop(pdata);
 	phy_if->phy_exit(pdata);
 
 	/* Free Interrupts */
@@ -1608,7 +1644,6 @@ axgbe_pci_stop(if_ctx_t ctx)
 {
 	struct axgbe_if_softc   *sc = iflib_get_softc(ctx);
         struct xgbe_prv_data    *pdata = &sc->pdata;
-	struct xgbe_phy_if	*phy_if = &pdata->phy_if;
 	struct xgbe_hw_if       *hw_if = &pdata->hw_if;
 	int ret;
 
@@ -1622,8 +1657,6 @@ axgbe_pci_stop(if_ctx_t ctx)
 
 	hw_if->disable_tx(pdata);
 	hw_if->disable_rx(pdata);
-
-	phy_if->phy_stop(pdata);
 
 	ret = hw_if->exit(pdata);
 	if (ret)
@@ -2333,12 +2366,13 @@ axgbe_if_promisc_set(if_ctx_t ctx, int flags)
 {
 	struct axgbe_if_softc *sc = iflib_get_softc(ctx);
 	struct xgbe_prv_data *pdata = &sc->pdata;
-	struct ifnet *ifp = pdata->netdev;
+	if_t ifp = pdata->netdev;
 
 	axgbe_printf(1, "%s: MAC_PFR 0x%x drv_flags 0x%x if_flags 0x%x\n",
-	    __func__, XGMAC_IOREAD(pdata, MAC_PFR), ifp->if_drv_flags, ifp->if_flags);
+	    __func__, XGMAC_IOREAD(pdata, MAC_PFR), if_getdrvflags(ifp),
+	    if_getflags(ifp));
 
-	if (ifp->if_flags & IFF_PPROMISC) {
+	if (if_getflags(ifp) & IFF_PPROMISC) {
 
 		axgbe_printf(1, "User requested to enter promisc mode\n");
 
@@ -2371,7 +2405,7 @@ static uint64_t
 axgbe_if_get_counter(if_ctx_t ctx, ift_counter cnt)
 {
 	struct axgbe_if_softc	*sc = iflib_get_softc(ctx);
-        struct ifnet		*ifp = iflib_get_ifp(ctx);
+        if_t			 ifp = iflib_get_ifp(ctx);
         struct xgbe_prv_data    *pdata = &sc->pdata;
         struct xgbe_mmc_stats	*pstats = &pdata->mmc_stats;
 

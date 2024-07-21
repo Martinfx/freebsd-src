@@ -32,23 +32,23 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ufs_bmap.c	8.7 (Berkeley) 3/21/95
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/proc.h>
+#include <sys/rwlock.h>
 #include <sys/vnode.h>
 #include <sys/mount.h>
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
 #include <sys/stat.h>
+
+#include <vm/vm.h>
+#include <vm/vm_object.h>
+#include <vm/vnode_pager.h>
 
 #include <ufs/ufs/extattr.h>
 #include <ufs/ufs/quota.h>
@@ -363,6 +363,14 @@ ufs_bmap_seekdata(struct vnode *vp, off_t *offp)
 		return (EINVAL);
 	if (*offp < 0 || *offp >= ip->i_size)
 		return (ENXIO);
+
+	/*
+	 * We could have pages on the vnode' object queue which still
+	 * do not have the data blocks allocated.  Convert all dirty
+	 * pages into buffer writes to ensure that we see all
+	 * allocated data.
+	 */
+	vnode_pager_clean_sync(vp);
 
 	bsize = mp->mnt_stat.f_iosize;
 	for (bn = *offp / bsize, numblks = howmany(ip->i_size, bsize);

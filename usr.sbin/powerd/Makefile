@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	powerd
 MAN=	powerd.8
 

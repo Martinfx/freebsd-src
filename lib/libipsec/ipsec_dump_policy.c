@@ -31,9 +31,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -70,11 +67,9 @@ static char *set_address(char *, size_t, struct sockaddr *);
  * When delimiter == NULL, alternatively ' '(space) is applied.
  */
 char *
-ipsec_dump_policy(policy, delimiter)
-	caddr_t policy;
-	char *delimiter;
+ipsec_dump_policy(c_caddr_t policy, const char *delimiter)
 {
-	struct sadb_x_policy *xpl = (struct sadb_x_policy *)policy;
+	const struct sadb_x_policy *xpl = (const struct sadb_x_policy *)policy;
 	struct sadb_x_ipsecrequest *xisr;
 	size_t off, buflen;
 	char *buf;
@@ -175,11 +170,8 @@ ipsec_dump_policy(policy, delimiter)
 }
 
 static char *
-ipsec_dump_ipsecrequest(buf, len, xisr, bound)
-	char *buf;
-	size_t len;
-	struct sadb_x_ipsecrequest *xisr;
-	size_t bound;	/* boundary */
+ipsec_dump_ipsecrequest(char *buf, size_t len, struct sadb_x_ipsecrequest *xisr,
+    size_t bound)
 {
 	const char *proto, *mode, *level;
 	char abuf[NI_MAXHOST * 2 + 2];
@@ -276,11 +268,7 @@ ipsec_dump_ipsecrequest(buf, len, xisr, bound)
 }
 
 static int
-set_addresses(buf, len, sa1, sa2)
-	char *buf;
-	size_t len;
-	struct sockaddr *sa1;
-	struct sockaddr *sa2;
+set_addresses(char *buf, size_t len, struct sockaddr *sa1, struct sockaddr *sa2)
 {
 	char tmp1[NI_MAXHOST], tmp2[NI_MAXHOST];
 
@@ -294,10 +282,7 @@ set_addresses(buf, len, sa1, sa2)
 }
 
 static char *
-set_address(buf, len, sa)
-	char *buf;
-	size_t len;
-	struct sockaddr *sa;
+set_address(char *buf, size_t len, struct sockaddr *sa)
 {
 	const int niflags = NI_NUMERICHOST;
 

@@ -81,7 +81,7 @@ AC_DEFUN([ZFS_AC_DEBUG], [
 AC_DEFUN([ZFS_AC_DEBUGINFO_ENABLE], [
 	DEBUG_CFLAGS="$DEBUG_CFLAGS -g -fno-inline $NO_IPA_SRA"
 
-	KERNEL_DEBUG_CFLAGS="$KERNEL_DEBUG_CFLAGS -fno-inline $NO_IPA_SRA"
+	KERNEL_DEBUG_CFLAGS="$KERNEL_DEBUG_CFLAGS -fno-inline $KERNEL_NO_IPA_SRA"
 	KERNEL_MAKE="$KERNEL_MAKE CONFIG_DEBUG_INFO=y"
 
 	DEBUGINFO_ZFS="_with_debuginfo"
@@ -211,12 +211,15 @@ AC_DEFUN([ZFS_AC_CONFIG_ALWAYS], [
 
 	ZFS_AC_CONFIG_ALWAYS_CC_NO_CLOBBERED
 	ZFS_AC_CONFIG_ALWAYS_CC_INFINITE_RECURSION
+	ZFS_AC_CONFIG_ALWAYS_KERNEL_CC_INFINITE_RECURSION
 	ZFS_AC_CONFIG_ALWAYS_CC_IMPLICIT_FALLTHROUGH
 	ZFS_AC_CONFIG_ALWAYS_CC_FRAME_LARGER_THAN
 	ZFS_AC_CONFIG_ALWAYS_CC_NO_FORMAT_TRUNCATION
 	ZFS_AC_CONFIG_ALWAYS_CC_NO_FORMAT_ZERO_LENGTH
+	ZFS_AC_CONFIG_ALWAYS_CC_FORMAT_OVERFLOW
 	ZFS_AC_CONFIG_ALWAYS_CC_NO_OMIT_FRAME_POINTER
 	ZFS_AC_CONFIG_ALWAYS_CC_NO_IPA_SRA
+	ZFS_AC_CONFIG_ALWAYS_KERNEL_CC_NO_IPA_SRA
 	ZFS_AC_CONFIG_ALWAYS_CC_ASAN
 	ZFS_AC_CONFIG_ALWAYS_CC_UBSAN
 	ZFS_AC_CONFIG_ALWAYS_TOOLCHAIN_SIMD
@@ -355,6 +358,9 @@ AC_DEFUN([ZFS_AC_RPM], [
 	AS_IF([test -n "$udevruledir" ], [
 		RPM_DEFINE_UTIL=${RPM_DEFINE_UTIL}' --define "_udevruledir $(udevruledir)"'
 	])
+	AS_IF([test -n "$bashcompletiondir" ], [
+		RPM_DEFINE_UTIL=${RPM_DEFINE_UTIL}' --define "_bashcompletiondir $(bashcompletiondir)"'
+	])
 	RPM_DEFINE_UTIL=${RPM_DEFINE_UTIL}' $(DEFINE_SYSTEMD)'
 	RPM_DEFINE_UTIL=${RPM_DEFINE_UTIL}' $(DEFINE_PYZFS)'
 	RPM_DEFINE_UTIL=${RPM_DEFINE_UTIL}' $(DEFINE_PAM)'
@@ -461,6 +467,7 @@ AC_DEFUN([ZFS_AC_DPKG], [
 	AC_SUBST(HAVE_DPKGBUILD)
 	AC_SUBST(DPKGBUILD)
 	AC_SUBST(DPKGBUILD_VERSION)
+	AC_SUBST([CFGOPTS], ["$CFGOPTS"])
 ])
 
 dnl #
@@ -505,30 +512,35 @@ AC_DEFUN([ZFS_AC_DEFAULT_PACKAGE], [
 		[with_vendor=$withval],
 		[with_vendor=check])
 	AS_IF([test "x$with_vendor" = "xcheck"],[
-		if test -f /etc/toss-release ; then
-			VENDOR=toss ;
-		elif test -f /etc/fedora-release ; then
-			VENDOR=fedora ;
-		elif test -f /etc/redhat-release ; then
-			VENDOR=redhat ;
-		elif test -f /etc/gentoo-release ; then
-			VENDOR=gentoo ;
+		if test -f /etc/alpine-release ; then
+			VENDOR=alpine ;
 		elif test -f /etc/arch-release ; then
 			VENDOR=arch ;
+		elif test -f /etc/artix-release ; then
+			VENDOR=artix ;
+		elif test -f /etc/fedora-release ; then
+			VENDOR=fedora ;
+		elif test -f /bin/freebsd-version ; then
+			VENDOR=freebsd ;
+		elif test -f /etc/gentoo-release ; then
+			VENDOR=gentoo ;
+		elif test -f /etc/lunar.release ; then
+			VENDOR=lunar ;
+		elif test -f /etc/openEuler-release ; then
+			VENDOR=openeuler ;
 		elif test -f /etc/SuSE-release ; then
 			VENDOR=sles ;
 		elif test -f /etc/slackware-version ; then
 			VENDOR=slackware ;
-		elif test -f /etc/lunar.release ; then
-			VENDOR=lunar ;
+		elif test -f /etc/toss-release ; then
+			VENDOR=toss ;
 		elif test -f /etc/lsb-release ; then
 			VENDOR=ubuntu ;
+		# put debian and redhat last as derivatives may have also their file
 		elif test -f /etc/debian_version ; then
 			VENDOR=debian ;
-		elif test -f /etc/alpine-release ; then
-			VENDOR=alpine ;
-		elif test -f /bin/freebsd-version ; then
-			VENDOR=freebsd ;
+		elif test -f /etc/redhat-release ; then
+			VENDOR=redhat ;
 		else
 			VENDOR= ;
 		fi],
@@ -541,19 +553,15 @@ AC_DEFUN([ZFS_AC_DEFAULT_PACKAGE], [
 
 	AC_MSG_CHECKING([default package type])
 	case "$VENDOR" in
-		toss)       DEFAULT_PACKAGE=rpm  ;;
-		redhat)     DEFAULT_PACKAGE=rpm  ;;
-		fedora)     DEFAULT_PACKAGE=rpm  ;;
-		gentoo)     DEFAULT_PACKAGE=tgz  ;;
-		alpine)     DEFAULT_PACKAGE=tgz  ;;
-		arch)       DEFAULT_PACKAGE=tgz  ;;
-		sles)       DEFAULT_PACKAGE=rpm  ;;
-		slackware)  DEFAULT_PACKAGE=tgz  ;;
-		lunar)      DEFAULT_PACKAGE=tgz  ;;
-		ubuntu)     DEFAULT_PACKAGE=deb  ;;
-		debian)     DEFAULT_PACKAGE=deb  ;;
-		freebsd)    DEFAULT_PACKAGE=pkg  ;;
-		*)          DEFAULT_PACKAGE=rpm  ;;
+		alpine|arch|artix|gentoo|lunar|slackware)
+			DEFAULT_PACKAGE=tgz  ;;
+		debian|ubuntu)
+			DEFAULT_PACKAGE=deb  ;;
+		freebsd)
+			DEFAULT_PACKAGE=pkg  ;;
+		*)
+		# fedora|openeuler|redhat|sles|toss
+			DEFAULT_PACKAGE=rpm  ;;
 	esac
 	AC_MSG_RESULT([$DEFAULT_PACKAGE])
 	AC_SUBST(DEFAULT_PACKAGE)
@@ -566,32 +574,19 @@ AC_DEFUN([ZFS_AC_DEFAULT_PACKAGE], [
 	AC_MSG_RESULT([$initdir])
 	AC_SUBST(initdir)
 
-	AC_MSG_CHECKING([default init script type and shell])
+	AC_MSG_CHECKING([default shell])
 	case "$VENDOR" in
-		toss)       DEFAULT_INIT_SCRIPT=redhat ;;
-		redhat)     DEFAULT_INIT_SCRIPT=redhat ;;
-		fedora)     DEFAULT_INIT_SCRIPT=fedora ;;
-		gentoo)     DEFAULT_INIT_SCRIPT=openrc ;;
-		alpine)     DEFAULT_INIT_SCRIPT=openrc ;;
-		arch)       DEFAULT_INIT_SCRIPT=lsb    ;;
-		sles)       DEFAULT_INIT_SCRIPT=lsb    ;;
-		slackware)  DEFAULT_INIT_SCRIPT=lsb    ;;
-		lunar)      DEFAULT_INIT_SCRIPT=lunar  ;;
-		ubuntu)     DEFAULT_INIT_SCRIPT=lsb    ;;
-		debian)     DEFAULT_INIT_SCRIPT=lsb    ;;
-		freebsd)    DEFAULT_INIT_SCRIPT=freebsd;;
-		*)          DEFAULT_INIT_SCRIPT=lsb    ;;
+		alpine|gentoo)	DEFAULT_INIT_SHELL=/sbin/openrc-run
+				IS_SYSV_RC=false	;;
+		artix)		DEFAULT_INIT_SHELL=/usr/bin/openrc-run
+				IS_SYSV_RC=false	;;
+		*)		DEFAULT_INIT_SHELL=/bin/sh
+				IS_SYSV_RC=true		;;
 	esac
 
-	case "$VENDOR" in
-		gentoo)     DEFAULT_INIT_SHELL="/sbin/openrc-run";;
-		alpine)     DEFAULT_INIT_SHELL="/sbin/openrc-run";;
-		*)          DEFAULT_INIT_SHELL="/bin/sh"         ;;
-	esac
-
-	AC_MSG_RESULT([$DEFAULT_INIT_SCRIPT:$DEFAULT_INIT_SHELL])
-	AC_SUBST(DEFAULT_INIT_SCRIPT)
+	AC_MSG_RESULT([$DEFAULT_INIT_SHELL])
 	AC_SUBST(DEFAULT_INIT_SHELL)
+	AC_SUBST(IS_SYSV_RC)
 
 	AC_MSG_CHECKING([default nfs server init script])
 	AS_IF([test "$VENDOR" = "debian"],
@@ -603,16 +598,19 @@ AC_DEFUN([ZFS_AC_DEFAULT_PACKAGE], [
 
 	AC_MSG_CHECKING([default init config directory])
 	case "$VENDOR" in
-		alpine)     initconfdir=/etc/conf.d    ;;
-		gentoo)     initconfdir=/etc/conf.d    ;;
-		toss)       initconfdir=/etc/sysconfig ;;
-		redhat)     initconfdir=/etc/sysconfig ;;
-		fedora)     initconfdir=/etc/sysconfig ;;
-		sles)       initconfdir=/etc/sysconfig ;;
-		ubuntu)     initconfdir=/etc/default   ;;
-		debian)     initconfdir=/etc/default   ;;
-		freebsd)    initconfdir=$sysconfdir/rc.conf.d;;
-		*)          initconfdir=/etc/default   ;;
+		alpine|artix|gentoo)
+			initconfdir=/etc/conf.d
+			;;
+		fedora|openeuler|redhat|sles|toss)
+			initconfdir=/etc/sysconfig
+			;;
+		freebsd)
+			initconfdir=$sysconfdir/rc.conf.d
+			;;
+		*)
+		# debian|ubuntu
+			initconfdir=/etc/default
+			;;
 	esac
 	AC_MSG_RESULT([$initconfdir])
 	AC_SUBST(initconfdir)
@@ -626,6 +624,22 @@ AC_DEFUN([ZFS_AC_DEFAULT_PACKAGE], [
 		AC_MSG_RESULT([no])
 	fi
 	AC_SUBST(RPM_DEFINE_INITRAMFS)
+
+	AC_MSG_CHECKING([default bash completion directory])
+	case "$VENDOR" in
+		alpine|artix|debian|gentoo|ubuntu)
+			bashcompletiondir=/usr/share/bash-completion/completions
+			;;
+		freebsd)
+			bashcompletiondir=$sysconfdir/bash_completion.d
+			;;
+		*)
+			bashcompletiondir=/etc/bash_completion.d
+			;;
+	esac
+	AC_MSG_RESULT([$bashcompletiondir])
+	AC_SUBST(bashcompletiondir)
+
 ])
 
 dnl #

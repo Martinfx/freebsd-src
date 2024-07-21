@@ -1,6 +1,6 @@
 #! /bin/sh
 #
-# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+# SPDX-License-Identifier: BSD-2-Clause
 #
 #  Copyright (c) 2010 Gordon Tetlow
 #  All rights reserved.
@@ -26,7 +26,15 @@
 #  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 #  SUCH DAMAGE.
 #
-# $FreeBSD$
+
+# Rendering a manual page is fast. Even a manual page several 100k in size
+# takes less than a CPU second. If it takes much longer, it is very likely
+# that a tool like mandoc(1) is running in an infinite loop. In this case
+# it is better to terminate it.
+ulimit -t 20
+
+# do not ignore the exit status of roff tools
+set -o pipefail
 
 # Usage: add_to_manpath path
 # Adds a variable to manpath while ensuring we don't have duplicates.
@@ -61,6 +69,25 @@ build_manlocales() {
 	MANLOCALES=${manlocales#:}
 
 	decho "Available manual locales: $MANLOCALES"
+}
+
+# Usage: build_mansect
+# Builds a correct MANSECT variable.
+build_mansect() {
+	# If the user has set mansect, who are we to argue.
+	if [ -n "$MANSECT" ]; then
+		return
+	fi
+
+	parse_configs
+
+	# Trim leading colon
+	MANSECT=${mansect#:}
+
+	if [ -z "$MANSECT" ]; then
+		MANSECT=$man_default_sections
+	fi
+	decho "Using manual sections: $MANSECT"
 }
 
 # Usage: build_manpath
@@ -119,8 +146,8 @@ check_cat() {
 	if exists "$1"; then
 		use_cat=yes
 		catpage=$found
-		setup_cattool $catpage
-		decho "    Found catpage $catpage"
+		setup_cattool "$catpage"
+		decho "    Found catpage \"$catpage\""
 		return 0
 	else
 		return 1
@@ -134,19 +161,19 @@ check_man() {
 	if exists "$1"; then
 		# We have a match, check for a cat page
 		manpage=$found
-		setup_cattool $manpage
-		decho "    Found manpage $manpage"
+		setup_cattool "$manpage"
+		decho "    Found manpage \"$manpage\""
 
 		if [ -n "${use_width}" ]; then
 			# non-standard width
 			unset use_cat
 			decho "    Skipping catpage: non-standard page width"
-		elif exists "$2" && is_newer $found $manpage; then
+		elif exists "$2" && is_newer $found "$manpage"; then
 			# cat page found and is newer, use that
 			use_cat=yes
 			catpage=$found
-			setup_cattool $catpage
-			decho "    Using catpage $catpage"
+			setup_cattool "$catpage"
+			decho "    Using catpage \"$catpage\""
 		else
 			# no cat page or is older
 			unset use_cat
@@ -167,8 +194,14 @@ decho() {
 }
 
 # Usage: exists glob
-# Returns true if glob resolves to a real file.
+#
+# Returns true if glob resolves to a real file and store the first
+# found filename in the variable $found
 exists() {
+	if [ -z "$1" ]; then
+		return 1
+	fi
+
 	local IFS
 
 	# Don't accidentally inherit callers IFS (breaks perl manpages)
@@ -177,13 +210,15 @@ exists() {
 	# Use some globbing tricks in the shell to determine if a file
 	# exists or not.
 	set +f
-	set -- "$1" $1
+	for file in "$1"*
+	do
+		if [ -r "$file" ]; then
+			found="$file"
+			set -f
+			return 0
+		fi
+	done
 	set -f
-
-	if [ "$1" != "$2" -a -r "$2" ]; then
-		found="$2"
-		return 0
-	fi
 
 	return 1
 }
@@ -206,10 +241,10 @@ find_file() {
 	fi
 	decho "  Searching directory $manroot" 2
 
-	mann="$manroot/$4.$2*"
-	man0="$manroot/$4.0*"
-	catn="$catroot/$4.$2*"
-	cat0="$catroot/$4.0*"
+	mann="$manroot/$4.$2"
+	man0="$manroot/$4.0"
+	catn="$catroot/$4.$2"
+	cat0="$catroot/$4.0"
 
 	# This is the behavior as seen by the original man utility.
 	# Let's not change that which doesn't seem broken.
@@ -269,7 +304,7 @@ manpath_warnings() {
 	fi
 }
 
-# Usage: man_check_for_so page path
+# Usage: man_check_for_so path
 # Returns: True if able to resolve the file, false if it ended in tears.
 # Detects the presence of the .so directive and causes the file to be
 # redirected to another source file.
@@ -284,12 +319,13 @@ man_check_for_so() {
 	# We need to loop to accommodate multiple .so directives.
 	while true
 	do
-		line=$($cattool $manpage | head -1)
+		line=$($cattool "$manpage" 2>/dev/null | grep -E -m1 -v '^\.\\"[ ]*|^[ ]*$')
 		case "$line" in
-		.so*)	trim "${line#.so}"
+               '.so /'*) break ;; # ignore absolute path
+               '.so '*) trim "${line#.so}"
 			decho "$manpage includes $tstr"
 			# Glob and check for the file.
-			if ! check_man "$path/$tstr*" ""; then
+			if ! check_man "$1/$tstr" ""; then
 				decho "  Unable to find $tstr"
 				return 1
 			fi
@@ -314,14 +350,14 @@ man_display_page() {
 	# just zcat the catpage and we are done.
 	if [ -z "$tflag" -a -n "$use_cat" ]; then
 		if [ -n "$wflag" ]; then
-			echo "$catpage (source: $manpage)"
+			echo "$catpage (source: \"$manpage\")"
 			ret=0
 		else
 			if [ $debug -gt 0 ]; then
-				decho "Command: $cattool $catpage | $MANPAGER"
+				decho "Command: $cattool \"$catpage\" | $MANPAGER"
 				ret=0
 			else
-				eval "$cattool $catpage | $MANPAGER"
+				$cattool "$catpage" | $MANPAGER
 				ret=$?
 			fi
 		fi
@@ -346,7 +382,7 @@ man_display_page() {
 		pipeline="mandoc $mandoc_args | $MANPAGER"
 	fi
 
-	if ! eval "$cattool $manpage | $testline" ;then
+	if ! $cattool "$manpage" | eval "$testline"; then
 		if which -s groff; then
 			man_display_page_groff
 		else
@@ -359,10 +395,10 @@ man_display_page() {
 	fi
 
 	if [ $debug -gt 0 ]; then
-		decho "Command: $cattool $manpage | $pipeline"
+		decho "Command: $cattool \"$manpage\" | eval \"$pipeline\""
 		ret=0
 	else
-		eval "$cattool $manpage | $pipeline"
+		$cattool "$manpage" | eval "$pipeline"
 		ret=$?
 	fi
 }
@@ -452,10 +488,10 @@ man_display_page_groff() {
 	fi
 
 	if [ $debug -gt 0 ]; then
-		decho "Command: $cattool $manpage | $pipeline"
+		decho "Command: $cattool \"$manpage\" | eval \"$pipeline\""
 		ret=0
 	else
-		eval "$cattool $manpage | $pipeline"
+		$cattool "$manpage" | eval "$pipeline"
 		ret=$?
 	fi
 }
@@ -472,8 +508,13 @@ man_find_and_display() {
 			decho "Found a usable page, displaying that"
 			unset use_cat
 			manpage="$1"
-			setup_cattool $manpage
-			if man_check_for_so $manpage $(dirname $manpage); then
+			setup_cattool "$manpage"
+			p=$(cd "$(dirname "$manpage")" && pwd)
+			case "$(basename "$p")" in
+				man*|cat*) p=$p/.. ;;
+				*) p=$p/../.. ;;
+			esac
+			if man_check_for_so "$p"; then
 				found_page=yes
 				man_display_page
 			fi
@@ -492,7 +533,7 @@ man_find_and_display() {
 
 				# Check if there is a MACHINE specific manpath.
 				if find_file $p $sect $MACHINE "$1"; then
-					if man_check_for_so $manpage $p; then
+					if man_check_for_so $p; then
 						found_page=yes
 						man_display_page
 						if [ -n "$aflag" ]; then
@@ -506,7 +547,7 @@ man_find_and_display() {
 				# Check if there is a MACHINE_ARCH
 				# specific manpath.
 				if find_file $p $sect $MACHINE_ARCH "$1"; then
-					if man_check_for_so $manpage $p; then
+					if man_check_for_so $p; then
 						found_page=yes
 						man_display_page
 						if [ -n "$aflag" ]; then
@@ -519,7 +560,7 @@ man_find_and_display() {
 
 				# Check plain old manpath.
 				if find_file $p $sect '' "$1"; then
-					if man_check_for_so $manpage $p; then
+					if man_check_for_so $p; then
 						found_page=yes
 						man_display_page
 						if [ -n "$aflag" ]; then
@@ -536,16 +577,16 @@ man_find_and_display() {
 
 	# Nothing? Well, we are done then.
 	if [ -z "$found_page" ]; then
-		echo "No manual entry for $1" >&2
+		echo "No manual entry for \"$1\"" >&2
 		ret=1
 		return
 	fi
 }
 
-# Usage: man_parse_args "$@"
+# Usage: man_parse_opts "$@"
 # Parses commandline options for man.
-man_parse_args() {
-	local IFS cmd_arg
+man_parse_opts() {
+	local cmd_arg
 
 	OPTIND=1
 	while getopts 'K:M:P:S:adfhkm:op:tw' cmd_arg; do
@@ -595,19 +636,6 @@ man_parse_args() {
 		do_apropos "$@"
 		exit
 	fi
-
-	IFS=:
-	for sect in $man_default_sections; do
-		if [ "$sect" = "$1" ]; then
-			decho "Detected manual section as first arg: $1"
-			MANSECT="$1"
-			shift
-			break
-		fi
-	done
-	unset IFS
-
-	pages="$*"
 }
 
 # Usage: man_setup
@@ -627,14 +655,8 @@ man_setup() {
 	decho "Using architecture: $MACHINE_ARCH:$MACHINE"
 
 	setup_pager
-
-	# Setup manual sections to search.
-	if [ -z "$MANSECT" ]; then
-		MANSECT=$man_default_sections
-	fi
-	decho "Using manual sections: $MANSECT"
-
 	build_manpath
+	build_mansect
 	man_setup_locale
 	man_setup_width
 }
@@ -781,6 +803,10 @@ parse_file() {
 				trim "${line#MANCONFIG}"
 				config_local="$tstr"
 				;;
+		MANSECT*)	decho "    MANSECT" 3
+				trim "${line#MANSECT}"
+				mansect="$mansect:$tstr"
+				;;
 		# Set variables in the form of FOO_BAR
 		*_*[\ \	]*)	var="${line%%[\ \	]*}"
 				trim "${line#$var}"
@@ -884,11 +910,11 @@ search_whatis() {
 	bad=${bad#\\n}
 
 	if [ -n "$good" ]; then
-		echo -e "$good" | $MANPAGER
+		printf '%b\n' "$good" | $MANPAGER
 	fi
 
 	if [ -n "$bad" ]; then
-		echo -e "$bad" >&2
+		printf '%b\n' "$bad" >&2
 	fi
 
 	exit $rval
@@ -900,9 +926,10 @@ setup_cattool() {
 	case "$1" in
 	*.bz)	cattool='/usr/bin/bzcat' ;;
 	*.bz2)	cattool='/usr/bin/bzcat' ;;
-	*.gz)	cattool='/usr/bin/zcat' ;;
+	*.gz)	cattool='/usr/bin/gzcat' ;;
 	*.lzma)	cattool='/usr/bin/lzcat' ;;
 	*.xz)	cattool='/usr/bin/xzcat' ;;
+	*.zst)	cattool='/usr/bin/zstdcat' ;;
 	*)	cattool='/usr/bin/zcat -f' ;;
 	esac
 }
@@ -989,11 +1016,11 @@ do_full_search() {
 	gflags="${gflags} --label"
 
 	set +f
-	for mpath in $(echo "${MANPATH}" | tr : [:blank:]); do
-		for section in $(echo "${MANSECT}" | tr : [:blank:]); do
+	for mpath in $(echo "${MANPATH}" | tr : '[:blank:]'); do
+		for section in $(echo "${MANSECT}" | tr : '[:blank:]'); do
 			for manfile in ${mpath}/man${section}/*.${section}*; do
 				mandoc "${manfile}" 2>/dev/null |
-					grep -E ${gflags} "${manfile}" -e ${re}
+					grep -E ${gflags} "${manfile}" -e "${re}"
 			done
 		done
 	done
@@ -1001,12 +1028,28 @@ do_full_search() {
 }
 
 do_man() {
-	man_parse_args "$@"
+	local IFS
+
+	man_parse_opts "$@"
+	man_setup
+
+	shift $(( $OPTIND - 1 ))
+	IFS=:
+	for sect in $MANSECT; do
+		if [ "$sect" = "$1" ]; then
+			decho "Detected manual section as first arg: $1"
+			MANSECT="$1"
+			shift
+			break
+		fi
+	done
+	unset IFS
+	pages="$*"
+
 	if [ -z "$pages" -a -z "${Kflag}" ]; then
 		echo 'What manual page do you want?' >&2
 		exit 1
 	fi
-	man_setup
 
 	if [ ! -z "${Kflag}" ]; then
 		# Short circuit because -K flag does a sufficiently
@@ -1014,8 +1057,8 @@ do_man() {
 		do_full_search "${REGEXP}"
 	fi
 
-	for page in $pages; do
-		decho "Searching for $page"
+	for page in "$@"; do
+		decho "Searching for \"$page\""
 		man_find_and_display "$page"
 	done
 
@@ -1045,11 +1088,11 @@ do_whatis() {
 
 # User's PATH setting decides on the groff-suite to pick up.
 EQN=eqn
-NROFF='groff -S -P-h -Wall -mtty-char -man'
+NROFF='groff -S -P-h -Wall -mtty-char -mandoc'
 PIC=pic
 REFER=refer
 TBL=tbl
-TROFF='groff -S -man'
+TROFF='groff -S -mandoc'
 VGRIND=vgrind
 
 LOCALE=/usr/bin/locale

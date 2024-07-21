@@ -1,5 +1,6 @@
-# $FreeBSD$
-# $Id: meta.autodep.mk,v 1.55 2021/12/13 08:12:01 sjg Exp $
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# $Id: meta.autodep.mk,v 1.63 2024/04/24 18:56:41 sjg Exp $
 
 #
 #	@(#) Copyright (c) 2010, Simon J. Gerraty
@@ -25,16 +26,16 @@ PICO?= .pico
 
 .if defined(SRCS)
 .if ${MAKE_VERSION:U0} >= 20211212
-OBJ_EXTENSIONS += ${.SUFFIXES:M*o}
+OBJ_SUFFIXES += ${.SUFFIXES:M*o}
 .else
 # it would be nice to be able to query .SUFFIXES
-OBJ_EXTENSIONS += .o .po .lo ${PICO}
+OBJ_SUFFIXES += .o .po .lo ${PICO}
 .endif
 
 # explicit dependencies help short-circuit .SUFFIX searches
 SRCS_DEP_FILTER+= N*.[hly]
 .for s in ${SRCS:${SRCS_DEP_FILTER:O:u:ts:}}
-.for e in ${OBJ_EXTENSIONS:O:u}
+.for e in ${OBJ_SUFFIXES:O:u}
 .if !target(${s:T:R}$e)
 ${s:T:R}$e: $s
 .endif
@@ -140,6 +141,10 @@ FORCE_DPADD += ${_nonlibs:@x@${DPADD:M*/$x}@}
 .END:	gendirdeps
 .endif
 
+.if ${LOCAL_DEPENDS_GUARD:U} == "no"
+.depend:
+.endif
+
 # if we don't have OBJS, then .depend isn't useful
 .if !target(.depend) && (!empty(OBJS) || ${.ALLTARGETS:M*.o} != "")
 # some makefiles and/or targets contain
@@ -175,7 +180,7 @@ DEPEND_SUFFIXES += .c .h .cpp .hpp .cxx .hxx .cc .hh
 .endif
 .depend: .NOMETA $${.MAKE.META.CREATED} ${_this}
 	@echo "Updating $@: ${.OODATE:T:[1..8]}"
-	@egrep -i '^R .*\.(${DEPEND_SUFFIXES:tl:O:u:S,^.,,:ts|})$$' /dev/null ${.MAKE.META.FILES:T:O:u:${META_FILE_FILTER:ts:}:M*o.meta} | \
+	@${EGREP:Uegrep} -i '^R .*\.(${DEPEND_SUFFIXES:tl:O:u:S,^.,,:ts|})$$' /dev/null ${.MAKE.META.FILES:T:O:u:${META_FILE_FILTER:ts:}:M*o.meta} | \
 	sed -e 's, \./, ,${OBJDIR_REFS:O:u:@d@;s, $d/, ,@};/\//d' \
 		-e 's,^\([^/][^/]*\).meta...[0-9]* ,\1: ,' | \
 	sort -u | \
@@ -187,7 +192,7 @@ DEPEND_SUFFIXES += .c .h .cpp .hpp .cxx .hxx .cc .hh
 	@case "${.MAKE.META.FILES:T:M*.po.*}" in \
 	*.po.*) mv $@.${.MAKE.PID} $@;; \
 	*) { cat $@.${.MAKE.PID}; \
-	sed ${OBJ_EXTENSIONS:N.o:N.po:@o@-e 's,\$o:,.o:,'@} \
+	sed ${OBJ_SUFFIXES:N.o:N.po:@o@-e 's,\$o:,.o:,'@} \
 		-e 's,\.o:,.po:,' $@.${.MAKE.PID}; } | sort -u > $@; \
 	rm -f $@.${.MAKE.PID};; \
 	esac
@@ -207,7 +212,8 @@ _depend =
 .endif
 
 .if ${UPDATE_DEPENDFILE} == "yes"
-gendirdeps:	${_DEPENDFILE}
+gendirdeps:	beforegendirdeps .WAIT ${_DEPENDFILE}
+beforegendirdeps:
 .endif
 
 .if !target(${_DEPENDFILE})
@@ -301,8 +307,10 @@ ${_DEPENDFILE}: .PRECIOUS
 CLEANFILES += *.meta filemon.* *.db
 
 # these make it easy to gather some stats
-now_utc = ${%s:L:gmtime}
+now_utc ?= ${%s:L:localtime}
+.if !defined(start_utc)
 start_utc := ${now_utc}
+.endif
 
 meta_stats= meta=${empty(.MAKE.META.FILES):?0:${.MAKE.META.FILES:[#]}} \
 	created=${empty(.MAKE.META.CREATED):?0:${.MAKE.META.CREATED:[#]}}
@@ -326,5 +334,7 @@ _reldir_failed: .NOMETA
 .END: _reldir_finish
 .ERROR: _reldir_failed
 .endif
+
+.-include <ccm.dep.mk>
 
 .endif

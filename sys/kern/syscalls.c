@@ -2,7 +2,6 @@
  * System call names.
  *
  * DO NOT EDIT-- this file is automatically @generated.
- * $FreeBSD$
  */
 
 const char *syscallnames[] = {
@@ -75,8 +74,8 @@ const char *syscallnames[] = {
 	"vfork",			/* 66 = vfork */
 	"obs_vread",			/* 67 = obsolete vread */
 	"obs_vwrite",			/* 68 = obsolete vwrite */
-	"sbrk",			/* 69 = sbrk */
-	"sstk",			/* 70 = sstk */
+	"obs_sbrk",			/* 69 = obsolete sbrk */
+	"obs_sstk",			/* 70 = obsolete sstk */
 	"compat.mmap",		/* 71 = old mmap */
 	"compat11.vadvise",		/* 72 = freebsd11 vadvise */
 	"munmap",			/* 73 = munmap */
@@ -145,7 +144,7 @@ const char *syscallnames[] = {
 	"mkdir",			/* 136 = mkdir */
 	"rmdir",			/* 137 = rmdir */
 	"utimes",			/* 138 = utimes */
-	"obs_4.2",			/* 139 = obsolete 4.2 sigreturn */
+	"obs_sigreturn",			/* 139 = obsolete sigreturn */
 	"adjtime",			/* 140 = adjtime */
 	"compat.getpeername",		/* 141 = old getpeername */
 	"compat.gethostid",		/* 142 = old gethostid */
@@ -589,4 +588,10 @@ const char *syscallnames[] = {
 	"fspacectl",			/* 580 = fspacectl */
 	"sched_getcpu",			/* 581 = sched_getcpu */
 	"swapoff",			/* 582 = swapoff */
+	"kqueuex",			/* 583 = kqueuex */
+	"membarrier",			/* 584 = membarrier */
+	"timerfd_create",			/* 585 = timerfd_create */
+	"timerfd_gettime",			/* 586 = timerfd_gettime */
+	"timerfd_settime",			/* 587 = timerfd_settime */
+	"kcmp",			/* 588 = kcmp */
 };

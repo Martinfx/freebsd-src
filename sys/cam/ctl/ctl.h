@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003 Silicon Graphics International Corp.
  * All rights reserved.
@@ -30,7 +30,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl.h#5 $
- * $FreeBSD$
  */
 /*
  * Function definitions used both within CTL and potentially in various CTL
@@ -56,6 +55,7 @@ typedef enum {
 	CTL_PORT_ISCSI		= 0x10,
 	CTL_PORT_SAS		= 0x20,
 	CTL_PORT_UMASS		= 0x40,
+	CTL_PORT_NVMF		= 0x80,
 	CTL_PORT_ALL		= 0xff,
 	CTL_PORT_ISC		= 0x100 // FC port for inter-shelf communication
 } ctl_port_type;
@@ -130,7 +130,9 @@ typedef enum {
 
 #ifdef	_KERNEL
 
+#ifdef MALLOC_DECLARE	/* from malloc.h */
 MALLOC_DECLARE(M_CTL);
+#endif
 
 struct ctl_page_index;
 
@@ -138,9 +140,13 @@ struct ctl_page_index;
 SYSCTL_DECL(_kern_cam_ctl);
 #endif
 
+struct cdev;
 struct ctl_lun;
 struct ctl_port;
 struct ctl_softc;
+struct ctl_scsiio;
+struct sbuf;
+union ctl_io;
 
 /*
  * Put a string into an sbuf, escaping characters that are illegal or not

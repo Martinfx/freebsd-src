@@ -32,10 +32,10 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)iso.h	8.6 (Berkeley) 5/10/95
- * $FreeBSD$
  */
+
+#ifndef _ISOFS_CD9660_ISO_H_
+#define _ISOFS_CD9660_ISO_H_
 
 #define ISODCL(from, to) (to - from + 1)
 
@@ -237,6 +237,11 @@ struct iso_mnt {
 	struct g_consumer *im_cp;
 	struct bufobj *im_bo;
 
+	uid_t	im_uid;
+	gid_t	im_gid;
+	mode_t	im_fmask;
+	mode_t	im_dmask;
+
 	int logical_block_size;
 	int im_bshift;
 	int im_bmask;
@@ -365,3 +370,5 @@ isonum_733(const unsigned char *p)
  * Associated files have a leading '='.
  */
 #define	ASSOCCHAR	'='
+
+#endif /* _ISOFS_CD9660_ISO_H_ */

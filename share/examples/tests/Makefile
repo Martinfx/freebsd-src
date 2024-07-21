@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=		tests
 
 .PATH:		${SRCTOP}/tests

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 DEVRTW88DIR=	${SRCTOP}/sys/contrib/dev/rtw88
 
 .PATH: ${DEVRTW88DIR}
@@ -15,7 +13,7 @@ SRCS+=	phy.c ps.c regd.c
 SRCS+=	rx.c sar.c sec.c tx.c util.c
 
 .if defined(WITH_CONFIG_PM) && ${WITH_CONFIG_PM} > 0
-SRCR+=	wow.c
+SRCS+=	wow.c
 CFLAGS+=	-DCONFIG_PM=${WITH_CONFIG_PM}
 .endif
 
@@ -36,7 +34,7 @@ SRCS+=	opt_wlan.h opt_inet6.h opt_inet.h
 CFLAGS+=	-DKBUILD_MODNAME='"rtw88"'
 
 CFLAGS+=	-I${DEVRTW88DIR}
-CFLAGS+=	-I${SRCTOP}/sys/compat/linuxkpi/common/include
+CFLAGS+=	${LINUXKPI_INCLUDES}
 CFLAGS+=	-DCONFIG_RTW88_DEBUG
 #CFLAGS+=	-DCONFIG_RTW88_DEBUGFS
 

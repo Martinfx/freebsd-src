@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #include <sys/param.h>
@@ -69,8 +67,8 @@ static SYSCTL_NODE(_debug, OID_AUTO, mtkswitch, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
 #endif
 
 static inline int mtkswitch_portforphy(int phy);
-static int mtkswitch_ifmedia_upd(struct ifnet *ifp);
-static void mtkswitch_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr);
+static int mtkswitch_ifmedia_upd(if_t ifp);
+static void mtkswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr);
 static void mtkswitch_tick(void *arg);
 
 static const struct ofw_compat_data compat_data[] = {
@@ -102,7 +100,7 @@ mtkswitch_probe(device_t dev)
 	bzero(sc, sizeof(*sc));
 	sc->sc_switchtype = switch_type;
 
-	device_set_desc_copy(dev, "MTK Switch Driver");
+	device_set_desc(dev, "MTK Switch Driver");
 
 	return (0);
 }
@@ -123,12 +121,6 @@ mtkswitch_attach_phys(struct mtkswitch_softc *sc)
 			continue;
 		}
 		sc->ifp[phy] = if_alloc(IFT_ETHER);
-		if (sc->ifp[phy] == NULL) {
-			device_printf(sc->sc_dev, "couldn't allocate ifnet structure\n");
-			err = ENOMEM;
-			break;
-		}
-
 		sc->ifp[phy]->if_softc = sc;
 		sc->ifp[phy]->if_flags |= IFF_UP | IFF_BROADCAST |
 		    IFF_DRV_RUNNING | IFF_SIMPLEX;
@@ -303,7 +295,7 @@ mtkswitch_miiforport(struct mtkswitch_softc *sc, int port)
 	return (device_get_softc(sc->miibus[phy]));
 }
 
-static inline struct ifnet *
+static inline if_t 
 mtkswitch_ifpforport(struct mtkswitch_softc *sc, int port)
 {
 	int phy = mtkswitch_phyforport(port);
@@ -484,7 +476,7 @@ mtkswitch_setport(device_t dev, etherswitch_port_t *p)
 	struct mtkswitch_softc *sc;
 	struct ifmedia *ifm;
 	struct mii_data *mii;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	sc = device_get_softc(dev);
 	if (p->es_port < 0 || p->es_port > sc->info.es_nports)
@@ -519,10 +511,10 @@ mtkswitch_statchg(device_t dev)
 }
 
 static int
-mtkswitch_ifmedia_upd(struct ifnet *ifp)
+mtkswitch_ifmedia_upd(if_t ifp)
 {
-	struct mtkswitch_softc *sc = ifp->if_softc;
-	struct mii_data *mii = mtkswitch_miiforport(sc, ifp->if_dunit);
+	struct mtkswitch_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = mtkswitch_miiforport(sc, if_getdunit(ifp));
         
 	if (mii == NULL)
 		return (ENXIO);
@@ -531,10 +523,10 @@ mtkswitch_ifmedia_upd(struct ifnet *ifp)
 }
 
 static void
-mtkswitch_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
+mtkswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-	struct mtkswitch_softc *sc = ifp->if_softc;
-	struct mii_data *mii = mtkswitch_miiforport(sc, ifp->if_dunit);
+	struct mtkswitch_softc *sc = if_getsoftc(ifp);
+	struct mii_data *mii = mtkswitch_miiforport(sc, if_getdunit(ifp));
 
 	DPRINTF(sc->sc_dev, "%s\n", __func__);
 

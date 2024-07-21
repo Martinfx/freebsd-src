@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 1996-1998 John D. Polstra.
  * All rights reserved.
@@ -23,10 +23,9 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
+#define _WANT_P_OSREL
 #include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -122,7 +121,7 @@ map_object(int fd, const char *path, const struct stat *sb)
     note_map = NULL;
     note_map_len = 0;
     segs = alloca(sizeof(segs[0]) * hdr->e_phnum);
-    stack_flags = RTLD_DEFAULT_STACK_PF_EXEC | PF_R | PF_W;
+    stack_flags = PF_X | PF_R | PF_W;
     text_end = 0;
     while (phdr < phlimit) {
 	switch (phdr->p_type) {
@@ -432,7 +431,7 @@ obj_free(Obj_Entry *obj)
 {
     Objlist_Entry *elm;
 
-    if (obj->tls_done)
+    if (obj->tls_static)
 	free_tls_offset(obj);
     while (obj->needed != NULL) {
 	Needed_Entry *needed = obj->needed;

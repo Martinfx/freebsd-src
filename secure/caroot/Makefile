@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 CLEANFILES+=	certdata.txt
 
 SUBDIR+=	trusted

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2009 Gabor Kovesdan <gabor@FreeBSD.org>
  * Copyright (C) 2012 Oleg Moskalenko <mom040267@gmail.com>
@@ -28,8 +28,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <ctype.h>
 #include <errno.h>
 #include <err.h>
@@ -45,63 +43,124 @@ __FBSDID("$FreeBSD$");
 
 bool byte_sort;
 
-static wchar_t **wmonths;
-static char **cmonths;
+struct wmonth {
+	wchar_t *mon;
+	wchar_t *ab;
+	wchar_t *alt;
+};
 
-/* initialise months */
+struct cmonth {
+	char *mon;
+	char *ab;
+	char *alt;
+};
+
+static struct wmonth *wmonths;
+static struct cmonth *cmonths;
+
+static int
+populate_cmonth(char **field, const nl_item item, int idx)
+{
+	char *tmp, *m;
+	size_t i, len;
+
+	tmp = nl_langinfo(item);
+	if (debug_sort)
+		printf("month[%d]=%s\n", idx, tmp);
+	if (*tmp == '\0')
+		return (0);
+	m = sort_strdup(tmp);
+	len = strlen(tmp);
+	for (i = 0; i < len; i++)
+		m[i] = toupper(m[i]);
+	*field = m;
+
+	return (1);
+}
+
+static int
+populate_wmonth(wchar_t **field, const nl_item item, int idx)
+{
+	wchar_t *m;
+	char *tmp;
+	size_t i, len;
+
+	tmp = nl_langinfo(item);
+	if (debug_sort)
+		printf("month[%d]=%s\n", idx, tmp);
+	if (*tmp == '\0')
+		return (0);
+	len = strlen(tmp);
+	m = sort_malloc(SIZEOF_WCHAR_STRING(len + 1));
+	if (mbstowcs(m, tmp, len) == ((size_t) - 1)) {
+		sort_free(m);
+		return (0);
+	}
+	m[len] = L'\0';
+	for (i = 0; i < len; i++)
+		m[i] = towupper(m[i]);
+	*field = m;
+
+	return (1);
+}
 
 void
 initialise_months(void)
 {
-	const nl_item item[12] = { ABMON_1, ABMON_2, ABMON_3, ABMON_4,
+	const nl_item mon_item[12] = { MON_1, MON_2, MON_3, MON_4,
+	    MON_5, MON_6, MON_7, MON_8, MON_9, MON_10,
+	    MON_11, MON_12 };
+	const nl_item ab_item[12] = { ABMON_1, ABMON_2, ABMON_3, ABMON_4,
 	    ABMON_5, ABMON_6, ABMON_7, ABMON_8, ABMON_9, ABMON_10,
 	    ABMON_11, ABMON_12 };
-	char *tmp;
-	size_t len;
+#ifdef ALTMON_1
+	const nl_item alt_item[12] = { ALTMON_1, ALTMON_2, ALTMON_3, ALTMON_4,
+	    ALTMON_5, ALTMON_6, ALTMON_7, ALTMON_8, ALTMON_9, ALTMON_10,
+	    ALTMON_11, ALTMON_12 };
+#endif
+	int i;
 
+	/*
+	 * Handle all possible month formats: abbrevation, full name,
+	 * standalone name (without case ending).
+	 */
 	if (mb_cur_max == 1) {
 		if (cmonths == NULL) {
-			char *m;
-
-			cmonths = sort_malloc(sizeof(char*) * 12);
-			for (int i = 0; i < 12; i++) {
-				cmonths[i] = NULL;
-				tmp = nl_langinfo(item[i]);
-				if (debug_sort)
-					printf("month[%d]=%s\n", i, tmp);
-				if (*tmp == '\0')
+			cmonths = sort_malloc(sizeof(struct cmonth) * 12);
+			for (i = 0; i < 12; i++) {
+				if (!populate_cmonth(&cmonths[i].mon,
+				    mon_item[i], i))
 					continue;
-				m = sort_strdup(tmp);
-				len = strlen(tmp);
-				for (unsigned int j = 0; j < len; j++)
-					m[j] = toupper(m[j]);
-				cmonths[i] = m;
+				if (!populate_cmonth(&cmonths[i].ab,
+				    ab_item[i], i))
+					continue;
+#ifdef ALTMON_1
+				if (!populate_cmonth(&cmonths[i].alt,
+				    alt_item[i], i))
+					continue;
+#else
+				cmonths[i].alt = NULL;
+#endif
 			}
 		}
 
 	} else {
 		if (wmonths == NULL) {
-			wchar_t *m;
-
-			wmonths = sort_malloc(sizeof(wchar_t *) * 12);
-			for (int i = 0; i < 12; i++) {
-				wmonths[i] = NULL;
-				tmp = nl_langinfo(item[i]);
-				if (debug_sort)
-					printf("month[%d]=%s\n", i, tmp);
-				if (*tmp == '\0')
+			wmonths = sort_malloc(sizeof(struct wmonth) * 12);
+			for (i = 0; i < 12; i++) {
+				if (!populate_wmonth(&wmonths[i].mon,
+				    mon_item[i], i))
 					continue;
-				len = strlen(tmp);
-				m = sort_malloc(SIZEOF_WCHAR_STRING(len + 1));
-				if (mbstowcs(m, tmp, len) ==
-				    ((size_t) - 1)) {
-					sort_free(m);
+				if (!populate_wmonth(&wmonths[i].ab,
+				    ab_item[i], i))
 					continue;
-				}
-				m[len] = L'\0';
-				for (unsigned int j = 0; j < len; j++)
-					m[j] = towupper(m[j]);
-				wmonths[i] = m;
+#ifdef ALTMON_1
+				if (!populate_wmonth(&wmonths[i].alt,
+				    alt_item[i], i))
+					continue;
+#else
+				wmonths[i].alt = NULL;
+#endif
 			}
 		}
 	}
@@ -323,63 +382,6 @@ bwsfree(const struct bwstring *s)
 }
 
 /*
- * Copy content of src binary string to dst.
- * If the capacity of the dst string is not sufficient,
- * then the data is truncated.
- */
-size_t
-bwscpy(struct bwstring *dst, const struct bwstring *src)
-{
-	size_t nums = BWSLEN(src);
-
-	if (nums > BWSLEN(dst))
-		nums = BWSLEN(dst);
-
-	if (mb_cur_max == 1) {
-		memcpy(dst->cdata.str, src->cdata.str, nums);
-		dst->cdata.len = nums;
-		dst->cdata.str[dst->cdata.len] = '\0';
-	} else {
-		memcpy(dst->wdata.str, src->wdata.str,
-		    SIZEOF_WCHAR_STRING(nums));
-		dst->wdata.len = nums;
-		dst->wdata.str[nums] = L'\0';
-	}
-
-	return (nums);
-}
-
-/*
- * Copy content of src binary string to dst,
- * with specified number of symbols to be copied.
- * If the capacity of the dst string is not sufficient,
- * then the data is truncated.
- */
-struct bwstring *
-bwsncpy(struct bwstring *dst, const struct bwstring *src, size_t size)
-{
-	size_t nums = BWSLEN(src);
-
-	if (nums > BWSLEN(dst))
-		nums = BWSLEN(dst);
-	if (nums > size)
-		nums = size;
-
-	if (mb_cur_max == 1) {
-		memcpy(dst->cdata.str, src->cdata.str, nums);
-		dst->cdata.len = nums;
-		dst->cdata.str[nums] = '\0';
-	} else {
-		memcpy(dst->wdata.str, src->wdata.str,
-		    SIZEOF_WCHAR_STRING(nums));
-		dst->wdata.len = nums;
-		dst->wdata.str[nums] = L'\0';
-	}
-
-	return (dst);
-}
-
-/*
  * Copy content of src binary string to dst,
  * with specified number of symbols to be copied.
  * An offset value can be specified, from the start of src string.
@@ -467,115 +469,6 @@ bwsfwrite(struct bwstring *bws, FILE *f, bool zero_ended)
 		}
 		fwprintf(f, L"%lc", eols);
 		return (printed + 1);
-	}
-}
-
-/*
- * Allocate and read a binary string from file.
- * The strings are nl-ended or zero-ended, depending on the sort setting.
- */
-struct bwstring *
-bwsfgetln(FILE *f, size_t *len, bool zero_ended, struct reader_buffer *rb)
-{
-	wint_t eols;
-
-	eols = zero_ended ? btowc('\0') : btowc('\n');
-
-	if (!zero_ended && (mb_cur_max > 1)) {
-		wchar_t *ret;
-
-		ret = fgetwln(f, len);
-
-		if (ret == NULL) {
-			if (!feof(f))
-				err(2, NULL);
-			return (NULL);
-		}
-		if (*len > 0) {
-			if (ret[*len - 1] == (wchar_t)eols)
-				--(*len);
-		}
-		return (bwssbdup(ret, *len));
-
-	} else if (!zero_ended && (mb_cur_max == 1)) {
-		char *ret;
-
-		ret = fgetln(f, len);
-
-		if (ret == NULL) {
-			if (!feof(f))
-				err(2, NULL);
-			return (NULL);
-		}
-		if (*len > 0) {
-			if (ret[*len - 1] == '\n')
-				--(*len);
-		}
-		return (bwscsbdup((unsigned char *)ret, *len));
-
-	} else {
-		*len = 0;
-
-		if (feof(f))
-			return (NULL);
-
-		if (2 >= rb->fgetwln_z_buffer_size) {
-			rb->fgetwln_z_buffer_size += 256;
-			rb->fgetwln_z_buffer = sort_realloc(rb->fgetwln_z_buffer,
-			    sizeof(wchar_t) * rb->fgetwln_z_buffer_size);
-		}
-		rb->fgetwln_z_buffer[*len] = 0;
-
-		if (mb_cur_max == 1)
-			while (!feof(f)) {
-				int c;
-
-				c = fgetc(f);
-
-				if (c == EOF) {
-					if (*len == 0)
-						return (NULL);
-					goto line_read_done;
-				}
-				if (c == eols)
-					goto line_read_done;
-
-				if (*len + 1 >= rb->fgetwln_z_buffer_size) {
-					rb->fgetwln_z_buffer_size += 256;
-					rb->fgetwln_z_buffer = sort_realloc(rb->fgetwln_z_buffer,
-					    SIZEOF_WCHAR_STRING(rb->fgetwln_z_buffer_size));
-				}
-
-				rb->fgetwln_z_buffer[*len] = c;
-				rb->fgetwln_z_buffer[++(*len)] = 0;
-			}
-		else
-			while (!feof(f)) {
-				wint_t c;
-
-				c = fgetwc(f);
-
-				if (c == WEOF) {
-					if (*len == 0)
-						return (NULL);
-					goto line_read_done;
-				}
-				if (c == eols)
-					goto line_read_done;
-
-				if (*len + 1 >= rb->fgetwln_z_buffer_size) {
-					rb->fgetwln_z_buffer_size += 256;
-					rb->fgetwln_z_buffer = sort_realloc(rb->fgetwln_z_buffer,
-					    SIZEOF_WCHAR_STRING(rb->fgetwln_z_buffer_size));
-				}
-
-				rb->fgetwln_z_buffer[*len] = c;
-				rb->fgetwln_z_buffer[++(*len)] = 0;
-			}
-
-line_read_done:
-		/* we do not count the last 0 */
-		return (bwssbdup(rb->fgetwln_z_buffer, *len));
 	}
 }
 
@@ -922,8 +815,11 @@ bws_month_score(const struct bwstring *s0)
 			++s;
 
 		for (int i = 11; i >= 0; --i) {
-			if (cmonths[i] &&
-			    (s == strstr(s, cmonths[i])))
+			if (cmonths[i].mon && (s == strstr(s, cmonths[i].mon)))
+				return (i);
+			if (cmonths[i].ab && (s == strstr(s, cmonths[i].ab)))
+				return (i);
+			if (cmonths[i].alt && (s == strstr(s, cmonths[i].alt)))
 				return (i);
 		}
 
@@ -937,7 +833,11 @@ bws_month_score(const struct bwstring *s0)
 			++s;
 
 		for (int i = 11; i >= 0; --i) {
-			if (wmonths[i] && (s == wcsstr(s, wmonths[i])))
+			if (wmonths[i].ab && (s == wcsstr(s, wmonths[i].ab)))
+				return (i);
+			if (wmonths[i].mon && (s == wcsstr(s, wmonths[i].mon)))
+				return (i);
+			if (wmonths[i].alt && (s == wcsstr(s, wmonths[i].alt)))
 				return (i);
 		}
 	}

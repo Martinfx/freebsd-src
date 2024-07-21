@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	ibmirror
 SRCS=	ibmirror.c
 MAN=

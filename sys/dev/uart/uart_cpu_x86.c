@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2003, 2004 Marcel Moolenaar
  * All rights reserved.
@@ -27,9 +27,6 @@
  */
 
 #include "opt_acpi.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -73,7 +70,7 @@ uart_cpu_getdev(int devtype, struct uart_devinfo *di)
 	 * !late_console, we haven't set up our own page tables yet, so we
 	 * can't map ACPI tables to look at them.
 	 */
-	if (late_console && uart_cpu_acpi_spcr(devtype, di) == 0)
+	if (late_console && uart_cpu_acpi_setup(devtype, di) == 0)
 		return (0);
 #endif
 

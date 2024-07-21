@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/geom/cache
 
 KMOD=	geom_cache

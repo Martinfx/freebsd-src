@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _GIC_V3_VAR_H_
@@ -40,8 +38,9 @@ DECLARE_CLASS(gic_v3_driver);
 struct gic_v3_irqsrc;
 
 struct redist_pcpu {
-	struct resource		res;		/* mem resource for redist */
+	struct resource		*res;		/* mem resource for redist */
 	vm_offset_t		pend_base;
+	bus_size_t		offset;
 	bool			lpi_enabled;	/* redist LPI configured? */
 };
 
@@ -55,7 +54,7 @@ struct gic_redists {
 	/* Number of Re-Distributor regions */
 	u_int			nregions;
 	/* Per-CPU Re-Distributor data */
-	struct redist_pcpu	*pcpu[MAXCPU];
+	struct redist_pcpu	*pcpu;
 };
 
 struct gic_v3_softc {
@@ -84,11 +83,15 @@ struct gic_v3_softc {
 	device_t		*gic_children;
 	struct intr_pic		*gic_pic;
 	struct gic_v3_irqsrc	*gic_irqs;
+
+	int			nranges;
+	struct arm_gic_range *	ranges;
 };
 
 struct gic_v3_devinfo {
 	int gic_domain;
 	int msi_xref;
+	int is_vgic;
 };
 
 #define GIC_INTR_ISRC(sc, irq)	(&sc->gic_irqs[irq].gi_isrc)
@@ -99,9 +102,11 @@ MALLOC_DECLARE(M_GIC_V3);
 #define	GICV3_IVAR_NIRQS	1000
 /* 1001 was GICV3_IVAR_REDIST_VADDR */
 #define	GICV3_IVAR_REDIST	1002
+#define	GICV3_IVAR_SUPPORT_LPIS	1003
 
 __BUS_ACCESSOR(gicv3, nirqs, GICV3, NIRQS, u_int);
 __BUS_ACCESSOR(gicv3, redist, GICV3, REDIST, void *);
+__BUS_ACCESSOR(gicv3, support_lpis, GICV3, SUPPORT_LPIS, bool);
 
 /* Device methods */
 int gic_v3_attach(device_t dev);
@@ -133,8 +138,8 @@ void gic_r_write_8(device_t, bus_size_t, uint64_t var);
 	u_int cpu = PCPU_GET(cpuid);		\
 						\
 	bus_read_##len(				\
-	    &sc->gic_redists.pcpu[cpu]->res,	\
-	    reg);				\
+	    (sc)->gic_redists.pcpu[cpu].res,	\
+	    (sc)->gic_redists.pcpu[cpu].offset + (reg)); \
 })
 
 #define	gic_r_write(sc, len, reg, val)		\
@@ -142,8 +147,9 @@ void gic_r_write_8(device_t, bus_size_t, uint64_t var);
 	u_int cpu = PCPU_GET(cpuid);		\
 						\
 	bus_write_##len(			\
-	    &sc->gic_redists.pcpu[cpu]->res,	\
-	    reg, val);				\
+	    (sc)->gic_redists.pcpu[cpu].res,	\
+	    (sc)->gic_redists.pcpu[cpu].offset + (reg), \
+	    (val));				\
 })
 
 #endif /* _GIC_V3_VAR_H_ */

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 The FreeBSD Foundation
  *
@@ -27,10 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <sys/cdefs.h>
-#ifdef __FreeBSD__
-__FBSDID("$FreeBSD$");
-#endif
 
 /*
  * IEEE 802.11s Hybrid Wireless Mesh Protocol, HWMP.
@@ -1399,7 +1395,7 @@ hwmp_recv_prep(struct ieee80211vap *vap, struct ieee80211_node *ni,
 
 	/*
 	 * Check if we received a PREP w/ AE and store target external address.
-	 * We may store target external address if recevied PREP w/ AE
+	 * We may store target external address if received PREP w/ AE
 	 * and we are not final destination
 	 */
 	if (prep->prep_flags & IEEE80211_MESHPREP_FLAGS_AE) {
@@ -1928,8 +1924,8 @@ hwmp_discover(struct ieee80211vap *vap,
 		if (rt == NULL) {
 			rt = ieee80211_mesh_rt_add(vap, dest);
 			if (rt == NULL) {
-				IEEE80211_NOTE(vap, IEEE80211_MSG_HWMP,
-				    ni, "unable to add discovery path to %6D",
+				IEEE80211_DPRINTF(vap, IEEE80211_MSG_HWMP,
+				    "unable to add discovery path to %6D",
 				    dest, ":");
 				vap->iv_stats.is_mesh_rtaddfailed++;
 				goto done;

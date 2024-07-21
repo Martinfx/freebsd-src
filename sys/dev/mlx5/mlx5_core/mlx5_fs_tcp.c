@@ -83,7 +83,7 @@ accel_fs_tcp_set_ipv6_flow(struct mlx5_flow_spec *spec, struct inpcb *inp)
 void
 mlx5e_accel_fs_del_inpcb(struct mlx5_flow_rule *rule)
 {
-	mlx5_del_flow_rule(rule);
+	mlx5_del_flow_rule(&rule);
 }
 
 struct mlx5_flow_rule *
@@ -98,6 +98,10 @@ mlx5e_accel_fs_add_inpcb(struct mlx5e_priv *priv,
 #endif
 	struct mlx5_flow_rule *flow;
 	struct mlx5_flow_spec *spec;
+	struct mlx5_flow_act flow_act = {
+		.actions = MLX5_FLOW_ACT_ACTIONS_FLOW_TAG,
+		.flow_tag = flow_tag,
+	};
 
 	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
@@ -160,8 +164,8 @@ mlx5e_accel_fs_add_inpcb(struct mlx5e_priv *priv,
 	flow = mlx5_add_flow_rule(ft->t, spec->match_criteria_enable,
 	    spec->match_criteria,
 	    spec->match_value,
-	    MLX5_FLOW_CONTEXT_ACTION_FWD_DEST,
-	    flow_tag,
+	    MLX5_FLOW_RULE_FWD_ACTION_DEST,
+	    &flow_act,
 	    &dest);
 out:
 	kvfree(spec);
@@ -176,6 +180,10 @@ accel_fs_tcp_add_default_rule(struct mlx5e_priv *priv, int type)
 	struct mlx5_flow_destination dest = {};
 	struct mlx5e_accel_fs_tcp *fs_tcp;
 	struct mlx5_flow_rule *rule;
+	struct mlx5_flow_act flow_act = {
+		.actions = MLX5_FLOW_ACT_ACTIONS_FLOW_TAG,
+		.flow_tag = MLX5_FS_DEFAULT_FLOW_TAG,
+	};
 
 	fs_tcp = &priv->fts.accel_tcp;
 
@@ -192,7 +200,7 @@ accel_fs_tcp_add_default_rule(struct mlx5e_priv *priv, int type)
 	    priv->fts.vlan.t : fs_tcp->tables[type + 1].t;
 
 	rule = mlx5_add_flow_rule(fs_tcp->tables[type].t, 0, match_criteria, match_value,
-	    MLX5_FLOW_CONTEXT_ACTION_FWD_DEST, MLX5_FS_DEFAULT_FLOW_TAG, &dest);
+	    MLX5_FLOW_RULE_FWD_ACTION_DEST, &flow_act, &dest);
 	if (IS_ERR(rule))
 		return (PTR_ERR(rule));
 
@@ -341,8 +349,6 @@ accel_fs_tcp_destroy_table(struct mlx5e_priv *priv, int i)
 	fs_tcp = &priv->fts.accel_tcp;
 	ft = fs_tcp->tables + i;
 
-	mlx5_del_flow_rule(fs_tcp->default_rules[i]);
-
 	accel_fs_tcp_destroy_groups(ft);
 	kfree(ft->g);
 	ft->g = NULL;
@@ -358,8 +364,10 @@ mlx5e_accel_fs_tcp_destroy(struct mlx5e_priv *priv)
 	if (!MLX5_CAP_FLOWTABLE_NIC_RX(priv->mdev, ft_field_support.outer_ip_version))
 		return;
 
-	for (i = 0; i < MLX5E_ACCEL_FS_TCP_NUM_TYPES; i++)
+	for (i = 0; i < MLX5E_ACCEL_FS_TCP_NUM_TYPES; i++) {
+		mlx5_del_flow_rule(&priv->fts.accel_tcp.default_rules[i]);
 		accel_fs_tcp_destroy_table(priv, i);
+	}
 }
 
 int
@@ -394,7 +402,7 @@ mlx5e_accel_fs_tcp_create(struct mlx5e_priv *priv)
 
 err_destroy_rules:
 	while (i--)
-		mlx5_del_flow_rule(priv->fts.accel_tcp.default_rules[i]);
+		mlx5_del_flow_rule(&priv->fts.accel_tcp.default_rules[i]);
 	i = MLX5E_ACCEL_FS_TCP_NUM_TYPES;
 
 err_destroy_tables:

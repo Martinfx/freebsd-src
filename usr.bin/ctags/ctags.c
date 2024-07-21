@@ -29,24 +29,12 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1987, 1993, 1994, 1995\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif
-
-#if 0
-#ifndef lint
-static char sccsid[] = "@(#)ctags.c	8.4 (Berkeley) 2/7/95";
-#endif
-#endif
-
-#include <sys/cdefs.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
-__FBSDID("$FreeBSD$");
 
 #include <err.h>
+#include <errno.h>
 #include <limits.h>
 #include <locale.h>
 #include <regex.h>
@@ -84,7 +72,7 @@ char	lbuf[LINE_MAX];
 
 void	init(void);
 void	find_entries(char *);
-static void usage(void);
+static void usage(void) __dead2;
 
 int
 main(int argc, char **argv)
@@ -98,8 +86,8 @@ main(int argc, char **argv)
 
 	setlocale(LC_ALL, "");
 
-	aflag = uflag = NO;
-	tflag = YES;
+	aflag = uflag = false;
+	tflag = true;
 	while ((ch = getopt(argc, argv, "BFTadf:tuwvx")) != -1)
 		switch(ch) {
 		case 'B':
@@ -109,7 +97,7 @@ main(int argc, char **argv)
 			searchar = '/';
 			break;
 		case 'T':
-			tflag = NO;
+			tflag = false;
 			break;
 		case 'a':
 			aflag++;
@@ -121,7 +109,7 @@ main(int argc, char **argv)
 			outfile = optarg;
 			break;
 		case 't':
-			tflag = YES;
+			tflag = true;
 			break;
 		case 'u':
 			uflag++;
@@ -142,6 +130,9 @@ main(int argc, char **argv)
 	argc -= optind;
 	if (!argc)
 		usage();
+
+	if (strcmp(outfile, "-") == 0)
+		outfile = "/dev/stdout";
 
 	if (!xflag)
 		setlocale(LC_COLLATE, "C");
@@ -164,11 +155,23 @@ main(int argc, char **argv)
 			put_entries(head);
 		else {
 			if (uflag) {
+				struct stat sb;
 				FILE *oldf;
 				regex_t *regx;
 
-				if ((oldf = fopen(outfile, "r")) == NULL)
+				if ((oldf = fopen(outfile, "r")) == NULL) {
+					if (errno == ENOENT) {
+						uflag = 0;
+						goto udone;
+					}
 					err(1, "opening %s", outfile);
+				}
+				if (fstat(fileno(oldf), &sb) != 0 ||
+				    !S_ISREG(sb.st_mode)) {
+					fclose(oldf);
+					uflag = 0;
+					goto udone;
+				}
 				if (unlink(outfile))
 					err(1, "unlinking %s", outfile);
 				if ((outf = fopen(outfile, "w")) == NULL)
@@ -198,6 +201,7 @@ nextline:
 				fclose(outf);
 				++aflag;
 			}
+udone:
 			if (!(outf = fopen(outfile, aflag ? "a" : "w")))
 				err(1, "%s", outfile);
 			put_entries(head);
@@ -218,6 +222,8 @@ nextline:
 			}
 		}
 	}
+	if (ferror(stdout) != 0 || fflush(stdout) != 0)
+		err(1, "stdout");
 	exit(exit_val);
 }
 
@@ -245,24 +251,24 @@ init(void)
 	const unsigned char	*sp;
 
 	for (i = 0; i < 256; i++) {
-		_wht[i] = _etk[i] = _itk[i] = _btk[i] = NO;
-		_gd[i] = YES;
+		_wht[i] = _etk[i] = _itk[i] = _btk[i] = false;
+		_gd[i] = true;
 	}
 #define	CWHITE	" \f\t\n"
 	for (sp = CWHITE; *sp; sp++)	/* white space chars */
-		_wht[*sp] = YES;
+		_wht[*sp] = true;
 #define	CTOKEN	" \t\n\"'#()[]{}=-+%*/&|^~!<>;,.:?"
 	for (sp = CTOKEN; *sp; sp++)	/* token ending chars */
-		_etk[*sp] = YES;
+		_etk[*sp] = true;
 #define	CINTOK	"ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz0123456789"
 	for (sp = CINTOK; *sp; sp++)	/* valid in-token chars */
-		_itk[*sp] = YES;
+		_itk[*sp] = true;
 #define	CBEGIN	"ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 	for (sp = CBEGIN; *sp; sp++)	/* token starting chars */
-		_btk[*sp] = YES;
+		_btk[*sp] = true;
 #define	CNOTGD	",;"
 	for (sp = CNOTGD; *sp; sp++)	/* invalid after-function chars */
-		_gd[*sp] = NO;
+		_gd[*sp] = false;
 }
 
 /*

@@ -91,8 +91,8 @@ int mlx4_en_create_tx_ring(struct mlx4_en_priv *priv,
 	ring->size_mask = size - 1;
 	ring->stride = stride;
 	ring->inline_thold = MAX(MIN_PKT_LEN, MIN(priv->prof->inline_thold, MAX_INLINE));
-	mtx_init(&ring->tx_lock.m, "mlx4 tx", NULL, MTX_DEF);
-	mtx_init(&ring->comp_lock.m, "mlx4 comp", NULL, MTX_DEF);
+	mtx_init(&ring->tx_lock, "mlx4 tx", NULL, MTX_DEF);
+	mtx_init(&ring->comp_lock, "mlx4 comp", NULL, MTX_DEF);
 
 	tmp = size * sizeof(struct mlx4_en_tx_info);
 	ring->tx_info = kzalloc_node(tmp, GFP_KERNEL, node);
@@ -205,8 +205,8 @@ void mlx4_en_destroy_tx_ring(struct mlx4_en_priv *priv,
 	for (x = 0; x != ring->size; x++)
 		bus_dmamap_destroy(ring->dma_tag, ring->tx_info[x].dma_map);
 	vfree(ring->tx_info);
-	mtx_destroy(&ring->tx_lock.m);
-	mtx_destroy(&ring->comp_lock.m);
+	mtx_destroy(&ring->tx_lock);
+	mtx_destroy(&ring->comp_lock);
 	bus_dma_tag_destroy(ring->dma_tag);
 	kfree(ring);
 	*pring = NULL;
@@ -308,7 +308,7 @@ done:
 	return (tx_info->nr_txbb);
 }
 
-int mlx4_en_free_tx_buf(struct ifnet *dev, struct mlx4_en_tx_ring *ring)
+int mlx4_en_free_tx_buf(if_t dev, struct mlx4_en_tx_ring *ring)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(dev);
 	int cnt = 0;
@@ -344,7 +344,7 @@ mlx4_en_tx_ring_is_full(struct mlx4_en_tx_ring *ring)
 	return (wqs < (HEADROOM + (2 * MLX4_EN_TX_WQE_MAX_WQEBBS)));
 }
 
-static int mlx4_en_process_tx_cq(struct ifnet *dev,
+static int mlx4_en_process_tx_cq(if_t dev,
 				 struct mlx4_en_cq *cq)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(dev);
@@ -604,7 +604,7 @@ static void hashrandom_init(void *arg)
 }
 SYSINIT(hashrandom_init, SI_SUB_RANDOM, SI_ORDER_ANY, &hashrandom_init, NULL);
 
-u16 mlx4_en_select_queue(struct ifnet *dev, struct mbuf *mb)
+u16 mlx4_en_select_queue(if_t dev, struct mbuf *mb)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(dev);
 	u32 rings_p_up = priv->num_tx_rings_p_up;
@@ -640,7 +640,7 @@ int mlx4_en_xmit(struct mlx4_en_priv *priv, int tx_ind, struct mbuf **mbp)
 	volatile struct mlx4_wqe_data_seg *dseg_inline;
 	volatile struct mlx4_en_tx_desc *tx_desc;
 	struct mlx4_en_tx_ring *ring = priv->tx_ring[tx_ind];
-	struct ifnet *ifp = priv->dev;
+	if_t ifp = priv->dev;
 	struct mlx4_en_tx_info *tx_info;
 	struct mbuf *mb = *mbp;
 	struct mbuf *m;
@@ -688,7 +688,7 @@ int mlx4_en_xmit(struct mlx4_en_priv *priv, int tx_ind, struct mbuf **mbp)
 	dseg = &tx_desc->data;
 
 	/* send a copy of the frame to the BPF listener, if any */
-	if (ifp != NULL && ifp->if_bpf != NULL)
+	if (ifp != NULL)
 		ETHER_BPF_MTAP(ifp, mb);
 
 	/* get default flags */
@@ -927,13 +927,13 @@ tx_drop:
 }
 
 static int
-mlx4_en_transmit_locked(struct ifnet *ifp, int tx_ind, struct mbuf *mb)
+mlx4_en_transmit_locked(if_t ifp, int tx_ind, struct mbuf *mb)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(ifp);
 	struct mlx4_en_tx_ring *ring = priv->tx_ring[tx_ind];
 	int err = 0;
 
-	if (unlikely((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0 ||
+	if (unlikely((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0 ||
 	    READ_ONCE(priv->port_up) == 0)) {
 		m_freem(mb);
 		return (ENETDOWN);
@@ -952,7 +952,7 @@ mlx4_en_transmit_locked(struct ifnet *ifp, int tx_ind, struct mbuf *mb)
 }
 
 int
-mlx4_en_transmit(struct ifnet *dev, struct mbuf *m)
+mlx4_en_transmit(if_t dev, struct mbuf *m)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(dev);
 	struct mlx4_en_tx_ring *ring;
@@ -981,10 +981,9 @@ mlx4_en_transmit(struct ifnet *dev, struct mbuf *m)
 	/* Poll CQ here */
 	mlx4_en_xmit_poll(priv, i);
 
-#if __FreeBSD_version >= 1100000
 	if (unlikely(err != 0))
 		if_inc_counter(dev, IFCOUNTER_IQDROPS, 1);
-#endif
+
 	return (err);
 }
 
@@ -992,7 +991,7 @@ mlx4_en_transmit(struct ifnet *dev, struct mbuf *m)
  * Flush ring buffers.
  */
 void
-mlx4_en_qflush(struct ifnet *dev)
+mlx4_en_qflush(if_t dev)
 {
 	struct mlx4_en_priv *priv = mlx4_netdev_priv(dev);
 

@@ -32,9 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)param.h	8.3 (Berkeley) 4/4/95
- * $FreeBSD$
  */
 
 #ifndef _SYS_PARAM_H_
@@ -76,7 +73,7 @@
  * cannot include sys/param.h and should only be updated here.
  */
 #undef __FreeBSD_version
-#define __FreeBSD_version 1400066
+#define __FreeBSD_version 1500020
 
 /*
  * __FreeBSD_kernel__ indicates that this system uses the kernel of FreeBSD,
@@ -94,7 +91,7 @@
 #undef __FreeBSD_kernel__
 #define __FreeBSD_kernel__
 
-#if defined(_KERNEL) || defined(IN_RTLD)
+#if defined(_KERNEL) || defined(_WANT_P_OSREL)
 #define	P_OSREL_SIGWAIT			700000
 #define	P_OSREL_SIGSEGV			700004
 #define	P_OSREL_MAP_ANON		800104
@@ -107,6 +104,8 @@
 #define	P_OSREL_CK_SUPERBLOCK		1300000
 #define	P_OSREL_CK_INODE		1300005
 #define	P_OSREL_POWERPC_NEW_AUX_ARGS	1300070
+#define	P_OSREL_TIDPID			1400079
+#define	P_OSREL_ARM64_SPSR		1400084
 
 #define	P_OSREL_MAJOR(x)		((x) / 100000)
 #endif
@@ -162,6 +161,7 @@
 #include <machine/param.h>
 #ifndef _KERNEL
 #include <sys/limits.h>
+#include <sys/_maxphys.h>
 #endif
 
 #ifndef DEV_BSHIFT
@@ -174,13 +174,6 @@
 #endif
 #ifndef DFLTPHYS
 #define DFLTPHYS	(64 * 1024)	/* default max raw I/O transfer size */
-#endif
-#ifndef MAXPHYS				/* max raw I/O transfer size */
-#ifdef __ILP32__
-#define MAXPHYS		(128 * 1024)
-#else
-#define MAXPHYS		(1024 * 1024)
-#endif
 #endif
 #ifndef MAXDUMPPGS
 #define MAXDUMPPGS	(DFLTPHYS/PAGE_SIZE)

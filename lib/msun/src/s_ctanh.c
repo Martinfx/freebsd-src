@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 David Schultz
  * All rights reserved.
@@ -64,9 +64,6 @@
  *   verifying with nearpi.c that this can't happen in IEEE single or double
  *   precision.  I also handle large x differently.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <complex.h>
 #include <math.h>

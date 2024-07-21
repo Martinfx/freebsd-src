@@ -22,6 +22,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  *
  * Copyright (c) 2016, Intel Corporation.
+ * Copyright (c) 2023, Klara Inc.
  */
 
 /*
@@ -231,28 +232,6 @@ fmd_prop_get_int32(fmd_hdl_t *hdl, const char *name)
 	if (strcmp(name, "spare_on_remove") == 0)
 		return (1);
 
-	if (strcmp(name, "io_N") == 0 || strcmp(name, "checksum_N") == 0)
-		return (10);	/* N = 10 events */
-
-	return (0);
-}
-
-int64_t
-fmd_prop_get_int64(fmd_hdl_t *hdl, const char *name)
-{
-	(void) hdl;
-
-	/*
-	 * These can be looked up in mp->modinfo->fmdi_props
-	 * For now we just hard code for phase 2. In the
-	 * future, there can be a ZED based override.
-	 */
-	if (strcmp(name, "remove_timeout") == 0)
-		return (15ULL * 1000ULL * 1000ULL * 1000ULL);	/* 15 sec */
-
-	if (strcmp(name, "io_T") == 0 || strcmp(name, "checksum_T") == 0)
-		return (1000ULL * 1000ULL * 1000ULL * 600ULL);	/* 10 min */
-
 	return (0);
 }
 
@@ -359,7 +338,7 @@ static void
 zed_log_fault(nvlist_t *nvl, const char *uuid, const char *code)
 {
 	nvlist_t *rsrc;
-	char *strval;
+	const char *strval;
 	uint64_t guid;
 	uint8_t byte;
 
@@ -372,7 +351,7 @@ zed_log_fault(nvlist_t *nvl, const char *uuid, const char *code)
 	if (code != NULL)
 		zed_log_msg(LOG_INFO, "\t%s: %s", FM_SUSPECT_DIAG_CODE, code);
 	if (nvlist_lookup_uint8(nvl, FM_FAULT_CERTAINTY, &byte) == 0)
-		zed_log_msg(LOG_INFO, "\t%s: %llu", FM_FAULT_CERTAINTY, byte);
+		zed_log_msg(LOG_INFO, "\t%s: %hhu", FM_FAULT_CERTAINTY, byte);
 	if (nvlist_lookup_nvlist(nvl, FM_FAULT_RESOURCE, &rsrc) == 0) {
 		if (nvlist_lookup_string(rsrc, FM_FMRI_SCHEME, &strval) == 0)
 			zed_log_msg(LOG_INFO, "\t%s: %s", FM_FMRI_SCHEME,
@@ -389,7 +368,7 @@ zed_log_fault(nvlist_t *nvl, const char *uuid, const char *code)
 static const char *
 fmd_fault_mkcode(nvlist_t *fault)
 {
-	char *class;
+	const char *class;
 	const char *code = "-";
 
 	/*
@@ -535,6 +514,19 @@ fmd_serd_exists(fmd_hdl_t *hdl, const char *name)
 	return (fmd_serd_eng_lookup(&mp->mod_serds, name) != NULL);
 }
 
+int
+fmd_serd_active(fmd_hdl_t *hdl, const char *name)
+{
+	fmd_module_t *mp = (fmd_module_t *)hdl;
+	fmd_serd_eng_t *sgp;
+
+	if ((sgp = fmd_serd_eng_lookup(&mp->mod_serds, name)) == NULL) {
+		zed_log_msg(LOG_ERR, "serd engine '%s' does not exist", name);
+		return (0);
+	}
+	return (fmd_serd_eng_fired(sgp) || !fmd_serd_eng_empty(sgp));
+}
+
 void
 fmd_serd_reset(fmd_hdl_t *hdl, const char *name)
 {
@@ -543,12 +535,10 @@ fmd_serd_reset(fmd_hdl_t *hdl, const char *name)
 
 	if ((sgp = fmd_serd_eng_lookup(&mp->mod_serds, name)) == NULL) {
 		zed_log_msg(LOG_ERR, "serd engine '%s' does not exist", name);
-		return;
+	} else {
+		fmd_serd_eng_reset(sgp);
+		fmd_hdl_debug(hdl, "serd_reset %s", name);
 	}
-
-	fmd_serd_eng_reset(sgp);
-
-	fmd_hdl_debug(hdl, "serd_reset %s", name);
 }
 
 int
@@ -556,16 +546,21 @@ fmd_serd_record(fmd_hdl_t *hdl, const char *name, fmd_event_t *ep)
 {
 	fmd_module_t *mp = (fmd_module_t *)hdl;
 	fmd_serd_eng_t *sgp;
-	int err;
 
 	if ((sgp = fmd_serd_eng_lookup(&mp->mod_serds, name)) == NULL) {
 		zed_log_msg(LOG_ERR, "failed to add record to SERD engine '%s'",
 		    name);
 		return (0);
 	}
-	err = fmd_serd_eng_record(sgp, ep->ev_hrt);
+	return (fmd_serd_eng_record(sgp, ep->ev_hrt));
+}
 
-	return (err);
+void
+fmd_serd_gc(fmd_hdl_t *hdl)
+{
+	fmd_module_t *mp = (fmd_module_t *)hdl;
+
+	fmd_serd_hash_apply(&mp->mod_serds, fmd_serd_eng_gc, NULL);
 }
 
 /* FMD Timers */
@@ -579,7 +574,7 @@ _timer_notify(union sigval sv)
 	const fmd_hdl_ops_t *ops = mp->mod_info->fmdi_ops;
 	struct itimerspec its;
 
-	fmd_hdl_debug(hdl, "timer fired (%p)", ftp->ft_tid);
+	fmd_hdl_debug(hdl, "%s timer fired (%p)", mp->mod_name, ftp->ft_tid);
 
 	/* disarm the timer */
 	memset(&its, 0, sizeof (struct itimerspec));
@@ -616,6 +611,7 @@ fmd_timer_install(fmd_hdl_t *hdl, void *arg, fmd_event_t *ep, hrtime_t delta)
 	sev.sigev_notify_function = _timer_notify;
 	sev.sigev_notify_attributes = NULL;
 	sev.sigev_value.sival_ptr = ftp;
+	sev.sigev_signo = 0;
 
 	timer_create(CLOCK_REALTIME, &sev, &ftp->ft_tid);
 	timer_settime(ftp->ft_tid, 0, &its, NULL);
@@ -707,7 +703,7 @@ int
 fmd_nvl_class_match(fmd_hdl_t *hdl, nvlist_t *nvl, const char *pattern)
 {
 	(void) hdl;
-	char *class;
+	const char *class;
 
 	return (nvl != NULL &&
 	    nvlist_lookup_string(nvl, FM_CLASS, &class) == 0 &&

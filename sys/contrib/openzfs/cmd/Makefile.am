@@ -39,8 +39,6 @@ zhack_LDADD = \
 
 
 ztest_CFLAGS    = $(AM_CFLAGS) $(KERNEL_CFLAGS)
-# Get rid of compiler warning for unchecked truncating snprintfs on gcc 7.1.1
-ztest_CFLAGS   += $(NO_FORMAT_TRUNCATION)
 ztest_CPPFLAGS  = $(AM_CPPFLAGS) $(FORCEDEBUG_CPPFLAGS)
 
 sbin_PROGRAMS   += ztest
@@ -100,12 +98,13 @@ endif
 
 
 if USING_PYTHON
-bin_SCRIPTS      += arc_summary     arcstat        dbufstat
-CLEANFILES       += arc_summary     arcstat        dbufstat
-dist_noinst_DATA += %D%/arc_summary %D%/arcstat.in %D%/dbufstat.in
+bin_SCRIPTS      += arc_summary     arcstat        dbufstat        zilstat
+CLEANFILES       += arc_summary     arcstat        dbufstat        zilstat
+dist_noinst_DATA += %D%/arc_summary %D%/arcstat.in %D%/dbufstat.in %D%/zilstat.in
 
 $(call SUBST,arcstat,%D%/)
 $(call SUBST,dbufstat,%D%/)
+$(call SUBST,zilstat,%D%/)
 arc_summary: %D%/arc_summary
 	$(AM_V_at)cp $< $@
 endif

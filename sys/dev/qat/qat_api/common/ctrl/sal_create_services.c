@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 /**
  *****************************************************************************
  * @file sal_create_services.c
@@ -63,6 +62,9 @@ SalCtrl_ServiceCreate(sal_service_type_t serviceType,
 		pCrypto_service->generic_service_info.stop = SalCtrl_CryptoStop;
 		pCrypto_service->generic_service_info.shutdown =
 		    SalCtrl_CryptoShutdown;
+
+		/* Force HW MAC validation for GCM and CCM */
+		pCrypto_service->forceAEADMacVerify = CPA_TRUE;
 
 		*(ppInst) = &(pCrypto_service->generic_service_info);
 

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006, Myricom Inc.
  * Copyright (c) 2008, Intel Corporation.
@@ -26,14 +26,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _TCP_LRO_H_
 #define _TCP_LRO_H_
 
 #include <sys/time.h>
+#include <sys/param.h>
+#include <sys/mbuf.h>
 #include <netinet/in.h>
 
 #ifndef TCP_LRO_ENTRIES
@@ -65,8 +65,12 @@
 
 struct inpcb;
 
+/* Precompute the LRO_RAW_ADDRESS_MAX value: */
+#define	LRO_RAW_ADDRESS_MAX \
+	howmany(12 + 2 * sizeof(struct in6_addr), sizeof(u_long))
+
 union lro_address {
-	u_long raw[1];
+	u_long raw[LRO_RAW_ADDRESS_MAX];
 	struct {
 		uint8_t lro_type;	/* internal */
 #define	LRO_TYPE_NONE     0
@@ -89,10 +93,10 @@ union lro_address {
 			struct in6_addr v6;
 		} d_addr;	/* destination IPv4/IPv6 address */
 	};
-} __aligned(sizeof(u_long));
+};
 
-#define	LRO_RAW_ADDRESS_MAX \
-    (sizeof(union lro_address) / sizeof(u_long))
+_Static_assert(sizeof(union lro_address) == sizeof(u_long) * LRO_RAW_ADDRESS_MAX,
+    "The raw field in the lro_address union does not cover the whole structure.");
 
 /* Optimize address comparison by comparing one unsigned long at a time: */
 
@@ -196,12 +200,25 @@ struct tcp_ackent {
 #define	TCP_LRO_LENGTH_MAX	(65535 - 255)	/* safe value with room for outer headers */
 #define	TCP_LRO_ACKCNT_MAX	65535		/* unlimited */
 
+#define	TCP_LRO_TS_OPTION	ntohl((TCPOPT_NOP << 24) | (TCPOPT_NOP << 16) |\
+    (TCPOPT_TIMESTAMP << 8) | TCPOLEN_TIMESTAMP)
+
+static inline struct tcphdr *
+tcp_lro_get_th(struct mbuf *m)
+{
+	return ((struct tcphdr *)((char *)m->m_data +
+	    m->m_pkthdr.lro_tcp_h_off));
+}
+
+extern long tcplro_stacks_wanting_mbufq;
+
 int tcp_lro_init(struct lro_ctrl *);
 int tcp_lro_init_args(struct lro_ctrl *, struct ifnet *, unsigned, unsigned);
 void tcp_lro_free(struct lro_ctrl *);
 void tcp_lro_flush_inactive(struct lro_ctrl *, const struct timeval *);
 void tcp_lro_flush(struct lro_ctrl *, struct lro_entry *);
 void tcp_lro_flush_all(struct lro_ctrl *);
+extern int (*tcp_lro_flush_tcphpts)(struct lro_ctrl *, struct lro_entry *);
 int tcp_lro_rx(struct lro_ctrl *, struct mbuf *, uint32_t);
 void tcp_lro_queue_mbuf(struct lro_ctrl *, struct mbuf *);
 void tcp_lro_reg_mbufq(void);

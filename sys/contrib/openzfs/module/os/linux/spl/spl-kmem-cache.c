@@ -21,6 +21,8 @@
  *  with the SPL.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define	SPL_KMEM_CACHE_IMPLEMENTING
+
 #include <linux/percpu_compat.h>
 #include <sys/kmem.h>
 #include <sys/kmem_cache.h>
@@ -28,19 +30,10 @@
 #include <sys/timer.h>
 #include <sys/vmem.h>
 #include <sys/wait.h>
+#include <sys/string.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
 #include <linux/prefetch.h>
-
-/*
- * Within the scope of spl-kmem.c file the kmem_cache_* definitions
- * are removed to allow access to the real Linux slab allocator.
- */
-#undef kmem_cache_destroy
-#undef kmem_cache_create
-#undef kmem_cache_alloc
-#undef kmem_cache_free
-
 
 /*
  * Linux 3.16 replaced smp_mb__{before,after}_{atomic,clear}_{dec,inc,bit}()
@@ -76,17 +69,6 @@ module_param(spl_kmem_cache_magazine_size, uint, 0444);
 MODULE_PARM_DESC(spl_kmem_cache_magazine_size,
 	"Default magazine size (2-256), set automatically (0)");
 
-/*
- * The default behavior is to report the number of objects remaining in the
- * cache.  This allows the Linux VM to repeatedly reclaim objects from the
- * cache when memory is low satisfy other memory allocations.  Alternately,
- * setting this value to KMC_RECLAIM_ONCE limits how aggressively the cache
- * is reclaimed.  This may increase the likelihood of out of memory events.
- */
-static unsigned int spl_kmem_cache_reclaim = 0 /* KMC_RECLAIM_ONCE */;
-module_param(spl_kmem_cache_reclaim, uint, 0644);
-MODULE_PARM_DESC(spl_kmem_cache_reclaim, "Single reclaim pass (0x1)");
-
 static unsigned int spl_kmem_cache_obj_per_slab = SPL_KMEM_CACHE_OBJ_PER_SLAB;
 module_param(spl_kmem_cache_obj_per_slab, uint, 0644);
 MODULE_PARM_DESC(spl_kmem_cache_obj_per_slab, "Number of objects per slab");
@@ -102,7 +84,8 @@ MODULE_PARM_DESC(spl_kmem_cache_max_size, "Maximum size of slab in MB");
  * of 16K was determined to be optimal for architectures using 4K pages and
  * to also work well on architecutres using larger 64K page sizes.
  */
-static unsigned int spl_kmem_cache_slab_limit = 16384;
+static unsigned int spl_kmem_cache_slab_limit =
+    SPL_MAX_KMEM_ORDER_NR_PAGES * PAGE_SIZE;
 module_param(spl_kmem_cache_slab_limit, uint, 0644);
 MODULE_PARM_DESC(spl_kmem_cache_slab_limit,
 	"Objects less than N bytes use the Linux slab");
@@ -151,7 +134,7 @@ MODULE_PARM_DESC(spl_kmem_cache_kmem_threads,
 
 struct list_head spl_kmem_cache_list;   /* List of caches */
 struct rw_semaphore spl_kmem_cache_sem; /* Cache list lock */
-taskq_t *spl_kmem_cache_taskq;		/* Task queue for aging / reclaim */
+static taskq_t *spl_kmem_cache_taskq;   /* Task queue for aging / reclaim */
 
 static void spl_cache_shrink(spl_kmem_cache_t *skc, void *obj);
 
@@ -182,8 +165,11 @@ kv_free(spl_kmem_cache_t *skc, void *ptr, int size)
 	 * of that infrastructure we are responsible for incrementing it.
 	 */
 	if (current->reclaim_state)
+#ifdef	HAVE_RECLAIM_STATE_RECLAIMED
+		current->reclaim_state->reclaimed += size >> PAGE_SHIFT;
+#else
 		current->reclaim_state->reclaimed_slab += size >> PAGE_SHIFT;
-
+#endif
 	vfree(ptr);
 }
 
@@ -701,12 +687,12 @@ spl_kmem_cache_create(const char *name, size_t size, size_t align,
 
 	skc->skc_magic = SKC_MAGIC;
 	skc->skc_name_size = strlen(name) + 1;
-	skc->skc_name = (char *)kmalloc(skc->skc_name_size, lflags);
+	skc->skc_name = kmalloc(skc->skc_name_size, lflags);
 	if (skc->skc_name == NULL) {
 		kfree(skc);
 		return (NULL);
 	}
-	strncpy(skc->skc_name, name, skc->skc_name_size);
+	strlcpy(skc->skc_name, name, skc->skc_name_size);
 
 	skc->skc_ctor = ctor;
 	skc->skc_dtor = dtor;
@@ -791,10 +777,8 @@ spl_kmem_cache_create(const char *name, size_t size, size_t align,
 	} else {
 		unsigned long slabflags = 0;
 
-		if (size > (SPL_MAX_KMEM_ORDER_NR_PAGES * PAGE_SIZE)) {
-			rc = EINVAL;
+		if (size > spl_kmem_cache_slab_limit)
 			goto out;
-		}
 
 #if defined(SLAB_USERCOPY)
 		/*
@@ -815,10 +799,8 @@ spl_kmem_cache_create(const char *name, size_t size, size_t align,
 		skc->skc_linux_cache = kmem_cache_create(
 		    skc->skc_name, size, align, slabflags, NULL);
 #endif
-		if (skc->skc_linux_cache == NULL) {
-			rc = ENOMEM;
+		if (skc->skc_linux_cache == NULL)
 			goto out;
-		}
 	}
 
 	down_write(&spl_kmem_cache_sem);
@@ -1016,8 +998,18 @@ spl_cache_grow(spl_kmem_cache_t *skc, int flags, void **obj)
 	ASSERT0(flags & ~KM_PUBLIC_MASK);
 	ASSERT(skc->skc_magic == SKC_MAGIC);
 	ASSERT((skc->skc_flags & KMC_SLAB) == 0);
-	might_sleep();
+
 	*obj = NULL;
+
+	/*
+	 * Since we can't sleep attempt an emergency allocation to satisfy
+	 * the request.  The only alterative is to fail the allocation but
+	 * it's preferable try.  The use of KM_NOSLEEP is expected to be rare.
+	 */
+	if (flags & KM_NOSLEEP)
+		return (spl_emergency_alloc(skc, flags, obj));
+
+	might_sleep();
 
 	/*
 	 * Before allocating a new slab wait for any reaping to complete and
@@ -1451,6 +1443,9 @@ spl_kmem_cache_init(void)
 	    spl_kmem_cache_kmem_threads, maxclsyspri,
 	    spl_kmem_cache_kmem_threads * 8, INT_MAX,
 	    TASKQ_PREPOPULATE | TASKQ_DYNAMIC);
+
+	if (spl_kmem_cache_taskq == NULL)
+		return (-ENOMEM);
 
 	return (0);
 }

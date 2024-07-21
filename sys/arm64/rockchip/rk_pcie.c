@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Michal Meloun <mmel@FreeBSD.org>
  *
@@ -28,9 +28,6 @@
 
 /* Rockchip PCIe controller driver */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -47,10 +44,10 @@ __FBSDID("$FreeBSD$");
 #include <machine/intr.h>
 #include <machine/resource.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
-#include <dev/extres/phy/phy.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
+#include <dev/phy/phy.h>
+#include <dev/regulator/regulator.h>
 #include <dev/gpio/gpiobusvar.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -1143,7 +1140,10 @@ rk_pcie_probe(device_t dev)
 
 static int
 rk_pcie_attach(device_t dev)
-{	struct rk_pcie_softc *sc;
+{
+	struct resource_map_request req;
+	struct resource_map map;
+	struct rk_pcie_softc *sc;
 	uint32_t val;
 	int rv, rid, max_speed;
 
@@ -1192,13 +1192,24 @@ rk_pcie_attach(device_t dev)
 		goto out;
 	}
 	sc->axi_mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-	    RF_ACTIVE);
+	    RF_ACTIVE | RF_UNMAPPED);
 	if (sc->axi_mem_res == NULL) {
 		device_printf(dev, "Cannot allocate 'axi-base' (rid: %d)\n",
 		    rid);
 		rv = ENXIO;
 		goto out;
 	}
+	resource_init_map_request(&req);
+	req.memattr = VM_MEMATTR_DEVICE_NP;
+	rv = bus_map_resource(dev, SYS_RES_MEMORY, sc->axi_mem_res, &req,
+	    &map);
+	if (rv != 0) {
+		device_printf(dev, "Cannot map 'axi-base' (rid: %d)\n",
+		    rid);
+		goto out;
+	}
+	rman_set_mapping(sc->axi_mem_res, &map);
+
 	rv = ofw_bus_find_string_index(sc->node, "reg-names", "apb-base", &rid);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get 'apb-base' memory\n");

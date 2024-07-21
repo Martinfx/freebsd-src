@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG =	rpc.rusersd
 SRCS =	rusersd.c rusers_proc.c extern.h
 MAN =	rpc.rusersd.8

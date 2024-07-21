@@ -40,8 +40,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  *
  * $Id: //depot/aic7xxx/aic7xxx/aic7xxx.h#85 $
- *
- * $FreeBSD$
  */
 
 #ifndef _AIC7XXX_H_
@@ -591,9 +589,7 @@ struct scb {
 	aic_io_ctx_t		  io_ctx;
 	struct ahc_softc	 *ahc_softc;
 	scb_flag		  flags;
-#ifndef __linux__
 	bus_dmamap_t		  dmamap;
-#endif
 	struct scb_platform_data *platform_data;
 	struct sg_map_node	 *sg_map;
 	struct ahc_dma_seg 	 *sg_list;
@@ -934,9 +930,7 @@ typedef void ahc_callback_t (void *);
 struct ahc_softc {
 	bus_space_tag_t           tag;
 	bus_space_handle_t        bsh;
-#ifndef __linux__
 	bus_dma_tag_t		  buffer_dmat;   /* dmat for buffer I/O */
-#endif
 	struct scb_data		 *scb_data;
 
 	struct scb		 *next_queued_scb;

@@ -34,8 +34,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
@@ -1188,7 +1186,7 @@ lomac_ifnet_create(struct ifnet *ifp, struct label *ifplabel)
 
 	dest = SLOT(ifplabel);
 
-	if (ifp->if_type == IFT_LOOP) {
+	if (if_gettype(ifp) == IFT_LOOP) {
 		grade = MAC_LOMAC_TYPE_EQUAL;
 		goto set;
 	}
@@ -1215,7 +1213,7 @@ lomac_ifnet_create(struct ifnet *ifp, struct label *ifplabel)
 			if (len < IFNAMSIZ) {
 				bzero(tifname, sizeof(tifname));
 				bcopy(q, tifname, len);
-				if (strcmp(tifname, ifp->if_xname) == 0) {
+				if (strcmp(tifname, if_name(ifp)) == 0) {
 					grade = MAC_LOMAC_TYPE_HIGH;
 					break;
 				}
@@ -1704,6 +1702,7 @@ lomac_priv_check(struct ucred *cred, int priv)
 	 */
 	case PRIV_SEEOTHERGIDS:
 	case PRIV_SEEOTHERUIDS:
+	case PRIV_SEEJAILPROC:
 		break;
 
 	/*
@@ -2248,12 +2247,6 @@ lomac_thread_userret(struct thread *td)
 		dodrop = 0;
 		mtx_unlock(&subj->mtx);
 		newcred = crget();
-		/*
-		 * Prevent a lock order reversal in mac_proc_vm_revoke;
-		 * ideally, the other user of subj->mtx wouldn't be holding
-		 * Giant.
-		 */
-		mtx_lock(&Giant);
 		PROC_LOCK(p);
 		mtx_lock(&subj->mtx);
 		/*
@@ -2275,7 +2268,6 @@ lomac_thread_userret(struct thread *td)
 		PROC_UNLOCK(p);
 		if (dodrop)
 			mac_proc_vm_revoke(curthread);
-		mtx_unlock(&Giant);
 	} else {
 		mtx_unlock(&subj->mtx);
 	}

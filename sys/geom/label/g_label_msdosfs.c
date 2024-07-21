@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2004 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * Copyright (c) 2006 Tobias Reifenberger
@@ -26,9 +26,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -215,10 +212,8 @@ endofchecks:
 	g_label_rtrim(label, size);
 
 error:
-	if (sector0 != NULL)
-		g_free(sector0);
-	if (sector != NULL)
-		g_free(sector);
+	g_free(sector0);
+	g_free(sector);
 }
 
 struct g_label_desc g_label_msdosfs = {

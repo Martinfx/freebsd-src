@@ -45,16 +45,6 @@
  *
  */
 
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 2000 Christoph Herrmann, Thomas-Henning von Kamptz\n\
-Copyright (c) 1980, 1989, 1993 The Regents of the University of California.\n\
-All rights reserved.\n";
-#endif /* not lint */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -118,7 +108,6 @@ static void	updjcg(int, time_t, int, int, unsigned int);
 static void	updcsloc(time_t, int, int, unsigned int);
 static void	frag_adjust(ufs2_daddr_t, int);
 static void	updclst(int);
-static void	mount_reload(const struct statfs *stfs);
 static void	cgckhash(struct cg *);
 
 /*
@@ -150,7 +139,7 @@ growfs(int fsi, int fso, unsigned int Nflag)
 	 */
 	fscs = (struct csum *)calloc((size_t)1, (size_t)sblock.fs_cssize);
 	if (fscs == NULL)
-		errx(1, "calloc failed");
+		errx(3, "calloc failed");
 	memcpy(fscs, osblock.fs_csp, osblock.fs_cssize);
 	free(osblock.fs_csp);
 	osblock.fs_csp = NULL;
@@ -243,7 +232,7 @@ growfs(int fsi, int fso, unsigned int Nflag)
 	 *
 	 * We probably should rather change the summary for the cylinder group
 	 * statistics here to the value of what would be in there, if the file
-	 * system were created initially with the new size. Therefor we still
+	 * system were created initially with the new size. Therefore we still
 	 * need to find an easy way of calculating that.
 	 * Possibly we can try to read the first superblock copy and apply the
 	 * "diffed" stats between the old and new superblock by still copying
@@ -262,7 +251,7 @@ growfs(int fsi, int fso, unsigned int Nflag)
 	 * and all the alternates back to disk.
 	 */
 	if (!Nflag && sbput(fso, &sblock, sblock.fs_ncg) != 0)
-		errc(2, EIO, "could not write updated superblock");
+		errc(3, EIO, "could not write updated superblock");
 	DBG_PRINT0("fscs written\n");
 
 #ifdef FS_DEBUG
@@ -339,7 +328,7 @@ initcg(int cylno, time_t modtime, int fso, unsigned int Nflag)
 	acg.cg_ndblk = dmax - cbase;
 	if (sblock.fs_contigsumsize > 0)
 		acg.cg_nclusterblks = acg.cg_ndblk / sblock.fs_frag;
-	start = &acg.cg_space[0] - (u_char *)(&acg.cg_firstfield);
+	start = sizeof(acg);
 	if (sblock.fs_magic == FS_UFS2_MAGIC) {
 		acg.cg_iusedoff = start;
 	} else {
@@ -690,7 +679,7 @@ updjcg(int cylno, time_t modtime, int fsi, int fso, unsigned int Nflag)
 				    sblock.fs_frag);
 			} else {
 				/*
-				 * Lets rejoin a possible partially growed
+				 * Lets rejoin a possible partially grown
 				 * fragment.
 				 */
 				k = 0;
@@ -716,7 +705,7 @@ updjcg(int cylno, time_t modtime, int fsi, int fso, unsigned int Nflag)
 				j++;
 			}
 			/*
-			 * Lets rejoin a possible partially growed fragment.
+			 * Lets rejoin a possible partially grown fragment.
 			 */
 			k = 0;
 			while (isset(cg_blksfree(&acg), i) &&
@@ -744,7 +733,7 @@ updjcg(int cylno, time_t modtime, int fsi, int fso, unsigned int Nflag)
 	}
 
 	/*
-	 * Handle the last new block if there are stll some new fragments left.
+	 * Handle the last new block if there are still some new fragments left.
 	 * Here we don't have to bother about the cluster summary or the even
 	 * the rotational layout table.
 	 */
@@ -1263,76 +1252,11 @@ is_dev(const char *name)
 	return (1);
 }
 
-/*
- * Return mountpoint on which the device is currently mounted.
- */ 
-static const struct statfs *
-dev_to_statfs(const char *dev)
-{
-	struct stat devstat, mntdevstat;
-	struct statfs *mntbuf, *statfsp;
-	char device[MAXPATHLEN];
-	char *mntdevname;
-	int i, mntsize;
-
-	/*
-	 * First check the mounted filesystems.
-	 */
-	if (stat(dev, &devstat) != 0)
-		return (NULL);
-	if (!S_ISCHR(devstat.st_mode) && !S_ISBLK(devstat.st_mode))
-		return (NULL);
-
-	mntsize = getmntinfo(&mntbuf, MNT_NOWAIT);
-	for (i = 0; i < mntsize; i++) {
-		statfsp = &mntbuf[i];
-		mntdevname = statfsp->f_mntfromname;
-		if (*mntdevname != '/') {
-			strcpy(device, _PATH_DEV);
-			strcat(device, mntdevname);
-			mntdevname = device;
-		}
-		if (stat(mntdevname, &mntdevstat) == 0 &&
-		    mntdevstat.st_rdev == devstat.st_rdev)
-			return (statfsp);
-	}
-
-	return (NULL);
-}
-
 static const char *
-mountpoint_to_dev(const char *mountpoint)
-{
-	struct statfs *mntbuf, *statfsp;
-	struct fstab *fs;
-	int i, mntsize;
-
-	/*
-	 * First check the mounted filesystems.
-	 */
-	mntsize = getmntinfo(&mntbuf, MNT_NOWAIT);
-	for (i = 0; i < mntsize; i++) {
-		statfsp = &mntbuf[i];
-
-		if (strcmp(statfsp->f_mntonname, mountpoint) == 0)
-			return (statfsp->f_mntfromname);
-	}
-
-	/*
-	 * Check the fstab.
-	 */
-	fs = getfsfile(mountpoint);
-	if (fs != NULL)
-		return (fs->fs_spec);
-
-	return (NULL);
-}
-
-static const char *
-getdev(const char *name)
+getdev(const char *name, struct statfs *statfsp)
 {
 	static char device[MAXPATHLEN];
-	const char *cp, *dev;
+	const char *cp;
 
 	if (is_dev(name))
 		return (name);
@@ -1344,9 +1268,8 @@ getdev(const char *name)
 			return (device);
 	}
 
-	dev = mountpoint_to_dev(name);
-	if (dev != NULL && is_dev(dev))
-		return (dev);
+	if (statfsp != NULL)
+		return (statfsp->f_mntfromname);
 
 	return (NULL);
 }
@@ -1378,7 +1301,7 @@ main(int argc, char **argv)
 	DBG_FUNC("main")
 	struct fs *fs;
 	const char *device;
-	const struct statfs *statfsp;
+	struct statfs *statfsp;
 	uint64_t size = 0;
 	off_t mediasize;
 	int error, j, fsi, fso, ch, ret, Nflag = 0, yflag = 0;
@@ -1408,7 +1331,7 @@ main(int argc, char **argv)
 				size <<= 30;
 				size <<= 10;
 			} else
-				errx(1, "unknown suffix on -s argument");
+				errx(2, "unknown suffix on -s argument");
 			break;
 		case 'v': /* for compatibility to newfs */
 			break;
@@ -1430,27 +1353,26 @@ main(int argc, char **argv)
 	/*
 	 * Now try to guess the device name.
 	 */
-	device = getdev(*argv);
+	statfsp = getmntpoint(*argv);
+	device = getdev(*argv, statfsp);
 	if (device == NULL)
-		errx(1, "cannot find special device for %s", *argv);
-
-	statfsp = dev_to_statfs(device);
+		errx(2, "cannot find special device for %s", *argv);
 
 	fsi = open(device, O_RDONLY);
 	if (fsi < 0)
-		err(1, "%s", device);
+		err(3, "%s", device);
 
 	/*
 	 * Try to guess the slice size if not specified.
 	 */
 	if (ioctl(fsi, DIOCGMEDIASIZE, &mediasize) == -1)
-		err(1,"DIOCGMEDIASIZE");
+		err(3,"DIOCGMEDIASIZE");
 
 	/*
 	 * Check if that partition is suitable for growing a file system.
 	 */
 	if (mediasize < 1)
-		errx(1, "partition is unavailable");
+		errx(2, "partition is unavailable");
 
 	/*
 	 * Read the current superblock, and take a backup.
@@ -1458,16 +1380,16 @@ main(int argc, char **argv)
 	if ((ret = sbget(fsi, &fs, UFS_STDSB, 0)) != 0) {
 		switch (ret) {
 		case ENOENT:
-			errx(1, "superblock not recognized");
+			errx(2, "superblock not recognized");
 		default:
-			errc(1, ret, "unable to read superblock");
+			errc(3, ret, "unable to read superblock");
 		}
 	}
 	/*
 	 * Check for filesystem that was unclean at mount time.
 	 */
 	if ((fs->fs_flags & (FS_UNCLEAN | FS_NEEDSFSCK)) != 0)
-		errx(1, "%s is not clean - run fsck.\n", *argv);
+		errx(2, "%s is not clean - run fsck.\n", *argv);
 	memcpy(&osblock, fs, fs->fs_sbsize);
 	free(fs);
 	memcpy((void *)&fsun1, (void *)&fsun2, osblock.fs_sbsize);
@@ -1488,7 +1410,7 @@ main(int argc, char **argv)
 			    mediasize,
 			    "B", HN_AUTOSCALE, HN_B | HN_NOSPACE | HN_DECIMAL);
 
-			errx(1, "requested size %s is larger "
+			errx(2, "requested size %s is larger "
 			    "than the available %s", oldsizebuf, newsizebuf);
 		}
 	}
@@ -1509,7 +1431,7 @@ main(int argc, char **argv)
 		if (size == (uint64_t)(osblock.fs_size * osblock.fs_fsize))
 			errx(0, "requested size %s is equal to the current "
 			    "filesystem size %s", newsizebuf, oldsizebuf);
-		errx(1, "requested size %s is smaller than the current "
+		errx(2, "requested size %s is smaller than the current "
 		   "filesystem size %s", newsizebuf, oldsizebuf);
 	}
 
@@ -1521,7 +1443,7 @@ main(int argc, char **argv)
 	 * Are we really growing?
 	 */
 	if (osblock.fs_size >= sblock.fs_size) {
-		errx(1, "we are not growing (%jd->%jd)",
+		errx(3, "we are not growing (%jd->%jd)",
 		    (intmax_t)osblock.fs_size, (intmax_t)sblock.fs_size);
 	}
 
@@ -1531,7 +1453,7 @@ main(int argc, char **argv)
 	if (yflag == 0) {
 		for (j = 0; j < FSMAXSNAP; j++) {
 			if (sblock.fs_snapinum[j]) {
-				errx(1, "active snapshot found in file system; "
+				errx(2, "active snapshot found in file system; "
 				    "please remove all snapshots before "
 				    "using growfs");
 			}
@@ -1576,14 +1498,14 @@ main(int argc, char **argv)
 		if (statfsp != NULL && (statfsp->f_flags & MNT_RDONLY) == 0) {
 			fso = open(_PATH_UFSSUSPEND, O_RDWR);
 			if (fso == -1)
-				err(1, "unable to open %s", _PATH_UFSSUSPEND);
+				err(3, "unable to open %s", _PATH_UFSSUSPEND);
 			error = ioctl(fso, UFSSUSPEND, &statfsp->f_fsid);
 			if (error != 0)
-				err(1, "UFSSUSPEND");
+				err(3, "UFSSUSPEND");
 		} else {
 			fso = open(device, O_WRONLY);
 			if (fso < 0)
-				err(1, "%s", device);
+				err(3, "%s", device);
 		}
 	}
 
@@ -1592,7 +1514,7 @@ main(int argc, char **argv)
 	 */
 	testbuf = malloc(sblock.fs_fsize);
 	if (testbuf == NULL)
-		err(1, "malloc");
+		err(3, "malloc");
 	rdfs((ufs2_daddr_t)((size - sblock.fs_fsize) / DEV_BSIZE),
 	    sblock.fs_fsize, testbuf, fsi);
 	wtfs((ufs2_daddr_t)((size - sblock.fs_fsize) / DEV_BSIZE),
@@ -1647,7 +1569,7 @@ main(int argc, char **argv)
 	    fragroundup(&sblock, sblock.fs_ncg * sizeof(struct csum));
 
 	if (osblock.fs_size >= sblock.fs_size)
-		errx(1, "not enough new space");
+		errx(3, "not enough new space");
 
 	DBG_PRINT0("sblock calculated\n");
 
@@ -1661,13 +1583,14 @@ main(int argc, char **argv)
 		if (statfsp != NULL && (statfsp->f_flags & MNT_RDONLY) == 0) {
 			error = ioctl(fso, UFSRESUME);
 			if (error != 0)
-				err(1, "UFSRESUME");
+				err(3, "UFSRESUME");
 		}
 		error = close(fso);
 		if (error != 0)
-			err(1, "close");
-		if (statfsp != NULL && (statfsp->f_flags & MNT_RDONLY) != 0)
-			mount_reload(statfsp);
+			err(3, "close");
+		if (statfsp != NULL && (statfsp->f_flags & MNT_RDONLY) != 0 &&
+		    chkdoreload(statfsp, warn) != 0)
+			exit(9);
 	}
 
 	DBG_CLOSE;
@@ -1732,29 +1655,6 @@ updclst(int block)
 
 	DBG_LEAVE;
 	return;
-}
-
-static void
-mount_reload(const struct statfs *stfs)
-{
-	char errmsg[255];
-	struct iovec *iov;
-	int iovlen;
-
-	iov = NULL;
-	iovlen = 0;
-	*errmsg = '\0';
-	build_iovec(&iov, &iovlen, "fstype", __DECONST(char *, "ffs"), 4);
-	build_iovec(&iov, &iovlen, "fspath", __DECONST(char *, stfs->f_mntonname), (size_t)-1);
-	build_iovec(&iov, &iovlen, "errmsg", errmsg, sizeof(errmsg));
-	build_iovec(&iov, &iovlen, "update", NULL, 0);
-	build_iovec(&iov, &iovlen, "reload", NULL, 0);
-
-	if (nmount(iov, iovlen, stfs->f_flags) < 0) {
-		errmsg[sizeof(errmsg) - 1] = '\0';
-		err(9, "%s: cannot reload filesystem%s%s", stfs->f_mntonname,
-		    *errmsg != '\0' ? ": " : "", errmsg);
-	}
 }
 
 /*

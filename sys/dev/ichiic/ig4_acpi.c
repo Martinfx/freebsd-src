@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_acpi.h"
 
 #include <sys/param.h>
@@ -85,13 +83,21 @@ static int
 ig4iic_acpi_attach(device_t dev)
 {
 	ig4iic_softc_t	*sc;
+	char *str;
 	int error;
 
 	sc = device_get_softc(dev);
 
 	sc->dev = dev;
-	/* All the HIDs matched are Atom SOCs. */
-	sc->version = IG4_ATOM;
+	error = ACPI_ID_PROBE(device_get_parent(dev), dev, ig4iic_ids, &str);
+	if (error > 0)
+		return (error);
+	if (strcmp(str, "APMC0D0F") == 0) {
+		sc->version = IG4_EMAG;
+	} else {
+		/* All the other HIDs matched are Atom SOCs. */
+		sc->version = IG4_ATOM;
+	}
 	sc->regs_rid = 0;
 	sc->regs_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 					  &sc->regs_rid, RF_ACTIVE);
@@ -108,7 +114,7 @@ ig4iic_acpi_attach(device_t dev)
 		ig4iic_acpi_detach(dev);
 		return (ENXIO);
 	}
-	sc->platform_attached = 1;
+	sc->platform_attached = true;
 
 	error = ig4iic_attach(sc);
 	if (error)
@@ -127,7 +133,7 @@ ig4iic_acpi_detach(device_t dev)
 		error = ig4iic_detach(sc);
 		if (error)
 			return (error);
-		sc->platform_attached = 0;
+		sc->platform_attached = false;
 	}
 
 	if (sc->intr_res) {

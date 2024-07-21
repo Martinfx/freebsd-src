@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/random.h>
 
 #include "tpm20.h"
@@ -39,13 +37,13 @@ __FBSDID("$FreeBSD$");
  * we don't want to execute this too often
  * as the chip is likely to be used by others too.
  */
-#define TPM_HARVEST_INTERVAL 10000000
+#define TPM_HARVEST_INTERVAL 10
 
 MALLOC_DEFINE(M_TPM20, "tpm_buffer", "buffer for tpm 2.0 driver");
 
 static void tpm20_discard_buffer(void *arg);
 #ifdef TPM_HARVEST
-static void tpm20_harvest(void *arg);
+static void tpm20_harvest(void *arg, int unused);
 #endif
 static int  tpm20_save_state(device_t dev, bool suspend);
 
@@ -70,6 +68,7 @@ tpm20_read(struct cdev *dev, struct uio *uio, int flags)
 {
 	struct tpm_sc *sc;
 	size_t bytes_to_transfer;
+	size_t offset;
 	int result = 0;
 
 	sc = (struct tpm_sc *)dev->si_drv1;
@@ -82,10 +81,10 @@ tpm20_read(struct cdev *dev, struct uio *uio, int flags)
 	}
 
 	bytes_to_transfer = MIN(sc->pending_data_length, uio->uio_resid);
+	offset = sc->total_length - sc->pending_data_length;
 	if (bytes_to_transfer > 0) {
-		result = uiomove((caddr_t) sc->buf, bytes_to_transfer, uio);
-		memset(sc->buf, 0, TPM_BUFSIZE);
-		sc->pending_data_length = 0;
+		result = uiomove((caddr_t) sc->buf + offset, bytes_to_transfer, uio);
+		sc->pending_data_length -= bytes_to_transfer;
 		cv_signal(&sc->buf_cv);
 	} else {
 		result = ETIMEDOUT;
@@ -129,7 +128,7 @@ tpm20_write(struct cdev *dev, struct uio *uio, int flags)
 		return (result);
 	}
 
-	result = sc->transmit(sc, byte_count);
+	result = TPM_TRANSMIT(sc->dev, byte_count);
 
 	if (result == 0) {
 		callout_reset(&sc->discard_buffer_callout,
@@ -154,6 +153,7 @@ tpm20_discard_buffer(void *arg)
 
 	memset(sc->buf, 0, TPM_BUFSIZE);
 	sc->pending_data_length = 0;
+	sc->total_length = 0;
 
 	cv_signal(&sc->buf_cv);
 	sx_xunlock(&sc->dev_lock);
@@ -192,12 +192,8 @@ tpm20_init(struct tpm_sc *sc)
 
 	cv_init(&sc->buf_cv, "TPM buffer cv");
 	callout_init(&sc->discard_buffer_callout, 1);
-#ifdef TPM_HARVEST
-	sc->harvest_ticks = TPM_HARVEST_INTERVAL / tick;
-	callout_init(&sc->harvest_callout, 1);
-	callout_reset(&sc->harvest_callout, 0, tpm20_harvest, sc);
-#endif
 	sc->pending_data_length = 0;
+	sc->total_length = 0;
 
 	make_dev_args_init(&args);
 	args.mda_devsw = &tpm20_cdevsw;
@@ -209,6 +205,12 @@ tpm20_init(struct tpm_sc *sc)
 	if (result != 0)
 		tpm20_release(sc);
 
+#ifdef TPM_HARVEST
+	TIMEOUT_TASK_INIT(taskqueue_thread, &sc->harvest_task, 0,
+	    tpm20_harvest, sc);
+	taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task, 0);
+#endif
+
 	return (result);
 
 }
@@ -218,7 +220,8 @@ tpm20_release(struct tpm_sc *sc)
 {
 
 #ifdef TPM_HARVEST
-	callout_drain(&sc->harvest_callout);
+	if (device_is_attached(sc->dev))
+		taskqueue_drain_timeout(taskqueue_thread, &sc->harvest_task);
 #endif
 
 	if (sc->buf != NULL)
@@ -243,13 +246,12 @@ tpm20_shutdown(device_t dev)
 }
 
 #ifdef TPM_HARVEST
-
 /*
  * Get TPM_HARVEST_SIZE random bytes and add them
  * into system entropy pool.
  */
 static void
-tpm20_harvest(void *arg)
+tpm20_harvest(void *arg, int unused)
 {
 	struct tpm_sc *sc;
 	unsigned char entropy[TPM_HARVEST_SIZE];
@@ -268,7 +270,7 @@ tpm20_harvest(void *arg)
 		cv_wait(&sc->buf_cv, &sc->dev_lock);
 
 	memcpy(sc->buf, cmd, sizeof(cmd));
-	result = sc->transmit(sc, sizeof(cmd));
+	result = TPM_TRANSMIT(sc->dev, sizeof(cmd));
 	if (result != 0) {
 		sx_xunlock(&sc->dev_lock);
 		return;
@@ -276,6 +278,7 @@ tpm20_harvest(void *arg)
 
 	/* Ignore response size */
 	sc->pending_data_length = 0;
+	sc->total_length = 0;
 
 	/* The number of random bytes we got is placed right after the header */
 	entropy_size = (uint16_t) sc->buf[TPM_HEADER_SIZE + 1];
@@ -290,7 +293,8 @@ tpm20_harvest(void *arg)
 	if (entropy_size > 0)
 		random_harvest_queue(entropy, entropy_size, RANDOM_PURE_TPM);
 
-	callout_reset(&sc->harvest_callout, sc->harvest_ticks, tpm20_harvest, sc);
+	taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task,
+	    hz * TPM_HARVEST_INTERVAL);
 }
 #endif	/* TPM_HARVEST */
 
@@ -319,7 +323,7 @@ tpm20_save_state(device_t dev, bool suspend)
 	sx_xlock(&sc->dev_lock);
 
 	memcpy(sc->buf, save_cmd, sizeof(save_cmd));
-	sc->transmit(sc, sizeof(save_cmd));
+	TPM_TRANSMIT(sc->dev, sizeof(save_cmd));
 
 	sx_xunlock(&sc->dev_lock);
 

@@ -32,12 +32,6 @@
  * SUCH DAMAGE.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)hash_page.c	8.7 (Berkeley) 8/16/94";
-#endif /* LIBC_SCCS and not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * PACKAGE:  hashing
  *
@@ -855,11 +849,10 @@ open_temp(HTAB *hashp)
 {
 	sigset_t set, oset;
 	int len;
-	char *envtmp = NULL;
+	char *envtmp;
 	char path[MAXPATHLEN];
 
-	if (issetugid() == 0)
-		envtmp = getenv("TMPDIR");
+	envtmp = secure_getenv("TMPDIR");
 	len = snprintf(path,
 	    sizeof(path), "%s/_hash.XXXXXX", envtmp ? envtmp : "/tmp");
 	if (len < 0 || len >= (int)sizeof(path)) {

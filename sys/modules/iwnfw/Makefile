@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 SUBDIR=	iwn100		\
 	iwn105		\
 	iwn135		\

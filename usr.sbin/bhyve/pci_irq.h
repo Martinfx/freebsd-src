@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2014 Hudson River Trading LLC
  * Written by: John H. Baldwin <jhb@FreeBSD.org>
@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef __PCI_IRQ_H__
@@ -34,14 +32,16 @@
 
 struct pci_devinst;
 
+#if defined(__amd64__)
+#include "amd64/pci_irq_machdep.h"
+#elif defined(__aarch64__)
+#include "aarch64/pci_irq_machdep.h"
+#else
+#error Unsupported platform
+#endif
+
 void	pci_irq_assert(struct pci_devinst *pi);
 void	pci_irq_deassert(struct pci_devinst *pi);
-void	pci_irq_init(struct vmctx *ctx);
-void	pci_irq_reserve(int irq);
-void	pci_irq_use(int irq);
-int	pirq_alloc_pin(struct pci_devinst *pi);
-int	pirq_irq(int pin);
-uint8_t	pirq_read(int pin);
-void	pirq_write(struct vmctx *ctx, int pin, uint8_t val);
+void	pci_irq_route(struct pci_devinst *pi, struct pci_irq *irq);
 
 #endif

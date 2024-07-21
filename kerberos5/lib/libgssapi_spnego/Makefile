@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=	kerberos-lib
 
 LIB=	gssapi_spnego

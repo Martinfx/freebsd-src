@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PACKAGE=examples
 FILESDIR=${SHAREDIR}/examples/libvgl
 PROG=	demo

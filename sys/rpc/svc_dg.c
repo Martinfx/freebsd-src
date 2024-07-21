@@ -34,22 +34,18 @@
  * Copyright (c) 1986-1991 by Sun Microsystems Inc.
  */
 
-#if defined(LIBC_SCCS) && !defined(lint)
-#ident	"@(#)svc_dg.c	1.17	94/04/24 SMI"
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * svc_dg.c, Server side for connectionless RPC.
  */
 
 #include <sys/param.h>
+#include <sys/jail.h>
 #include <sys/lock.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/protosw.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
@@ -101,9 +97,10 @@ svc_dg_create(SVCPOOL *pool, struct socket *so, size_t sendsize,
 {
 	SVCXPRT *xprt;
 	struct __rpc_sockinfo si;
-	struct sockaddr* sa;
 	int error;
 
+	if (jailed(curthread->td_ucred))
+		return (NULL);
 	if (!__rpc_socket2sockinfo(so, &si)) {
 		printf(svc_dg_str, svc_dg_err1);
 		return (NULL);
@@ -126,20 +123,16 @@ svc_dg_create(SVCPOOL *pool, struct socket *so, size_t sendsize,
 	xprt->xp_p2 = NULL;
 	xprt->xp_ops = &svc_dg_ops;
 
-	CURVNET_SET(so->so_vnet);
-	error = so->so_proto->pr_sockaddr(so, &sa);
-	CURVNET_RESTORE();
+	xprt->xp_ltaddr.ss_len = sizeof(xprt->xp_ltaddr);
+	error = sosockaddr(so, (struct sockaddr *)&xprt->xp_ltaddr);
 	if (error)
 		goto freedata;
 
-	memcpy(&xprt->xp_ltaddr, sa, sa->sa_len);
-	free(sa, M_SONAME);
-
 	xprt_register(xprt);
 
-	SOCKBUF_LOCK(&so->so_rcv);
+	SOCK_RECVBUF_LOCK(so);
 	soupcall_set(so, SO_RCV, svc_dg_soupcall, xprt);
-	SOCKBUF_UNLOCK(&so->so_rcv);
+	SOCK_RECVBUF_UNLOCK(so);
 
 	return (xprt);
 freedata:
@@ -197,18 +190,18 @@ svc_dg_recv(SVCXPRT *xprt, struct rpc_msg *msg,
 		 * from racing the upcall after our soreadable() call
 		 * returns false.
 		 */
-		SOCKBUF_LOCK(&xprt->xp_socket->so_rcv);
+		SOCK_RECVBUF_LOCK(xprt->xp_socket);
 		if (!soreadable(xprt->xp_socket))
 			xprt_inactive_self(xprt);
-		SOCKBUF_UNLOCK(&xprt->xp_socket->so_rcv);
+		SOCK_RECVBUF_UNLOCK(xprt->xp_socket);
 		sx_xunlock(&xprt->xp_lock);
 		return (FALSE);
 	}
 
 	if (error) {
-		SOCKBUF_LOCK(&xprt->xp_socket->so_rcv);
+		SOCK_RECVBUF_LOCK(xprt->xp_socket);
 		soupcall_clear(xprt->xp_socket, SO_RCV);
-		SOCKBUF_UNLOCK(&xprt->xp_socket->so_rcv);
+		SOCK_RECVBUF_UNLOCK(xprt->xp_socket);
 		xprt_inactive_self(xprt);
 		sx_xunlock(&xprt->xp_lock);
 		return (FALSE);
@@ -273,9 +266,9 @@ static void
 svc_dg_destroy(SVCXPRT *xprt)
 {
 
-	SOCKBUF_LOCK(&xprt->xp_socket->so_rcv);
+	SOCK_RECVBUF_LOCK(xprt->xp_socket);
 	soupcall_clear(xprt->xp_socket, SO_RCV);
-	SOCKBUF_UNLOCK(&xprt->xp_socket->so_rcv);
+	SOCK_RECVBUF_UNLOCK(xprt->xp_socket);
 
 	sx_destroy(&xprt->xp_lock);
 	if (xprt->xp_socket)
@@ -288,10 +281,7 @@ svc_dg_destroy(SVCXPRT *xprt)
 
 static bool_t
 /*ARGSUSED*/
-svc_dg_control(xprt, rq, in)
-	SVCXPRT *xprt;
-	const u_int	rq;
-	void		*in;
+svc_dg_control(SVCXPRT *xprt, const u_int rq, void *in)
 {
 
 	return (FALSE);

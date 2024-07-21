@@ -1,5 +1,4 @@
 #
-# $FreeBSD$
 #
 
 .PATH: ${SRCTOP}/sys/dev/hwpmc
@@ -12,8 +11,8 @@ SRCS+=	vnode_if.h
 
 .if ${MACHINE_CPUARCH} == "aarch64"
 SRCS+=	hwpmc_arm64.c hwpmc_arm64_md.c
-SRCS+=	cmn600.c hwpmc_cmn600.c
-SRCS+=	hwpmc_dmc620.c pmu_dmc620.c
+SRCS.DEV_ACPI=	cmn600.c hwpmc_cmn600.c
+SRCS.DEV_ACPI+=	hwpmc_dmc620.c pmu_dmc620.c
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64"

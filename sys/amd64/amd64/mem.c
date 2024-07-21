@@ -35,12 +35,9 @@
  * SUCH DAMAGE.
  *
  *	from: Utah $Hdr: mem.c 1.13 89/10/08$
- *	from: @(#)mem.c	7.2 (Berkeley) 5/9/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Memory special file
  */
@@ -82,6 +79,7 @@ memrw(struct cdev *dev, struct uio *uio, int flags)
 	struct iovec *iov;
 	void *p;
 	ssize_t orig_resid;
+	vm_prot_t prot;
 	u_long v, vd;
 	u_int c;
 	int error;
@@ -113,8 +111,16 @@ memrw(struct cdev *dev, struct uio *uio, int flags)
 				break;
 			}
 
-			if (!kernacc((void *)v, c, uio->uio_rw == UIO_READ ?
-			    VM_PROT_READ : VM_PROT_WRITE)) {
+			switch (uio->uio_rw) {
+			case UIO_READ:
+				prot = VM_PROT_READ;
+				break;
+			case UIO_WRITE:
+				prot = VM_PROT_WRITE;
+				break;
+			}
+
+			if (!kernacc((void *)v, c, prot)) {
 				error = EFAULT;
 				break;
 			}
@@ -148,7 +154,7 @@ memrw(struct cdev *dev, struct uio *uio, int flags)
 			}
 			p = pmap_mapdev(v, PAGE_SIZE);
 			error = uiomove(p, c, uio);
-			pmap_unmapdev((vm_offset_t)p, PAGE_SIZE);
+			pmap_unmapdev(p, PAGE_SIZE);
 			break;
 		}
 	}

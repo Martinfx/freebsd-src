@@ -24,14 +24,12 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/types.h>
 #include <sys/elf.h>
 #include <sys/proc.h>
 #include <sys/ptrace.h>
 #include <sys/reg.h>
+#include <machine/pcb.h>
 #ifdef VFP
 #include <machine/vfp.h>
 #endif

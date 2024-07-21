@@ -32,7 +32,7 @@
 #include "file.h"
 
 #ifndef lint
-FILE_RCSID("@(#)$File: print.c,v 1.90 2021/10/24 15:52:18 christos Exp $")
+FILE_RCSID("@(#)$File: print.c,v 1.99 2023/07/17 16:40:57 christos Exp $")
 #endif  /* lint */
 
 #include <string.h>
@@ -46,13 +46,13 @@ FILE_RCSID("@(#)$File: print.c,v 1.90 2021/10/24 15:52:18 christos Exp $")
 #include "cdf.h"
 
 #ifndef COMPILE_ONLY
-protected void
+file_protected void
 file_mdump(struct magic *m)
 {
 	static const char optyp[] = { FILE_OPS };
 	char tbuf[256];
 
-	(void) fprintf(stderr, "%u: %.*s %u", m->lineno,
+	(void) fprintf(stderr, "%u: %.*s %d", m->lineno,
 	    (m->cont_level & 7) + 1, ">>>>>>>>", m->offset);
 
 	if (m->flag & INDIR) {
@@ -62,7 +62,7 @@ file_mdump(struct magic *m)
 		    "*bad in_type*");
 		if (m->in_op & FILE_OPINVERSE)
 			(void) fputc('~', stderr);
-		(void) fprintf(stderr, "%c%u),",
+		(void) fprintf(stderr, "%c%d),",
 		    (CAST(size_t, m->in_op & FILE_OPS_MASK) <
 		    __arraycount(optyp)) ?
 		    optyp[m->in_op & FILE_OPS_MASK] : '?', m->in_offset);
@@ -134,7 +134,7 @@ file_mdump(struct magic *m)
 		case FILE_BESHORT:
 		case FILE_BELONG:
 		case FILE_INDIRECT:
-			(void) fprintf(stderr, "%d", m->value.l);
+			(void) fprintf(stderr, "%d", CAST(int32_t, m->value.l));
 			break;
 		case FILE_BEQUAD:
 		case FILE_LEQUAD:
@@ -200,7 +200,7 @@ file_mdump(struct magic *m)
 		case FILE_LEVARINT:
 		case FILE_BEVARINT:
 			(void)fprintf(stderr, "%s", file_fmtvarint(
-			    m->value.us, m->type, tbuf, sizeof(tbuf)));
+			    tbuf, sizeof(tbuf), m->value.us, m->type));
 			break;
 		case FILE_MSDOSDATE:
 		case FILE_BEMSDOSDATE:
@@ -213,6 +213,10 @@ file_mdump(struct magic *m)
 		case FILE_LEMSDOSTIME:
 			(void)fprintf(stderr, "%s,",
 			    file_fmttime(tbuf, sizeof(tbuf), m->value.h));
+			break;
+		case FILE_OCTAL:
+			(void)fprintf(stderr, "%s",
+			    file_fmtnum(tbuf, sizeof(tbuf), m->value.s, 8));
 			break;
 		case FILE_DEFAULT:
 			/* XXX - do anything here? */
@@ -238,7 +242,7 @@ file_mdump(struct magic *m)
 #endif
 
 /*VARARGS*/
-protected void
+file_protected void
 file_magwarn(struct magic_set *ms, const char *f, ...)
 {
 	va_list va;
@@ -246,7 +250,7 @@ file_magwarn(struct magic_set *ms, const char *f, ...)
 	/* cuz we use stdout for most, stderr here */
 	(void) fflush(stdout);
 
-	if (ms->file)
+	if (ms && ms->file)
 		(void) fprintf(stderr, "%s, %lu: ", ms->file,
 		    CAST(unsigned long, ms->line));
 	(void) fprintf(stderr, "Warning: ");
@@ -256,14 +260,15 @@ file_magwarn(struct magic_set *ms, const char *f, ...)
 	(void) fputc('\n', stderr);
 }
 
-protected const char *
-file_fmtvarint(const unsigned char *us, int t, char *buf, size_t blen)
+file_protected const char *
+file_fmtvarint(char *buf, size_t blen, const unsigned char *us, int t)
 {
-	snprintf(buf, blen, "%jd", file_varint2uintmax_t(us, t, NULL));
+	snprintf(buf, blen, "%jd", CAST(intmax_t,
+	    file_varint2uintmax_t(us, t, NULL)));
 	return buf;
 }
 
-protected const char *
+file_protected const char *
 file_fmtdatetime(char *buf, size_t bsize, uint64_t v, int flags)
 {
 	char *pp;
@@ -279,6 +284,9 @@ file_fmtdatetime(char *buf, size_t bsize, uint64_t v, int flags)
 		// on 32 bit time_t?
 		t = CAST(time_t, v);
 	}
+
+	if (t > MAX_CTIME)
+		goto out;
 
 	if (flags & FILE_T_LOCAL) {
 		tm = localtime_r(&t, &tmz);
@@ -302,7 +310,7 @@ out:
  * https://docs.microsoft.com/en-us/windows/win32/api/winbase/\
  *	nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
  */
-protected const char *
+file_protected const char *
 file_fmtdate(char *buf, size_t bsize, uint16_t v)
 {
 	struct tm tm;
@@ -321,7 +329,7 @@ out:
 	return buf;
 }
 
-protected const char *
+file_protected const char *
 file_fmttime(char *buf, size_t bsize, uint16_t v)
 {
 	struct tm tm;
@@ -339,4 +347,22 @@ out:
 	strlcpy(buf, "*Invalid time*", bsize);
 	return buf;
 
+}
+
+file_protected const char *
+file_fmtnum(char *buf, size_t blen, const char *us, int base)
+{
+	char *endptr;
+	unsigned long long val;
+
+	errno = 0;
+	val = strtoull(us, &endptr, base);
+	if (*endptr || errno) {
+bad:		strlcpy(buf, "*Invalid number*", blen);
+		return buf;
+	}
+
+	if (snprintf(buf, blen, "%llu", val) < 0)
+		goto bad;
+	return buf;
 }

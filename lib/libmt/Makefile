@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 LIB=		mt
 SHLIBDIR?=	/lib
 SRCS=		mtlib.c

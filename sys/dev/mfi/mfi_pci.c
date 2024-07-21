@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD AND BSD-2-Clause
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 IronPort Systems
  * All rights reserved.
@@ -53,8 +53,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /* PCI/PCI-X/PCIe bus interface for the LSI MegaSAS controllers */
 
 #include "opt_mfi.h"
@@ -114,7 +112,7 @@ SYSCTL_INT(_hw_mfi, OID_AUTO, msi, CTLFLAG_RDTUN, &mfi_msi, 0,
 
 static int	mfi_mrsas_enable;
 SYSCTL_INT(_hw_mfi, OID_AUTO, mrsas_enable, CTLFLAG_RDTUN, &mfi_mrsas_enable,
-     0, "Allow mrasas to take newer cards");
+     0, "Allow mrsas to take newer cards");
 
 struct mfi_ident {
 	uint16_t	vendor;

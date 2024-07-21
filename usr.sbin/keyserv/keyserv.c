@@ -27,14 +27,6 @@
  * Mountain View, California  94043
  */
 
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)keyserv.c	1.15	94/04/25 SMI";
-#endif
-static const char rcsid[] =
-  "$FreeBSD$";
-#endif /* not lint */
-
 /*
  * Copyright (c) 1986 - 1991 by Sun Microsystems, Inc.
  */
@@ -83,9 +75,8 @@ static int debugging = 1;
 static int debugging = 0;
 #endif
 
-static void keyprogram();
+static void keyprogram(struct svc_req *rqstp, SVCXPRT *transp);
 static des_block masterkey;
-char *getenv();
 static char ROOTKEY[] = "/etc/.rootkey";
 
 /*
@@ -107,9 +98,7 @@ cryptkeyres *key_decrypt_pk_2_svc_prog( uid_t, cryptkeyarg2 * );
 des_block *key_gen_1_svc_prog( void *, struct svc_req * );
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 	int nflag = 0;
 	int c;
@@ -221,8 +210,7 @@ main(argc, argv)
  * randomize the master key the best we can
  */
 static void
-randomize(master)
-	des_block *master;
+randomize(des_block *master)
 {
 	master->key.low = arc4random();
 	master->key.high = arc4random();
@@ -234,9 +222,7 @@ randomize(master)
  * Returns 1 on success.
  */
 static int
-getrootkey(master, prompt)
-	des_block *master;
-	int prompt;
+getrootkey(des_block *master, int prompt)
 {
 	char *passwd;
 	char name[MAXNETNAMELEN + 1];
@@ -306,8 +292,7 @@ getrootkey(master, prompt)
  * Procedures to implement RPC service
  */
 char *
-strstatus(status)
-	keystatus status;
+strstatus(keystatus status)
 {
 	switch (status) {
 	case KEY_SUCCESS:
@@ -324,9 +309,7 @@ strstatus(status)
 }
 
 keystatus *
-key_set_1_svc_prog(uid, key)
-	uid_t uid;
-	keybuf key;
+key_set_1_svc_prog(uid_t uid, keybuf key)
 {
 	static keystatus status;
 
@@ -343,9 +326,7 @@ key_set_1_svc_prog(uid, key)
 }
 
 cryptkeyres *
-key_encrypt_pk_2_svc_prog(uid, arg)
-	uid_t uid;
-	cryptkeyarg2 *arg;
+key_encrypt_pk_2_svc_prog(uid_t uid, cryptkeyarg2 *arg)
 {
 	static cryptkeyres res;
 
@@ -371,9 +352,7 @@ key_encrypt_pk_2_svc_prog(uid, arg)
 }
 
 cryptkeyres *
-key_decrypt_pk_2_svc_prog(uid, arg)
-	uid_t uid;
-	cryptkeyarg2 *arg;
+key_decrypt_pk_2_svc_prog(uid_t uid, cryptkeyarg2 *arg)
 {
 	static cryptkeyres res;
 
@@ -399,9 +378,7 @@ key_decrypt_pk_2_svc_prog(uid, arg)
 }
 
 keystatus *
-key_net_put_2_svc_prog(uid, arg)
-	uid_t uid;
-	key_netstarg *arg;
+key_net_put_2_svc_prog(uid_t uid, key_netstarg *arg)
 {
 	static keystatus status;
 
@@ -423,9 +400,7 @@ key_net_put_2_svc_prog(uid, arg)
 }
 
 key_netstres *
-key_net_get_2_svc_prog(uid, arg)
-	uid_t uid;
-	void *arg;
+key_net_get_2_svc_prog(uid_t uid, void *arg)
 {
 	static key_netstres keynetname;
 
@@ -452,9 +427,7 @@ key_net_get_2_svc_prog(uid, arg)
 }
 
 cryptkeyres *
-key_get_conv_2_svc_prog(uid, arg)
-	uid_t uid;
-	keybuf arg;
+key_get_conv_2_svc_prog(uid_t uid, keybuf arg)
 {
 	static cryptkeyres  res;
 
@@ -480,9 +453,7 @@ key_get_conv_2_svc_prog(uid, arg)
 
 
 cryptkeyres *
-key_encrypt_1_svc_prog(uid, arg)
-	uid_t uid;
-	cryptkeyarg *arg;
+key_encrypt_1_svc_prog(uid_t uid, cryptkeyarg *arg)
 {
 	static cryptkeyres res;
 
@@ -508,9 +479,7 @@ key_encrypt_1_svc_prog(uid, arg)
 }
 
 cryptkeyres *
-key_decrypt_1_svc_prog(uid, arg)
-	uid_t uid;
-	cryptkeyarg *arg;
+key_decrypt_1_svc_prog(uid_t uid, cryptkeyarg *arg)
 {
 	static cryptkeyres res;
 
@@ -537,9 +506,7 @@ key_decrypt_1_svc_prog(uid, arg)
 
 /* ARGSUSED */
 des_block *
-key_gen_1_svc_prog(v, s)
-	void	*v;
-	struct svc_req	*s;
+key_gen_1_svc_prog(void *v, struct svc_req *s)
 {
 	struct timeval time;
 	static des_block keygen;
@@ -561,9 +528,7 @@ key_gen_1_svc_prog(v, s)
 }
 
 getcredres *
-key_getcred_1_svc_prog(uid, name)
-	uid_t uid;
-	netnamestr *name;
+key_getcred_1_svc_prog(uid_t uid, netnamestr *name)
 {
 	static getcredres res;
 	static u_int gids[NGROUPS];
@@ -594,9 +559,7 @@ key_getcred_1_svc_prog(uid, name)
  * RPC boilerplate
  */
 static void
-keyprogram(rqstp, transp)
-	struct svc_req *rqstp;
-	SVCXPRT *transp;
+keyprogram(struct svc_req *rqstp, SVCXPRT *transp)
 {
 	union {
 		keybuf key_set_1_arg;
@@ -613,7 +576,8 @@ keyprogram(rqstp, transp)
 	} argument;
 	char *result;
 	xdrproc_t xdr_argument, xdr_result;
-	char *(*local) ();
+	typedef void *(svc_cb)(uid_t uid, void *arg);
+	svc_cb *local;
 	uid_t uid = -1;
 	int check_auth;
 
@@ -625,49 +589,49 @@ keyprogram(rqstp, transp)
 	case KEY_SET:
 		xdr_argument = (xdrproc_t)xdr_keybuf;
 		xdr_result = (xdrproc_t)xdr_int;
-		local = (char *(*)()) key_set_1_svc_prog;
+		local = (svc_cb *)key_set_1_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_ENCRYPT:
 		xdr_argument = (xdrproc_t)xdr_cryptkeyarg;
 		xdr_result = (xdrproc_t)xdr_cryptkeyres;
-		local = (char *(*)()) key_encrypt_1_svc_prog;
+		local = (svc_cb *)key_encrypt_1_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_DECRYPT:
 		xdr_argument = (xdrproc_t)xdr_cryptkeyarg;
 		xdr_result = (xdrproc_t)xdr_cryptkeyres;
-		local = (char *(*)()) key_decrypt_1_svc_prog;
+		local = (svc_cb *)key_decrypt_1_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_GEN:
 		xdr_argument = (xdrproc_t)xdr_void;
 		xdr_result = (xdrproc_t)xdr_des_block;
-		local = (char *(*)()) key_gen_1_svc_prog;
+		local = (svc_cb *)key_gen_1_svc_prog;
 		check_auth = 0;
 		break;
 
 	case KEY_GETCRED:
 		xdr_argument = (xdrproc_t)xdr_netnamestr;
 		xdr_result = (xdrproc_t)xdr_getcredres;
-		local = (char *(*)()) key_getcred_1_svc_prog;
+		local = (svc_cb *)key_getcred_1_svc_prog;
 		check_auth = 0;
 		break;
 
 	case KEY_ENCRYPT_PK:
 		xdr_argument = (xdrproc_t)xdr_cryptkeyarg2;
 		xdr_result = (xdrproc_t)xdr_cryptkeyres;
-		local = (char *(*)()) key_encrypt_pk_2_svc_prog;
+		local = (svc_cb *)key_encrypt_pk_2_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_DECRYPT_PK:
 		xdr_argument = (xdrproc_t)xdr_cryptkeyarg2;
 		xdr_result = (xdrproc_t)xdr_cryptkeyres;
-		local = (char *(*)()) key_decrypt_pk_2_svc_prog;
+		local = (svc_cb *)key_decrypt_pk_2_svc_prog;
 		check_auth = 1;
 		break;
 
@@ -675,21 +639,21 @@ keyprogram(rqstp, transp)
 	case KEY_NET_PUT:
 		xdr_argument = (xdrproc_t)xdr_key_netstarg;
 		xdr_result = (xdrproc_t)xdr_keystatus;
-		local = (char *(*)()) key_net_put_2_svc_prog;
+		local = (svc_cb *)key_net_put_2_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_NET_GET:
 		xdr_argument = (xdrproc_t) xdr_void;
 		xdr_result = (xdrproc_t)xdr_key_netstres;
-		local = (char *(*)()) key_net_get_2_svc_prog;
+		local = (svc_cb *)key_net_get_2_svc_prog;
 		check_auth = 1;
 		break;
 
 	case KEY_GET_CONV:
 		xdr_argument = (xdrproc_t) xdr_keybuf;
 		xdr_result = (xdrproc_t)xdr_cryptkeyres;
-		local = (char *(*)()) key_get_conv_2_svc_prog;
+		local = (svc_cb *)key_get_conv_2_svc_prog;
 		check_auth = 1;
 		break;
 
@@ -734,13 +698,10 @@ keyprogram(rqstp, transp)
 			"unable to free arguments\n");
 		exit(1);
 	}
-	return;
 }
 
 static int
-root_auth(trans, rqstp)
-	SVCXPRT *trans;
-	struct svc_req *rqstp;
+root_auth(SVCXPRT *trans, struct svc_req *rqstp)
 {
 	uid_t uid;
 	struct sockaddr *remote;
@@ -782,7 +743,7 @@ root_auth(trans, rqstp)
 }
 
 static void
-usage()
+usage(void)
 {
 	(void) fprintf(stderr,
 			"usage: keyserv [-n] [-D] [-d] [-v] [-p path]\n");

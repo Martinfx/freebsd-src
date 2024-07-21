@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1998 Doug Rabson
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifdef __i386__
@@ -104,7 +102,7 @@
  */
 
 /*
- * Always use lock prefixes.  The result is slighly less optimal for
+ * Always use lock prefixes.  The result is slightly less optimal for
  * UP systems, but it matters less now, and sometimes UP is emulated
  * over SMP.
  *
@@ -297,8 +295,8 @@ static __inline void
 __storeload_barrier(void)
 {
 #if defined(_KERNEL)
-	__asm __volatile("lock; addl $0,%%gs:%0"
-	    : "+m" (*(u_int *)OFFSETOF_MONITORBUF) : : "memory", "cc");
+	__asm __volatile("lock; addl $0,%%gs:%c0"
+	    : : "i" (OFFSETOF_MONITORBUF) : "memory", "cc");
 #else /* !_KERNEL */
 	__asm __volatile("lock; addl $0,-8(%%rsp)" : : : "memory", "cc");
 #endif /* _KERNEL*/

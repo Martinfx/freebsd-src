@@ -70,8 +70,8 @@ dnode_increase_indirection(dnode_t *dn, dmu_tx_t *tx)
 	dmu_buf_impl_t *children[DN_MAX_NBLKPTR];
 	ASSERT3U(nblkptr, <=, DN_MAX_NBLKPTR);
 	for (i = 0; i < nblkptr; i++) {
-		children[i] =
-		    dbuf_find(dn->dn_objset, dn->dn_object, old_toplvl, i);
+		children[i] = dbuf_find(dn->dn_objset, dn->dn_object,
+		    old_toplvl, i, NULL);
 	}
 
 	/* transfer dnode's block pointers to new indirect block */
@@ -175,19 +175,21 @@ free_blocks(dnode_t *dn, blkptr_t *bp, int num, dmu_tx_t *tx)
 static void
 free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 {
-	int off, num;
-	int i, err, epbs;
+	uint64_t off, num, i, j;
+	unsigned int epbs;
+	int err;
 	uint64_t txg = tx->tx_txg;
 	dnode_t *dn;
 
 	DB_DNODE_ENTER(db);
 	dn = DB_DNODE(db);
 	epbs = dn->dn_phys->dn_indblkshift - SPA_BLKPTRSHIFT;
-	off = start - (db->db_blkid * 1<<epbs);
+	off = start - (db->db_blkid << epbs);
 	num = end - start + 1;
 
-	ASSERT3U(off, >=, 0);
-	ASSERT3U(num, >=, 0);
+	ASSERT3U(dn->dn_phys->dn_indblkshift, >=, SPA_BLKPTRSHIFT);
+	ASSERT3U(end + 1, >=, start);
+	ASSERT3U(start, >=, (db->db_blkid << epbs));
 	ASSERT3U(db->db_level, >, 0);
 	ASSERT3U(db->db.db_size, ==, 1 << dn->dn_phys->dn_indblkshift);
 	ASSERT3U(off+num, <=, db->db.db_size >> SPA_BLKPTRSHIFT);
@@ -197,7 +199,6 @@ free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 		uint64_t *buf;
 		dmu_buf_impl_t *child;
 		dbuf_dirty_record_t *dr;
-		int j;
 
 		ASSERT(db->db_level == 1);
 
@@ -217,8 +218,11 @@ free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 			for (j = 0; j < child->db.db_size >> 3; j++) {
 				if (buf[j] != 0) {
 					panic("freed data not zero: "
-					    "child=%p i=%d off=%d num=%d\n",
-					    (void *)child, i, off, num);
+					    "child=%p i=%llu off=%llu "
+					    "num=%llu\n",
+					    (void *)child, (u_longlong_t)i,
+					    (u_longlong_t)off,
+					    (u_longlong_t)num);
 				}
 			}
 		}
@@ -234,8 +238,11 @@ free_verify(dmu_buf_impl_t *db, uint64_t start, uint64_t end, dmu_tx_t *tx)
 			for (j = 0; j < child->db.db_size >> 3; j++) {
 				if (buf[j] != 0) {
 					panic("freed data not zero: "
-					    "child=%p i=%d off=%d num=%d\n",
-					    (void *)child, i, off, num);
+					    "child=%p i=%llu off=%llu "
+					    "num=%llu\n",
+					    (void *)child, (u_longlong_t)i,
+					    (u_longlong_t)off,
+					    (u_longlong_t)num);
 				}
 			}
 		}
@@ -475,7 +482,14 @@ dnode_evict_dbufs(dnode_t *dn)
 		    zfs_refcount_is_zero(&db->db_holds)) {
 			db_marker->db_level = db->db_level;
 			db_marker->db_blkid = db->db_blkid;
-			db_marker->db_state = DB_SEARCH;
+			/*
+			 * Insert a MARKER node with the same level and blkid.
+			 * And to resolve any ties in dbuf_compare() use the
+			 * pointer of the dbuf that we are evicting. Pass the
+			 * address in db_parent.
+			 */
+			db_marker->db_state = DB_MARKER;
+			db_marker->db_parent = (void *)((uintptr_t)db - 1);
 			avl_insert_here(&dn->dn_dbufs, db_marker, db,
 			    AVL_BEFORE);
 
@@ -620,6 +634,7 @@ dnode_sync_free(dnode_t *dn, dmu_tx_t *tx)
 
 /*
  * Write out the dnode's dirty buffers.
+ * Does not wait for zio completions.
  */
 void
 dnode_sync(dnode_t *dn, dmu_tx_t *tx)

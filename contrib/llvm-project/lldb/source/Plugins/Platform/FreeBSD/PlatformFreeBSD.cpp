@@ -22,13 +22,14 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/FileSpec.h"
+#include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/State.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/StreamString.h"
 
-#include "llvm/ADT/Triple.h"
-#include "llvm/Support/Host.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 // Define these constants from FreeBSD mman.h for use when targeting remote
 // FreeBSD systems even when host has different values.
@@ -45,7 +46,7 @@ static uint32_t g_initialize_count = 0;
 
 
 PlatformSP PlatformFreeBSD::CreateInstance(bool force, const ArchSpec *arch) {
-  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PLATFORM));
+  Log *log = GetLog(LLDBLog::Platform);
   LLDB_LOG(log, "force = {0}, arch=({1}, {2})", force,
            arch ? arch->GetArchitectureName() : "<null>",
            arch ? arch->GetTriple().getTriple() : "<null>");
@@ -128,9 +129,10 @@ PlatformFreeBSD::PlatformFreeBSD(bool is_host)
   }
 }
 
-std::vector<ArchSpec> PlatformFreeBSD::GetSupportedArchitectures() {
+std::vector<ArchSpec>
+PlatformFreeBSD::GetSupportedArchitectures(const ArchSpec &process_host_arch) {
   if (m_remote_platform_sp)
-    return m_remote_platform_sp->GetSupportedArchitectures();
+    return m_remote_platform_sp->GetSupportedArchitectures(process_host_arch);
   return m_supported_architectures;
 }
 
@@ -185,9 +187,12 @@ MmapArgList PlatformFreeBSD::GetMmapArgumentList(const ArchSpec &arch,
 }
 
 CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
-  if (!m_type_system_up)
-    m_type_system_up.reset(new TypeSystemClang("siginfo", triple));
-  TypeSystemClang *ast = m_type_system_up.get();
+  {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    if (!m_type_system)
+      m_type_system = std::make_shared<TypeSystemClang>("siginfo", triple);
+  }
+  TypeSystemClang *ast = m_type_system.get();
 
   // generic types
   CompilerType int_type = ast->GetBasicType(eBasicTypeInt);
@@ -201,7 +206,7 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
 
   CompilerType sigval_type = ast->CreateRecordType(
       nullptr, OptionalClangModuleID(), lldb::eAccessPublic, "__lldb_sigval_t",
-      clang::TTK_Union, lldb::eLanguageTypeC);
+      llvm::to_underlying(clang::TagTypeKind::Union), lldb::eLanguageTypeC);
   ast->StartTagDeclarationDefinition(sigval_type);
   ast->AddFieldToRecordType(sigval_type, "sival_int", int_type,
                             lldb::eAccessPublic, 0);
@@ -212,7 +217,7 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
   // siginfo_t
   CompilerType siginfo_type = ast->CreateRecordType(
       nullptr, OptionalClangModuleID(), lldb::eAccessPublic, "__lldb_siginfo_t",
-      clang::TTK_Struct, lldb::eLanguageTypeC);
+      llvm::to_underlying(clang::TagTypeKind::Struct), lldb::eLanguageTypeC);
   ast->StartTagDeclarationDefinition(siginfo_type);
   ast->AddFieldToRecordType(siginfo_type, "si_signo", int_type,
                             lldb::eAccessPublic, 0);
@@ -234,12 +239,12 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
   // union used to hold the signal data
   CompilerType union_type = ast->CreateRecordType(
       nullptr, OptionalClangModuleID(), lldb::eAccessPublic, "",
-      clang::TTK_Union, lldb::eLanguageTypeC);
+      llvm::to_underlying(clang::TagTypeKind::Union), lldb::eLanguageTypeC);
   ast->StartTagDeclarationDefinition(union_type);
 
   ast->AddFieldToRecordType(
       union_type, "_fault",
-      ast->CreateStructForIdentifier(ConstString(),
+      ast->CreateStructForIdentifier(llvm::StringRef(),
                                      {
                                          {"_trapno", int_type},
                                      }),
@@ -247,7 +252,7 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
 
   ast->AddFieldToRecordType(
       union_type, "_timer",
-      ast->CreateStructForIdentifier(ConstString(),
+      ast->CreateStructForIdentifier(llvm::StringRef(),
                                      {
                                          {"_timerid", int_type},
                                          {"_overrun", int_type},
@@ -256,7 +261,7 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
 
   ast->AddFieldToRecordType(
       union_type, "_mesgq",
-      ast->CreateStructForIdentifier(ConstString(),
+      ast->CreateStructForIdentifier(llvm::StringRef(),
                                      {
                                          {"_mqd", int_type},
                                      }),
@@ -264,7 +269,7 @@ CompilerType PlatformFreeBSD::GetSiginfoType(const llvm::Triple &triple) {
 
   ast->AddFieldToRecordType(
       union_type, "_poll",
-      ast->CreateStructForIdentifier(ConstString(),
+      ast->CreateStructForIdentifier(llvm::StringRef(),
                                      {
                                          {"_band", long_type},
                                      }),

@@ -28,9 +28,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)tcp_fsm.h	8.1 (Berkeley) 6/10/93
- * $FreeBSD$
  */
 
 #ifndef _NETINET_TCP_FSM_H_
@@ -84,10 +81,6 @@ static u_char	tcp_outflags[TCP_NSTATES] = {
 	TH_ACK,			/* 9, FIN_WAIT_2 */
 	TH_ACK,			/* 10, TIME_WAIT */
 };
-#endif
-
-#ifdef KPROF
-int	tcp_acounts[TCP_NSTATES][PRU_NREQ];
 #endif
 
 #ifdef	TCPSTATES

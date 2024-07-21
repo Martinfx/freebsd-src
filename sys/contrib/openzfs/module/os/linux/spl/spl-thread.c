@@ -26,6 +26,7 @@
 #include <sys/thread.h>
 #include <sys/kmem.h>
 #include <sys/tsd.h>
+#include <sys/string.h>
 
 /*
  * Thread interfaces
@@ -92,7 +93,7 @@ __thread_create(caddr_t stk, size_t  stksize, thread_func_t func,
 		return (NULL);
 	}
 
-	strncpy(tp->tp_name, name, tp->tp_name_size);
+	strlcpy(tp->tp_name, name, tp->tp_name_size);
 
 	/*
 	 * Strip trailing "_thread" from passed name which will be the func
@@ -151,25 +152,15 @@ spl_kthread_create(int (*func)(void *), void *data, const char namefmt[], ...)
 EXPORT_SYMBOL(spl_kthread_create);
 
 /*
- * The "why" argument indicates the allowable side-effects of the call:
- *
- * FORREAL:  Extract the next pending signal from p_sig into p_cursig;
- * stop the process if a stop has been requested or if a traced signal
- * is pending.
- *
- * JUSTLOOKING:  Don't stop the process, just indicate whether or not
- * a signal might be pending (FORREAL is needed to tell for sure).
+ * Extract the next pending signal from p_sig into p_cursig; stop the process
+ * if a stop has been requested or if a traced signal is pending.
  */
 int
-issig(int why)
+issig(void)
 {
-	ASSERT(why == FORREAL || why == JUSTLOOKING);
 
 	if (!signal_pending(current))
 		return (0);
-
-	if (why != FORREAL)
-		return (1);
 
 	struct task_struct *task = current;
 	spl_kernel_siginfo_t __info;
@@ -178,12 +169,11 @@ issig(int why)
 	sigorsets(&set, &task->blocked, &set);
 
 	spin_lock_irq(&task->sighand->siglock);
-	int ret;
 #ifdef HAVE_DEQUEUE_SIGNAL_4ARG
 	enum pid_type __type;
-	if ((ret = dequeue_signal(task, &set, &__info, &__type)) != 0) {
+	if (dequeue_signal(task, &set, &__info, &__type) != 0) {
 #else
-	if ((ret = dequeue_signal(task, &set, &__info)) != 0) {
+	if (dequeue_signal(task, &set, &__info) != 0) {
 #endif
 #ifdef HAVE_SIGNAL_STOP
 		spin_unlock_irq(&task->sighand->siglock);

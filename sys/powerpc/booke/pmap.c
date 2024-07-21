@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (C) 2007-2009 Semihalf, Rafal Jaworowski <raj@semihalf.com>
  * Copyright (C) 2006 Semihalf, Marian Balakowicz <m8@semihalf.com>
@@ -74,8 +74,6 @@
   */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ddb.h"
 #include "opt_kstack_pages.h"
 
@@ -133,8 +131,10 @@ __FBSDID("$FreeBSD$");
 
 #ifdef  DEBUG
 #define debugf(fmt, args...) printf(fmt, ##args)
+#define	__debug_used
 #else
 #define debugf(fmt, args...)
+#define	__debug_used	__unused
 #endif
 
 #ifdef __powerpc64__
@@ -239,7 +239,6 @@ static __inline uint32_t tlb_calc_wimg(vm_paddr_t pa, vm_memattr_t ma);
 
 static vm_size_t tsize2size(unsigned int);
 static unsigned int size2tsize(vm_size_t);
-static unsigned long ilog2(unsigned long);
 
 static void set_mas4_defaults(void);
 
@@ -263,7 +262,7 @@ static int pv_entry_count = 0, pv_entry_max = 0, pv_entry_high_water = 0;
 #endif
 
 static vm_paddr_t pte_vatopa(pmap_t, vm_offset_t);
-static int pte_enter(pmap_t, vm_page_t, vm_offset_t, uint32_t, boolean_t);
+static int pte_enter(pmap_t, vm_page_t, vm_offset_t, uint32_t, bool);
 static int pte_remove(pmap_t, vm_offset_t, uint8_t);
 static pte_t *pte_find(pmap_t, vm_offset_t);
 static void kernel_pte_alloc(vm_offset_t, vm_offset_t);
@@ -302,9 +301,9 @@ static vm_paddr_t	mmu_booke_extract(pmap_t, vm_offset_t);
 static vm_page_t	mmu_booke_extract_and_hold(pmap_t, vm_offset_t,
     vm_prot_t);
 static void		mmu_booke_init(void);
-static boolean_t	mmu_booke_is_modified(vm_page_t);
-static boolean_t	mmu_booke_is_prefaultable(pmap_t, vm_offset_t);
-static boolean_t	mmu_booke_is_referenced(vm_page_t);
+static bool		mmu_booke_is_modified(vm_page_t);
+static bool		mmu_booke_is_prefaultable(pmap_t, vm_offset_t);
+static bool		mmu_booke_is_referenced(vm_page_t);
 static int		mmu_booke_ts_referenced(vm_page_t);
 static vm_offset_t	mmu_booke_map(vm_offset_t *, vm_paddr_t, vm_paddr_t,
     int);
@@ -312,7 +311,7 @@ static int		mmu_booke_mincore(pmap_t, vm_offset_t,
     vm_paddr_t *);
 static void		mmu_booke_object_init_pt(pmap_t, vm_offset_t,
     vm_object_t, vm_pindex_t, vm_size_t);
-static boolean_t	mmu_booke_page_exists_quick(pmap_t, vm_page_t);
+static bool		mmu_booke_page_exists_quick(pmap_t, vm_page_t);
 static void		mmu_booke_page_init(vm_page_t);
 static int		mmu_booke_page_wired_mappings(vm_page_t);
 static int		mmu_booke_pinit(pmap_t);
@@ -333,12 +332,12 @@ static void		mmu_booke_deactivate(struct thread *);
 static void		mmu_booke_bootstrap(vm_offset_t, vm_offset_t);
 static void		*mmu_booke_mapdev(vm_paddr_t, vm_size_t);
 static void		*mmu_booke_mapdev_attr(vm_paddr_t, vm_size_t, vm_memattr_t);
-static void		mmu_booke_unmapdev(vm_offset_t, vm_size_t);
+static void		mmu_booke_unmapdev(void *, vm_size_t);
 static vm_paddr_t	mmu_booke_kextract(vm_offset_t);
 static void		mmu_booke_kenter(vm_offset_t, vm_paddr_t);
 static void		mmu_booke_kenter_attr(vm_offset_t, vm_paddr_t, vm_memattr_t);
 static void		mmu_booke_kremove(vm_offset_t);
-static boolean_t	mmu_booke_dev_direct_mapped(vm_paddr_t, vm_size_t);
+static int		mmu_booke_dev_direct_mapped(vm_paddr_t, vm_size_t);
 static void		mmu_booke_sync_icache(pmap_t, vm_offset_t,
     vm_size_t);
 static void		mmu_booke_dumpsys_map(vm_paddr_t pa, size_t,
@@ -353,7 +352,7 @@ static int		mmu_booke_change_attr(vm_offset_t addr,
 static int		mmu_booke_decode_kernel_ptr(vm_offset_t addr,
     int *is_user, vm_offset_t *decoded_addr);
 static void		mmu_booke_page_array_startup(long);
-static boolean_t mmu_booke_page_is_mapped(vm_page_t m);
+static bool mmu_booke_page_is_mapped(vm_page_t m);
 static bool mmu_booke_ps_enabled(pmap_t pmap);
 
 static struct pmap_funcs mmu_booke_methods = {
@@ -632,7 +631,7 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	int cnt, i, j;
 	vm_paddr_t s, e, sz;
 	vm_paddr_t physsz, hwphyssz;
-	u_int phys_avail_count;
+	u_int phys_avail_count __debug_used;
 	vm_size_t kstack0_sz;
 	vm_paddr_t kstack0_phys;
 	vm_offset_t kstack0;
@@ -748,6 +747,11 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	virtual_avail += PTBL_BUFS * PTBL_PAGES * PAGE_SIZE;
 	debugf("ptbl_buf_pool_vabase = 0x%"PRI0ptrX" end = 0x%"PRI0ptrX"\n",
 	    ptbl_buf_pool_vabase, virtual_avail);
+#endif
+#ifdef	__powerpc64__
+	/* Allocate KVA space for crashdumpmap. */
+	crashdumpmap = (caddr_t)virtual_avail;
+	virtual_avail += MAXDUMPPGS * PAGE_SIZE;
 #endif
 
 	/* Calculate corresponding physical addresses for the kernel region. */
@@ -1050,11 +1054,12 @@ mmu_booke_kextract(vm_offset_t va)
 
 /*
  * Initialize the pmap module.
- * Called by vm_init, to initialize any structures that the pmap
- * system needs to map virtual memory.
+ *
+ * Called by vm_mem_init(), to initialize any structures that the pmap system
+ * needs to map virtual memory.
  */
 static void
-mmu_booke_init()
+mmu_booke_init(void)
 {
 	int shpgperproc = PMAP_SHPGPERPROC;
 
@@ -1069,7 +1074,7 @@ mmu_booke_init()
 	TUNABLE_INT_FETCH("vm.pmap.shpgperproc", &shpgperproc);
 	pv_entry_max = shpgperproc * maxproc + vm_cnt.v_page_count;
 
-	TUNABLE_INT_FETCH("vm.pmap.pv_entries", &pv_entry_max);
+	TUNABLE_INT_FETCH("vm.pmap.pv_entry_max", &pv_entry_max);
 	pv_entry_high_water = 9 * (pv_entry_max / 10);
 
 	uma_zone_reserve_kva(pvzone, pv_entry_max);
@@ -1221,7 +1226,7 @@ mmu_booke_decode_kernel_ptr(vm_offset_t addr, int *is_user,
 	return (0);
 }
 
-static boolean_t
+static bool
 mmu_booke_page_is_mapped(vm_page_t m)
 {
 
@@ -1783,22 +1788,22 @@ mmu_booke_page_init(vm_page_t m)
  * Return whether or not the specified physical page was modified
  * in any of physical maps.
  */
-static boolean_t
+static bool
 mmu_booke_is_modified(vm_page_t m)
 {
 	pte_t *pte;
 	pv_entry_t pv;
-	boolean_t rv;
+	bool rv;
 
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 	    ("mmu_booke_is_modified: page %p is not managed", m));
-	rv = FALSE;
+	rv = false;
 
 	/*
 	 * If the page is not busied then this check is racy.
 	 */
 	if (!pmap_page_is_write_mapped(m))
-		return (FALSE);
+		return (false);
 
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
@@ -1806,7 +1811,7 @@ mmu_booke_is_modified(vm_page_t m)
 		if ((pte = pte_find(pv->pv_pmap, pv->pv_va)) != NULL &&
 		    PTE_ISVALID(pte)) {
 			if (PTE_ISMODIFIED(pte))
-				rv = TRUE;
+				rv = true;
 		}
 		PMAP_UNLOCK(pv->pv_pmap);
 		if (rv)
@@ -1820,34 +1825,34 @@ mmu_booke_is_modified(vm_page_t m)
  * Return whether or not the specified virtual address is eligible
  * for prefault.
  */
-static boolean_t
+static bool
 mmu_booke_is_prefaultable(pmap_t pmap, vm_offset_t addr)
 {
 
-	return (FALSE);
+	return (false);
 }
 
 /*
  * Return whether or not the specified physical page was referenced
  * in any physical maps.
  */
-static boolean_t
+static bool
 mmu_booke_is_referenced(vm_page_t m)
 {
 	pte_t *pte;
 	pv_entry_t pv;
-	boolean_t rv;
+	bool rv;
 
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 	    ("mmu_booke_is_referenced: page %p is not managed", m));
-	rv = FALSE;
+	rv = false;
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
 		PMAP_LOCK(pv->pv_pmap);
 		if ((pte = pte_find(pv->pv_pmap, pv->pv_va)) != NULL &&
 		    PTE_ISVALID(pte)) {
 			if (PTE_ISREFERENCED(pte))
-				rv = TRUE;
+				rv = true;
 		}
 		PMAP_UNLOCK(pv->pv_pmap);
 		if (rv)
@@ -1984,21 +1989,21 @@ mmu_booke_unwire(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
  * only necessary that true be returned for a small subset of pmaps for proper
  * page aging.
  */
-static boolean_t
+static bool
 mmu_booke_page_exists_quick(pmap_t pmap, vm_page_t m)
 {
 	pv_entry_t pv;
 	int loops;
-	boolean_t rv;
+	bool rv;
 
 	KASSERT((m->oflags & VPO_UNMANAGED) == 0,
 	    ("mmu_booke_page_exists_quick: page %p is not managed", m));
 	loops = 0;
-	rv = FALSE;
+	rv = false;
 	rw_wlock(&pvh_global_lock);
 	TAILQ_FOREACH(pv, &m->md.pv_list, pv_link) {
 		if (pv->pv_pmap == pmap) {
-			rv = TRUE;
+			rv = true;
 			break;
 		}
 		if (++loops >= 16)
@@ -2119,7 +2124,7 @@ mmu_booke_dumpsys_unmap(vm_paddr_t pa, size_t sz, void *va)
 extern struct dump_pa dump_map[PHYS_AVAIL_SZ + 1];
 
 void
-mmu_booke_scan_init()
+mmu_booke_scan_init(void)
 {
 	vm_offset_t va;
 	pte_t *pte;
@@ -2313,14 +2318,15 @@ mmu_booke_mapdev_attr(vm_paddr_t pa, vm_size_t size, vm_memattr_t ma)
  * 'Unmap' a range mapped by mmu_booke_mapdev().
  */
 static void
-mmu_booke_unmapdev(vm_offset_t va, vm_size_t size)
+mmu_booke_unmapdev(void *p, vm_size_t size)
 {
 #ifdef SUPPORTS_SHRINKING_TLB1
-	vm_offset_t base, offset;
+	vm_offset_t base, offset, va;
 
 	/*
 	 * Unmap only if this is inside kernel virtual space.
 	 */
+	va = (vm_offset_t)p;
 	if ((va >= VM_MIN_KERNEL_ADDRESS) && (va <= VM_MAX_KERNEL_ADDRESS)) {
 		base = trunc_page(va);
 		offset = va & PAGE_MASK;
@@ -2821,7 +2827,7 @@ tlb1_mapin_region(vm_offset_t va, vm_paddr_t pa, vm_size_t size, int wimge)
  * assembler level setup done in locore.S.
  */
 void
-tlb1_init()
+tlb1_init(void)
 {
 	vm_offset_t mas2;
 	uint32_t mas0, mas1, mas3, mas7;

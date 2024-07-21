@@ -5,7 +5,6 @@
 #
 # Arguments: 0x00 (AC offline, economy) or 0x01 (AC online, performance)
 #
-# $FreeBSD$
 #
 
 # PROVIDE: power_profile
@@ -62,6 +61,9 @@ if [ $# -ne 1 ]; then
 	err 1 "Usage: $0 [0x00|0x01]"
 fi
 load_rc_config $name
+
+# doesn't make sense to run in a svcj: privileged operations
+power_profile_svcj="NO"
 
 # Find the next state (performance or economy).
 state=$1

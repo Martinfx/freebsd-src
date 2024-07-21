@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	mlock
 MAN=
 

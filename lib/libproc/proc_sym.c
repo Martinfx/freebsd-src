@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2016-2017 Mark Johnston <markj@FreeBSD.org>
  * Copyright (c) 2010 The FreeBSD Foundation
@@ -30,9 +30,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/types.h>
 #ifndef NO_CTF
@@ -105,7 +102,7 @@ struct symsort_thunk {
 };
 
 static int
-symvalcmp(void *_thunk, const void *a1, const void *a2)
+symvalcmp(const void *a1, const void *a2, void *_thunk)
 {
 	GElf_Sym sym1, sym2;
 	struct symsort_thunk *thunk;
@@ -192,7 +189,7 @@ load_symtab(Elf *e, struct symtab *symtab, u_long sh_type)
 
 	thunk.e = e;
 	thunk.symtab = symtab;
-	qsort_r(symtab->index, nsyms, sizeof(u_int), &thunk, symvalcmp);
+	qsort_r(symtab->index, nsyms, sizeof(u_int), symvalcmp, &thunk);
 
 	return (0);
 }

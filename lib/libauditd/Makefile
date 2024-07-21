@@ -1,11 +1,11 @@
 #
-# $FreeBSD$
 #
 
 OPENBSMDIR=		${SRCTOP}/contrib/openbsm
 _LIBAUDITDDIR=		${OPENBSMDIR}/libauditd
 _LIBBSMDIR=		${OPENBSMDIR}/libbsm
 
+PACKAGE=	audit
 LIB=		auditd
 
 .PATH:		${_LIBAUDITDDIR}

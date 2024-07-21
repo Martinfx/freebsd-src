@@ -25,8 +25,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _NET_ROUTE_VAR_H_
@@ -228,6 +226,7 @@ bool nhop_can_multipath(const struct nhop_object *nh);
 bool match_nhop_gw(const struct nhop_object *nh, const struct sockaddr *gw);
 int check_info_match_nhop(const struct rt_addrinfo *info,
     const struct rtentry *rt, const struct nhop_object *nh);
+bool rib_can_4o6_nhop(void);
 
 /* route_rtentry.c */
 void vnet_rtzone_init(void);
@@ -255,6 +254,7 @@ void nhop_free_any(struct nhop_object *nh);
 struct nhop_object *nhop_get_nhop_internal(struct rib_head *rnh,
     struct nhop_object *nh, int *perror);
 
+bool nhop_check_gateway(int upper_family, int neigh_family);
 
 int nhop_create_from_info(struct rib_head *rnh, struct rt_addrinfo *info,
     struct nhop_object **nh_ret);
@@ -304,8 +304,6 @@ void nhgrp_ctl_unlink_all(struct nh_control *ctl);
 /* nhgrp_ctl.c */
 int nhgrp_dump_sysctl(struct rib_head *rh, struct sysctl_req *w);
 
-int nhgrp_get_group(struct rib_head *rh, struct weightened_nhop *wn,
-    int num_nhops, struct nhgrp_object **pnhg);
 int nhgrp_get_filtered_group(struct rib_head *rh, const struct rtentry *rt,
     const struct nhgrp_object *src, rib_filter_f_t flt_func, void *flt_data,
     struct route_nhop_data *rnd);

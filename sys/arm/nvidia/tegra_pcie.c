@@ -25,8 +25,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * Nvidia Integrated PCI/PCI-Express controller driver.
  */
@@ -49,10 +47,10 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_kern.h>
 #include <vm/pmap.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
-#include <dev/extres/phy/phy.h>
-#include <dev/extres/regulator/regulator.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
+#include <dev/phy/phy.h>
+#include <dev/regulator/regulator.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
@@ -392,7 +390,7 @@ tegra_pcbib_map_cfg(struct tegra_pcib_softc *sc, u_int bus, u_int slot,
     u_int func, u_int reg)
 {
 	bus_size_t offs;
-	int rv;
+	int flags, rv;
 
 	offs = sc->cfg_base_addr;
 	offs |= PCI_CFG_BUS(bus) | PCI_CFG_DEV(slot) | PCI_CFG_FUN(func) |
@@ -402,7 +400,12 @@ tegra_pcbib_map_cfg(struct tegra_pcib_softc *sc, u_int bus, u_int slot,
 	if (sc->cfg_handle != 0)
 		bus_space_unmap(sc->bus_tag, sc->cfg_handle, 0x800);
 
-	rv = bus_space_map(sc->bus_tag, offs, 0x800, 0, &sc->cfg_handle);
+#if defined(BUS_SPACE_MAP_NONPOSTED)
+	flags = BUS_SPACE_MAP_NONPOSTED;
+#else
+	flags = 0;
+#endif
+	rv = bus_space_map(sc->bus_tag, offs, 0x800, flags, &sc->cfg_handle);
 	if (rv != 0)
 		device_printf(sc->dev, "Cannot map config space\n");
 	else
@@ -1382,7 +1385,7 @@ tegra_pcib_attach_msi(device_t dev)
 
 	sc = device_get_softc(dev);
 
-	sc->msi_page = kmem_alloc_contig(PAGE_SIZE, M_WAITOK, 0,
+	sc->msi_page = (uintptr_t)kmem_alloc_contig(PAGE_SIZE, M_WAITOK, 0,
 	    BUS_SPACE_MAXADDR, PAGE_SIZE, 0, VM_MEMATTR_DEFAULT);
 
 	/* MSI BAR */

@@ -6,9 +6,6 @@
  * modified for PC98 by Kakefuda
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -124,12 +121,6 @@ rest(int centisecs)
  * except possibly at physical block boundaries.
  */
 
-#ifndef  __bool_true_false_are_defined
-typedef int	bool;
-#endif
-#define TRUE	1
-#define FALSE	0
-
 #define dtoi(c)		((c) - '0')
 
 static int octave;	/* currently selected octave */
@@ -185,8 +176,8 @@ playinit(void)
     whole = (100 * SECS_PER_MIN * WHOLE_NOTE) / DFLT_TEMPO;
     fill = NORMAL;
     value = DFLT_VALUE;
-    octtrack = FALSE;
-    octprefix = TRUE;	/* act as though there was an initial O(n) */
+    octtrack = false;
+    octprefix = true;	/* act as though there was an initial O(n) */
 }
 
 /* 
@@ -283,7 +274,7 @@ playstring(char *cp, size_t slen)
 					pitch -= OCTAVE_NOTES;
 				}
 			}
-			octprefix = FALSE;
+			octprefix = false;
 			lastpitch = pitch;
 
 			/* ...which may in turn be followed by an override time value */
@@ -312,29 +303,29 @@ playstring(char *cp, size_t slen)
 			break;
 		case 'O':
 			if (cp[1] == 'N' || cp[1] == 'n') {
-				octprefix = octtrack = FALSE;
+				octprefix = octtrack = false;
 				++cp;
 				slen--;
 			} else if (cp[1] == 'L' || cp[1] == 'l') {
-				octtrack = TRUE;
+				octtrack = true;
 				++cp;
 				slen--;
 			} else {
 				GETNUM(cp, octave);
 				if (octave >= nitems(pitchtab) / OCTAVE_NOTES)
 					octave = DFLT_OCTAVE;
-				octprefix = TRUE;
+				octprefix = true;
 			}
 			break;
 		case '>':
 			if (octave < nitems(pitchtab) / OCTAVE_NOTES - 1)
 				octave++;
-			octprefix = TRUE;
+			octprefix = true;
 			break;
 		case '<':
 			if (octave > 0)
 				octave--;
-			octprefix = TRUE;
+			octprefix = true;
 			break;
 		case 'N':
 			GETNUM(cp, pitch);
@@ -399,15 +390,11 @@ playstring(char *cp, size_t slen)
  * endtone(), and rest() functions defined above.
  */
 
-static int spkr_active = FALSE; /* exclusion flag */
+static bool spkr_active = false; /* exclusion flag */
 static char *spkr_inbuf;  /* incoming buf */
 
 static int
-spkropen(dev, flags, fmt, td)
-	struct cdev *dev;
-	int flags;
-	int fmt;
-	struct thread	*td;
+spkropen(struct cdev *dev, int flags, int fmt, struct thread *td)
 {
 #ifdef DEBUG
 	(void) printf("spkropen: entering with dev = %s\n", devtoname(dev));
@@ -421,16 +408,13 @@ spkropen(dev, flags, fmt, td)
 #endif /* DEBUG */
 		playinit();
 		spkr_inbuf = malloc(DEV_BSIZE, M_SPKR, M_WAITOK);
-		spkr_active = TRUE;
+		spkr_active = true;
 		return(0);
     	}
 }
 
 static int
-spkrwrite(dev, uio, ioflag)
-	struct cdev *dev;
-	struct uio *uio;
-	int ioflag;
+spkrwrite(struct cdev *dev, struct uio *uio, int ioflag)
 {
 #ifdef DEBUG
 	printf("spkrwrite: entering with dev = %s, count = %zd\n",
@@ -456,11 +440,7 @@ spkrwrite(dev, uio, ioflag)
 }
 
 static int
-spkrclose(dev, flags, fmt, td)
-	struct cdev *dev;
-	int flags;
-	int fmt;
-	struct thread *td;
+spkrclose(struct cdev *dev, int flags, int fmt, struct thread *td)
 {
 #ifdef DEBUG
 	(void) printf("spkrclose: entering with dev = %s\n", devtoname(dev));
@@ -469,17 +449,13 @@ spkrclose(dev, flags, fmt, td)
 	wakeup(&endtone);
 	wakeup(&endrest);
 	free(spkr_inbuf, M_SPKR);
-	spkr_active = FALSE;
+	spkr_active = false;
 	return(0);
 }
 
 static int
-spkrioctl(dev, cmd, cmdarg, flags, td)
-	struct cdev *dev;
-	unsigned long cmd;
-	caddr_t cmdarg;
-	int flags;
-	struct thread *td;
+spkrioctl(struct cdev *dev, unsigned long cmd, caddr_t cmdarg, int flags,
+    struct thread *td)
 {
 #ifdef DEBUG
 	(void) printf("spkrioctl: entering with dev = %s, cmd = %lx\n",

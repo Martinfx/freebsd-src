@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Khamba Staring <k.staring@quickdecay.com>
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef PIN_PATCH_REALTEK_H
@@ -580,6 +578,21 @@ static struct hdaa_model_pin_patch_t realtek_model_pin_patches[] = {
 				},
 				.pin_patches = (struct pin_patch_t[]){
 					PIN_PATCH_JACK_WO_DETECT(25),
+					{ }
+				}
+			}, { }
+		}
+	}, { /**** CODEC: HDA_CODEC_ALC287 ****/
+		.id = HDA_CODEC_ALC287,
+		.patches = (struct model_pin_patch_t[]){
+			{
+				.models = (struct pin_machine_model_t[]){
+					PIN_SUBVENDOR(LENOVO_X1CRBNG11_SUBVENDOR),
+					{ }
+				},
+				.pin_patches = (struct pin_patch_t[]){
+					PIN_PATCH_NOT_APPLICABLE(20),
+					PIN_PATCH_STRING(33, "as=1 seq=15 device=Headphones loc=Right"),
 					{ }
 				}
 			}, { }

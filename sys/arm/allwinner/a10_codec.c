@@ -22,16 +22,11 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 /*
  * Allwinner A10/A20 and H3 Audio Codec
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -45,15 +40,14 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 
 #include <dev/sound/pcm/sound.h>
-#include <dev/sound/chip.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <dev/gpio/gpiobusvar.h>
 
-#include <dev/extres/clk/clk.h>
-#include <dev/extres/hwreset/hwreset.h>
+#include <dev/clk/clk.h>
+#include <dev/hwreset/hwreset.h>
 
 #include "sunxi_dma_if.h"
 #include "mixer_if.h"

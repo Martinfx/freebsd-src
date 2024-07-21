@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/netpfil/ipfw/nat64
 
 KMOD=	ipfw_nat64

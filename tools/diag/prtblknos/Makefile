@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 BINDIR?=	/usr/bin
 
 PROG=	prtblknos

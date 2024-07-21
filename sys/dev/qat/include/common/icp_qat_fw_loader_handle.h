@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright(c) 2007-2022 Intel Corporation */
-/* $FreeBSD$ */
 #ifndef __ICP_QAT_FW_LOADER_HANDLE_H__
 #define __ICP_QAT_FW_LOADER_HANDLE_H__
 #include "icp_qat_uclo.h"
@@ -16,6 +15,7 @@ struct icp_qat_fw_loader_ae_data {
 struct icp_qat_fw_loader_hal_handle {
 	struct icp_qat_fw_loader_ae_data aes[ICP_QAT_UCLO_MAX_AE];
 	unsigned int ae_mask;
+	unsigned int admin_ae_mask;
 	unsigned int slice_mask;
 	unsigned int revision_id;
 	unsigned int ae_max_num;

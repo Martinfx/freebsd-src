@@ -1,4 +1,3 @@
-# $FreeBSD$
 #
 # Please see the file src/etc/mtree/README before making changes to this file.
 #
@@ -46,13 +45,13 @@
         ..
         ipf             mode=0700 tags=package=ipf
         ..
+        mtree
+        ..
         ntp             uname=ntpd gname=ntpd
         ..
         pkg
         ..
         ports
-        ..
-        portsnap
         ..
         zfsd tags=package=zfs
             cases
@@ -92,8 +91,6 @@
         ..
 /set gname=daemon
         lpd
-        ..
-        opielocks       mode=0700
         ..
         output
             lpd

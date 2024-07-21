@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH: ${SRCTOP}/sys/security/mac_test
 
 KMOD=	mac_test

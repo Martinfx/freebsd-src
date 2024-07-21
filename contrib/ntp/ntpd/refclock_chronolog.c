@@ -109,7 +109,7 @@ chronolog_start(
 	if (debug)
 		printf ("starting Chronolog with device %s\n",device);
 #endif
-	fd = refclock_open(device, SPEED232, 0);
+	fd = refclock_open(&peer->srcadr, device, SPEED232, 0);
 	if (fd <= 0)
 		return (0);
 
@@ -339,5 +339,5 @@ chronolog_poll(
 }
 
 #else
-int refclock_chronolog_bs;
+NONEMPTY_TRANSLATION_UNIT
 #endif /* REFCLOCK */

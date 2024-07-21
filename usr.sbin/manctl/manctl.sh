@@ -32,12 +32,11 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 #
 # manctl: 
 #	a utility for manipulating manual pages
 # functions:
-#	compress uncompressed man pages (elliminating .so's)
+#	compress uncompressed man pages (eliminating .so's)
 #		this is now two-pass.  If possible, .so's
 #		are replaced with hard links
 #	uncompress compressed man pages

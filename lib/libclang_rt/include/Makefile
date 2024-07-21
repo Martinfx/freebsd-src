@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <bsd.init.mk>
 
 .PATH:		${CRTSRC}/include/sanitizer

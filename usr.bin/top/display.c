@@ -7,8 +7,6 @@
  *
  *  Copyright (c) 1984, 1989, William LeFebvre, Rice University
  *  Copyright (c) 1989, 1990, 1992, William LeFebvre, Northwestern University
- *
- * $FreeBSD$
  */
 
 /*
@@ -254,7 +252,7 @@ i_loadave(int mpid, double avenrun[])
 
     for (i = 0; i < 3; i++)
     {
-	printf("%c %5.2f",
+	printf("%c %7.2f",
 	    i == 0 ? ':' : ',',
 	    avenrun[i]);
     }
@@ -291,7 +289,7 @@ u_loadave(int mpid, double *avenrun)
     /* we should optimize this and only display changes */
     for (i = 0; i < 3; i++)
     {
-	printf("%s%5.2f",
+	printf("%s%7.2f",
 	    i == 0 ? "" : ", ",
 	    avenrun[i]);
     }

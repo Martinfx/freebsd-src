@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	udp_pingpong
 MAN=
 

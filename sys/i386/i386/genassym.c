@@ -30,13 +30,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	from: @(#)genassym.c	5.11 (Berkeley) 5/10/91
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_apic.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_kstack_pages.h"
@@ -183,7 +179,6 @@ ASSYM(BOOTINFO_SIZE, sizeof(struct bootinfo));
 ASSYM(BI_VERSION, offsetof(struct bootinfo, bi_version));
 ASSYM(BI_KERNELNAME, offsetof(struct bootinfo, bi_kernelname));
 ASSYM(BI_NFS_DISKLESS, offsetof(struct bootinfo, bi_nfs_diskless));
-ASSYM(BI_ENDCOMMON, offsetof(struct bootinfo, bi_endcommon));
 ASSYM(NFSDISKLESS_SIZE, sizeof(struct nfs_diskless));
 ASSYM(BI_SIZE, offsetof(struct bootinfo, bi_size));
 ASSYM(BI_SYMTAB, offsetof(struct bootinfo, bi_symtab));

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 1997, 1998, 1999 Justin T. Gibbs.
  * Copyright (c) 1997, 1998, 2003 Kenneth D. Merry.
@@ -28,9 +28,6 @@
  *
  * $Id: //depot/users/kenm/FreeBSD-test2/sys/cam/ctl/ctl_scsi_all.h#2 $
  */
-
-__FBSDID("$FreeBSD$");
-
 __BEGIN_DECLS
 const char *	ctl_scsi_status_string(struct ctl_scsiio *ctsio);
 #ifdef _KERNEL
@@ -46,7 +43,7 @@ int ctl_scsi_command_string(struct ctl_scsiio *ctsio,
 int ctl_scsi_sense_sbuf(struct ctl_scsiio *ctsio,
 			struct scsi_inquiry_data *inq_data, struct sbuf *sb,
 			scsi_sense_string_flags flags);
-void ctl_scsi_path_string(union ctl_io *io, char *path_str, int strlen);
+void ctl_scsi_path_string(struct ctl_io_hdr *hdr, char *path_str, int strlen);
 char *ctl_scsi_sense_string(struct ctl_scsiio *ctsio,
 			    struct scsi_inquiry_data *inq_data, char *str,
 			    int str_len);

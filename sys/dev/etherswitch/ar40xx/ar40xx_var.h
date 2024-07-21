@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2022 Adrian Chadd <adrian@FreeBSD.org>.
  *
@@ -120,7 +120,7 @@ struct ar40xx_softc {
 	struct {
 		char *ifname[AR40XX_NUM_PHYS];
 		device_t miibus[AR40XX_NUM_PHYS];
-		struct ifnet *ifp[AR40XX_NUM_PHYS];
+		if_t ifp[AR40XX_NUM_PHYS];
 	} sc_phys;
 
 	/* ATU (address table unit) support */

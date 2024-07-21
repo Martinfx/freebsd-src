@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2020 Alan Somers
  *
@@ -23,12 +23,11 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 extern "C" {
 #include <sys/param.h>
+#include <sys/mman.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -44,22 +43,6 @@ using namespace testing;
 
 class CopyFileRange: public FuseTest {
 public:
-static sig_atomic_t s_sigxfsz;
-
-void SetUp() {
-	s_sigxfsz = 0;
-	FuseTest::SetUp();
-}
-
-void TearDown() {
-	struct sigaction sa;
-
-	bzero(&sa, sizeof(sa));
-	sa.sa_handler = SIG_DFL;
-	sigaction(SIGXFSZ, &sa, NULL);
-
-	FuseTest::TearDown();
-}
 
 void expect_maybe_lseek(uint64_t ino)
 {
@@ -114,12 +97,6 @@ void expect_write(uint64_t ino, uint64_t offset, uint64_t isize,
 
 };
 
-sig_atomic_t CopyFileRange::s_sigxfsz = 0;
-
-void sigxfsz_handler(int __unused sig) {
-	CopyFileRange::s_sigxfsz = 1;
-}
-
 
 class CopyFileRange_7_27: public CopyFileRange {
 public:
@@ -136,6 +113,37 @@ virtual void SetUp() {
 	CopyFileRange::SetUp();
 }
 };
+
+class CopyFileRangeRlimitFsize: public CopyFileRange {
+public:
+static sig_atomic_t s_sigxfsz;
+struct rlimit	m_initial_limit;
+
+virtual void SetUp() {
+	s_sigxfsz = 0;
+	getrlimit(RLIMIT_FSIZE, &m_initial_limit);
+	CopyFileRange::SetUp();
+}
+
+void TearDown() {
+	struct sigaction sa;
+
+	setrlimit(RLIMIT_FSIZE, &m_initial_limit);
+
+	bzero(&sa, sizeof(sa));
+	sa.sa_handler = SIG_DFL;
+	sigaction(SIGXFSZ, &sa, NULL);
+
+	FuseTest::TearDown();
+}
+
+};
+
+sig_atomic_t CopyFileRangeRlimitFsize::s_sigxfsz = 0;
+
+void sigxfsz_handler(int __unused sig) {
+	CopyFileRangeRlimitFsize::s_sigxfsz = 1;
+}
 
 TEST_F(CopyFileRange, eio)
 {
@@ -189,7 +197,7 @@ TEST_F(CopyFileRange, evicts_cache)
 	const char RELPATH1[] = "src.txt";
 	const char FULLPATH2[] = "mountpoint/dst.txt";
 	const char RELPATH2[] = "dst.txt";
-	void *buf0, *buf1, *buf;
+	char *buf0, *buf1, *buf;
 	const uint64_t ino1 = 42;
 	const uint64_t ino2 = 43;
 	const uint64_t fh1 = 0xdeadbeef1a7ebabe;
@@ -201,7 +209,7 @@ TEST_F(CopyFileRange, evicts_cache)
 	ssize_t len = m_maxbcachebuf;
 	int fd1, fd2;
 
-	buf0 = malloc(m_maxbcachebuf);
+	buf0 = new char[m_maxbcachebuf];
 	memset(buf0, 42, m_maxbcachebuf);
 
 	expect_lookup(RELPATH1, ino1, S_IFREG | 0644, fsize1, 1);
@@ -232,7 +240,7 @@ TEST_F(CopyFileRange, evicts_cache)
 	fd2 = open(FULLPATH2, O_RDWR);
 
 	// Prime cache
-	buf = malloc(m_maxbcachebuf);
+	buf = new char[m_maxbcachebuf];
 	ASSERT_EQ(m_maxbcachebuf, pread(fd2, buf, m_maxbcachebuf, start2))
 		<< strerror(errno);
 	EXPECT_EQ(0, memcmp(buf0, buf, m_maxbcachebuf));
@@ -241,7 +249,7 @@ TEST_F(CopyFileRange, evicts_cache)
 	ASSERT_EQ(len, copy_file_range(fd1, &start1, fd2, &start2, len, 0));
 
 	// Read again.  This should bypass the cache and read direct from server
-	buf1 = malloc(m_maxbcachebuf);
+	buf1 = new char[m_maxbcachebuf];
 	memset(buf1, 69, m_maxbcachebuf);
 	start2 -= len;
 	expect_read(ino2, start2, m_maxbcachebuf, m_maxbcachebuf, buf1, -1,
@@ -250,9 +258,9 @@ TEST_F(CopyFileRange, evicts_cache)
 		<< strerror(errno);
 	EXPECT_EQ(0, memcmp(buf1, buf, m_maxbcachebuf));
 
-	free(buf1);
-	free(buf0);
-	free(buf);
+	delete[] buf1;
+	delete[] buf0;
+	delete[] buf;
 	leak(fd1);
 	leak(fd2);
 }
@@ -313,8 +321,78 @@ TEST_F(CopyFileRange, fallback)
 	ASSERT_EQ(len, copy_file_range(fd1, &start1, fd2, &start2, len, 0));
 }
 
-/* fusefs should respect RLIMIT_FSIZE */
-TEST_F(CopyFileRange, rlimit_fsize)
+/*
+ * Writes via mmap should not conflict with using copy_file_range.  Any dirty
+ * pages that overlap with copy_file_range's input should be flushed before
+ * FUSE_COPY_FILE_RANGE is sent.
+ */
+TEST_F(CopyFileRange, mmap_write)
+{
+	const char FULLPATH[] = "mountpoint/src.txt";
+	const char RELPATH[] = "src.txt";
+	uint8_t *wbuf, *fbuf;
+	void *p;
+	size_t fsize = 0x6000;
+	size_t wsize = 0x3000;
+	ssize_t r;
+	off_t offset2_in = 0;
+	off_t offset2_out = wsize;
+	size_t copysize = wsize;
+	const uint64_t ino = 42;
+	const uint64_t fh = 0xdeadbeef1a7ebabe;
+	int fd;
+	const mode_t mode = 0644;
+
+	fbuf = new uint8_t[fsize]();
+	wbuf = new uint8_t[wsize];
+	memset(wbuf, 1, wsize);
+
+	expect_lookup(RELPATH, ino, S_IFREG | mode, fsize, 1);
+	expect_open(ino, 0, 1, fh);
+	/* This read is initiated by the mmap write */
+	expect_read(ino, 0, fsize, fsize, fbuf, -1, fh);
+	/* This write flushes the buffer filled by the mmap write */
+	expect_write(ino, 0, wsize, wsize, wbuf);
+
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([=](auto in) {
+			return (in.header.opcode == FUSE_COPY_FILE_RANGE &&
+				(off_t)in.body.copy_file_range.off_in == offset2_in &&
+				(off_t)in.body.copy_file_range.off_out == offset2_out &&
+				in.body.copy_file_range.len == copysize
+			);
+		}, Eq(true)),
+		_)
+	).WillOnce(Invoke(ReturnImmediate([&](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, write);
+		out.body.write.size = copysize;
+	})));
+
+	fd = open(FULLPATH, O_RDWR);
+
+	/* First, write some data via mmap */
+	p = mmap(NULL, wsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	ASSERT_NE(MAP_FAILED, p) << strerror(errno);
+	memmove((uint8_t*)p, wbuf, wsize);
+	ASSERT_EQ(0, munmap(p, wsize)) << strerror(errno);
+
+	/*
+	 * Then copy it around the file via copy_file_range.  This should
+	 * trigger a FUSE_WRITE to flush the pages written by mmap.
+	 */
+	r = copy_file_range(fd, &offset2_in, fd, &offset2_out, copysize, 0);
+	ASSERT_EQ(copysize, (size_t)r) << strerror(errno);
+
+	delete[] wbuf;
+	delete[] fbuf;
+}
+
+
+/*
+ * copy_file_range should send SIGXFSZ and return EFBIG when the operation
+ * would exceed the limit imposed by RLIMIT_FSIZE.
+ */
+TEST_F(CopyFileRangeRlimitFsize, signal)
 {
 	const char FULLPATH1[] = "mountpoint/src.txt";
 	const char RELPATH1[] = "src.txt";
@@ -344,7 +422,7 @@ TEST_F(CopyFileRange, rlimit_fsize)
 	).Times(0);
 
 	rl.rlim_cur = fsize2;
-	rl.rlim_max = 10 * fsize2;
+	rl.rlim_max = m_initial_limit.rlim_max;
 	ASSERT_EQ(0, setrlimit(RLIMIT_FSIZE, &rl)) << strerror(errno);
 	ASSERT_NE(SIG_ERR, signal(SIGXFSZ, sigxfsz_handler)) << strerror(errno);
 
@@ -353,6 +431,57 @@ TEST_F(CopyFileRange, rlimit_fsize)
 	ASSERT_EQ(-1, copy_file_range(fd1, &start1, fd2, &start2, len, 0));
 	EXPECT_EQ(EFBIG, errno);
 	EXPECT_EQ(1, s_sigxfsz);
+}
+
+/*
+ * When crossing the RLIMIT_FSIZE boundary, writes should be truncated, not
+ * aborted.
+ * https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=266611
+ */
+TEST_F(CopyFileRangeRlimitFsize, truncate)
+{
+	const char FULLPATH1[] = "mountpoint/src.txt";
+	const char RELPATH1[] = "src.txt";
+	const char FULLPATH2[] = "mountpoint/dst.txt";
+	const char RELPATH2[] = "dst.txt";
+	struct rlimit rl;
+	const uint64_t ino1 = 42;
+	const uint64_t ino2 = 43;
+	const uint64_t fh1 = 0xdeadbeef1a7ebabe;
+	const uint64_t fh2 = 0xdeadc0de88c0ffee;
+	off_t fsize1 = 1 << 20;		/* 1 MiB */
+	off_t fsize2 = 1 << 19;		/* 512 KiB */
+	off_t start1 = 1 << 18;
+	off_t start2 = fsize2;
+	ssize_t len = 65536;
+	off_t limit = start2 + len / 2;
+	int fd1, fd2;
+
+	expect_lookup(RELPATH1, ino1, S_IFREG | 0644, fsize1, 1);
+	expect_lookup(RELPATH2, ino2, S_IFREG | 0644, fsize2, 1);
+	expect_open(ino1, 0, 1, fh1);
+	expect_open(ino2, 0, 1, fh2);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([=](auto in) {
+			return (in.header.opcode == FUSE_COPY_FILE_RANGE &&
+				(off_t)in.body.copy_file_range.off_out == start2 &&
+				in.body.copy_file_range.len == (size_t)len / 2
+			);
+		}, Eq(true)),
+		_)
+	).WillOnce(Invoke(ReturnImmediate([=](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, write);
+		out.body.write.size = len / 2;
+	})));
+
+	rl.rlim_cur = limit;
+	rl.rlim_max = m_initial_limit.rlim_max;
+	ASSERT_EQ(0, setrlimit(RLIMIT_FSIZE, &rl)) << strerror(errno);
+	ASSERT_NE(SIG_ERR, signal(SIGXFSZ, sigxfsz_handler)) << strerror(errno);
+
+	fd1 = open(FULLPATH1, O_RDONLY);
+	fd2 = open(FULLPATH2, O_WRONLY);
+	ASSERT_EQ(len / 2, copy_file_range(fd1, &start1, fd2, &start2, len, 0));
 }
 
 TEST_F(CopyFileRange, ok)

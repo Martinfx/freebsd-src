@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2006 Marcel Moolenaar
  * All rights reserved.
@@ -24,8 +24,6 @@
  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _DEV_PUC_BFE_H_
@@ -64,10 +62,10 @@ struct puc_softc {
 	int		sc_nports;
 	struct puc_port *sc_port;
 
-	int		sc_fastintr:1;
-	int		sc_leaving:1;
-	int		sc_polled:1;
-	int		sc_msi:1;
+	bool		sc_fastintr:1;
+	bool		sc_leaving:1;
+	bool		sc_polled:1;
+	bool		sc_msi:1;
 
 	int		sc_ilr;
 
@@ -91,7 +89,7 @@ struct resource *puc_bus_alloc_resource(device_t, device_t, int, int *,
 int puc_bus_get_resource(device_t, device_t, int, int, rman_res_t *, rman_res_t *);
 int puc_bus_print_child(device_t, device_t);
 int puc_bus_read_ivar(device_t, device_t, int, uintptr_t *);
-int puc_bus_release_resource(device_t, device_t, int, int, struct resource *);
+int puc_bus_release_resource(device_t, device_t, struct resource *);
 int puc_bus_setup_intr(device_t, device_t, struct resource *, int,
     driver_filter_t *, driver_intr_t *, void *, void **);
 int puc_bus_teardown_intr(device_t, device_t, struct resource *, void *);

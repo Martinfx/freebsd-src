@@ -39,12 +39,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ffs_alloc.c	8.19 (Berkeley) 7/13/95
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/time.h>
@@ -305,7 +300,6 @@ ffs_alloccg(struct inode *ip, int cg, daddr_t bpref, int size)
 	error = bread((void *)ip->i_devvp, fsbtodb(fs, cgtod(fs, cg)),
 	    (int)fs->fs_cgsize, NULL, &bp);
 	if (error) {
-		brelse(bp);
 		return (0);
 	}
 	cgp = (struct cg *)bp->b_data;
@@ -449,7 +443,6 @@ ffs_blkfree(struct inode *ip, daddr_t bno, long size)
 	error = bread((void *)ip->i_devvp, fsbtodb(fs, cgtod(fs, cg)),
 	    (int)fs->fs_cgsize, NULL, &bp);
 	if (error) {
-		brelse(bp);
 		return;
 	}
 	cgp = (struct cg *)bp->b_data;

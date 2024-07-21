@@ -58,13 +58,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- *	@(#)ip_input.c	8.2 (Berkeley) 1/4/94
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
@@ -95,6 +91,7 @@ __FBSDID("$FreeBSD$");
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_types.h>
+#include <net/if_private.h>
 #include <net/if_dl.h>
 #include <net/route.h>
 #include <net/netisr.h>
@@ -129,11 +126,9 @@ __FBSDID("$FreeBSD$");
 
 #include <netipsec/ipsec_support.h>
 
-#include <netinet6/ip6protosw.h>
-
-ipproto_input_t		*ip6_protox[IPPROTO_MAX] = {
+ip6proto_input_t	*ip6_protox[IPPROTO_MAX] = {
 			    [0 ... IPPROTO_MAX - 1] = rip6_input };
-ipproto_ctlinput_t	*ip6_ctlprotox[IPPROTO_MAX] = {
+ip6proto_ctlinput_t	*ip6_ctlprotox[IPPROTO_MAX] = {
 			    [0 ... IPPROTO_MAX - 1] = rip6_ctlinput };
 
 VNET_DEFINE(struct in6_ifaddrhead, in6_ifaddrhead);
@@ -209,6 +204,7 @@ SYSCTL_PROC(_net_inet6_ip6, IPV6CTL_INTRDQMAXLEN, intr_direct_queue_maxlen,
 #endif
 
 VNET_DEFINE(pfil_head_t, inet6_pfil_head);
+VNET_DEFINE(pfil_head_t, inet6_local_pfil_head);
 
 VNET_PCPUSTAT_DEFINE(struct ip6stat, ip6stat);
 VNET_PCPUSTAT_SYSINIT(ip6stat);
@@ -245,6 +241,10 @@ ip6_vnet_init(void *arg __unused)
 	args.pa_type = PFIL_TYPE_IP6;
 	args.pa_headname = PFIL_INET6_NAME;
 	V_inet6_pfil_head = pfil_head_register(&args);
+
+	args.pa_flags = PFIL_OUT;
+	args.pa_headname = PFIL_INET6_LOCAL_NAME;
+	V_inet6_local_pfil_head = pfil_head_register(&args);
 
 	if (hhook_head_register(HHOOK_TYPE_IPSEC_IN, AF_INET6,
 	    &V_ipsec_hhh_in[HHOOK_IPSEC_INET6],
@@ -308,7 +308,8 @@ ip6_init(void *arg __unused)
 SYSINIT(ip6_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD, ip6_init, NULL);
 
 int
-ip6proto_register(uint8_t proto, ipproto_input_t input, ipproto_ctlinput_t ctl)
+ip6proto_register(uint8_t proto, ip6proto_input_t input,
+    ip6proto_ctlinput_t ctl)
 {
 
 	MPASS(proto > 0);
@@ -572,7 +573,7 @@ ip6_input(struct mbuf *m)
 			int ifindex = ifp->if_index;
 			if (ifindex >= IP6S_M2MMAX)
 				ifindex = 0;
-			IP6STAT_INC(ip6s_m2m[ifindex]);
+			IP6STAT_INC2(ip6s_m2m, ifindex);
 		} else
 			IP6STAT_INC(ip6s_m1);
 	}
@@ -616,7 +617,7 @@ ip6_input(struct mbuf *m)
 		goto bad;
 	}
 
-	IP6STAT_INC(ip6s_nxthist[ip6->ip6_nxt]);
+	IP6STAT_INC2(ip6s_nxthist, ip6->ip6_nxt);
 	IP_PROBE(receive, NULL, NULL, ip6, rcvif, NULL, ip6);
 
 	/*
@@ -655,12 +656,6 @@ ip6_input(struct mbuf *m)
 		in6_ifstat_inc(rcvif, ifs6_in_addrerr);
 		goto bad;
 	}
-#ifdef ALTQ
-	if (altq_input != NULL && (*altq_input)(m, AF_INET6) == 0) {
-		/* packet is dropped by traffic conditioner */
-		return;
-	}
-#endif
 	/*
 	 * The following check is not documented in specs.  A malicious
 	 * party may be able to use IPv4 mapped addr to confuse tcp/udp stack
@@ -737,7 +732,7 @@ ip6_input(struct mbuf *m)
 		goto passin;
 
 	odst = ip6->ip6_dst;
-	if (pfil_run_hooks(V_inet6_pfil_head, &m, m->m_pkthdr.rcvif, PFIL_IN,
+	if (pfil_mbuf_in(V_inet6_pfil_head, &m, m->m_pkthdr.rcvif,
 	    NULL) != PFIL_PASS)
 		return;
 	ip6 = mtod(m, struct ip6_hdr *);
@@ -888,6 +883,18 @@ passin:
 	} else if (!ours) {
 		ip6_forward(m, srcrt);
 		return;
+	}
+
+	/*
+	 * We are going to ship the packet to the local protocol stack. Call the
+	 * filter again for this 'output' action, allowing redirect-like rules
+	 * to adjust the source address.
+	 */
+	if (PFIL_HOOKED_OUT(V_inet6_local_pfil_head)) {
+		if (pfil_mbuf_out(V_inet6_local_pfil_head, &m, V_loif, NULL) !=
+		    PFIL_PASS)
+			return;
+		ip6 = mtod(m, struct ip6_hdr *);
 	}
 
 	/*
@@ -1714,16 +1721,3 @@ ip6_lasthdr(const struct mbuf *m, int off, int proto, int *nxtp)
 		proto = *nxtp;
 	}
 }
-
-/*
- * System control for IP6
- */
-
-u_char	inet6ctlerrmap[PRC_NCMDS] = {
-	0,		0,		0,		0,
-	0,		EMSGSIZE,	EHOSTDOWN,	EHOSTUNREACH,
-	EHOSTUNREACH,	EHOSTUNREACH,	ECONNREFUSED,	ECONNREFUSED,
-	EMSGSIZE,	EHOSTUNREACH,	0,		0,
-	0,		0,		EHOSTUNREACH,	0,
-	ENOPROTOOPT,	ECONNREFUSED
-};

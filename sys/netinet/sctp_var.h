@@ -32,9 +32,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #ifndef _NETINET_SCTP_VAR_H_
 #define _NETINET_SCTP_VAR_H_
 
@@ -198,7 +195,7 @@ extern struct protosw sctp_seqpacket_protosw, sctp_stream_protosw;
 }
 
 #define sctp_sbfree(ctl, stcb, sb, m) { \
-	SCTP_SAVE_ATOMIC_DECREMENT(&(sb)->sb_cc, SCTP_BUF_LEN((m))); \
+	SCTP_SB_DECR(sb, SCTP_BUF_LEN((m))); \
 	SCTP_SAVE_ATOMIC_DECREMENT(&(sb)->sb_mbcnt, MSIZE); \
 	if (((ctl)->do_not_ref_stcb == 0) && stcb) {\
 		SCTP_SAVE_ATOMIC_DECREMENT(&(stcb)->asoc.sb_cc, SCTP_BUF_LEN((m))); \
@@ -210,7 +207,7 @@ extern struct protosw sctp_seqpacket_protosw, sctp_stream_protosw;
 }
 
 #define sctp_sballoc(stcb, sb, m) { \
-	atomic_add_int(&(sb)->sb_cc,SCTP_BUF_LEN((m))); \
+	SCTP_SB_INCR(sb, SCTP_BUF_LEN((m))); \
 	atomic_add_int(&(sb)->sb_mbcnt, MSIZE); \
 	if (stcb) { \
 		atomic_add_int(&(stcb)->asoc.sb_cc, SCTP_BUF_LEN((m))); \
@@ -321,27 +318,30 @@ struct sctp_tcb;
 struct sctphdr;
 
 void sctp_close(struct socket *so);
+void sctp_abort(struct socket *so);
 int sctp_disconnect(struct socket *so);
-void sctp_ctlinput(int, struct sockaddr *, void *);
+ipproto_ctlinput_t sctp_ctlinput;
 int sctp_ctloutput(struct socket *, struct sockopt *);
+#ifdef INET
 void sctp_input_with_port(struct mbuf *, int, uint16_t);
 int sctp_input(struct mbuf **, int *, int);
+#endif
 void sctp_pathmtu_adjustment(struct sctp_tcb *, uint32_t, bool);
 void
 sctp_notify(struct sctp_inpcb *, struct sctp_tcb *, struct sctp_nets *,
     uint8_t, uint8_t, uint16_t, uint32_t);
 int sctp_flush(struct socket *, int);
-int sctp_shutdown(struct socket *);
+int sctp_shutdown(struct socket *, enum shutdown_how);
 int
 sctp_bindx(struct socket *, int, struct sockaddr_storage *,
     int, int, struct proc *);
 
 /* can't use sctp_assoc_t here */
 int sctp_peeloff(struct socket *, struct socket *, int, caddr_t, int *);
-int sctp_ingetaddr(struct socket *, struct sockaddr **);
-int sctp_peeraddr(struct socket *, struct sockaddr **);
+int sctp_ingetaddr(struct socket *, struct sockaddr *);
+int sctp_peeraddr(struct socket *, struct sockaddr *);
 int sctp_listen(struct socket *, int, struct thread *);
-int sctp_accept(struct socket *, struct sockaddr **);
+int sctp_accept(struct socket *, struct sockaddr *);
 
 #endif				/* _KERNEL */
 

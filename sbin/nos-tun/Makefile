@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 PROG=	nos-tun
 MAN=	nos-tun.8
 WARNS?=	3

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 BINDIR?=	/usr/local/bin
 PROG=	wtap
 SRC=	wtap.c

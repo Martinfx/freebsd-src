@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 BINDIR		?= ${HOME}/bin
 BINOWN		?= ${USER}
 BINGRP		?= ${USER}

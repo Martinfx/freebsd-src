@@ -29,14 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static const char sccsid[] = "@(#)setup.c	8.10 (Berkeley) 5/9/95";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/disk.h>
 #include <sys/stat.h>
@@ -54,11 +46,14 @@ __FBSDID("$FreeBSD$");
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
-#include <libufs.h>
 
 #include "fsck.h"
 
-struct inoinfo **inphead, **inpsort;	/* info about all inodes */
+struct inohash *inphash;	       /* hash list of directory inode info */
+struct inoinfo **inpsort;	       /* disk order list of directory inodes */
+struct inode snaplist[FSMAXSNAP + 1];  /* list of active snapshots */
+int snapcnt;			       /* number of active snapshots */
+char *copybuf;			       /* buffer to copy snapshot blocks */
 
 static int sbhashfailed;
 #define POWEROF2(num)	(((num) & ((num) - 1)) == 0)
@@ -66,6 +61,8 @@ static int sbhashfailed;
 static int calcsb(char *dev, int devfd, struct fs *fs);
 static void saverecovery(int readfd, int writefd);
 static int chkrecovery(int devfd);
+static int getlbnblkno(struct inodesc *);
+static int checksnapinfo(struct inode *);
 
 /*
  * Read in a superblock finding an alternate if necessary.
@@ -75,14 +72,19 @@ static int chkrecovery(int devfd);
 int
 setup(char *dev)
 {
-	long bmapsize;
+	long i, bmapsize;
+	struct inode ip;
 
 	/*
 	 * We are expected to have an open file descriptor and a superblock.
 	 */
 	if (fsreadfd < 0 || havesb == 0) {
-		if (debug)
-			printf("setup: bad fsreadfd or missing superblock\n");
+		if (debug) {
+			if (fsreadfd < 0)
+				printf("setup: missing fsreadfd\n");
+			else
+				printf("setup: missing superblock\n");
+		}
 		return (0);
 	}
 	if (preen == 0)
@@ -159,14 +161,14 @@ setup(char *dev)
 		    (unsigned)(sizeof(struct inostatlist) * (sblock.fs_ncg)));
 		goto badsb;
 	}
-	numdirs = MAX(sblock.fs_cstotal.cs_ndir, 128);
-	dirhash = numdirs;
+	numdirs = sblock.fs_cstotal.cs_ndir;
+	dirhash = MAX(numdirs / 2, 1);
 	inplast = 0;
 	listmax = numdirs + 10;
 	inpsort = (struct inoinfo **)Calloc(listmax, sizeof(struct inoinfo *));
-	inphead = (struct inoinfo **)Calloc(numdirs, sizeof(struct inoinfo *));
-	if (inpsort == NULL || inphead == NULL) {
-		printf("cannot alloc %ju bytes for inphead\n",
+	inphash = (struct inohash *)Calloc(dirhash, sizeof(struct inohash));
+	if (inpsort == NULL || inphash == NULL) {
+		printf("cannot alloc %ju bytes for inphash\n",
 		    (uintmax_t)numdirs * sizeof(struct inoinfo *));
 		goto badsb;
 	}
@@ -174,11 +176,187 @@ setup(char *dev)
 		usedsoftdep = 1;
 	else
 		usedsoftdep = 0;
+	/*
+	 * Collect any snapshot inodes so that we can allow them to
+	 * claim any blocks that we free. The code for doing this is
+	 * imported here and into inode.c from sys/ufs/ffs/ffs_snapshot.c.
+	 */
+	for (snapcnt = 0; snapcnt < FSMAXSNAP; snapcnt++) {
+		if (sblock.fs_snapinum[snapcnt] == 0)
+			break;
+		ginode(sblock.fs_snapinum[snapcnt], &ip);
+		if ((DIP(ip.i_dp, di_mode) & IFMT) == IFREG &&
+		    (DIP(ip.i_dp, di_flags) & SF_SNAPSHOT) != 0 &&
+		    checksnapinfo(&ip)) {
+			if (debug)
+				printf("Load snapshot %jd\n",
+				    (intmax_t)sblock.fs_snapinum[snapcnt]);
+			snaplist[snapcnt] = ip;
+			continue;
+		}
+		printf("Removing non-snapshot inode %ju from snapshot list\n",
+		    (uintmax_t)sblock.fs_snapinum[snapcnt]);
+		irelse(&ip);
+		for (i = snapcnt + 1; i < FSMAXSNAP; i++) {
+			if (sblock.fs_snapinum[i] == 0)
+				break;
+			sblock.fs_snapinum[i - 1] = sblock.fs_snapinum[i];
+		}
+		sblock.fs_snapinum[i - 1] = 0;
+		snapcnt--;
+		sbdirty();
+	}
+	if (snapcnt > 0 && copybuf == NULL) {
+		copybuf = Balloc(sblock.fs_bsize);
+		if (copybuf == NULL)
+			errx(EEXIT, "cannot allocate space for snapshot "
+			    "copy buffer");
+	}
 	return (1);
 
 badsb:
 	ckfini(0);
 	return (0);
+}
+
+/*
+ * Check for valid snapshot information.
+ *
+ * Each snapshot has a list of blocks that have been copied. This list
+ * is consulted before checking the snapshot inode. Its purpose is to
+ * speed checking of commonly checked blocks and to avoid recursive
+ * checks of the snapshot inode. In particular, the list must contain
+ * the superblock, the superblock summary information, and all the
+ * cylinder group blocks. The list may contain other commonly checked
+ * pointers such as those of the blocks that contain the snapshot inodes.
+ * The list is sorted into block order to allow binary search lookup.
+ *
+ * The twelve direct direct block pointers of the snapshot are always
+ * copied, so we test for them first before checking the list itself
+ * (i.e., they are not in the list).
+ *
+ * The checksnapinfo() routine needs to ensure that the list contains at
+ * least the super block, its summary information, and the cylinder groups.
+ * Here we check the list first for the superblock, zero or more cylinder
+ * groups up to the location of the superblock summary information, the
+ * summary group information, and any remaining cylinder group maps that
+ * follow it. We skip over any other entries in the list.
+ */
+#define CHKBLKINLIST(chkblk)						\
+	/* All UFS_NDADDR blocks are copied */				\
+	if ((chkblk) >= UFS_NDADDR) {					\
+		/* Skip over blocks that are not of interest */		\
+		while (*blkp < (chkblk) && blkp < lastblkp)		\
+			blkp++;						\
+		/* Fail if end of list and not all blocks found */	\
+		if (blkp >= lastblkp) {					\
+			pwarn("UFS%d snapshot inode %jd failed: "	\
+			    "improper block list length (%jd)\n",	\
+			    sblock.fs_magic == FS_UFS1_MAGIC ? 1 : 2,	\
+			    (intmax_t)snapip->i_number,			\
+			    (intmax_t)(lastblkp - &snapblklist[0]));	\
+			status = 0;					\
+		}							\
+		/* Fail if block we seek is missing */			\
+		else if (*blkp++ != (chkblk)) {				\
+			pwarn("UFS%d snapshot inode %jd failed: "	\
+			    "block list (%jd) != %s (%jd)\n",		\
+			    sblock.fs_magic == FS_UFS1_MAGIC ? 1 : 2,	\
+			    (intmax_t)snapip->i_number,			\
+			    (intmax_t)blkp[-1],	#chkblk,		\
+			    (intmax_t)chkblk);				\
+			status = 0;					\
+		}							\
+	}
+
+static int
+checksnapinfo(struct inode *snapip)
+{
+	struct fs *fs;
+	struct bufarea *bp;
+	struct inodesc idesc;
+	daddr_t *snapblklist, *blkp, *lastblkp, csblkno;
+	int cg, loc, len, status;
+	ufs_lbn_t lbn;
+	size_t size;
+
+	fs = &sblock;
+	memset(&idesc, 0, sizeof(struct inodesc));
+	idesc.id_type = ADDR;
+	idesc.id_func = getlbnblkno;
+	idesc.id_number = snapip->i_number;
+	lbn = howmany(fs->fs_size, fs->fs_frag);
+	idesc.id_parent = lbn;		/* sought after blkno */
+	if ((ckinode(snapip->i_dp, &idesc) & FOUND) == 0)
+		return (0);
+	size = fragroundup(fs,
+	    DIP(snapip->i_dp, di_size) - lblktosize(fs, lbn));
+	bp = getdatablk(idesc.id_parent, size, BT_DATA);
+	if (bp->b_errs != 0)
+		return (0);
+	snapblklist = (daddr_t *)bp->b_un.b_buf;
+	/*
+	 * snapblklist[0] is the size of the list
+	 * snapblklist[1] is the first element of the list
+	 *
+	 * We need to be careful to bound the size of the list and verify
+	 * that we have not run off the end of it if it or its size has
+	 * been corrupted.
+	 */
+	blkp = &snapblklist[1];
+	lastblkp = &snapblklist[MAX(0,
+	    MIN(snapblklist[0] + 1, size / sizeof(daddr_t)))];
+	status = 1;
+	/* Check that the superblock is listed. */
+	CHKBLKINLIST(lblkno(fs, fs->fs_sblockloc));
+	if (status == 0)
+		goto out;
+	/*
+	 * Calculate where the summary information is located.
+	 * Usually it is in the first cylinder group, but growfs
+	 * may move it to the first cylinder group that it adds.
+	 *
+	 * Check all cylinder groups up to the summary information.
+	 */
+	csblkno = fragstoblks(fs, fs->fs_csaddr);
+	for (cg = 0; cg < fs->fs_ncg; cg++) {
+		if (fragstoblks(fs, cgtod(fs, cg)) > csblkno)
+			break;
+		CHKBLKINLIST(fragstoblks(fs, cgtod(fs, cg)));
+		if (status == 0)
+			goto out;
+	}
+	/* Check the summary information block(s). */
+	len = howmany(fs->fs_cssize, fs->fs_bsize);
+	for (loc = 0; loc < len; loc++) {
+		CHKBLKINLIST(csblkno + loc);
+		if (status == 0)
+			goto out;
+	}
+	/* Check the remaining cylinder groups. */
+	for (; cg < fs->fs_ncg; cg++) {
+		CHKBLKINLIST(fragstoblks(fs, cgtod(fs, cg)));
+		if (status == 0)
+			goto out;
+	}
+out:
+	brelse(bp);
+	return (status);
+}
+
+/*
+ * Return the block number associated with a specified inode lbn.
+ * Requested lbn is in id_parent. If found, block is returned in
+ * id_parent.
+ */
+static int
+getlbnblkno(struct inodesc *idesc)
+{
+
+	if (idesc->id_lbn < idesc->id_parent)
+		return (KEEPON);
+	idesc->id_parent = idesc->id_blkno;
+	return (STOP | FOUND);
 }
 
 /*
@@ -195,14 +373,14 @@ openfilesys(char *dev)
 	if ((statb.st_mode & S_IFMT) != S_IFCHR &&
 	    (statb.st_mode & S_IFMT) != S_IFBLK) {
 		if (bkgrdflag != 0 && (statb.st_flags & SF_SNAPSHOT) == 0) {
-			pfatal("BACKGROUND FSCK LACKS A SNAPSHOT\n");
-			exit(EEXIT);
+			pwarn("BACKGROUND FSCK LACKS A SNAPSHOT\n");
+			return (0);
 		}
 		if (bkgrdflag != 0) {
 			cursnapshot = statb.st_ino;
 		} else {
-			pfatal("%s IS NOT A DISK DEVICE\n", dev);
-			if (reply("CONTINUE") == 0)
+			pwarn("%s IS NOT A DISK DEVICE\n", dev);
+			if (preen || reply("CONTINUE") == 0)
 				return (0);
 		}
 	}
@@ -316,7 +494,7 @@ sblock_init(void)
 	fsmodified = 0;
 	lfdir = 0;
 	initbarea(&sblk, BT_SUPERBLK);
-	sblk.b_un.b_buf = Malloc(SBLOCKSIZE);
+	sblk.b_un.b_buf = Balloc(SBLOCKSIZE);
 	if (sblk.b_un.b_buf == NULL)
 		errx(EEXIT, "cannot allocate space for superblock");
 	dev_bsize = secsize = DEV_BSIZE;
@@ -345,7 +523,7 @@ calcsb(char *dev, int devfd, struct fs *fs)
 	 */
 	if (ioctl(devfd, DIOCGSECTORSIZE, &secsize) == -1)
 		return (0);
-	fsrbuf = Malloc(secsize);
+	fsrbuf = Balloc(secsize);
 	if (fsrbuf == NULL)
 		errx(EEXIT, "calcsb: cannot allocate recovery buffer");
 	if (blread(devfd, fsrbuf,
@@ -388,7 +566,7 @@ chkrecovery(int devfd)
 	rdsize = sblock.fs_fsize;
 	if (ioctl(devfd, DIOCGSECTORSIZE, &secsize) == -1 ||
 	    rdsize % secsize != 0 ||
-	    (fsrbuf = Malloc(rdsize)) == NULL ||
+	    (fsrbuf = Balloc(rdsize)) == NULL ||
 	    blread(devfd, fsrbuf, (SBLOCK_UFS2 - rdsize) / dev_bsize,
 	      rdsize) != 0) {
 		free(fsrbuf);
@@ -427,7 +605,7 @@ saverecovery(int readfd, int writefd)
 	if (sblock.fs_magic != FS_UFS2_MAGIC ||
 	    ioctl(readfd, DIOCGSECTORSIZE, &secsize) == -1 ||
 	    rdsize % secsize != 0 ||
-	    (fsrbuf = Malloc(rdsize)) == NULL ||
+	    (fsrbuf = Balloc(rdsize)) == NULL ||
 	    blread(readfd, fsrbuf, (SBLOCK_UFS2 - rdsize) / dev_bsize,
 	      rdsize) != 0) {
 		printf("RECOVERY DATA COULD NOT BE CREATED\n");

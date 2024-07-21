@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 MAN=
 
 .include <bsd.own.mk>

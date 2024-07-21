@@ -1,6 +1,6 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
+
+PACKAGE=	elftoolchain
 
 ELFTCDIR=	${SRCTOP}/contrib/elftoolchain
 SRCDIR=		${ELFTCDIR}/cxxfilt

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010 Edward Tomasz Napierala <trasz@FreeBSD.org>
  * Copyright (c) 2004-2006 Pawel Jakub Dawidek <pjd@FreeBSD.org>
@@ -27,22 +27,20 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
-#include <sys/module.h>
-#include <sys/lock.h>
-#include <sys/mutex.h>
 #include <sys/bio.h>
 #include <sys/disk.h>
+#include <sys/eventhandler.h>
+#include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/malloc.h>
+#include <sys/module.h>
+#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/sbuf.h>
 #include <sys/sysctl.h>
-#include <sys/malloc.h>
-#include <sys/eventhandler.h>
+
 #include <geom/geom.h>
 #include <geom/geom_dbg.h>
 #include <geom/mountver/g_mountver.h>

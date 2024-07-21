@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 S=     ${SRCTOP}/sys
 
 .PATH: $S/dev/usb/video

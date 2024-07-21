@@ -28,9 +28,6 @@
 #include "opt_inet6.h"
 #include "opt_ipsec.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
@@ -331,6 +328,15 @@ static struct ipsec_support ipv4_ipsec = {
 	.methods = NULL
 };
 struct ipsec_support * const ipv4_ipsec_support = &ipv4_ipsec;
+#endif
+
+#ifdef INET6
+static struct ipsec_support ipv6_ipsec = {
+	.enabled = 0,
+	.methods = NULL
+};
+struct ipsec_support * const ipv6_ipsec_support = &ipv6_ipsec;
+#endif
 
 IPSEC_KMOD_METHOD(int, ipsec_kmod_udp_input, sc,
     udp_input, METHOD_DECL(struct ipsec_support * const sc, struct mbuf *m,
@@ -341,15 +347,6 @@ IPSEC_KMOD_METHOD(int, ipsec_kmod_udp_pcbctl, sc,
     udp_pcbctl, METHOD_DECL(struct ipsec_support * const sc, struct inpcb *inp,
 	struct sockopt *sopt), METHOD_ARGS(inp, sopt)
 )
-#endif
-
-#ifdef INET6
-static struct ipsec_support ipv6_ipsec = {
-	.enabled = 0,
-	.methods = NULL
-};
-struct ipsec_support * const ipv6_ipsec_support = &ipv6_ipsec;
-#endif
 
 IPSEC_KMOD_METHOD(int, ipsec_kmod_input, sc,
     input, METHOD_DECL(struct ipsec_support * const sc, struct mbuf *m,
@@ -367,13 +364,14 @@ IPSEC_KMOD_METHOD(int, ipsec_kmod_forward, sc,
 )
 
 IPSEC_KMOD_METHOD(int, ipsec_kmod_ctlinput, sc,
-    ctlinput, METHOD_DECL(struct ipsec_support * const sc, int code,
-        struct sockaddr *sa, void *v), METHOD_ARGS(code, sa, v)
+    ctlinput, METHOD_DECL(struct ipsec_support * const sc,
+	ipsec_ctlinput_param_t param), METHOD_ARGS(param)
 )
 
-IPSEC_KMOD_METHOD(int, ipsec_kmod_output, sc,
-    output, METHOD_DECL(struct ipsec_support * const sc, struct mbuf *m,
-	struct inpcb *inp), METHOD_ARGS(m, inp)
+IPSEC_KMOD_METHOD(int, ipsec_kmod_output, sc, output,
+    METHOD_DECL(struct ipsec_support * const sc, struct ifnet *ifp,
+    struct mbuf *m, struct inpcb *inp, u_long mtu),
+    METHOD_ARGS(ifp, m, inp, mtu)
 )
 
 IPSEC_KMOD_METHOD(int, ipsec_kmod_pcbctl, sc,
@@ -401,8 +399,7 @@ ipsec_kmod_capability(struct ipsec_support * const sc, struct mbuf *m,
 	 * call key_havesp() without additional synchronizations.
 	 */
 	if (cap == IPSEC_CAP_OPERABLE)
-		return (key_havesp(IPSEC_DIR_INBOUND) != 0 ||
-		    key_havesp(IPSEC_DIR_OUTBOUND) != 0);
+		return (key_havesp_any());
 	return (ipsec_kmod_caps(sc, m, cap));
 }
 

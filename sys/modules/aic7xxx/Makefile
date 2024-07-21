@@ -1,6 +1,3 @@
-
-# $FreeBSD$
-
 SUBDIR= ahc ahd
 
 firmware: aicasm/aicasm ahdfirmware ahcfirmware

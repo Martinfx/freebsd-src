@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .PATH:	${SRCTOP}/sys/dev/syscons/logo
 
 KMOD=	beastie_saver

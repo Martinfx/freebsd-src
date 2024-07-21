@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 TESTPGM?=TestProgramNotSpecifed
 
 all:

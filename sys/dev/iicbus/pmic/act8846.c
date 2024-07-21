@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2019 Michal Meloun <mmel@FreeBSD.org>
  *
@@ -26,8 +26,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 /*
  * ACT8846 PMIC driver
  */
@@ -43,7 +41,7 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
-#include <dev/extres/regulator/regulator.h>
+#include <dev/regulator/regulator.h>
 #include <dev/fdt/fdt_pinctrl.h>
 #include <dev/iicbus/iiconf.h>
 #include <dev/iicbus/iicbus.h>

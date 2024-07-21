@@ -71,6 +71,8 @@ dnode_stats_t dnode_stats = {
 	{ "dnode_move_active",			KSTAT_DATA_UINT64 },
 };
 
+dnode_sums_t dnode_sums;
+
 static kstat_t *dnode_ksp;
 static kmem_cache_t *dnode_cache;
 
@@ -96,6 +98,14 @@ dbuf_compare(const void *x1, const void *x2)
 	cmp = TREE_CMP(d1->db_blkid, d2->db_blkid);
 	if (likely(cmp))
 		return (cmp);
+
+	if (d1->db_state == DB_MARKER) {
+		ASSERT3S(d2->db_state, !=, DB_MARKER);
+		return (TREE_PCMP(d1->db_parent, d2));
+	} else if (d2->db_state == DB_MARKER) {
+		ASSERT3S(d1->db_state, !=, DB_MARKER);
+		return (TREE_PCMP(d1, d2->db_parent));
+	}
 
 	if (d1->db_state == DB_SEARCH) {
 		ASSERT3S(d2->db_state, !=, DB_SEARCH);
@@ -225,6 +235,72 @@ dnode_dest(void *arg, void *unused)
 	avl_destroy(&dn->dn_dbufs);
 }
 
+static int
+dnode_kstats_update(kstat_t *ksp, int rw)
+{
+	dnode_stats_t *ds = ksp->ks_data;
+
+	if (rw == KSTAT_WRITE)
+		return (EACCES);
+	ds->dnode_hold_dbuf_hold.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_dbuf_hold);
+	ds->dnode_hold_dbuf_read.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_dbuf_read);
+	ds->dnode_hold_alloc_hits.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_hits);
+	ds->dnode_hold_alloc_misses.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_misses);
+	ds->dnode_hold_alloc_interior.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_interior);
+	ds->dnode_hold_alloc_lock_retry.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_lock_retry);
+	ds->dnode_hold_alloc_lock_misses.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_lock_misses);
+	ds->dnode_hold_alloc_type_none.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_alloc_type_none);
+	ds->dnode_hold_free_hits.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_hits);
+	ds->dnode_hold_free_misses.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_misses);
+	ds->dnode_hold_free_lock_misses.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_lock_misses);
+	ds->dnode_hold_free_lock_retry.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_lock_retry);
+	ds->dnode_hold_free_refcount.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_refcount);
+	ds->dnode_hold_free_overflow.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_hold_free_overflow);
+	ds->dnode_free_interior_lock_retry.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_free_interior_lock_retry);
+	ds->dnode_allocate.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_allocate);
+	ds->dnode_reallocate.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_reallocate);
+	ds->dnode_buf_evict.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_buf_evict);
+	ds->dnode_alloc_next_chunk.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_alloc_next_chunk);
+	ds->dnode_alloc_race.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_alloc_race);
+	ds->dnode_alloc_next_block.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_alloc_next_block);
+	ds->dnode_move_invalid.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_invalid);
+	ds->dnode_move_recheck1.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_recheck1);
+	ds->dnode_move_recheck2.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_recheck2);
+	ds->dnode_move_special.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_special);
+	ds->dnode_move_handle.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_handle);
+	ds->dnode_move_rwlock.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_rwlock);
+	ds->dnode_move_active.value.ui64 =
+	    wmsum_value(&dnode_sums.dnode_move_active);
+	return (0);
+}
+
 void
 dnode_init(void)
 {
@@ -233,11 +309,41 @@ dnode_init(void)
 	    0, dnode_cons, dnode_dest, NULL, NULL, NULL, 0);
 	kmem_cache_set_move(dnode_cache, dnode_move);
 
+	wmsum_init(&dnode_sums.dnode_hold_dbuf_hold, 0);
+	wmsum_init(&dnode_sums.dnode_hold_dbuf_read, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_hits, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_misses, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_interior, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_lock_retry, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_lock_misses, 0);
+	wmsum_init(&dnode_sums.dnode_hold_alloc_type_none, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_hits, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_misses, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_lock_misses, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_lock_retry, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_refcount, 0);
+	wmsum_init(&dnode_sums.dnode_hold_free_overflow, 0);
+	wmsum_init(&dnode_sums.dnode_free_interior_lock_retry, 0);
+	wmsum_init(&dnode_sums.dnode_allocate, 0);
+	wmsum_init(&dnode_sums.dnode_reallocate, 0);
+	wmsum_init(&dnode_sums.dnode_buf_evict, 0);
+	wmsum_init(&dnode_sums.dnode_alloc_next_chunk, 0);
+	wmsum_init(&dnode_sums.dnode_alloc_race, 0);
+	wmsum_init(&dnode_sums.dnode_alloc_next_block, 0);
+	wmsum_init(&dnode_sums.dnode_move_invalid, 0);
+	wmsum_init(&dnode_sums.dnode_move_recheck1, 0);
+	wmsum_init(&dnode_sums.dnode_move_recheck2, 0);
+	wmsum_init(&dnode_sums.dnode_move_special, 0);
+	wmsum_init(&dnode_sums.dnode_move_handle, 0);
+	wmsum_init(&dnode_sums.dnode_move_rwlock, 0);
+	wmsum_init(&dnode_sums.dnode_move_active, 0);
+
 	dnode_ksp = kstat_create("zfs", 0, "dnodestats", "misc",
 	    KSTAT_TYPE_NAMED, sizeof (dnode_stats) / sizeof (kstat_named_t),
 	    KSTAT_FLAG_VIRTUAL);
 	if (dnode_ksp != NULL) {
 		dnode_ksp->ks_data = &dnode_stats;
+		dnode_ksp->ks_update = dnode_kstats_update;
 		kstat_install(dnode_ksp);
 	}
 }
@@ -249,6 +355,35 @@ dnode_fini(void)
 		kstat_delete(dnode_ksp);
 		dnode_ksp = NULL;
 	}
+
+	wmsum_fini(&dnode_sums.dnode_hold_dbuf_hold);
+	wmsum_fini(&dnode_sums.dnode_hold_dbuf_read);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_hits);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_misses);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_interior);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_lock_retry);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_lock_misses);
+	wmsum_fini(&dnode_sums.dnode_hold_alloc_type_none);
+	wmsum_fini(&dnode_sums.dnode_hold_free_hits);
+	wmsum_fini(&dnode_sums.dnode_hold_free_misses);
+	wmsum_fini(&dnode_sums.dnode_hold_free_lock_misses);
+	wmsum_fini(&dnode_sums.dnode_hold_free_lock_retry);
+	wmsum_fini(&dnode_sums.dnode_hold_free_refcount);
+	wmsum_fini(&dnode_sums.dnode_hold_free_overflow);
+	wmsum_fini(&dnode_sums.dnode_free_interior_lock_retry);
+	wmsum_fini(&dnode_sums.dnode_allocate);
+	wmsum_fini(&dnode_sums.dnode_reallocate);
+	wmsum_fini(&dnode_sums.dnode_buf_evict);
+	wmsum_fini(&dnode_sums.dnode_alloc_next_chunk);
+	wmsum_fini(&dnode_sums.dnode_alloc_race);
+	wmsum_fini(&dnode_sums.dnode_alloc_next_block);
+	wmsum_fini(&dnode_sums.dnode_move_invalid);
+	wmsum_fini(&dnode_sums.dnode_move_recheck1);
+	wmsum_fini(&dnode_sums.dnode_move_recheck2);
+	wmsum_fini(&dnode_sums.dnode_move_special);
+	wmsum_fini(&dnode_sums.dnode_move_handle);
+	wmsum_fini(&dnode_sums.dnode_move_rwlock);
+	wmsum_fini(&dnode_sums.dnode_move_active);
 
 	kmem_cache_destroy(dnode_cache);
 	dnode_cache = NULL;
@@ -593,6 +728,7 @@ dnode_allocate(dnode_t *dn, dmu_object_type_t ot, int blocksize, int ibs,
 	ASSERT(DMU_OT_IS_VALID(ot));
 	ASSERT((bonustype == DMU_OT_NONE && bonuslen == 0) ||
 	    (bonustype == DMU_OT_SA && bonuslen == 0) ||
+	    (bonustype == DMU_OTN_UINT64_METADATA && bonuslen == 0) ||
 	    (bonustype != DMU_OT_NONE && bonuslen != 0));
 	ASSERT(DMU_OT_IS_VALID(bonustype));
 	ASSERT3U(bonuslen, <=, DN_SLOTS_TO_BONUSLEN(dn_slots));
@@ -1109,9 +1245,11 @@ dnode_check_slots_free(dnode_children_t *children, int idx, int slots)
 	return (B_TRUE);
 }
 
-static void
+static uint_t
 dnode_reclaim_slots(dnode_children_t *children, int idx, int slots)
 {
+	uint_t reclaimed = 0;
+
 	ASSERT3S(idx + slots, <=, DNODES_PER_BLOCK);
 
 	for (int i = idx; i < idx + slots; i++) {
@@ -1123,8 +1261,11 @@ dnode_reclaim_slots(dnode_children_t *children, int idx, int slots)
 			ASSERT3S(dnh->dnh_dnode->dn_type, ==, DMU_OT_NONE);
 			dnode_destroy(dnh->dnh_dnode);
 			dnh->dnh_dnode = DN_SLOT_FREE;
+			reclaimed++;
 		}
 	}
+
+	return (reclaimed);
 }
 
 void
@@ -1142,7 +1283,7 @@ dnode_free_interior_slots(dnode_t *dn)
 
 	while (!dnode_slots_tryenter(children, idx, slots)) {
 		DNODE_STAT_BUMP(dnode_free_interior_lock_retry);
-		cond_resched();
+		kpreempt(KPREEMPT_SYNC);
 	}
 
 	dnode_set_slots(children, idx, slots, DN_SLOT_FREE);
@@ -1423,7 +1564,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 			dnode_slots_rele(dnc, idx, slots);
 			while (!dnode_slots_tryenter(dnc, idx, slots)) {
 				DNODE_STAT_BUMP(dnode_hold_alloc_lock_retry);
-				cond_resched();
+				kpreempt(KPREEMPT_SYNC);
 			}
 
 			/*
@@ -1437,6 +1578,8 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 			} else {
 				dn = dnode_create(os, dn_block + idx, db,
 				    object, dnh);
+				dmu_buf_add_user_size(&db->db,
+				    sizeof (dnode_t));
 			}
 		}
 
@@ -1478,7 +1621,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 		dnode_slots_rele(dnc, idx, slots);
 		while (!dnode_slots_tryenter(dnc, idx, slots)) {
 			DNODE_STAT_BUMP(dnode_hold_free_lock_retry);
-			cond_resched();
+			kpreempt(KPREEMPT_SYNC);
 		}
 
 		if (!dnode_check_slots_free(dnc, idx, slots)) {
@@ -1494,8 +1637,13 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 		 * to be freed.  Single slot dnodes can be safely
 		 * re-purposed as a performance optimization.
 		 */
-		if (slots > 1)
-			dnode_reclaim_slots(dnc, idx + 1, slots - 1);
+		if (slots > 1) {
+			uint_t reclaimed =
+			    dnode_reclaim_slots(dnc, idx + 1, slots - 1);
+			if (reclaimed > 0)
+				dmu_buf_sub_user_size(&db->db,
+				    reclaimed * sizeof (dnode_t));
+		}
 
 		dnh = &dnc->dnc_children[idx];
 		if (DN_SLOT_IS_PTR(dnh->dnh_dnode)) {
@@ -1503,6 +1651,7 @@ dnode_hold_impl(objset_t *os, uint64_t object, int flag, int slots,
 		} else {
 			dn = dnode_create(os, dn_block + idx, db,
 			    object, dnh);
+			dmu_buf_add_user_size(&db->db, sizeof (dnode_t));
 		}
 
 		mutex_enter(&dn->dn_mtx);
@@ -1637,7 +1786,14 @@ dnode_try_claim(objset_t *os, uint64_t object, int slots)
 }
 
 /*
- * Checks if the dnode contains any uncommitted dirty records.
+ * Checks if the dnode itself is dirty, or is carrying any uncommitted records.
+ * It is important to check both conditions, as some operations (eg appending
+ * to a file) can dirty both as a single logical unit, but they are not synced
+ * out atomically, so checking one and not the other can result in an object
+ * appearing to be clean mid-way through a commit.
+ *
+ * Do not change this lightly! If you get it wrong, dmu_offset_next() can
+ * detect a hole where there is really data, leading to silent corruption.
  */
 boolean_t
 dnode_is_dirty(dnode_t *dn)
@@ -1645,7 +1801,8 @@ dnode_is_dirty(dnode_t *dn)
 	mutex_enter(&dn->dn_mtx);
 
 	for (int i = 0; i < TXG_SIZE; i++) {
-		if (multilist_link_active(&dn->dn_dirty_link[i])) {
+		if (multilist_link_active(&dn->dn_dirty_link[i]) ||
+		    !list_is_empty(&dn->dn_dirty_records[i])) {
 			mutex_exit(&dn->dn_mtx);
 			return (B_TRUE);
 		}
@@ -1755,7 +1912,7 @@ dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 	if (ibs == dn->dn_indblkshift)
 		ibs = 0;
 
-	if (size >> SPA_MINBLOCKSHIFT == dn->dn_datablkszsec && ibs == 0)
+	if (size == dn->dn_datablksz && ibs == 0)
 		return (0);
 
 	rw_enter(&dn->dn_struct_rwlock, RW_WRITER);
@@ -1778,24 +1935,25 @@ dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 	if (ibs && dn->dn_nlevels != 1)
 		goto fail;
 
-	/* resize the old block */
-	err = dbuf_hold_impl(dn, 0, 0, TRUE, FALSE, FTAG, &db);
-	if (err == 0) {
-		dbuf_new_size(db, size, tx);
-	} else if (err != ENOENT) {
-		goto fail;
-	}
-
-	dnode_setdblksz(dn, size);
 	dnode_setdirty(dn, tx);
-	dn->dn_next_blksz[tx->tx_txg&TXG_MASK] = size;
+	if (size != dn->dn_datablksz) {
+		/* resize the old block */
+		err = dbuf_hold_impl(dn, 0, 0, TRUE, FALSE, FTAG, &db);
+		if (err == 0) {
+			dbuf_new_size(db, size, tx);
+		} else if (err != ENOENT) {
+			goto fail;
+		}
+
+		dnode_setdblksz(dn, size);
+		dn->dn_next_blksz[tx->tx_txg & TXG_MASK] = size;
+		if (db)
+			dbuf_rele(db, FTAG);
+	}
 	if (ibs) {
 		dn->dn_indblkshift = ibs;
-		dn->dn_next_indblkshift[tx->tx_txg&TXG_MASK] = ibs;
+		dn->dn_next_indblkshift[tx->tx_txg & TXG_MASK] = ibs;
 	}
-	/* release after we have fixed the blocksize in the dnode */
-	if (db)
-		dbuf_rele(db, FTAG);
 
 	rw_exit(&dn->dn_struct_rwlock);
 	return (0);
@@ -2280,17 +2438,9 @@ dnode_spill_freed(dnode_t *dn)
 uint64_t
 dnode_block_freed(dnode_t *dn, uint64_t blkid)
 {
-	void *dp = spa_get_dsl(dn->dn_objset->os_spa);
 	int i;
 
 	if (blkid == DMU_BONUS_BLKID)
-		return (FALSE);
-
-	/*
-	 * If we're in the process of opening the pool, dp will not be
-	 * set yet, but there shouldn't be anything dirty.
-	 */
-	if (dp == NULL)
 		return (FALSE);
 
 	if (dn->dn_free_txg)
@@ -2407,7 +2557,7 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 	}
 
 	if (db != NULL && txg != 0 && (db->db_blkptr == NULL ||
-	    db->db_blkptr->blk_birth <= txg ||
+	    BP_GET_LOGICAL_BIRTH(db->db_blkptr) <= txg ||
 	    BP_IS_HOLE(db->db_blkptr))) {
 		/*
 		 * This can only happen when we are searching up the tree
@@ -2455,7 +2605,7 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 		    i >= 0 && i < epb; i += inc) {
 			if (BP_GET_FILL(&bp[i]) >= minfill &&
 			    BP_GET_FILL(&bp[i]) <= maxfill &&
-			    (hole || bp[i].blk_birth > txg))
+			    (hole || BP_GET_LOGICAL_BIRTH(&bp[i]) > txg))
 				break;
 			if (inc > 0 || *offset > 0)
 				*offset += inc;
@@ -2469,8 +2619,9 @@ dnode_next_offset_level(dnode_t *dn, int flags, uint64_t *offset,
 
 		if (inc < 0) {
 			/* traversing backwards; position offset at the end */
-			ASSERT3U(*offset, <=, start);
-			*offset = MIN(*offset + (1ULL << span) - 1, start);
+			if (span < 8 * sizeof (*offset))
+				*offset = MIN(*offset + (1ULL << span) - 1,
+				    start);
 		} else if (*offset < start) {
 			*offset = start;
 		}
@@ -2577,3 +2728,8 @@ EXPORT_SYMBOL(dnode_free_range);
 EXPORT_SYMBOL(dnode_evict_dbufs);
 EXPORT_SYMBOL(dnode_evict_bonus);
 #endif
+
+ZFS_MODULE_PARAM(zfs, zfs_, default_bs, INT, ZMOD_RW,
+	"Default dnode block shift");
+ZFS_MODULE_PARAM(zfs, zfs_, default_ibs, INT, ZMOD_RW,
+	"Default dnode indirect block shift");

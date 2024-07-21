@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 .include <src.opts.mk>
 
 CFLAGS+=-I${SRCTOP}/contrib/libucl/include

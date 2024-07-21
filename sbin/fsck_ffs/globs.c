@@ -29,20 +29,6 @@
  * SUCH DAMAGE.
  */
 
-#if 0
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1980, 1986, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif /* not lint */
-
-#ifndef lint
-static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/14/95";
-#endif /* not lint */
-#endif
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <ufs/ufs/dinode.h>
 #include <ufs/ffs/fs.h>
@@ -60,19 +46,19 @@ ino_t cursnapshot;
 long  dirhash, inplast;
 unsigned long  numdirs, listmax;
 long countdirs;		/* number of directories we actually found */
-int	adjrefcnt[MIBSIZE];	/* MIB command to adjust inode reference cnt */
-int	adjblkcnt[MIBSIZE];	/* MIB command to adjust inode block count */
-int	setsize[MIBSIZE];	/* MIB command to set inode size */
-int	adjndir[MIBSIZE];	/* MIB command to adjust number of directories */
-int	adjnbfree[MIBSIZE];	/* MIB command to adjust number of free blocks */
-int	adjnifree[MIBSIZE];	/* MIB command to adjust number of free inodes */
-int	adjnffree[MIBSIZE];	/* MIB command to adjust number of free frags */
-int	adjnumclusters[MIBSIZE];	/* MIB command to adjust number of free clusters */
-int	freefiles[MIBSIZE];	/* MIB command to free a set of files */
-int	freedirs[MIBSIZE];	/* MIB command to free a set of directories */
-int	freeblks[MIBSIZE];	/* MIB command to free a set of data blocks */
+int	adjrefcnt[MIBSIZE];	/* MIB cmd to adjust inode reference cnt */
+int	adjblkcnt[MIBSIZE];	/* MIB cmd to adjust inode block count */
+int	setsize[MIBSIZE];	/* MIB cmd to set inode size */
+int	adjndir[MIBSIZE];	/* MIB cmd to adjust number of directories */
+int	adjnbfree[MIBSIZE];	/* MIB cmd to adjust number of free blocks */
+int	adjnifree[MIBSIZE];	/* MIB cmd to adjust number of free inodes */
+int	adjnffree[MIBSIZE];	/* MIB cmd to adjust number of free frags */
+int	adjnumclusters[MIBSIZE]; /* MIB cmd to adjust number of free clusters */
+int	adjdepth[MIBSIZE];	/* MIB cmd to adjust directory depth count */
+int	freefiles[MIBSIZE];	/* MIB cmd to free a set of files */
+int	freedirs[MIBSIZE];	/* MIB cmd to free a set of directories */
+int	freeblks[MIBSIZE];	/* MIB cmd to free a set of data blocks */
 struct	fsck_cmd cmd;		/* sysctl file system update commands */
-char	snapname[BUFSIZ];	/* when doing snapshots, the name of the file */
 char	*cdevname;		/* name of device being checked */
 long	dev_bsize;		/* computed value of DEV_BSIZE */
 long	secsize;		/* actual disk sector size */
@@ -90,7 +76,7 @@ char	ckclean;		/* only do work if not cleanly unmounted */
 int	cvtlevel;		/* convert to newer file system format */
 int	ckhashadd;		/* check hashes to be added */
 int	bkgrdcheck;		/* determine if background check is possible */
-int	bkgrdsumadj;		/* whether the kernel have ability to adjust superblock summary */
+int	bkgrdsumadj;		/* kernel able to adjust superblock summary */
 char	usedsoftdep;		/* just fix soft dependency inconsistencies */
 char	preen;			/* just fix normal inconsistencies */
 char	rerun;			/* rerun fsck. Only used in non-preen mode */
@@ -110,6 +96,7 @@ ino_t	lfdir;			/* lost & found directory inode number */
 const char *lfname;		/* lost & found directory name */
 int	lfmode;			/* lost & found directory creation mode */
 ufs2_daddr_t n_blks;		/* number of blocks in use */
+int	cgheader_corrupt;	/* one or more CG headers are corrupt */
 ino_t n_files;			/* number of files in use */
 volatile sig_atomic_t	got_siginfo;	/* received a SIGINFO */
 volatile sig_atomic_t	got_sigalarm;	/* received a SIGALRM */
@@ -139,11 +126,11 @@ fsckinit(void)
 	bzero(adjnifree, sizeof(int) * MIBSIZE);
 	bzero(adjnffree, sizeof(int) * MIBSIZE);
 	bzero(adjnumclusters, sizeof(int) * MIBSIZE);
+	bzero(adjdepth, sizeof(int) * MIBSIZE);
 	bzero(freefiles, sizeof(int) * MIBSIZE);
 	bzero(freedirs, sizeof(int) * MIBSIZE);
 	bzero(freeblks, sizeof(int) * MIBSIZE);
 	bzero(&cmd, sizeof(struct fsck_cmd));
-	bzero(snapname, sizeof(char) * BUFSIZ);
 	cdevname = NULL;
 	dev_bsize = 0;
 	secsize = 0;
@@ -164,6 +151,7 @@ fsckinit(void)
 	lfmode = 0700;
 	n_blks = 0;
 	n_files = 0;
+	cgheader_corrupt = 0;
 	got_siginfo = 0;
 	got_sigalarm = 0;
 	bzero(&zino.dp1, sizeof(struct ufs1_dinode));

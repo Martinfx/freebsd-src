@@ -21,12 +21,13 @@ SM_RCSID("@(#)$Id: util.c,v 1.10 2013-11-22 20:51:44 ca Exp $")
 
 /*
 **  STR2PRT -- convert "unprintable" characters in a string to \oct
+**		(except for some special chars, see below)
 **
 **	Parameters:
-**		s -- string to convert
+**		s -- string to convert [A]
 **
 **	Returns:
-**		converted string.
+**		converted string [S][U]
 **		This is a static local buffer, string must be copied
 **		before this function is called again!
 */
@@ -41,6 +42,12 @@ str2prt(s)
 	static int len = 0;
 	static char *buf = NULL;
 
+#if _FFR_LOGASIS >= 1
+#define BADCHAR(ch)	((unsigned char)(ch) <= 31)
+#else
+#define BADCHAR(ch)	(!(isascii(ch) && isprint(ch)))
+#endif
+
 	if (s == NULL)
 		return NULL;
 	ok = true;
@@ -51,7 +58,7 @@ str2prt(s)
 			++l;
 			ok = false;
 		}
-		else if (!(isascii(*h) && isprint(*h)))
+		else if (BADCHAR(*h))
 		{
 			l += 3;
 			ok = false;
@@ -71,7 +78,7 @@ str2prt(s)
 	for (h = buf; *s != '\0' && l > 0; s++, l--)
 	{
 		c = *s;
-		if (isascii(c) && isprint(c) && c != '\\')
+		if (c != '\\' && !BADCHAR(c))
 		{
 			*h++ = c;
 		}
@@ -99,9 +106,8 @@ str2prt(s)
 					(unsigned int)((unsigned char) c));
 
 				/*
-				**  XXX since l is unsigned this may
-				**  wrap around if the calculation is screwed
-				**  up...
+				**  XXX since l is unsigned this may wrap
+				**  around if the calculation is screwed up...
 				*/
 
 				l -= 2;
@@ -123,13 +129,14 @@ str2prt(s)
 **	The input and output pointers can be the same.
 **
 **	Parameters:
-**		ibp -- a pointer to the string to translate
-**		obp -- a pointer to an output buffer
+**		ibp -- a pointer to the string to translate [x]
+**		obp -- a pointer to an output buffer [i][m:A]
 **		bsp -- pointer to the length of the output buffer
+**		rpool -- rpool for allocations
 **
 **	Returns:
-**		A possibly new bp (if the buffer needed to grow); if
-**		it is different, *bsp will updated to the size of
+**		A possibly new obp (if the buffer needed to grow);
+**		if it is different, *bsp will updated to the size of
 **		the new buffer and the caller is responsible for
 **		freeing the memory.
 */
@@ -137,16 +144,40 @@ str2prt(s)
 #define SM_MM_QUOTE(ch) (((ch) & 0377) == METAQUOTE || (((ch) & 0340) == 0200))
 
 char *
-quote_internal_chars(ibp, obp, bsp)
+#if SM_HEAP_CHECK > 2
+quote_internal_chars_tagged
+#else
+quote_internal_chars
+#endif
+	(ibp, obp, bsp, rpool
+#if SM_HEAP_CHECK > 2
+	, tag, line, group
+#endif
+	)
 	char *ibp;
 	char *obp;
 	int *bsp;
+	SM_RPOOL_T *rpool;
+#if SM_HEAP_CHECK > 2
+	char *tag;
+	int line;
+	int group;
+#else
+# define tag  "quote_internal_chars"
+# define line 1
+# define group 1
+#endif
 {
 	char *ip, *op;
 	int bufused, olen;
 	bool buffer_same, needs_quoting;
 
+	if (NULL == ibp)
+		return NULL;
 	buffer_same = ibp == obp;
+	SM_REQUIRE(NULL != bsp);
+	if (NULL == obp)
+		*bsp = 0;
 	needs_quoting = false;
 
 	/* determine length of output string (starts at 1 for trailing '\0') */
@@ -162,7 +193,7 @@ quote_internal_chars(ibp, obp, bsp)
 	/* is the output buffer big enough? */
 	if (olen > *bsp)
 	{
-		obp = sm_malloc_x(olen);
+		obp = sm_rpool_malloc_tagged_x(rpool, olen, tag, line, group);
 		buffer_same = false;
 		*bsp = olen;
 	}
@@ -187,7 +218,7 @@ quote_internal_chars(ibp, obp, bsp)
 
 	if (buffer_same)
 	{
-		obp = sm_malloc_x(olen);
+		obp = sm_malloc_tagged_x(olen, tag, line + 1, group);
 		buffer_same = false;
 		*bsp = olen;
 	}
@@ -205,14 +236,19 @@ quote_internal_chars(ibp, obp, bsp)
 	op[bufused] = '\0';
 	return obp;
 }
+#if SM_HEAP_CHECK <= 2
+# undef tag
+# undef line
+# undef group
+#endif
 
 /*
 **  DEQUOTE_INTERNAL_CHARS -- undo the effect of quote_internal_chars
 **
 **	Parameters:
-**		ibp -- a pointer to the string to be translated.
-**		obp -- a pointer to the output buffer.  Can be the
-**			same as ibp.
+**		ibp -- a pointer to the string to be translated. [i]
+**		obp -- a pointer to the output buffer. [x]
+**			Can be the same as ibp.
 **		obs -- the size of the output buffer.
 **
 **	Returns:

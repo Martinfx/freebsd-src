@@ -39,9 +39,6 @@
 
 #include "opt_rootdevname.h"
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/cons.h>
@@ -352,13 +349,13 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 		NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, fspath);
 		error = namei(&nd);
 		if (error) {
-			NDFREE_PNBUF(&nd);
 			fspath = "/mnt";
 			NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE,
 			    fspath);
 			error = namei(&nd);
 		}
 		if (!error) {
+			NDFREE_PNBUF(&nd);
 			vp = nd.ni_vp;
 			error = (vp->v_type == VDIR) ? 0 : ENOTDIR;
 			if (!error)
@@ -376,7 +373,6 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 			} else
 				vput(vp);
 		}
-		NDFREE_PNBUF(&nd);
 
 		if (error)
 			printf("mountroot: unable to remount previous root "
@@ -387,6 +383,7 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, "/dev");
 	error = namei(&nd);
 	if (!error) {
+		NDFREE_PNBUF(&nd);
 		vp = nd.ni_vp;
 		error = (vp->v_type == VDIR) ? 0 : ENOTDIR;
 		if (!error)
@@ -413,7 +410,6 @@ vfs_mountroot_shuffle(struct thread *td, struct mount *mpdevfs)
 	if (error)
 		printf("mountroot: unable to remount devfs under /dev "
 		    "(error %d)\n", error);
-	NDFREE_PNBUF(&nd);
 
 	if (mporoot == mpdevfs) {
 		vfs_unbusy(mpdevfs);
@@ -594,7 +590,7 @@ parse_dir_md(char **conf)
 	free(tok, M_TEMP);
 
 	/* Get file status. */
-	error = kern_statat(td, 0, AT_FDCWD, path, UIO_SYSSPACE, &sb, NULL);
+	error = kern_statat(td, 0, AT_FDCWD, path, UIO_SYSSPACE, &sb);
 	if (error)
 		goto out;
 
@@ -718,18 +714,19 @@ parse_directive(char **conf)
 	return (error);
 }
 
-static int
+static bool
 parse_mount_dev_present(const char *dev)
 {
 	struct nameidata nd;
 	int error;
 
-	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, dev);
+	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, dev);
 	error = namei(&nd);
-	if (!error)
-		vput(nd.ni_vp);
+	if (error != 0)
+		return (false);
+	vrele(nd.ni_vp);
 	NDFREE_PNBUF(&nd);
-	return (error != 0) ? 0 : 1;
+	return (true);
 }
 
 #define	ERRMSGL	255
@@ -793,7 +790,7 @@ parse_mount(char **conf)
 		ma = parse_mountroot_options(ma, opts);
 
 		error = kernel_mount(ma, MNT_ROOTFS);
-		if (error == 0 || timeout <= 0)
+		if (error == 0 || error == EILSEQ || timeout <= 0)
 			break;
 
 		if (root_mount_timeout * hz == timeout ||
@@ -897,18 +894,18 @@ vfs_mountroot_conf0(struct sbuf *sb)
 	char *s, *tok, *mnt, *opt;
 	int error;
 
-	sbuf_printf(sb, ".onfail panic\n");
+	sbuf_cat(sb, ".onfail panic\n");
 	sbuf_printf(sb, ".timeout %d\n", root_mount_timeout);
 	if (boothowto & RB_ASKNAME)
-		sbuf_printf(sb, ".ask\n");
+		sbuf_cat(sb, ".ask\n");
 #ifdef ROOTDEVNAME
 	if (boothowto & RB_DFLTROOT)
 		sbuf_printf(sb, "%s\n", ROOTDEVNAME);
 #endif
 	if (boothowto & RB_CDROM) {
-		sbuf_printf(sb, "cd9660:/dev/cd0 ro\n");
-		sbuf_printf(sb, ".timeout 0\n");
-		sbuf_printf(sb, "cd9660:/dev/cd1 ro\n");
+		sbuf_cat(sb, "cd9660:/dev/cd0 ro\n");
+		sbuf_cat(sb, ".timeout 0\n");
+		sbuf_cat(sb, "cd9660:/dev/cd1 ro\n");
 		sbuf_printf(sb, ".timeout %d\n", root_mount_timeout);
 	}
 	s = kern_getenv("vfs.root.mountfrom");
@@ -935,7 +932,7 @@ vfs_mountroot_conf0(struct sbuf *sb)
 		sbuf_printf(sb, "%s\n", ROOTDEVNAME);
 #endif
 	if (!(boothowto & RB_ASKNAME))
-		sbuf_printf(sb, ".ask\n");
+		sbuf_cat(sb, ".ask\n");
 }
 
 static int
@@ -986,7 +983,7 @@ vfs_mountroot_wait(void)
 
 	curfail = 0;
 	lastfail.tv_sec = 0;
-	ppsratecheck(&lastfail, &curfail, 1);
+	eventratecheck(&lastfail, &curfail, 1);
 	td = curthread;
 	while (1) {
 		g_waitidle(td);
@@ -995,7 +992,7 @@ vfs_mountroot_wait(void)
 			mtx_unlock(&root_holds_mtx);
 			break;
 		}
-		if (ppsratecheck(&lastfail, &curfail, 1)) {
+		if (eventratecheck(&lastfail, &curfail, 1)) {
 			printf("Root mount waiting for:");
 			TAILQ_FOREACH(h, &root_holds, list)
 				printf(" %s", h->who);
@@ -1022,6 +1019,7 @@ vfs_mountroot_wait_if_neccessary(const char *fs, const char *dev)
 	 * behaviour by setting vfs.root_mount_always_wait=1.
 	 */
 	if (strcmp(fs, "zfs") == 0 || strstr(fs, "nfs") != NULL ||
+	    strcmp(fs, "p9fs") == 0 ||
 	    dev[0] == '\0' || root_mount_always_wait != 0) {
 		vfs_mountroot_wait();
 		return (0);

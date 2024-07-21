@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2005-2009 Ariff Abdullah <ariff@FreeBSD.org>
  * Copyright (c) 2001 Cameron Grant <cg@FreeBSD.org>
@@ -25,14 +25,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SND_VCHAN_H_
 #define _SND_VCHAN_H_
 
-int vchan_create(struct pcm_channel *, int);
+extern int snd_maxautovchans;
+
+int vchan_create(struct pcm_channel *);
 int vchan_destroy(struct pcm_channel *);
 
 #ifdef SND_DEBUG
@@ -46,6 +46,9 @@ int vchan_sync(struct pcm_channel *);
 	(((c)->flags & CHN_F_VIRTUAL) && (((c)->flags & CHN_F_DIRTY) ||	\
 	sndbuf_getfmt((c)->bufhard) != (c)->parentchannel->format ||	\
 	sndbuf_getspd((c)->bufhard) != (c)->parentchannel->speed))
+
+int vchan_setnew(struct snddev_info *, int, int);
+void vchan_setmaxauto(struct snddev_info *, int);
 
 void vchan_initsys(device_t);
 

@@ -1,5 +1,3 @@
-# $FreeBSD$
-
 KMOD	= kttcp
 SRCS	= kttcp.c
 SRCS   += device_if.h

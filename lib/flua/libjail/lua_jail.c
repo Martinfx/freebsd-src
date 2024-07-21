@@ -24,12 +24,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -78,7 +73,7 @@ l_jail_filter(const char *param_name, void *data __unused)
 
 	/*
 	 * Allowing lastjid will mess up our iteration over all jails on the
-	 * system, as this is a special paramter that indicates where the search
+	 * system, as this is a special parameter that indicates where the search
 	 * starts from.  We'll always add jid and name, so just silently remove
 	 * these.
 	 */

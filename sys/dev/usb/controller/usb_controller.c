@@ -1,6 +1,5 @@
-/* $FreeBSD$ */
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2008 Hans Petter Selasky. All rights reserved.
  *
@@ -136,7 +135,6 @@ DRIVER_MODULE(usbus, octusb, usb_driver, 0, 0);
 
 /* Dual Mode Drivers */
 DRIVER_MODULE(usbus, dwcotg, usb_driver, 0, 0);
-DRIVER_MODULE(usbus, saf1761otg, usb_driver, 0, 0);
 
 /*------------------------------------------------------------------------*
  *	usb_probe
@@ -414,6 +412,9 @@ usb_bus_explore(struct usb_proc_msg *pm)
 #if USB_HAVE_ROOT_MOUNT_HOLD
 	usb_root_mount_rel(bus);
 #endif
+
+	/* Nice the enumeration a bit, to avoid looping too fast. */
+	usb_pause_mtx(&bus->bus_mtx, USB_MS_TO_TICKS(usb_enum_nice_time));
 }
 
 /*------------------------------------------------------------------------*

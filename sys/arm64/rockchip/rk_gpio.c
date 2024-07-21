@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2018 Emmanuel Vadot <manu@FreeBSD.org>
  * Copyright (c) 2021 Soren Schmidt <sos@deepcore.dk>
@@ -27,9 +27,6 @@
  *
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
@@ -49,7 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <dev/gpio/gpiobusvar.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
-#include <dev/extres/clk/clk.h>
+#include <dev/clk/clk.h>
 
 #include "gpio_if.h"
 #include "pic_if.h"
@@ -79,7 +76,7 @@ enum gpio_regs {
     GPIO_INTR_EDGE_RISING | GPIO_INTR_EDGE_FALLING | \
     GPIO_INTR_LEVEL_HIGH | GPIO_INTR_LEVEL_LOW)
 
-#define	GPIO_FLAGS_PINCTRL	GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN
+#define	GPIO_FLAGS_PINCTRL	(GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN)
 #define	RK_GPIO_MAX_PINS	32
 
 struct pin_cached {
@@ -207,7 +204,7 @@ rk_gpio_write_4(struct rk_gpio_softc *sc, int reg, uint32_t value)
 static int
 rk_gpio_intr(void *arg)
 {
-	struct rk_gpio_softc *sc = (struct rk_gpio_softc *)arg;;
+	struct rk_gpio_softc *sc = (struct rk_gpio_softc *)arg;
 	struct trapframe *tf = curthread->td_intr_frame;
 	uint32_t status;
 
@@ -259,12 +256,13 @@ static int
 rk_gpio_attach(device_t dev)
 {
 	struct rk_gpio_softc *sc;
-	phandle_t node;
+	phandle_t parent_node, node;
 	int err, i;
 
 	sc = device_get_softc(dev);
 	sc->sc_dev = dev;
 	sc->pinctrl = device_get_parent(dev);
+	parent_node = ofw_bus_get_node(sc->pinctrl);
 
 	node = ofw_bus_get_node(sc->sc_dev);
 	if (!OF_hasprop(node, "gpio-controller"))
@@ -303,9 +301,15 @@ rk_gpio_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	RK_GPIO_LOCK(sc);
-	sc->version = rk_gpio_read_4(sc, RK_GPIO_VERSION);
-	RK_GPIO_UNLOCK(sc);
+	/*
+	 * RK3568 has GPIO_VER_ID register, however both
+	 * RK3328 and RK3399 doesn't have. So choose the
+	 * version based on parent's compat string.
+	 */
+	if (ofw_bus_node_is_compatible(parent_node, "rockchip,rk3568-pinctrl"))
+		sc->version = RK_GPIO_TYPE_V2;
+	else
+		sc->version = RK_GPIO_TYPE_V1;
 
 	switch (sc->version) {
 	case RK_GPIO_TYPE_V1:

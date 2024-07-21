@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2009 Ed Schouten <ed@FreeBSD.org>
  * All rights reserved.
@@ -26,9 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/time.h>
 #include <paths.h>
@@ -52,7 +49,7 @@ ulog_fill(struct utmpx *utx, const char *line)
 
 	utx->ut_pid = getpid();
 	gettimeofday(&utx->ut_tv, NULL);
-	strncpy(utx->ut_line, line, sizeof utx->ut_line);
+	strlcpy(utx->ut_line, line, sizeof utx->ut_line);
 
 	SHA1_Init(&c);
 	SHA1_Update(&c, "libulog", 7);
@@ -69,9 +66,9 @@ ulog_login(const char *line, const char *user, const char *host)
 
 	ulog_fill(&utx, line);
 	utx.ut_type = USER_PROCESS;
-	strncpy(utx.ut_user, user, sizeof utx.ut_user);
+	strlcpy(utx.ut_user, user, sizeof utx.ut_user);
 	if (host != NULL)
-		strncpy(utx.ut_host, host, sizeof utx.ut_host);
+		strlcpy(utx.ut_host, host, sizeof utx.ut_host);
 	pututxline(&utx);
 }
 

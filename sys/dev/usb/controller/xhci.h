@@ -1,7 +1,6 @@
-/* $FreeBSD$ */
 
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2010-2022 Hans Petter Selasky
  *
@@ -489,6 +488,7 @@ typedef int (xhci_port_route_t)(device_t, uint32_t, uint32_t);
 
 enum xhci_quirks {
 	XHCI_QUIRK_DISABLE_PORT_PED			= 0x00000001,
+	XHCI_QUIRK_DMA_32B				= 0x00000002,
 };
 
 struct xhci_softc {
