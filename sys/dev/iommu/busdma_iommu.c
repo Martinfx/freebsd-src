@@ -278,11 +278,7 @@ iommu_get_dev_ctx(device_t dev)
 	if (!unit->dma_enabled)
 		return (NULL);
 
-#if defined(__amd64__) || defined(__i386__)
-	dmar_quirks_pre_use(unit);
-	dmar_instantiate_rmrr_ctxs(unit);
-#endif
-
+	iommu_unit_pre_instantiate_ctx(unit);
 	return (iommu_instantiate_ctx(unit, dev, false));
 }
 
@@ -963,7 +959,7 @@ iommu_init_busdma(struct iommu_unit *unit)
 {
 	int error;
 
-	unit->dma_enabled = 1;
+	unit->dma_enabled = 0;
 	error = TUNABLE_INT_FETCH("hw.iommu.dma", &unit->dma_enabled);
 	if (error == 0) /* compatibility */
 		TUNABLE_INT_FETCH("hw.dmar.dma", &unit->dma_enabled);
