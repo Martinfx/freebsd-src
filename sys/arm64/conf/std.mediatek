@@ -1,0 +1,5 @@
+options 	SOC_MEDIATEK
+
+options         FDT
+# DTBs
+makeoptions     MODULES_EXTRA+="dtb/mediatek"
