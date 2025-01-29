@@ -57,6 +57,7 @@ options 	SOC_BCM2836
 options 	SOC_BRCM_BCM2837
 options 	SOC_MV_ARMADA38X
 options 	SOC_MV_ARMADAXP
+options 	SOC_MEDIATEK
 
 options 	SCHED_ULE		# ULE scheduler
 options 	SMP			# Enable multiple cores
@@ -272,6 +273,7 @@ device		hidbus		# Generic HID Bus
 options 	FDT			# Configure using FDT/DTB data
 makeoptions	MODULES_EXTRA+="dtb/allwinner"
 makeoptions	MODULES_EXTRA+="dtb/imx6"
+makeoptions MODULES_EXTRA+="dtb/mediatek"
 makeoptions	MODULES_EXTRA+="dtb/nvidia"
 makeoptions	MODULES_EXTRA+="dtb/rockchip"
 makeoptions	MODULES_EXTRA+="dtb/rpi"
