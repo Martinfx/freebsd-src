@@ -530,6 +530,7 @@ UART_ACPI_CLASS_AND_DEVICE(acpi_compat_data);
 static struct ofw_compat_data compat_data[] = {
 	{"ns16550",		(uintptr_t)&uart_ns8250_class},
 	{"ns16550a",		(uintptr_t)&uart_ns8250_class},
+	{"mediatek,mt7622-uart",(uintptr_t)&uart_ns8250_class},
 	{NULL,			(uintptr_t)NULL},
 };
 UART_FDT_CLASS_AND_DEVICE(compat_data);
