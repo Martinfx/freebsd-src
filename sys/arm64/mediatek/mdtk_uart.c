@@ -67,7 +67,6 @@ struct mdtk_softc {
 static int
 mdtk_uart_attach(struct uart_softc *sc)
 {
-	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	int rv;
 	struct ns8250_softc *ns8250 = (struct ns8250_softc*)sc;
 	struct uart_bas *bas = &sc->sc_bas;
@@ -82,7 +81,6 @@ mdtk_uart_attach(struct uart_softc *sc)
 	ns8250->ier |= ns8250->ier_rxbits;
 	uart_setreg(bas, REG_IER, ns8250->ier);
 	uart_barrier(bas);
-	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	return (0);
 }
 
@@ -180,8 +178,7 @@ uart_fdt_get_shift1(phandle_t node)
 static int
 mdtk_uart_probe(device_t dev)
 {
-	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
-        struct mdtk_softc *sc;
+    struct mdtk_softc *sc;
 	phandle_t node;
 	uint64_t freq;
 	int shift;
@@ -223,7 +220,6 @@ mdtk_uart_probe(device_t dev)
 		return (ENXIO);
 	}*/
 	freq = 25000000;
-	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	return (uart_bus_probe(dev, shift, 0, (int)freq, 0, 0, 0));
 }
 
