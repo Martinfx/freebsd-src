@@ -150,7 +150,9 @@ static struct uart_class mdtk_uart_class = {
     sizeof(struct mdtk_softc),
 	.uc_ops = &uart_ns8250_ops,
 	.uc_range = 8,
-	.uc_rclk = 0,
+	.uc_rclk = 0,  
+    .uc_rshift = 2,
+    .uc_riowidth = 4,
 };
 
 /* Compatible devices. */
@@ -183,7 +185,7 @@ mdtk_uart_probe(device_t dev)
 	phandle_t node;
 	uint64_t freq;
 	int shift;
-	int rv;
+	//int rv;
 	const struct ofw_compat_data *cd;
 
 	sc = device_get_softc(dev);
@@ -202,10 +204,10 @@ mdtk_uart_probe(device_t dev)
 	if (rv != 0) {
 		device_printf(dev, "Cannot unreset 'serial' reset\n");
 		return (ENXIO);
-	}
+	}*/
 	node = ofw_bus_get_node(dev);
 	shift = uart_fdt_get_shift1(node);
-	rv = clk_get_by_ofw_index(dev, 0, 0, &sc->clk);
+	/*rv = clk_get_by_ofw_index(dev, 0, 0, &sc->clk);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get UART clock: %d\n", rv);
 		return (ENXIO);
