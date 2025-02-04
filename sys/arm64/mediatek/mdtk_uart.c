@@ -126,7 +126,7 @@ mdtk_uart_ungrab(struct uart_softc *sc)
 
 static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-    KOBJMETHOD(uart_attach,		mdtk_uart_attach),
+    	KOBJMETHOD(uart_attach,		mdtk_uart_attach),
 	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
 	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
@@ -137,8 +137,8 @@ static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
 	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
-    KOBJMETHOD(uart_grab,		mdtk_uart_grab),
-    KOBJMETHOD(uart_ungrab,		mdtk_uart_ungrab),
+    	KOBJMETHOD(uart_grab,		ns8250_bus_grab),
+    	KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
 	KOBJMETHOD_END
 };
 
@@ -176,7 +176,8 @@ uart_fdt_get_shift1(phandle_t node)
 static int
 mdtk_uart_probe(device_t dev)
 {
-    struct mdtk_softc *sc;
+	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
+        struct mdtk_softc *sc;
 	phandle_t node;
 	uint64_t freq;
 	int shift;
@@ -190,7 +191,7 @@ mdtk_uart_probe(device_t dev)
 	if (cd->ocd_data == 0)
 		return (ENXIO);
 	sc->ns8250_base.base.sc_class = (struct uart_class *)cd->ocd_data;
-	rv = hwreset_get_by_ofw_name(dev, 0, "serial", &sc->reset);
+/*	rv = hwreset_get_by_ofw_name(dev, 0, "serial", &sc->reset);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get 'serial' reset\n");
 		return (ENXIO);
@@ -216,7 +217,9 @@ mdtk_uart_probe(device_t dev)
 	if (rv != 0) {
 		device_printf(dev, "Cannot enable UART clock: %d\n", rv);
 		return (ENXIO);
-	}
+	}*/
+	freq = 25000000;
+	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	return (uart_bus_probe(dev, shift, 0, (int)freq, 0, 0, 0));
 }
 
