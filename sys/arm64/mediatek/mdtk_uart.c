@@ -67,6 +67,7 @@ struct mdtk_softc {
 static int
 mdtk_uart_attach(struct uart_softc *sc)
 {
+	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	int rv;
 	struct ns8250_softc *ns8250 = (struct ns8250_softc*)sc;
 	struct uart_bas *bas = &sc->sc_bas;
@@ -81,6 +82,7 @@ mdtk_uart_attach(struct uart_softc *sc)
 	ns8250->ier |= ns8250->ier_rxbits;
 	uart_setreg(bas, REG_IER, ns8250->ier);
 	uart_barrier(bas);
+	printf("func: %s - line: %d - file: %s\n", __func__, __LINE__, __FILE__);
 	return (0);
 }
 
@@ -96,16 +98,16 @@ mdtk_uart_grab(struct uart_softc *sc)
 	 * saved mask alone. We'll restore whatever it was in ungrab.
 	 * All pending interrupt signals are reset when IER is set to 0.
 	 */
-    uart_lock(sc->sc_hwmdtkx);
+	uart_lock(sc->sc_hwmtx);
 	ier = uart_getreg(bas, REG_IER);
 	uart_setreg(bas, REG_IER, ier & ns8250->ier_mask);
 
-    while ((uart_getreg(bas, REG_LSR) & LSR_TEmdtk) == 0)
+	while ((uart_getreg(bas, REG_LSR) & LSR_TEMT) == 0)
 		;
 
 	uart_setreg(bas, REG_FCR, 0);
 	uart_barrier(bas);
-    uart_unlock(sc->sc_hwmdtkx);
+	uart_unlock(sc->sc_hwmtx);
 }
 
 static void
@@ -117,16 +119,16 @@ mdtk_uart_ungrab(struct uart_softc *sc)
 	/*
 	 * Restore previous interrupt mask
 	 */
-    uart_lock(sc->sc_hwmdtkx);
+	uart_lock(sc->sc_hwmtx);
 	uart_setreg(bas, REG_FCR, ns8250->fcr);
 	uart_setreg(bas, REG_IER, ns8250->ier);
 	uart_barrier(bas);
-    uart_unlock(sc->sc_hwmdtkx);
+	uart_unlock(sc->sc_hwmtx);
 }
 
 static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-    	KOBJMETHOD(uart_attach,		mdtk_uart_attach),
+    KOBJMETHOD(uart_attach,		mdtk_uart_attach),
 	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
 	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
@@ -137,8 +139,8 @@ static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
 	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
-    	KOBJMETHOD(uart_grab,		ns8250_bus_grab),
-    	KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
+    KOBJMETHOD(uart_grab,		ns8250_bus_grab),
+    KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
 	KOBJMETHOD_END
 };
 
@@ -153,8 +155,8 @@ static struct uart_class mdtk_uart_class = {
 
 /* Compatible devices. */
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mdtk7622-uart",(uintptr_t)&mdtk_uart_class},
-    {"mediatek,mdtk6577-uart",(uintptr_t)&mdtk_uart_class},
+    {"mediatek,mt7622-uart",(uintptr_t)&mdtk_uart_class},
+    {"mediatek,mtk6577-uart",(uintptr_t)&mdtk_uart_class},
 	{NULL,			 (uintptr_t)NULL},
 };
 
