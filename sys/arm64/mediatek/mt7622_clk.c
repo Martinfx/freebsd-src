@@ -1,0 +1,363 @@
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/bus.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/rman.h>
+#include <sys/kernel.h>
+#include <sys/module.h>
+#include <machine/bus.h>
+#include <dev/fdt/simplebus.h>
+#include <dev/ofw/ofw_bus.h>
+#include <dev/ofw/ofw_bus_subr.h>
+
+#include <dt-bindings/clock/mt7622-clk.h>
+#include <dev/clk/clk_fixed.h>
+#include <dev/clk/clk_div.h>
+#include <dev/clk/clk_mux.h>
+#include <dev/clk/clk_gate.h>
+#include <dev/clk/clk_link.h>
+#include <arm64/mediatek/mt7622_clk.h>
+#include <dev/hwreset/hwreset.h>
+#include "clkdev_if.h"
+
+#define CLK_CFG_0	0x040
+#define UNIVPLL2_FREQ       2400000000  /* 2.4 GHz */
+
+static struct ofw_compat_data compat_data[] = {
+	{"mediatek,mt7622-topckgen",	1},
+	{NULL,		 	0},
+};
+
+/* Parent lists */
+PLIST(eth_ck_parents) = {	"clkxtal",
+	"syspll1_d2",
+	"univpll1_d2",
+	"syspll1_d4",
+	"univpll_d5",
+	"sgmiipll_d2",
+	"univpll_d7",
+	"dmpll_ck"};
+
+static struct clk_fixed_def mdtk_fixed_clk[] = {
+	/*FRATE(CLK_TOP_TO_U2_PHY, "to_u2_phy", "clkxtal",
+		  31250000),
+	FRATE(CLK_TOP_TO_U2_PHY_1P, "to_u2_phy_1p", "clkxtal",
+		  31250000),
+	FRATE(CLK_TOP_PCIE0_PIPE_EN, "pcie0_pipe_en", "clkxtal",
+		  125000000),
+	FRATE(CLK_TOP_PCIE1_PIPE_EN, "pcie1_pipe_en", "clkxtal",
+		  125000000),
+	FRATE(CLK_TOP_SSUSB_TX250M, "ssusb_tx250m", "clkxtal",
+		  250000000),
+	FRATE(CLK_TOP_SSUSB_EQ_RX250M, "ssusb_eq_rx250m", "clkxtal",
+		  250000000),
+	FRATE(CLK_TOP_SSUSB_CDR_REF, "ssusb_cdr_ref", "clkxtal",
+		  33333333),
+	FRATE(CLK_TOP_SSUSB_CDR_FB, "ssusb_cdr_fb", "clkxtal",
+		  50000000),
+	FRATE(CLK_TOP_SATA_ASIC, "sata_asic", "clkxtal",
+		  50000000),
+	FRATE(CLK_TOP_SATA_RBC, "sata_rbc", "clkxtal",
+		  50000000),
+	*/
+	FRATE(0, "mainpll", 1120000000UL),
+	FRATE(0, "univ2pll", UNIVPLL2_FREQ),
+	FRATE(CLK_APMIXED_ETH1PLL, "eth1pll", 500000000),
+	FRATE(CLK_APMIXED_ETH2PLL, "eth2pll", 650000000),
+	FRATE(CLK_APMIXED_SGMIPLL, "sgmipll", 650000000),
+
+	FFACT(CLK_TOP_TO_USB3_SYS, "to_usb3_sys", "eth1pll", 1, 4),
+	FFACT(CLK_TOP_P1_1MHZ, "p1_1mhz", "eth1pll", 1, 500),
+	FFACT(CLK_TOP_4MHZ, "free_run_4mhz", "eth1pll", 1, 125),
+	FFACT(CLK_TOP_P0_1MHZ, "p0_1mhz", "eth1pll", 1, 500),
+	FFACT(CLK_TOP_TXCLK_SRC_PRE, "txclk_src_pre", "sgmiipll_d2", 1, 1),
+	FFACT(CLK_TOP_RTC, "rtc", "clkxtal", 1, 1024),
+	FFACT(CLK_TOP_MEMPLL, "mempll", "clkxtal", 32, 1),
+	FFACT(CLK_TOP_DMPLL, "dmpll_ck", "mempll", 1, 1),
+	FFACT(CLK_TOP_SYSPLL_D2, "syspll_d2", "mainpll", 1, 2),
+	FFACT(CLK_TOP_SYSPLL1_D2, "syspll1_d2", "mainpll", 1, 4),
+	FFACT(CLK_TOP_SYSPLL1_D4, "syspll1_d4", "mainpll", 1, 8),
+	FFACT(CLK_TOP_SYSPLL1_D8, "syspll1_d8", "mainpll", 1, 16),
+	FFACT(CLK_TOP_SYSPLL2_D4, "syspll2_d4", "mainpll", 1, 12),
+	FFACT(CLK_TOP_SYSPLL2_D8, "syspll2_d8", "mainpll", 1, 24),
+	FFACT(CLK_TOP_SYSPLL_D5, "syspll_d5", "mainpll", 1, 5),
+	FFACT(CLK_TOP_SYSPLL3_D2, "syspll3_d2", "mainpll", 1, 10),
+	FFACT(CLK_TOP_SYSPLL3_D4, "syspll3_d4", "mainpll", 1, 20),
+	FFACT(CLK_TOP_SYSPLL4_D2, "syspll4_d2", "mainpll", 1, 14),
+	FFACT(CLK_TOP_SYSPLL4_D4, "syspll4_d4", "mainpll", 1, 28),
+	FFACT(CLK_TOP_SYSPLL4_D16, "syspll4_d16", "mainpll", 1, 112),
+	FFACT(CLK_TOP_UNIVPLL, "univpll", "univ2pll", 1, 2),
+	FFACT(CLK_TOP_UNIVPLL_D2, "univpll_d2", "univpll", 1, 2),
+	FFACT(CLK_TOP_UNIVPLL1_D2, "univpll1_d2", "univpll", 1, 4),
+	FFACT(CLK_TOP_UNIVPLL1_D4, "univpll1_d4", "univpll", 1, 8),
+	FFACT(CLK_TOP_UNIVPLL1_D8, "univpll1_d8", "univpll", 1, 16),
+	FFACT(CLK_TOP_UNIVPLL1_D16, "univpll1_d16", "univpll", 1, 32),
+	FFACT(CLK_TOP_UNIVPLL2_D2, "univpll2_d2", "univpll", 1, 6),
+	FFACT(CLK_TOP_UNIVPLL2_D4, "univpll2_d4", "univpll", 1, 12),
+	FFACT(CLK_TOP_UNIVPLL2_D8, "univpll2_d8", "univpll", 1, 24),
+	FFACT(CLK_TOP_UNIVPLL2_D16, "univpll2_d16", "univpll", 1, 48),
+	FFACT(CLK_TOP_UNIVPLL_D5, "univpll_d5", "univpll", 1, 5),
+	FFACT(CLK_TOP_UNIVPLL3_D2, "univpll3_d2", "univpll", 1, 10),
+	FFACT(CLK_TOP_UNIVPLL3_D4, "univpll3_d4", "univpll", 1, 20),
+	FFACT(CLK_TOP_UNIVPLL3_D16, "univpll3_d16", "univpll", 1, 80),
+	FFACT(CLK_TOP_UNIVPLL_D7, "univpll_d7", "univpll", 1, 7),
+	FFACT(CLK_TOP_UNIVPLL_D80_D4, "univpll_d80_d4", "univpll", 1, 320),
+    FFACT(CLK_TOP_SGMIIPLL, "sgmiipll_ck", "sgmipll", 1, 1),
+    FFACT(CLK_TOP_SGMIIPLL_D2, "sgmiipll_d2", "sgmipll", 1, 2),
+};
+
+
+static struct clk_link_def mdtk_link_clk[] = {
+
+};
+
+static struct clk_gate_def mdtk_gate_clk[] = {
+	GATE(CLK_TOP_ETH_SEL, "eth_sel", "eth_sel_mux", CLK_CFG_0, 31)
+};
+
+/*static struct clk_fixed_def mdtk_top_divs[] = {
+	FFACT(CLK_TOP_TO_USB3_SYS, "to_usb3_sys", "eth1pll", 1, 4),
+	FFACT(CLK_TOP_P1_1MHZ, "p1_1mhz", "eth1pll", 1, 500),
+	FFACT(CLK_TOP_4MHZ, "free_run_4mhz", "eth1pll", 1, 125),
+	FFACT(CLK_TOP_P0_1MHZ, "p0_1mhz", "eth1pll", 1, 500),
+	FFACT(CLK_TOP_TXCLK_SRC_PRE, "txclk_src_pre", "sgmiipll_d2", 1, 1),
+	FFACT(CLK_TOP_RTC, "rtc", "clkxtal", 1, 1024),
+	FFACT(CLK_TOP_MEMPLL, "mempll", "clkxtal", 32, 1),
+	FFACT(CLK_TOP_DMPLL, "dmpll_ck", "mempll", 1, 1),
+	FFACT(CLK_TOP_SGMIIPLL, "sgmiipll_ck", "sgmipll", 1, 1),
+	FFACT(CLK_TOP_SGMIIPLL_D2, "sgmiipll_d2", "sgmipll", 1, 2),
+	FFACT(CLK_TOP_AUD1PLL, "aud1pll_ck", "aud1pll", 1, 1),
+	FFACT(CLK_TOP_AUD2PLL, "aud2pll_ck", "aud2pll", 1, 1),
+	FFACT(CLK_TOP_AUD_I2S2_MCK, "aud_i2s2_mck", "i2s2_mck_sel", 1, 2),
+	FFACT(CLK_TOP_TO_USB3_REF, "to_usb3_ref", "univpll2_d4", 1, 4),
+	FFACT(CLK_TOP_PCIE1_MAC_EN, "pcie1_mac_en", "univpll1_d4", 1, 1),
+	FFACT(CLK_TOP_PCIE0_MAC_EN, "pcie0_mac_en", "univpll1_d4", 1, 1),
+	FFACT(CLK_TOP_ETH_500M, "eth_500m", "eth1pll", 1, 1),
+};*/
+/*
+static struct clk_div_def top_adj_divs[] = {
+	DIV(CLK_TOP_APLL1_DIV, "apll1_ck_div", "apll1_ck_sel",
+		0x120, 24, 3),
+	DIV(CLK_TOP_APLL2_DIV, "apll2_ck_div", "apll2_ck_sel",
+		0x120, 28, 3),
+	DIV(CLK_TOP_I2S0_MCK_DIV, "i2s0_mck_div", "i2s0_mck_sel",
+		0x124, 0, 7),
+	DIV(CLK_TOP_I2S1_MCK_DIV, "i2s1_mck_div", "i2s1_mck_sel",
+		0x124, 8, 7),
+	DIV(CLK_TOP_I2S2_MCK_DIV, "i2s2_mck_div", "aud_i2s2_mck",
+		0x124, 16, 7),
+	DIV(CLK_TOP_I2S3_MCK_DIV, "i2s3_mck_div", "i2s3_mck_sel",
+		0x124, 24, 7),
+	DIV(CLK_TOP_A1SYS_HP_DIV, "a1sys_div", "a1sys_hp_sel",
+		0x128, 8, 7),
+	DIV(CLK_TOP_A2SYS_HP_DIV, "a2sys_div", "a2sys_hp_sel",
+		0x128, 24, 7),
+};*/
+
+static struct clk_mux_def peri_muxes[] = {
+	MUX0(0, "eth_sel_mux", eth_ck_parents, CLK_CFG_0, 24, 3)
+};
+
+static void
+init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
+    int nclks)
+{
+	int i, rv;
+
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_fixed_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clk_fixed_register failed");
+	}
+
+}
+
+static void
+init_linked(struct mdtk_clk_softc *sc, struct clk_link_def *clks,
+    int nclks)
+{
+	for (int i = 0; i < nclks; i++) {
+		int rv = clknode_link_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_link_register failed");
+	}
+
+}
+
+
+static void
+init_muxes(struct mdtk_clk_softc *sc, struct clk_mux_def *clks, int nclks)
+{
+	int i, rv;
+
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_mux_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clk_mux_register failed");
+	}
+}
+
+static void
+init_gates(struct mdtk_clk_softc *sc, struct clk_gate_def *clks, int nclks)
+{
+	int i, rv;
+
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_gate_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_gate_register failed");
+	}
+}
+
+
+static int
+mdtk_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
+{
+	struct mdtk_clk_softc *sc;
+
+	sc = device_get_softc(dev);
+	*val = bus_read_4(sc->mem_res, addr);
+	return (0);
+}
+
+static int
+mdtk_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val)
+{
+	struct mdtk_clk_softc *sc;
+
+	sc = device_get_softc(dev);
+	bus_write_4(sc->mem_res, addr, val);
+	return (0);
+}
+
+static int
+mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
+    uint32_t set_mask)
+{
+	struct mdtk_clk_softc *sc;
+	uint32_t reg;
+
+	sc = device_get_softc(dev);
+	reg = bus_read_4(sc->mem_res, addr);
+	reg &= ~clear_mask;
+	reg |= set_mask;
+	bus_write_4(sc->mem_res, addr, reg);
+	return (0);
+}
+
+static void
+mdtk_clkdev_device_lock(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+
+	sc = device_get_softc(dev);
+	mtx_lock(&sc->mtx);
+}
+
+static void
+mdtk_clkdev_device_unlock(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+
+	sc = device_get_softc(dev);
+	mtx_unlock(&sc->mtx);
+}
+
+static void
+register_clocks(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+
+	sc = device_get_softc(dev);
+	sc->clkdom = clkdom_create(dev);
+	if (sc->clkdom == NULL)
+		panic("clkdom == NULL");
+	
+	init_fixeds(sc, mdtk_fixed_clk, nitems(mdtk_fixed_clk));
+	init_linked(sc, mdtk_link_clk, nitems(mdtk_link_clk));
+	init_muxes(sc, peri_muxes, nitems(peri_muxes));
+	init_gates(sc, mdtk_gate_clk, nitems(mdtk_gate_clk));
+
+	clkdom_finit(sc->clkdom);
+	//clkdom_xlock(sc->clkdom);
+	/*	postinit_clock(sc);*/
+	//clkdom_unlock(sc->clkdom);
+	if (bootverbose)
+		clkdom_dump(sc->clkdom);
+}
+
+static int
+mdtk_mt7622_clk_detach(device_t dev)
+{
+	device_printf(dev, "Error: Clock driver cannot be detached\n");
+	return (EBUSY);
+}
+
+static int
+mdtk_mt7622_clk_probe(device_t dev)
+{
+	if (!ofw_bus_status_okay(dev))
+		return (ENXIO);
+
+	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data != 0) {
+		device_set_desc(dev, "Mediatek Unit mt7622-clk");
+		return (BUS_PROBE_DEFAULT);
+	}
+
+	return (ENXIO);
+}
+
+static int
+mdtk_mt7622_clk_attach(device_t dev) {
+	struct mdtk_clk_softc *sc = device_get_softc(dev);
+	int rid, rv;
+
+	sc->dev = dev;
+
+	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+	sc->type = ofw_bus_search_compatible(dev, compat_data)->ocd_data;
+
+	/* Resource setup. */
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (!sc->mem_res) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		rv = ENXIO;
+		goto fail;
+	}
+
+	register_clocks(dev);
+	hwreset_register_ofw_provider(dev);
+	return (0);
+
+fail:
+	if (sc->mem_res)
+		bus_release_resource(dev, SYS_RES_MEMORY, 0, sc->mem_res);
+
+	return (rv);
+}
+
+static device_method_t mdtk_mt7622_clk_methods[] = {
+	/* Device interface */
+	DEVMETHOD(device_probe,		mdtk_mt7622_clk_probe),
+	DEVMETHOD(device_attach,	mdtk_mt7622_clk_attach),
+	DEVMETHOD(device_detach, 	mdtk_mt7622_clk_detach),
+
+	/* Clkdev interface*/
+	DEVMETHOD(clkdev_read_4,	mdtk_clkdev_read_4),
+	DEVMETHOD(clkdev_write_4,	mdtk_clkdev_write_4),
+	DEVMETHOD(clkdev_modify_4,	mdtk_clkdev_modify_4),
+	DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
+	DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
+
+	DEVMETHOD_END
+};
+
+
+DEFINE_CLASS_0(mdtk_mt7622_clk, mdtk_mt7622_clk_driver, mdtk_mt7622_clk_methods,
+  sizeof(struct mdtk_clk_softc));
+
+EARLY_DRIVER_MODULE(mdtk_mt7622_clk, simplebus, mdtk_mt7622_clk_driver, NULL, NULL,
+    BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 1);
