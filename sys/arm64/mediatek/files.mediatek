@@ -1,2 +1,4 @@
-arm64/mediatek/mdtk_uart.c	standard
-
+arm64/mediatek/mdtk_uart.c	     standard
+arm64/mediatek/mt7622_clk_topckgen.c standard
+arm64/mediatek/mt7622_clk_pericfg.c  standard
+arm64/mediatek/mdtk_clk.c            standard
