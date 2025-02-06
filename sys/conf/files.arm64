@@ -1,4 +1,3 @@
-
 ##
 ## Kernel
 ##
@@ -776,3 +775,7 @@ dev/clk/xilinx/zynqmp_reset.c			optional fdt soc_xilinx_zynq
 
 # mediatek
 arm64/mediatek/mdtk_uart.c			optional fdt soc_mediatek
+arm64/mediatek/mt7622_clk_topckgen.c		optional fdt soc_mediatek
+arm64/mediatek/mt7622_clk_pericfg.c            optional fdt soc_mediatek
+arm64/mediatek/mdtk_clk.c                       optional fdt soc_mediatek
+
