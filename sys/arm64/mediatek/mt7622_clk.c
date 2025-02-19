@@ -22,6 +22,9 @@
 #include "clkdev_if.h"
 
 #define CLK_CFG_0	0x040
+#define CLK_CFG_1   0x050
+#define CLK_CFG_2   0x060
+#define CLK_CFG_3   0x070
 #define UNIVPLL2_FREQ       2400000000  /* 2.4 GHz */
 
 static struct ofw_compat_data compat_data[] = {
@@ -30,7 +33,8 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 /* Parent lists */
-PLIST(eth_ck_parents) = {	"clkxtal",
+PLIST(eth_ck_parents) = {
+    "clkxtal",
 	"syspll1_d2",
 	"univpll1_d2",
 	"syspll1_d4",
@@ -38,6 +42,118 @@ PLIST(eth_ck_parents) = {	"clkxtal",
 	"sgmiipll_d2",
 	"univpll_d7",
 	"dmpll_ck"};
+
+PLIST(ddrphycfg_ck_parents) = {
+	"clkxtal",
+	"syspll1_d8"
+};
+
+PLIST(mem_ck_parents) = {
+	"clkxtal",
+	"dmpll_ck"
+};
+
+PLIST(axi_ck_parents) = {
+	"clkxtal",
+	"syspll1_d2",
+	"syspll_d5",
+	"syspll1_d4",
+	"univpll_d5",
+	"univpll2_d2",
+	"univpll_d7",
+	"dmpll_ck"
+};
+
+PLIST(pwm_ck_parents) = {
+	"clkxtal",
+	"univpll2_d4",
+	"univpll3_d2",
+	"univpll1_d4"
+};
+
+PLIST(f10m_ref_ck_parents) = {
+	"clkxtal",
+	"syspll4_d16"
+};
+
+PLIST(nfi_infra_ck_parents) = {
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"clkxtal",
+	"univpll2_d8",
+	"syspll1_d8",
+	"univpll1_d8",
+	"syspll4_d2",
+	"univpll2_d4",
+	"univpll3_d2",
+	"syspll1_d4",
+	"syspll_d7"
+};
+
+PLIST(flash_ck_parents) = {
+	"clkxtal",
+	"univpll_div80_d4",
+	"syspll2_d8",
+	"syspll3_d4",
+	"univpll3_d4",
+	"univpll1_d8",
+	"syspll2_d4",
+	"univpll2_d4"
+};
+
+PLIST(uart_ck_parents) = {
+	"clkxtal",
+	"univpll2_d8"
+};
+
+PLIST(spi0_ck_parents) = {
+	"clkxtal",
+	"syspll3_d2",
+	"clkxtal",
+	"syspll2_d4",
+	"syspll4_d2",
+	"univpll2_d4",
+	"univpll1_d8",
+	"clkxtal"
+};
+
+PLIST(spi1_ck_parents) = {
+	"clkxtal",
+	"syspll3_d2",
+	"clkxtal",
+	"syspll2_d4",
+	"syspll4_d2",
+	"univpll2_d4",
+	"univpll1_d8",
+	"clkxtal"
+};
+
+PLIST(msdc50_0_ck_parents) = {
+	"clkxtal",
+	"univpll2_d8",
+	"univpll2_d4",
+	"syspll_d7",
+	"univpll2_d2",
+	"univpll_d5",
+	"univpll1_d2",
+	"univpll_d3"
+};
+
+PLIST(msdc30_0_ck_parents) = {
+	"clkxtal",
+	"univpll2_d16",
+	"univ48m_ck",
+	"syspll2_d4",
+	"univpll2_d4",
+	"syspll_d7",
+	"syspll2_d2",
+	"univpll2_d2"
+};
 
 static struct clk_fixed_def mdtk_fixed_clk[] = {
 	/*FRATE(CLK_TOP_TO_U2_PHY, "to_u2_phy", "clkxtal",
@@ -61,11 +177,15 @@ static struct clk_fixed_def mdtk_fixed_clk[] = {
 	FRATE(CLK_TOP_SATA_RBC, "sata_rbc", "clkxtal",
 		  50000000),
 	*/
-	FRATE(0, "mainpll", 1120000000UL),
-	FRATE(0, "univ2pll", UNIVPLL2_FREQ),
-	FRATE(CLK_APMIXED_ETH1PLL, "eth1pll", 500000000),
-	FRATE(CLK_APMIXED_ETH2PLL, "eth2pll", 650000000),
-	FRATE(CLK_APMIXED_SGMIPLL, "sgmipll", 650000000),
+	FRATE(CLK_APMIXED_ARMPLL,   "armpll",    120000000ULL),
+	FRATE(CLK_APMIXED_MAINPLL,  "mainpll",  1120000000ULL),
+	FRATE(CLK_APMIXED_UNIV2PLL, "univ2pll", 2400000000ULL),
+	FRATE(CLK_APMIXED_ETH1PLL,  "eth1pll",   500000000ULL),
+	FRATE(CLK_APMIXED_ETH2PLL,  "eth2pll",   650000000ULL),
+	FRATE(CLK_APMIXED_AUD1PLL,  "aud1pll",   147456000ULL),
+	FRATE(CLK_APMIXED_AUD2PLL,  "aud2pll",   135475000ULL),
+	FRATE(CLK_APMIXED_TRGPLL,   "trgpll",    725000000ULL),
+	FRATE(CLK_APMIXED_SGMIPLL,  "sgmipll",   650000000ULL),
 
 	FFACT(CLK_TOP_TO_USB3_SYS, "to_usb3_sys", "eth1pll", 1, 4),
 	FFACT(CLK_TOP_P1_1MHZ, "p1_1mhz", "eth1pll", 1, 500),
@@ -102,18 +222,53 @@ static struct clk_fixed_def mdtk_fixed_clk[] = {
 	FFACT(CLK_TOP_UNIVPLL3_D4, "univpll3_d4", "univpll", 1, 20),
 	FFACT(CLK_TOP_UNIVPLL3_D16, "univpll3_d16", "univpll", 1, 80),
 	FFACT(CLK_TOP_UNIVPLL_D7, "univpll_d7", "univpll", 1, 7),
-	FFACT(CLK_TOP_UNIVPLL_D80_D4, "univpll_d80_d4", "univpll", 1, 320),
+	FFACT(CLK_TOP_UNIVPLL_D80_D4, "univpll_div80_d4", "univpll", 1, 320),
     FFACT(CLK_TOP_SGMIIPLL, "sgmiipll_ck", "sgmipll", 1, 1),
     FFACT(CLK_TOP_SGMIIPLL_D2, "sgmiipll_d2", "sgmipll", 1, 2),
-};
 
+	FFACT(/*CLK_TOP_SYSPLL_D7*/ 0, "syspll_d7", "mainpll", 1, 8),
+};
 
 static struct clk_link_def mdtk_link_clk[] = {
 
 };
 
 static struct clk_gate_def mdtk_gate_clk[] = {
-	GATE(CLK_TOP_ETH_SEL, "eth_sel", "eth_sel_mux", CLK_CFG_0, 31)
+	GATE(CLK_TOP_ETH_SEL, "eth_sel", "eth_sel_mux", CLK_CFG_0, 31),
+	GATE(CLK_TOP_DDRPHYCFG_SEL, "ddrphycfg_sel", "ddrphycfg_sel_mux", CLK_CFG_0, 23),
+	GATE(CLK_TOP_MEM_SEL, "mem_sel", "mem_sel_mux", CLK_CFG_0, 15),
+	GATE(CLK_TOP_AXI_SEL, "axi_sel", "axi_sel_mux", CLK_CFG_0, 7),
+
+	GATE(CLK_TOP_PWM_SEL, "pwm_sel", "pwm_sel_mux", CLK_CFG_1, 7),
+	GATE(CLK_TOP_F10M_REF_SEL, "f10m_ref_sel", "f10m_ref_sel_mux", CLK_CFG_1, 15),
+    GATE(CLK_TOP_NFI_INFRA_SEL, "spinfi_infra_bclk_sel", "spinfi_infra_bclk_sel_mux", CLK_CFG_1, 23),
+	GATE(CLK_TOP_FLASH_SEL, "flash_sel", "flash_sel_mux", CLK_CFG_1, 31),
+
+	GATE(CLK_TOP_UART_SEL, "uart_sel", "uart_sel_mux", CLK_CFG_2, 7),
+	GATE(CLK_TOP_SPI0_SEL, "spi0_sel", "spi0_sel_mux", CLK_CFG_2, 15),
+	GATE(CLK_TOP_SPI1_SEL, "spi1_sel", "spi1_sel_mux", CLK_CFG_2, 23),
+    //GATE(CLK_TOP_MSDC50_0_SEL, "msdc50_0_sel", "msdc50_0_sel_mux", CLK_CFG_2, 31),
+
+	//GATE(CLK_TOP_MSDC30_0_SEL, "msdc30_0_sel", "msdc30_0_sel_mux", CLK_CFG_3, 7),
+};
+
+static struct clk_mux_def mdtk_muxes_clk[] = {
+	MUX0(0, "eth_sel_mux", eth_ck_parents, CLK_CFG_0, 24, 3),
+	MUX0(0, "ddrphycfg_sel_mux", ddrphycfg_ck_parents, CLK_CFG_0, 16, 1),
+	MUX0(0, "mem_sel_mux", mem_ck_parents, CLK_CFG_0, 8, 1),
+	MUX0(0, "axi_sel_mux", axi_ck_parents, CLK_CFG_0, 0, 3),
+
+	MUX0(0, "pwm_sel_mux", pwm_ck_parents, CLK_CFG_1, 0, 2),
+	MUX0(0, "f10m_ref_sel_mux", f10m_ref_ck_parents, CLK_CFG_1, 8, 1),
+	MUX0(0, "spinfi_infra_bclk_sel_mux", nfi_infra_ck_parents, CLK_CFG_1, 16, 4),
+	MUX0(0, "flash_sel_mux", flash_ck_parents, CLK_CFG_1, 24, 3),
+
+	MUX0(0, "uart_sel_mux", uart_ck_parents, CLK_CFG_2, 0, 1),
+	MUX0(0, "spi0_sel_mux", spi0_ck_parents, CLK_CFG_2, 8, 3),
+	MUX0(0, "spi1_sel_mux", spi1_ck_parents, CLK_CFG_2, 16, 3),
+	//MUX0(0, "msdc50_0_sel_mux", msdc50_0_ck_parents, CLK_CFG_2, 24, 3),
+
+	//MUX0(0, "msdc30_0_sel_mux", msdc30_0_ck_parents, CLK_CFG_3, 0, 3),
 };
 
 /*static struct clk_fixed_def mdtk_top_divs[] = {
@@ -154,10 +309,6 @@ static struct clk_div_def top_adj_divs[] = {
 	DIV(CLK_TOP_A2SYS_HP_DIV, "a2sys_div", "a2sys_hp_sel",
 		0x128, 24, 7),
 };*/
-
-static struct clk_mux_def peri_muxes[] = {
-	MUX0(0, "eth_sel_mux", eth_ck_parents, CLK_CFG_0, 24, 3)
-};
 
 static void
 init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
@@ -276,7 +427,7 @@ register_clocks(device_t dev)
 	
 	init_fixeds(sc, mdtk_fixed_clk, nitems(mdtk_fixed_clk));
 	init_linked(sc, mdtk_link_clk, nitems(mdtk_link_clk));
-	init_muxes(sc, peri_muxes, nitems(peri_muxes));
+	init_muxes(sc, mdtk_muxes_clk, nitems(mdtk_muxes_clk));
 	init_gates(sc, mdtk_gate_clk, nitems(mdtk_gate_clk));
 
 	clkdom_finit(sc->clkdom);
