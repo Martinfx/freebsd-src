@@ -90,8 +90,8 @@
 		.clkdef.name = _name,					\
 		.clkdef.parent_names = (const char *[]){_pname},				\
 		.offset = _reg,				\
-		.i_shift = _shift \
-		.i_width = _width \
+		.i_shift = _shift, \
+		.i_width = _width, \
 }
 
 /* Pure multiplexer. */
