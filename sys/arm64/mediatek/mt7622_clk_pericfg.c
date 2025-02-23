@@ -135,25 +135,22 @@ fail:
 }
 
 static int
-pericfg_hwreset_by_idx(struct mdtk_clk_softc *sc, intptr_t idx, bool reset)
+pericfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
+    struct mdtk_clk_softc *sc = device_get_softc(dev);
     uint32_t mask, reset_reg;
 
     CLKDEV_DEVICE_LOCK(sc->dev);
+    KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
+
+
     mask = 1 << (idx % 32);
     reset_reg = (idx / 32) * 4;
 
-    CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, reset ? mask : 0);
+    CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
     CLKDEV_DEVICE_UNLOCK(sc->dev);
 
     return(0);
-}
-
-static int
-pericfg_clk_hwreset_assert(device_t dev, intptr_t id, bool value)
-{
-    struct mdtk_clk_softc *sc = device_get_softc(dev);
-    return (pericfg_hwreset_by_idx(sc, id, value));
 }
 
 static device_method_t mdtk_mt7622_pericfg_methods[] = {
