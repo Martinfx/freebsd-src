@@ -17,8 +17,8 @@
 
 struct pinmux_softc {
     device_t 	dev;
-    struct resource	*pad_mem_res;
-    struct resource	*mux_mem_res;
+    struct resource	*base_res;
+    struct resource	*eint_res;
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -358,17 +358,17 @@ pinmux_attach(device_t dev)
     sc->dev = dev;
 
     rid = 0;
-    sc->pad_mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+    sc->base_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
         RF_ACTIVE);
-    if (sc->pad_mem_res == NULL) {
+    if (sc->base_res == NULL) {
         device_printf(dev, "Cannot allocate memory resources\n");
         return (ENXIO);
     }
 
     rid = 1;
-    sc->mux_mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+    sc->eint_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
         RF_ACTIVE);
-    if (sc->mux_mem_res == NULL) {
+    if (sc->eint_res == NULL) {
         device_printf(dev, "Cannot allocate memory resources\n");
         return (ENXIO);
     }
@@ -376,13 +376,15 @@ pinmux_attach(device_t dev)
 
     /* Register as a pinctrl device and process default configuration */
     fdt_pinctrl_register(dev, NULL);
-    fdt_pinctrl_configure_by_name(dev, "boot");
+    if (fdt_pinctrl_configure_tree(dev) != 0) {
+        device_printf(dev, "Cannot configure pinctrl device!\n");
+    }
 
     return (0);
 }
 
 
-static device_method_t mt_pinmux_methods[] = {
+static device_method_t mt7622_pinmux_methods[] = {
     /* Device interface */
     DEVMETHOD(device_probe,         pinmux_probe),
     DEVMETHOD(device_attach,        pinmux_attach),
@@ -394,7 +396,7 @@ static device_method_t mt_pinmux_methods[] = {
     DEVMETHOD_END
 };
 
-static DEFINE_CLASS_0(pinmux, mt_pinmux_driver, mt_pinmux_methods,
+static DEFINE_CLASS_0(pinmux, mt7622_pinmux_driver, mt7622_pinmux_methods,
     sizeof(struct pinmux_softc));
-EARLY_DRIVER_MODULE(mt_pinmux, simplebus, mt_pinmux_driver,
+EARLY_DRIVER_MODULE(mt7622_pinmux, simplebus, mt7622_pinmux_driver,
     NULL, NULL, 71);
