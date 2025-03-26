@@ -133,12 +133,9 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
     }
 
     for (child = OF_child(node); child != 0;	child =	OF_peer(child)) {
-         if (OF_getprop(child, "name", name, sizeof(name)) > 0) {
-             if (strncmp(name, "mux", 3) == 0 || strncmp(name, "conf", 4) == 0 ||
-                 OF_hasprop(child, "gpio-hog")) {
-                 device_printf(dev, "Name %s\n", name);
-             }
-         }
+        if (OF_getprop(child, "name", name, sizeof(name)) > 0) {
+            device_printf(dev, "Name %s\n", name);
+        }
     }
 
     return 0;
