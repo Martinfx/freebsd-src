@@ -49,7 +49,6 @@ struct mt7622_pinctrl_fdt_cfg {
 
 struct mt7622_pinctrl_softc {
     device_t        dev;
-    struct mtx      mtx;
     struct resource *mem_res;
     int             mem_rid;
 
@@ -127,6 +126,10 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
     phandle_t node = OF_node_from_xref(cfgxref);
     phandle_t child;
     char name[32];
+    char function[32];
+    char groups[32];
+    uint32_t pins[16];
+    int len;
 
     if (node <= 0) {
         return (ENXIO);
@@ -135,6 +138,27 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
     for (child = OF_child(node); child != 0;	child =	OF_peer(child)) {
         if (OF_getprop(child, "name", name, sizeof(name)) > 0) {
             device_printf(dev, "Name %s\n", name);
+
+            /* Handle mux configuration nodes */
+            if (strncmp(name, "mux", 3) == 0) {
+                /* Get function and groups properties */
+                if (OF_getprop(child, "function", function, sizeof(function)) > 0) {
+                    device_printf(dev, "Function: %s\n", function);
+                }
+                if (OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
+                    device_printf(dev, "Groups: %s\n", groups);
+                }
+            }
+            else if (strncmp(name, "cfg", 3) == 0) {
+                len = OF_getprop(child, "pins", pins, sizeof(pins));
+                if (len > 0) {
+                    device_printf(dev, "Pins: ");
+                    for (int i = 0; i < len/4; i++) {
+                        device_printf(dev, "%d ", pins[i]);
+                    }
+                    device_printf(dev, "\n");
+                }
+            }
         }
     }
 
@@ -159,9 +183,6 @@ mtk_pinctrl_attach(device_t dev)
 {
     struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
     sc->dev = dev;
-
-    /* Initialize mutex */
-    mtx_init(&sc->mtx, device_get_nameunit(dev), "pinctrl", MTX_DEF);
 
     /* Map memory resource */
     sc->mem_rid = 0;
