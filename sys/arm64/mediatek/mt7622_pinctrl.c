@@ -15,6 +15,7 @@
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
+#include <dev/gpio/gpiobusvar.h>
 
 static struct ofw_compat_data compat_data[] = {
     { "mediatek,mt7622-pinctrl", 1 },
@@ -47,23 +48,31 @@ struct mt7622_pinctrl_fdt_cfg {
     uint32_t config;
 };
 
+struct mt7622_pinctrl_irqsrc {
+    struct intr_irqsrc	isrc;
+    int			irq;
+    int			type;
+};
+
 struct mt7622_pinctrl_softc {
     device_t        dev;
+    device_t        sc_dev;
+    device_t        sc_busdev;
+    struct mtx      sc_mtx;
+    int             sc_ngpios;
+    struct mt7622_pinctrl_irqsrc	*sc_irqs;
+
     struct resource *mem_res;
     int             mem_rid;
 
     const struct pinctrl_pin_desc *pins;
     unsigned int    npins;
 
-
     const struct pinctrl_pin_group *groups;
     unsigned int    ngroups;
 
     const struct pinctrl_function *functions;
     unsigned int    nfunctions;
-
-    bus_space_tag_t     bst;
-    bus_space_handle_t  bsh;
 };
 
 static const struct pinctrl_pin_desc mt7622_pins[] = {
@@ -222,45 +231,52 @@ mt7622_pinctrl_write_4(struct mt7622_pinctrl_softc *sc, bus_size_t offset, uint3
 static int
 mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
 {
-    phandle_t node = OF_node_from_xref(cfgxref);
     phandle_t child;
     char name[32];
     char function[32];
     char groups[32];
     uint32_t pins[16];
-    int len;
+    int len = 0;
+    //struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+    phandle_t node = OF_node_from_xref(cfgxref);
 
     if (node <= 0) {
         return (ENXIO);
     }
 
-    for (child = OF_child(node); child != 0;	child =	OF_peer(child)) {
+    for (child = OF_child(node); child != 0; child = OF_peer(child)) {
         if (OF_getprop(child, "name", name, sizeof(name)) > 0) {
             device_printf(dev, "Name %s\n", name);
 
             /* Handle mux configuration nodes */
             if (strncmp(name, "mux", 3) == 0) {
                 /* Get function and groups properties */
-                if (OF_getprop(child, "function", function, sizeof(function)) > 0) {
-                    device_printf(dev, "Function: %s\n", function);
+                if (OF_getprop(child, "function", function,
+                               sizeof(function)) > 0) {
+                    device_printf(dev, "Function: %s\n",
+                                  function);
                 }
-                if (OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
-                    device_printf(dev, "Groups: %s\n", groups);
+                if (OF_getprop(child, "groups", groups,
+                               sizeof(groups)) > 0) {
+                    device_printf(dev, "Groups: %s\n",
+                                  groups);
                 }
-            }
-            else if (strncmp(name, "conf", 4) == 0) {
-                len = OF_getprop(child, "pins", pins, sizeof(pins));
-                //device_printf(dev, "Pins: %s\n", pins);
-                if (len > 0) {
-                    device_printf(dev, "Pins: ");
-                    for (int i = 0; i < len/4; i++) {
-                        device_printf(dev, "%d ", pins[i]);
+            } else if (strncmp(name, "conf", 4) == 0) {
+                len = OF_getprop(child, "pins", pins,
+                                 sizeof(pins));
+                // device_printf(dev, "Pins: %s\n", pins);
+               if (len > 0) {
+                 /*   device_printf(dev, "Pins: ");
+                    for (int i = 0; i < len / 4; i++) {
+                        device_printf(dev, "%d ",
+                                      pins[i]);
                     }
-                    device_printf(dev, "\n");
+                    device_printf(dev, "\n");*/
                 }
             }
         }
     }
+
 
     return 0;
 }
@@ -281,8 +297,11 @@ mtk_pinctrl_probe(device_t dev)
 static int
 mtk_pinctrl_attach(device_t dev)
 {
+    pcell_t gpio_ranges[4];
+    int error;
+    phandle_t node = ofw_bus_get_node(dev);
     struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
-    sc->dev = dev;
+    sc->sc_dev = dev;
 
     /* Map memory resource */
     sc->mem_rid = 0;
@@ -300,11 +319,44 @@ mtk_pinctrl_attach(device_t dev)
     sc->functions = mt7622_functions;
     sc->nfunctions = MT7622_NUM_FUNCTIONS;
 
-    fdt_pinctrl_register(dev, NULL);
-    if (fdt_pinctrl_configure_tree(dev) != 0) {
-        device_printf(dev, "Cannot configure pinctrl device!\n");
+    error = OF_getencprop(node, "gpio-ranges", gpio_ranges,
+                          sizeof(gpio_ranges));
+
+    if (error == -1) {
+        device_printf(dev, "failed to get gpio-ranges\n");
+        goto error;
     }
+
+    sc->sc_ngpios = gpio_ranges[3];
+
+    if (sc->sc_ngpios == 0) {
+        device_printf(dev, "no GPIOs\n");
+        goto error;
+    }
+
+    sc->sc_busdev = gpiobus_attach_bus(dev);
+    if (sc->sc_busdev == NULL) {
+        device_printf(dev, "failed to attach gpiobus\n");
+
+        goto error;
+    }
+
+    fdt_pinctrl_register(dev, NULL);
+    fdt_pinctrl_configure_tree(dev);
+
+    if (!OF_hasprop(node, "interrupt-controller"))
+        return (0);
+
+    sc->sc_irqs = mallocarray(sc->sc_ngpios,
+                              sizeof(*sc->sc_irqs), M_DEVBUF, M_ZERO | M_WAITOK);
+    intr_pic_register(dev, OF_xref_from_node(ofw_bus_get_node(dev)));
+
     return (0);
+
+error:
+    bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+    sc->mem_res = NULL;
+    return (ENXIO);
 }
 
 static int
