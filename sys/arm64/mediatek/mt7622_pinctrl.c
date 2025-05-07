@@ -182,36 +182,36 @@ static const struct pinctrl_pin_desc mt7622_pins[] = {
 };
 #define MT7622_NUM_PINS ARRAY_SIZE(mt7622_pins)
 
-static const unsigned int uart0_pins[] = { 0, 1 };  /* UART uses GPIO0 and GPIO1 */
-static const unsigned int i2c0_pins[] = { 2, 3 };   /* I2C uses GPIO2 and GPIO3 */
+static const unsigned int emmc_pins[] = { 40, 41, 42, 43, 44, 45, 47, 48, 49, 50 };
+static const unsigned int emmc_rst_pins[] = { 37 };
 
 static const struct pinctrl_pin_group mt7622_groups[] = {
     {
-        .name = "uart0_grp",
-        .pins = uart0_pins,
-        .npins = ARRAY_SIZE(uart0_pins),
+        .name = "emmc",
+        .pins = emmc_pins,
+        .npins = ARRAY_SIZE(emmc_pins),
     },
     {
-        .name = "i2c0_grp",
-        .pins = i2c0_pins,
-        .npins = ARRAY_SIZE(i2c0_pins),
+        .name = "emmc_rst",
+        .pins = emmc_rst_pins,
+        .npins = ARRAY_SIZE(emmc_rst_pins),
     }
 };
 #define MT7622_NUM_GROUPS ARRAY_SIZE(mt7622_groups)
 
-static const char * const uart_groups[] = { "uart0_grp" };
-static const char * const i2c_groups[] = { "i2c0_grp" };
+static const char * const emmc_groups[] = { "emmc" };
+static const char * const emmc_groups2[] = { "emmc" };
 
 static const struct pinctrl_function mt7622_functions[] = {
     {
-        .name = "uart",
-        .groups = uart_groups,
-        .ngroups = ARRAY_SIZE(uart_groups),
+        .name = "emmc",
+        .groups = emmc_groups,
+        .ngroups = ARRAY_SIZE(emmc_groups),
     },
     {
-        .name = "i2c",
-        .groups = i2c_groups,
-        .ngroups = ARRAY_SIZE(i2c_groups),
+        .name = "emmc",
+        .groups = emmc_groups2,
+        .ngroups = ARRAY_SIZE(emmc_groups2),
     }
 };
 #define MT7622_NUM_FUNCTIONS ARRAY_SIZE(mt7622_functions)
@@ -247,91 +247,96 @@ mt7622_set_pinmux(struct mt7622_pinctrl_softc *sc, unsigned int pin, uint32_t fu
 static int
 mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
 {
-	struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
-	phandle_t node = OF_node_from_xref(cfgxref);
-	phandle_t child;
-	char name[32];
-	char function[32];
-	char groups[32];
-	uint32_t pins[16];
-	int len = 0;
+    struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+    phandle_t node = OF_node_from_xref(cfgxref);
+    phandle_t child;
+    char name[32];
+    char function[32];
+    char groups[32];
+    uint32_t pins[16];
+    int len;
 
-	if (node <= 0)
-		return (ENXIO);
+    if (node <= 0)
+        return (ENXIO);
 
-	for (child = OF_child(node); child != 0; child = OF_peer(child)) {
-		if (OF_getprop(child, "name", name, sizeof(name)) <= 0)
-			continue;
+    for (child = OF_child(node); child != 0; child = OF_peer(child)) {
+        if (OF_getprop(child, "name", name, sizeof(name)) <= 0)
+            continue;
 
-		device_printf(dev, "Name: %s\n", name);
+        device_printf(dev, "Node: %s\n", name);
 
-		/* Handle mux configuration nodes */
-		if (strncmp(name, "mux", 3) == 0) {
-			if (OF_getprop(child, "function", function,
-				sizeof(function)) <= 0)
-				continue;
-			if (OF_getprop(child, "groups", groups,
-				sizeof(groups)) <= 0)
-				continue;
+        if (strncmp(name, "mux", 3) == 0) {
+            if (OF_getprop(child, "function", function, sizeof(function)) <= 0)
+                continue;
+            if (OF_getprop(child, "groups", groups, sizeof(groups)) <= 0)
+                continue;
 
-			//device_printf(dev, "  Function: %s\n", function);
-			//device_printf(dev, "  Groups: %s\n", groups);
+            device_printf(dev, "  Function: %s\n", function);
+            device_printf(dev, "  Groups: %s\n", groups);
 
-			/* Search matching function and group */
-			for (unsigned int i = 0; i < sc->nfunctions; i++) {
-				if (strcmp(function, sc->functions[i].name) !=
-				    0)
-					continue;
+            /* Find the function */
+            const struct pinctrl_function *fn = NULL;
+            for (unsigned int i = 0; i < sc->nfunctions; i++) {
+                if (strcmp(sc->functions[i].name, function) == 0) {
+                    fn = &sc->functions[i];
+                    break;
+                }
+            }
+            if (fn == NULL) {
+                device_printf(dev, "  Unknown function: %s\n", function);
+                continue;
+            }
 
-				for (unsigned int j = 0;
-				    j < sc->functions[i].ngroups; j++) {
-					if (strcmp(groups,
-						sc->functions[i].groups[j]) !=
-					    0)
-						continue;
+            /* Verify group is in function */
+            bool group_found = false;
+            for (unsigned int j = 0; j < fn->ngroups; j++) {
+                if (strcmp(fn->groups[j], groups) == 0) {
+                    group_found = true;
+                    break;
+                }
+            }
+            if (!group_found) {
+                device_printf(dev, "  Group %s not in function %s\n", groups, function);
+                continue;
+            }
 
-					for (unsigned int k = 0;
-					    k < sc->ngroups; k++) {
-						if (strcmp(sc->groups[k].name,
-							groups) != 0)
-							continue;
+            /* Find the group itself */
+            const struct pinctrl_pin_group *grp = NULL;
+            for (unsigned int k = 0; k < sc->ngroups; k++) {
+                if (strcmp(sc->groups[k].name, groups) == 0) {
+                    grp = &sc->groups[k];
+                    break;
+                }
+            }
+            if (grp == NULL) {
+                device_printf(dev, "  Unknown group: %s\n", groups);
+                continue;
+            }
 
-						for (unsigned int p = 0;
-						    p < sc->groups[k].npins;
-						    p++) {
-							uint32_t pin =
-							    sc->groups[k]
-								.pins[p];
-							mt7622_set_pinmux(sc,
-							    pin,
-							    0); // UART = func 0
-							// (zatím
-							// hardcoded)
-							device_printf(dev,"  Set pin %u to function %u\n",pin, 0);
-						}
-					}
-				}
-			}
+            /* Configure pins */
+            for (unsigned int p = 0; p < grp->npins; p++) {
+                uint32_t pin = grp->pins[p];
+                mt7622_set_pinmux(sc, pin, 0); // hardcoded funkce 0 pro UART
+                device_printf(dev, "  Set pin %u to function %s\n", pin, function);
+            }
 
-			/* Handle pinconf configuration nodes */
-		} else if (strncmp(name, "conf", 4) == 0) {
-			len = OF_getprop(child, "pins", pins, sizeof(pins));
-			if (len <= 0)
-				continue;
+        } else if (strncmp(name, "conf", 4) == 0) {
+            len = OF_getprop(child, "pins", pins, sizeof(pins));
+            if (len <= 0)
+                continue;
 
-			int npins = len / sizeof(uint32_t);
-			device_printf(dev, "  Configuring %d pin(s)\n:", npins);
-			for (int i = 0; i < npins; i++) {
-				device_printf(dev, " %u \n", pins[i]);
-				// TODO:  bias, drive-strength
-			}
-			device_printf(dev, "\n");
-		}
-	}
+            int npins = len / sizeof(uint32_t);
+            device_printf(dev, "  Configuring %d pin(s): \n", npins);
+            for (int i = 0; i < npins; i++) {
+                device_printf(dev, " %u", pins[i]);
+                // TODO: Implement bias-disable, drive-strength
+            }
+            device_printf(dev, "\n");
+        }
+    }
 
-	return (0);
+    return (0);
 }
-
 static int
 mtk_pinctrl_probe(device_t dev)
 {
