@@ -228,57 +228,108 @@ mt7622_pinctrl_write_4(struct mt7622_pinctrl_softc *sc, bus_size_t offset, uint3
     bus_write_4(sc->mem_res, offset, value);
 }
 
+#define MTK_PINCTRL_GPIO_MODE_BASE  0x300  // Registr MODE_BASE offset in datasheet
+#define MTK_PINCTRL_GPIO_MODE_REG(pin)   (MTK_PINCTRL_GPIO_MODE_BASE + ((pin / 10) * 4))
+#define MTK_PINCTRL_GPIO_MODE_SHIFT(pin) ((pin % 10) * 3)
+
+static void
+mt7622_set_pinmux(struct mt7622_pinctrl_softc *sc, unsigned int pin, uint32_t func)
+{
+    uint32_t shift, val;
+
+    shift = MTK_PINCTRL_GPIO_MODE_SHIFT(pin);
+    val = mt7622_pinctrl_read_4(sc, MTK_PINCTRL_GPIO_MODE_REG(pin));
+    val &= ~(0x7 << shift);
+    val |= (func & 0x7) << shift;
+    mt7622_pinctrl_write_4(sc, MTK_PINCTRL_GPIO_MODE_REG(pin), val);
+}
+
 static int
 mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
 {
-    phandle_t child;
-    char name[32];
-    char function[32];
-    char groups[32];
-    uint32_t pins[16];
-    int len = 0;
-    //struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
-    phandle_t node = OF_node_from_xref(cfgxref);
+	struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+	phandle_t node = OF_node_from_xref(cfgxref);
+	phandle_t child;
+	char name[32];
+	char function[32];
+	char groups[32];
+	uint32_t pins[16];
+	int len = 0;
 
-    if (node <= 0) {
-        return (ENXIO);
-    }
+	if (node <= 0)
+		return (ENXIO);
 
-    for (child = OF_child(node); child != 0; child = OF_peer(child)) {
-        if (OF_getprop(child, "name", name, sizeof(name)) > 0) {
-            device_printf(dev, "Name %s\n", name);
+	for (child = OF_child(node); child != 0; child = OF_peer(child)) {
+		if (OF_getprop(child, "name", name, sizeof(name)) <= 0)
+			continue;
 
-            /* Handle mux configuration nodes */
-            if (strncmp(name, "mux", 3) == 0) {
-                /* Get function and groups properties */
-                if (OF_getprop(child, "function", function,
-                               sizeof(function)) > 0) {
-                    device_printf(dev, "Function: %s\n",
-                                  function);
-                }
-                if (OF_getprop(child, "groups", groups,
-                               sizeof(groups)) > 0) {
-                    device_printf(dev, "Groups: %s\n",
-                                  groups);
-                }
-            } else if (strncmp(name, "conf", 4) == 0) {
-                len = OF_getprop(child, "pins", pins,
-                                 sizeof(pins));
-                // device_printf(dev, "Pins: %s\n", pins);
-               if (len > 0) {
-                 /*   device_printf(dev, "Pins: ");
-                    for (int i = 0; i < len / 4; i++) {
-                        device_printf(dev, "%d ",
-                                      pins[i]);
-                    }
-                    device_printf(dev, "\n");*/
-                }
-            }
-        }
-    }
+		device_printf(dev, "Name: %s\n", name);
 
+		/* Handle mux configuration nodes */
+		if (strncmp(name, "mux", 3) == 0) {
+			if (OF_getprop(child, "function", function,
+				sizeof(function)) <= 0)
+				continue;
+			if (OF_getprop(child, "groups", groups,
+				sizeof(groups)) <= 0)
+				continue;
 
-    return 0;
+			//device_printf(dev, "  Function: %s\n", function);
+			//device_printf(dev, "  Groups: %s\n", groups);
+
+			/* Search matching function and group */
+			for (unsigned int i = 0; i < sc->nfunctions; i++) {
+				if (strcmp(function, sc->functions[i].name) !=
+				    0)
+					continue;
+
+				for (unsigned int j = 0;
+				    j < sc->functions[i].ngroups; j++) {
+					if (strcmp(groups,
+						sc->functions[i].groups[j]) !=
+					    0)
+						continue;
+
+					for (unsigned int k = 0;
+					    k < sc->ngroups; k++) {
+						if (strcmp(sc->groups[k].name,
+							groups) != 0)
+							continue;
+
+						for (unsigned int p = 0;
+						    p < sc->groups[k].npins;
+						    p++) {
+							uint32_t pin =
+							    sc->groups[k]
+								.pins[p];
+							mt7622_set_pinmux(sc,
+							    pin,
+							    0); // UART = func 0
+							// (zatím
+							// hardcoded)
+							device_printf(dev,"  Set pin %u to function %u\n",pin, 0);
+						}
+					}
+				}
+			}
+
+			/* Handle pinconf configuration nodes */
+		} else if (strncmp(name, "conf", 4) == 0) {
+			len = OF_getprop(child, "pins", pins, sizeof(pins));
+			if (len <= 0)
+				continue;
+
+			int npins = len / sizeof(uint32_t);
+			device_printf(dev, "  Configuring %d pin(s)\n:", npins);
+			for (int i = 0; i < npins; i++) {
+				device_printf(dev, " %u \n", pins[i]);
+				// TODO:  bias, drive-strength
+			}
+			device_printf(dev, "\n");
+		}
+	}
+
+	return (0);
 }
 
 static int
