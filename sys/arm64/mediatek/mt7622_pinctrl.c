@@ -184,6 +184,15 @@ static const struct pinctrl_pin_desc mt7622_pins[] = {
 
 static const unsigned int emmc_pins[] = { 40, 41, 42, 43, 44, 45, 47, 48, 49, 50 };
 static const unsigned int emmc_rst_pins[] = { 37 };
+static const unsigned int esw_pins[] = { 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70};
+static const unsigned int esw_p0_p1_pins[] = {51, 52, 53, 54, 55, 56, 57, 58};
+static const unsigned int esw_p2_p3_p4_pins[] = {59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70};
+static const unsigned int rgmii_via_esw_pins[] = {59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70};
+static const unsigned int rgmii_via_gmac1_pins[] = {59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70};
+static const unsigned int rgmii_via_gmac2_pins[] = {25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36};
+static const unsigned int mdc_mdio_pins[] = {23, 24};
+static const unsigned int i2c0_pins[] = {14, 15};
+static const unsigned int i2c1_0_pins[] = {55, 56};
 
 static const struct pinctrl_pin_group mt7622_groups[] = {
     {
@@ -195,12 +204,69 @@ static const struct pinctrl_pin_group mt7622_groups[] = {
         .name = "emmc_rst",
         .pins = emmc_rst_pins,
         .npins = ARRAY_SIZE(emmc_rst_pins),
+    },
+    {
+        .name = "esw",
+        .pins = esw_pins,
+        .npins = ARRAY_SIZE(esw_pins),
+    },
+    {
+        .name = "esw_p0_p1",
+        .pins = esw_p0_p1_pins,
+        .npins = ARRAY_SIZE(esw_p0_p1_pins),
+    },
+    {
+        .name = "esw_p2_p3_p4",
+        .pins = esw_p2_p3_p4_pins,
+        .npins = ARRAY_SIZE(esw_p2_p3_p4_pins),
+    },
+    {
+        .name = "rgmii_via_esw",
+        .pins = rgmii_via_esw_pins,
+        .npins = ARRAY_SIZE(rgmii_via_esw_pins),
+    },
+    {
+        .name = "rgmii_via_gmac1",
+        .pins = rgmii_via_gmac1_pins,
+        .npins = ARRAY_SIZE(rgmii_via_gmac1_pins),
+    },
+    {
+        .name = "rgmii_via_gmac2",
+        .pins = rgmii_via_gmac2_pins,
+        .npins = ARRAY_SIZE(rgmii_via_gmac2_pins),
+    },
+    {
+        .name = "mdc_mdio",
+        .pins = mdc_mdio_pins,
+        .npins = ARRAY_SIZE(mdc_mdio_pins),
+    },
+    {
+        .name = "i2c0",
+        .pins = i2c0_pins,
+        .npins = ARRAY_SIZE(i2c0_pins),
+    },
+    {
+        .name = "i2c1_0",
+        .pins = i2c1_0_pins,
+        .npins = ARRAY_SIZE(i2c1_0_pins),
     }
 };
 #define MT7622_NUM_GROUPS ARRAY_SIZE(mt7622_groups)
 
 static const char * const emmc_groups[] = { "emmc" };
-static const char * const emmc_groups2[] = { "emmc" };
+static const char * const emmc_rst_groups[] = { "emmc_rst" };
+static const char * const esw_groups[] = { "esw" };
+static const char * const esw_p0_p1_groups[] = { "esw_p0_p1" };
+static const char * const esw_p2_p3_p4_groups[] = { "esw_p2_p3_p4" };
+static const char * const rgmii_via_esw_groups[] = { "rgmii_via_esw" };
+static const char * const rgmii_via_gmac1_groups[] = { "rgmii_via_gmac1" };
+static const char * const rgmii_via_gmac2_groups[] = { "rgmii_via_gmac2" };
+static const char * const mdc_mdio_groups[] = { "mdc_mdio" };
+static const char * const i2c0_groups[] = { "i2c0" };
+static const char * const i2c1_0_groups[] = { "i2c1_0" };
+
+//static const char * const i2c0_groups[] = { "i2c" };
+//static const char * const i2c1_0_groups[] = { "i2c" };
 
 static const struct pinctrl_function mt7622_functions[] = {
     {
@@ -210,8 +276,53 @@ static const struct pinctrl_function mt7622_functions[] = {
     },
     {
         .name = "emmc",
-        .groups = emmc_groups2,
-        .ngroups = ARRAY_SIZE(emmc_groups2),
+        .groups = emmc_rst_groups,
+        .ngroups = ARRAY_SIZE(emmc_rst_groups),
+    },
+    {
+        .name = "eth",
+        .groups = esw_groups,
+        .ngroups = ARRAY_SIZE(esw_groups),
+    },
+    {
+        .name = "eth",
+        .groups = esw_p0_p1_groups,
+        .ngroups = ARRAY_SIZE(esw_p0_p1_groups),
+    },
+    {
+        .name = "eth",
+        .groups = esw_p2_p3_p4_groups,
+        .ngroups = ARRAY_SIZE(esw_p2_p3_p4_groups),
+    },
+    {
+        .name = "eth",
+        .groups = rgmii_via_esw_groups,
+        .ngroups = ARRAY_SIZE(rgmii_via_esw_groups),
+    },
+    {
+        .name = "eth",
+        .groups = rgmii_via_gmac1_groups,
+        .ngroups = ARRAY_SIZE(rgmii_via_gmac1_groups),
+    },
+    {
+        .name = "eth",
+        .groups = rgmii_via_gmac2_groups,
+        .ngroups = ARRAY_SIZE(rgmii_via_gmac2_groups),
+    },
+    {
+        .name = "eth",
+        .groups = mdc_mdio_groups,
+        .ngroups = ARRAY_SIZE(mdc_mdio_groups),
+    },
+    {
+        .name = "i2c",
+        .groups = i2c0_groups,
+        .ngroups = ARRAY_SIZE(i2c0_groups),
+    },
+    {
+        .name = "i2c",
+        .groups = i2c1_0_groups,
+        .ngroups = ARRAY_SIZE(i2c1_0_groups),
     }
 };
 #define MT7622_NUM_FUNCTIONS ARRAY_SIZE(mt7622_functions)
@@ -277,6 +388,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
             /* Find the function */
             const struct pinctrl_function *fn = NULL;
             for (unsigned int i = 0; i < sc->nfunctions; i++) {
+                //device_printf(dev, "sc->functions[i].name: %s , function: %s\n",sc->functions[i].name, function);
                 if (strcmp(sc->functions[i].name, function) == 0) {
                     fn = &sc->functions[i];
                     break;
@@ -290,6 +402,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
             /* Verify group is in function */
             bool group_found = false;
             for (unsigned int j = 0; j < fn->ngroups; j++) {
+                device_printf(dev, "fn->groups[j]: %s , groups: %s \n" ,fn->groups[j], groups);
                 if (strcmp(fn->groups[j], groups) == 0) {
                     group_found = true;
                     break;
@@ -325,13 +438,13 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
             if (len <= 0)
                 continue;
 
-            int npins = len / sizeof(uint32_t);
+            /*int npins = len / sizeof(uint32_t);
             device_printf(dev, "  Configuring %d pin(s): \n", npins);
             for (int i = 0; i < npins; i++) {
-                device_printf(dev, " %u", pins[i]);
+                device_printf(dev, " %u\n", pins[i]);
                 // TODO: Implement bias-disable, drive-strength
             }
-            device_printf(dev, "\n");
+            device_printf(dev, "\n");*/
         }
     }
 
