@@ -19,6 +19,7 @@
 static struct ofw_compat_data compat_data[] =
     {{"mediatek,mt7622-pinctrl", 1}, {NULL, 0}};
 
+/*
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 struct pinctrl_pin_desc {
@@ -70,8 +71,8 @@ struct mt7622_pinctrl_softc {
 
     const struct pinctrl_function *functions;
     unsigned int nfunctions;
-};
-
+};*/
+/*
 static const struct pinctrl_pin_desc mt7622_pins[] = {
 {.number = 0, .name = "GPIO_A"},       {.number = 1, .name = "I2S1_IN"},
 {.number = 2, .name = "I2S1_OUT"},     {.number = 3, .name = "I2S_BCLK"},
@@ -1506,11 +1507,34 @@ static inline uint32_t mt7622_pinctrl_read_4(struct mt7622_pinctrl_softc *sc,
 static inline void mt7622_pinctrl_write_4(struct mt7622_pinctrl_softc *sc,
                                           bus_size_t offset, uint32_t value) {
     bus_write_4(sc->mem_res, offset, value);
-}
+}*/
+
+struct mt7622_pinmux_desc {
+    const char *funcs[8];
+    bus_size_t reg_offset;
+    int shift;
+};
+
+struct mt7622_pinctrl_softc {
+    device_t sc_dev;
+    device_t sc_busdev;
+    struct resource *mem_res;
+    int mem_rid;
+    const struct mt7622_pinmux_desc *pixmux;
+};
+
+static const struct mt7622_pinmux_desc pinmux[] = {
+    [23] = {{ "MDIO", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
+    [24] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
+    [37] = {{ "Parallel NAND Flash", "GPIO", "EMMC", NULL, NULL, NULL, NULL, NULL}, 0x300, 20},
+    [50] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 20},
+    [71] = {{ "PMIC I2C", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 16},
+    [72] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 16}
+};
 
 static int
 mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
-    struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+    //struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
     phandle_t node = OF_node_from_xref(cfgxref);
     phandle_t child;
     char name[64], function[64], groups[64];
@@ -1526,9 +1550,9 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
             if (OF_getprop(child, "function", function, sizeof(function)) > 0 &&
                     OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
 
-                device_printf(dev, "Function: %s, Groups: %s\n", function, groups);
+                //device_printf(dev, "Function: %s, Groups: %s\n", function, groups);
 
-                int func_index = -1;
+                /*int func_index = -1;
                 int group_index = -1;
 
                 for (int i = 0; i < sc->nfunctions; i++) {
@@ -1545,6 +1569,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
                     }
                 }
 
+                device_printf(dev, "Func_index: %d , Group_index: %d \n", func_index, group_index);
                 if (func_index < 0 || group_index < 0) {
                     device_printf(dev, "Unknown function or group\n");
                     continue;
@@ -1565,7 +1590,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
 
                     device_printf(dev, "Pin %u mux set to %u (reg 0x%x)\n", pin, mux_val,
                                   offset);
-                }
+                }*/
             }
         }
     }
@@ -1587,65 +1612,29 @@ mtk_pinctrl_probe(device_t dev) {
 
 static int
 mtk_pinctrl_attach(device_t dev) {
-    pcell_t gpio_ranges[4];
-    int error;
-    phandle_t node = ofw_bus_get_node(dev);
     struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
     sc->sc_dev = dev;
 
     /* Map memory resource */
     sc->mem_rid = 0;
-    sc->mem_res =
-            bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid, RF_ACTIVE);
+    sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid, RF_ACTIVE);
     if (sc->mem_res == NULL) {
         device_printf(dev, "Could not map memory resource\n");
         return (ENXIO);
     }
 
-    sc->pins = mt7622_pins;
+    /*sc->pins = mt7622_pins;
     sc->npins = MT7622_NUM_PINS;
     sc->groups = mt7622_groups;
     sc->ngroups = MT7622_NUM_GROUPS;
     sc->functions = mt7622_functions;
-    sc->nfunctions = MT7622_NUM_FUNCTIONS;
-
-    error = OF_getencprop(node, "gpio-ranges", gpio_ranges, sizeof(gpio_ranges));
-
-    if (error == -1) {
-        device_printf(dev, "failed to get gpio-ranges\n");
-        goto error;
-    }
-
-    sc->sc_ngpios = gpio_ranges[3];
-
-    if (sc->sc_ngpios == 0) {
-        device_printf(dev, "no GPIOs\n");
-        goto error;
-    }
-
-    sc->sc_busdev = gpiobus_attach_bus(dev);
-    if (sc->sc_busdev == NULL) {
-        device_printf(dev, "failed to attach gpiobus\n");
-
-        goto error;
-    }
+    sc->nfunctions = MT7622_NUM_FUNCTIONS;*/
+    sc->pixmux = pinmux;
 
     fdt_pinctrl_register(dev, NULL);
     fdt_pinctrl_configure_tree(dev);
 
-    if (!OF_hasprop(node, "interrupt-controller"))
-        return (0);
-
-    sc->sc_irqs = mallocarray(sc->sc_ngpios, sizeof(*sc->sc_irqs), M_DEVBUF,
-                              M_ZERO | M_WAITOK);
-    intr_pic_register(dev, OF_xref_from_node(ofw_bus_get_node(dev)));
-
     return (0);
-
-error:
-    bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-    sc->mem_res = NULL;
-    return (ENXIO);
 }
 
 static int mtk_pinctrl_detach(device_t dev) {
