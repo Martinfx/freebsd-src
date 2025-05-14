@@ -1526,7 +1526,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
             if (OF_getprop(child, "function", function, sizeof(function)) > 0 &&
                     OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
 
-                device_printf(dev, "Function: %s, Groups: %s\n", function, groups);
+                //device_printf(dev, "Function: %s, Groups: %s\n", function, groups);
 
                 int func_index = -1;
                 int group_index = -1;
@@ -1545,6 +1545,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
                     }
                 }
 
+                device_printf(dev, "Func_index: %d , Group_index: %d \n", func_index, group_index);
                 if (func_index < 0 || group_index < 0) {
                     device_printf(dev, "Unknown function or group\n");
                     continue;
