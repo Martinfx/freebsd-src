@@ -1513,7 +1513,7 @@ struct mt7622_pinmux_desc {
     uint8_t pin;
     const char *funcs[8];
     uint16_t reg_offset;
-    uint8_t shift;
+    int shift;
 };
 
 struct mt7622_pinctrl_softc {
