@@ -1510,9 +1510,8 @@ static inline void mt7622_pinctrl_write_4(struct mt7622_pinctrl_softc *sc,
 }*/
 
 struct mt7622_pinmux_desc {
-    uint8_t pin;
     const char *funcs[8];
-    uint16_t reg_offset;
+    bus_size_t reg_offset;
     int shift;
 };
 
@@ -1525,7 +1524,10 @@ struct mt7622_pinctrl_softc {
 };
 
 static const struct mt7622_pinmux_desc pinmux[] = {
-    [40] = { 40, { "gpio", "emmc", "nand", NULL, NULL, NULL, NULL, NULL }, 0x300, 0  },
+    [23] = {{ "MDIO", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  },
+    [24] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  },
+    [71] = {{ "PMIC I2C", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0 },
+    [72] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  }
 };
 
 static int
