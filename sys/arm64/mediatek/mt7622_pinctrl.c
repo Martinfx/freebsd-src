@@ -1524,8 +1524,8 @@ struct mt7622_pinctrl_softc {
 };
 
 static const struct mt7622_pinmux_desc pinmux[] = {
-    [23] = {{ "MDIO", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  },
-    [24] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  },
+    [23] = {{ "MDIO", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
+    [24] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
     [71] = {{ "PMIC I2C", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0 },
     [72] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 0  }
 };
