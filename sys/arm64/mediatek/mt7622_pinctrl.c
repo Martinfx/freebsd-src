@@ -1529,7 +1529,13 @@ static const struct mt7622_pinmux_desc pinmux[] = {
     [37] = {{ "Parallel NAND Flash", "GPIO", "EMMC", NULL, NULL, NULL, NULL, NULL}, 0x300, 20},
     [50] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 20},
     [71] = {{ "PMIC I2C", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 16},
-    [72] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 16}
+    [72] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 16},
+    [25] = {{ "RGMII", "GPIO", "SDXC", NULL, NULL, NULL, NULL, NULL}, 0x300, 12},
+    [36] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 12},
+    [10] = {{ "SPI NOR Flash", "GPIO", "SPI NAND Flash", NULL, NULL, NULL, NULL, NULL}, 0x300, 8},
+    [13] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 8},
+    [6] = {{ "UART0", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 4},
+    [7] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 4}
 };
 
 static int
