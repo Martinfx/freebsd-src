@@ -2,8 +2,6 @@ options 	SOC_MEDIATEK
 
 device		uart_ns8250
 
-files           "../mediatek/files.mediatek"
-
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
