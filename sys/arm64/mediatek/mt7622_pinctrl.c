@@ -1,3 +1,29 @@
+/*-
+ * Copyright (c) 2025 Martin Filla, Michal Meloun <mmel@FreeBSD.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/cdefs.h>
@@ -1535,7 +1561,83 @@ static const struct mt7622_pinmux_desc pinmux[] = {
     [10] = {{ "SPI NOR Flash", "GPIO", "SPI NAND Flash", NULL, NULL, NULL, NULL, NULL}, 0x300, 8},
     [13] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 8},
     [6] = {{ "UART0", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 4},
-    [7] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 4}
+    [7] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 4},
+
+    [21] = {{ "I2S4_OUT", "GPIO21", "SD_CMD", NULL, NULL, "ANTSEL", "BT_SPXT_C0", "DBG_UTIF"}, 0x310, 28},
+    [20] = {{ "I2S3_OUT", "GPIO20", "SD_CLK", NULL, NULL, "ANTSEL", "BT_SPXT_C1", "DBG_UTIF"}, 0x310, 24},
+    [19] = {{ "I2S2_OUT", "GPIO19", "SD_D0", NULL, NULL,"ANTSEL", "BT_IPATH_EN", "DBG_UTIF"}, 0x310, 20},
+    [18] = {{ "I2S4_IN", "GPIO18", "SD_D1", NULL, NULL, "ANTSEL", "BT_ERX_EN", "DBG_UTIF"}, 0x310, 16},
+    [76] = {{ "SPIC1_CS", "GPIO76", "UART CTS1", "I2C2_SDA", "PWM_CH4", "ANTSEL", NULL, "DBG_UTIF"}, 0x310, 12},
+    [75] = {{ "SPIC1_MISO", "GPIO75", "UART RTS1", "I2C2_SCL", "PWM_CH3", "ANTSEL", NULL, "DBG_UTIF"}, 0x310, 8},
+    [74] = {{ "SPIC1_MOSI", "GPIO74", "UART RDX1", "I2C2_SDA", "PWM_CH4", "ANTSEL", NULL, "DBG_UTIF"}, 0x310, 4},
+    [73] = {{ "SPIC1_CLK", "GPIO73", "UART TXD1", "I2C1_SCL", "PWM_CH1", "ANTSEL", NULL, "DBG_UTIF"}, 0x310, 0},
+
+    [77] = {{ "GPIO_D/GPIO77", "GPIO77", NULL, NULL, "PWM_CH5", "ANTSEL", NULL, "DBG_UTIF"}, 0x320, 28},
+    [17] = {{ "I2S3_IN", "GPIO17", "SD_D2", NULL, "IR_R", "ANTSEL", "BT_ELNA_EN", "DBG_UTIF"}, 0x320, 24},
+    [16] = {{ "I2S2_IN", "GPIO17", "SD_D2", NULL, "IR_R", "ANTSEL", "BT_ELNA_EN", "DBG_UTIF"}, 0x320, 20},
+    [0] = {{ "GPIO_A/GPIO0", "GPIO0", NULL, NULL, NULL, NULL, NULL, NULL}, 0x320, 16},
+    [78] = {{ "WATCHDOG", "GPIO78", NULL, NULL, "PWM_CH6", NULL, NULL, "DBG_UTIF"}, 0x320, 12},
+    [35] = {{ "GPIO_A/GPIO0", "GPIO35", "PCIE0_PAD_CLKREQ", "PCIE1_PAD_CLKREQ", NULL, "ANTSEL", NULL, NULL}, 0x320, 8},
+    [34] = {{ "GPIO_A/GPIO0", "GPIO34", "PCIE0_PAD_WAKE", "PCIE1_PAD_WAKE", NULL, "ANTSEL", NULL, "EXT_BGCK"}, 0x320, 4},
+    [5] = {{ "I2S_MCLK", "GPIO5", NULL, NULL, NULL, NULL, NULL, "DBG_UTIF"}, 0x320, 0},
+
+    [57] = {{ "I2C2_SCL", "GPIO57", "UART_RTS1", "TDM_OUT_MCLK", NULL, NULL, NULL, NULL}, 0x330, 28},
+    [56] = {{ "I2C1_SDA", "GPIO56", "UART_RXD1", "TDM_IN_DATA", NULL, NULL, NULL, NULL}, 0x330, 24},
+    [55] = {{ "I2C1_SCL", "GPIO55", "UART_TXD1", "TDM_OUT_DATA", NULL, NULL, NULL, NULL}, 0x330, 20},
+    [54] = {{ "UART_CTS2", "GPIO54", NULL, "PWM_CH4", NULL, NULL, NULL, NULL}, 0x330, 16},
+    [53] = {{ "UART_RTS2", "GPIO53", NULL, "PWM_CH3", NULL, NULL, NULL, NULL}, 0x330, 12},
+    [52] = {{ "UART_RXD2", "GPIO52", NULL, "PWM_CH2", NULL, NULL, NULL, NULL}, 0x330, 8},
+    [51] = {{ "UART_TXD2", "GPIO51", NULL, "PWM_CH1", NULL, NULL, NULL, NULL}, 0x330, 4},
+    [84] = {{ "PCIE1_PAD_PERST", "GPIO84", NULL, NULL, NULL, NULL, NULL, NULL}, 0x330, 0},
+
+    [65] = {{ "ESW_RXD", "GPIO65", "G1_RXD", NULL, "SPIC0_MISO", NULL, NULL, NULL}, 0x340, 28},
+    [64] = {{ "ESW_TXC", "GPIO64", "G1_TXC", NULL, "SPIC0_MOSI", NULL, NULL, NULL}, 0x340, 24},
+    [63] = {{ "ESW_TXEN", "GPIO63", "G1_TXEN", NULL, "SPIC0_CLK", NULL, NULL, NULL}, 0x340, 20},
+    [62] = {{ "ESW_TXD", "GPIO62", "G1_TXD", "TDM_IN_WS", "UART_CTS2_N", "UART_RXD4", NULL, NULL}, 0x340, 16},
+    [61] = {{ "ESW_TXD", "GPIO61", "G1_TXD", "TDM_IN_BCLK", "UART_RTS2_N", "UART_TXD4", NULL, NULL}, 0x340, 12},
+    [60] = {{ "ESW_TXD", "GPIO60", "G1_TXD", "TDM_IN_MCLK", "UART_RXD2", "IR_R", NULL, NULL}, 0x340, 8},
+    [59] = {{ "ESW_TXD", "GPIO59", "G1_TXD", "TMD_OUT_WS", "UART_TXD2", "IR_T", NULL, NULL}, 0x340, 4},
+    [58] = {{ "I2C2_SDA", "GPIO58", "UART_CTS1", "TDM_OUT_BCLK", NULL, NULL, NULL, NULL}, 0x340, 0},
+
+    [83] = {{ "PCIE0_PAD_PERST", "GPIO83", NULL, NULL, NULL, NULL, NULL, NULL}, 0x350, 28},
+    [9] = {{ "SPI_HOLD", "GPIO9", "SNFI_HOLD", "TDM_OUT_BCLK", NULL, NULL, "FPC_DL_STS", NULL}, 0x350, 24},
+    [8] = {{ "SPI_WP", "GPIO8", "SNFI_WP", "TDM_OUT_MCLK", NULL, NULL, "FPC_DAT_STS", NULL}, 0x350, 20},
+    [70] = {{ "ESW_RXC", "GPIO70", "G1_RXCV", "SPIC1_CS", NULL, NULL, NULL, NULL}, 0x350, 16},
+    [69] = {{ "ESW_RXDV", "GPIO69", "G1_RXDV", "PWM_CH6", "SPIC1_MISO", NULL, NULL, NULL}, 0x350, 12},
+    [68] = {{ "ESW_RXD", "GPIO68", "G1_RXD", "PWM_CH5", "SPIC1_MOSI", NULL, NULL, NULL}, 0x350, 8},
+    [67] = {{ "ESW_RXD", "GPIO67", "G1_RXD", "PWM_CH4", "SPIC1_CLK", NULL, NULL, NULL}, 0x350, 4},
+    [66] = {{ "ESW_RXD", "GPIO66", "G1_RXD", NULL, "SPIC0_CS", NULL, NULL, NULL}, 0x350, 0},
+
+    [90] = {{ "I2C2_SDA", "GPIO90", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 24},
+    [89] = {{ "I2C2_SCL", "GPIO89", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 20},
+    [88] = {{ "I2C1_SDA", "GPIO88", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 16},
+    [87] = {{ "I2C1_SCL", "GPIO87", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 12},
+    [86] = {{ "EPHY_LED0_N", "GPIO86", NULL, NULL, "CPUM_HW_SEL", NULL, "FPC_CTL", "JTRST_N"}, 0x360, 8},
+    [85] = {{ "WLED_N", "GPIO85", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 4},
+    [102] = {{ "GPIO_E/GPIO102", "GPIO102", NULL, NULL, NULL, NULL, "ANTSEL", "FPC_DATA"}, 0x360, 0},
+
+    [97] = {{ "PWM_CH3", "GPIO97", "UART_TXD4", NULL, "AICE_TCKC", "ANTSEL", "FPC_DATA[", "W_JTCLK"}, 0x380, 28},
+    [96] = {{ "PWM_CH2", "GPIO96", "UART_CTS4", "UART_RXD2", "CPUM_CK_XI", "ANTSEL", "FPC_DATA", "W_DBGACK"}, 0x380, 24},
+    [95] = {{ "I2C1_SDA", "GPIO88", NULL, NULL, NULL, NULL, NULL, NULL}, 0x380, 20},
+    [22] = {{ "GPIO_B/GPIO22", "GPIO22", NULL, "TSF_INTR", NULL, NULL, "ANTSEL", "DBG_UTIF"}, 0x380, 16},
+
+    [94] = {{ "UART_CTS4", "GPIO94", "EPHY_LED4_N", "DFD_TMS", "CPUM", "ANTSEL", "FPC_CTL", "JTMS"}, 0x390, 28},
+    [93] = {{ "UART_RTS4", "GPIO93", "EPHY_LED3_N", "DFD_TCK", "CPUM", "ANTSEL", "FPC_CTL", "JTCLK"}, 0x390, 24},
+    [92] = {{ "UART_RXD4", "GPIO92", "EPHY_LED2_N", "DFD_TDO", "CPUM", "ANTSEL", "FPC_CTL", "JTDO"}, 0x390, 20},
+    [91] = {{ "UART_TXD4", "GPIO91", "EPHY_LED1_N", "DFD_TDI", "CPUM_2B_SEL", "ANTSEL", "FPC_CK_XI", "JTDI"}, 0x390, 16},
+    [101] = {{ "PWM_CH7", "GPIO101", NULL, NULL, NULL, "ANTSEL", "FPC_DATA", "DBG_UART_TXD"}, 0x390, 12},
+    [100] = {{ "PWM_CH6", "GPIO100", NULL, "IR_R", NULL, "ANTSEL", "FPC_DATA", "W_JTRST_N"}, 0x390, 8},
+    [99] = {{ "PWM_CH5", "GPIO99", NULL, "IR_T", "AICE_TMSC", "ANTSEL", "FPC_DATA", "W_JTMS"}, 0x390, 4},
+    [98] = {{ "PWM_CH4", "GPIO98", "UART_RXD4", NULL, NULL, "ANTSEL", "FPC_DATA", "W_JTDI"}, 0x390, 0},
+
+    [4] = {{ "I2S_WS_OUT", "GPIO4", "UART_RXD2", "i2S_WS_IN", NULL, NULL, NULL, NULL}, 0x3A0, 28},
+    [3] = {{ "I2S_BCLK_OUT", "GPIO3", "UART_TXD2", "i2S_BCLK_IN", NULL, NULL, NULL, NULL}, 0x3A0, 24},
+    [2] = {{ "I2S1_OUT", "GPIO2", "UART_CTS2_N", NULL, NULL, NULL, NULL, NULL}, 0x3A0, 20},
+    [1] = {{ "I2S1_IN", "GPIO1", "UART_RTS2_N", NULL, NULL, NULL, NULL, NULL}, 0x3A0, 16},
+    [82] = {{ "UART_RXD3", "GPIO82", "SPDIF_R", "SPIC0_MOSI", "PWM_CH7", "ANTSEL", NULL, "DBG_UTIF"}, 0x3A0, 12},
+    [81] = {{ "UART_TXD3", "GPIO81", "SPDIF_T", "SPIC0_CLK", "PWM_CH6", "ANTSEL", NULL, "DBG_UTIF"}, 0x3A0, 8},
+    [80] = {{ "UART_CTS3", "GPIO80", NULL, "SPIC0_CS", "CPIE0_PAD_CLKREQ", "ANTSEL", NULL, "DBG_UTIF"}, 0x3A0, 4},
+    [79] = {{ "UART_RTS3", "GPIO79", NULL, "SPIC0_MISO", "PCIE0_PAD_WAKE", "ANTSEL", NULL, "DBG_UTIF"}, 0x3A0, 0}
 };
 
 static int
