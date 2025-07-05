@@ -1652,14 +1652,14 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
         return (ENXIO);
 
     for (child = OF_child(node); child != 0; child = OF_peer(child)) {
-        if (OF_getprop(child, "name", name, sizeof(name)) <= 0)
-            continue;
+        //if (OF_getprop(child, "name", name, sizeof(name)) <= 0)
+        //    continue;
 
         if (strncmp(name, "mux", 3) == 0) {
             if (OF_getprop(child, "function", function, sizeof(function)) > 0 &&
                     OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
 
-                device_printf(dev, "Name: %s Function: %s, Groups: %s\n",name, function, groups);
+                device_printf(dev, "Function: %s, Groups: %s\n",function, groups);
 
                 /*int func_index = -1;
                 int group_index = -1;
