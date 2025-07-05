@@ -1550,6 +1550,7 @@ struct mt7622_pinctrl_softc {
 };
 
 static const struct mt7622_pinmux_desc pinmux[] = {
+    // number of pin , mode 0..7, register, shift
     [23] = {{ "MDIO", "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
     [24] = {{ NULL, "GPIO", NULL, NULL, NULL, NULL, NULL, NULL}, 0x300, 24},
     [37] = {{ "Parallel NAND Flash", "GPIO", "EMMC", NULL, NULL, NULL, NULL, NULL}, 0x300, 20},
@@ -1658,7 +1659,7 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
             if (OF_getprop(child, "function", function, sizeof(function)) > 0 &&
                     OF_getprop(child, "groups", groups, sizeof(groups)) > 0) {
 
-                //device_printf(dev, "Function: %s, Groups: %s\n", function, groups);
+                device_printf(dev, "Name: %s Function: %s, Groups: %s\n",name, function, groups);
 
                 /*int func_index = -1;
                 int group_index = -1;
