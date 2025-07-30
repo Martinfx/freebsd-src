@@ -42,8 +42,22 @@
 #include <dev/clk/clk_mux.h>
 #include <dev/clk/clk_gate.h>
 #include <dev/clk/clk_link.h>
-
 #include <arm/mediatek/mdtk_clk.h>
+#include "mt_clk_pll.h"
+
+    static void
+init_pll(struct mdtk_clk_softc *sc, struct clk_pll_def *clks,
+            int nclks)
+{
+    int i, rv;
+
+    for (i = 0; i < nclks; i++) {
+        rv = mt_clk_pll_register(sc->clkdom, clks + i);
+        if (rv != 0)
+            panic("clknode_pll_register failed");
+    }
+
+}
 
 static void
 init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
@@ -159,6 +173,7 @@ mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef) {
     if (sc->clkdom == NULL)
         panic("clkdom == NULL");
 
+    init_pll(sc, cldef->pll_def, cldef->num_pll);
     init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
     init_linked(sc, cldef->linked_def, cldef->num_linked);
     init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
