@@ -177,4 +177,4 @@ DEFINE_CLASS_0(mt7622_infracfg, mt7622_infracfg_driver, mt7622_infracfg_methods,
 sizeof(struct mdtk_clk_softc));
 
 EARLY_DRIVER_MODULE(mt7622_infracfg, simplebus, mt7622_infracfg_driver, NULL, NULL,
-        BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);
+        BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 5);
