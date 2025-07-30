@@ -423,22 +423,7 @@ static struct clk_fixed_def fixed_clk[] = {
 	    0),
 	FRATE(CLK_TOP_NFI1X_PAD, "nfi1x_pad",/*"clk26m",*/
 	    0),
-
-	/* we have not pll clock infrastructure */
-	FRATE(CLK_APMIXED_ARMPLL,   "armpll",    120000000ULL),
-	FRATE(CLK_APMIXED_MAINPLL,  "mainpll",  1120000000ULL),
-	FRATE(CLK_APMIXED_UNIVPLL, "univpll", 2400000000ULL),
-	FRATE(CLK_APMIXED_MMPLL,  "mmpll",   500000000ULL),
-	FRATE(CLK_APMIXED_MSDCPLL,  "msdcpll",   650000000ULL),
-	FRATE(CLK_APMIXED_TVDPLL,  "tvdpll",   147456000ULL),
-	FRATE(CLK_APMIXED_AUD1PLL,  "aud1pll",   135475000ULL),
-	FRATE(CLK_APMIXED_TRGPLL,  "trgpll",   135475000ULL),
-	FRATE(CLK_APMIXED_ETHPLL,   "ethpll",    120000000ULL),
-	FRATE(CLK_APMIXED_VDECPLL,  "vdecpll",  1120000000ULL),
-	FRATE(CLK_APMIXED_HADDS2PLL, "hadds2pll", 2400000000ULL),
-	FRATE(CLK_APMIXED_AUD2PLL,  "aud2pll",   500000000ULL),
-	FRATE(CLK_APMIXED_TVD2PLL,  "tvd2pll",   650000000ULL),
-
+	
 	FFACT(CLK_TOP_SYSPLL, "syspll_ck", "mainpll", 1, 1),
 	FFACT(CLK_TOP_SYSPLL_D2, "syspll_d2", "mainpll", 1, 2),
 	FFACT(CLK_TOP_SYSPLL_D3, "syspll_d3", "mainpll", 1, 3),
