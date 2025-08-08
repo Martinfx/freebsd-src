@@ -15,3 +15,4 @@ arm/mediatek/mt7623_pinctrl.c           optional fdt
 arm/mediatek/mt_clk_pll.c               optional clk fdt
 arm/mediatek/mt7623_mp.c                optional smp
 arm/mediatek/mt7623_machdep.c           standard
+arm/mediatek/mt_watchdog.c              optional fdt
