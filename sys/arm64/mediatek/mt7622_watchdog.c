@@ -39,6 +39,8 @@
 #include <dev/ofw/ofw_bus_subr.h>
 #include <machine/bus.h>
 
+#define TOPRGUWDT_MAX_TIMEOUT	31
+#define TOPRGUWDT_MIN_TIMEOUT	2
 /* Watchdog Mode Register */
 #define TOPRGUWDT_MODE          0x0
 /* Watchdog Counter Setting Register */
