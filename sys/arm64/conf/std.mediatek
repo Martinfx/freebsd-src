@@ -6,6 +6,12 @@ device		uart_ns8250
 # GPIO / PINCTRL
 device      mt7622_pinctrl
 
+# eth switch
+device 		etherswitch
+device 		miibus
+device      mt7531_switch
+device 		mdio
+
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
