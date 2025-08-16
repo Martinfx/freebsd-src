@@ -269,7 +269,7 @@ mt7531_getinfo(device_t dev)
 static int
 mt7531_getport(device_t dev, etherswitch_port_t *p)
 {
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    /*struct mt7531_switch_softc *sc = device_get_softc(dev);
     uint32_t pmsr = 0;
     int port = p->es_port;
 
@@ -277,7 +277,7 @@ mt7531_getport(device_t dev, etherswitch_port_t *p)
         return (EINVAL);
 
     p->es_pvid = 1;
-    p->es_flags = 0;
+    p->es_flags = 0;*/
 
     /*p->es_link = (pmsr & PMSR_LINK) != 0;
     p->es_duplex = (pmsr & PMSR_FDX) ? 1 : 0;
@@ -372,7 +372,7 @@ mt7531_attach_phys(struct mt7531_switch_softc *sc)
     char name[IFNAMSIZ];
 
     /* PHYs need an interface, so we generate a dummy one */
-    snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->sc_dev));
+    snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->dev));
     for (phy = 0; phy < sc->numphys; phy++) {
         if ((sc->phymap & (1u << phy)) == 0) {
             sc->ifp[phy] = NULL;
@@ -393,7 +393,7 @@ mt7531_attach_phys(struct mt7531_switch_softc *sc)
         sc->ifname[phy] = malloc(strlen(name) + 1, M_DEVBUF, M_WAITOK);
         bcopy(name, sc->ifname[phy], strlen(name) + 1);
         if_initname(sc->ifp[phy], sc->ifname[phy],
-                    mtkswitch_portforphy(phy));
+                    mt7531_portforphy(phy));
         err = mii_attach(sc->sc_dev, &sc->miibus[phy], sc->ifp[phy],
                          mtkswitch_ifmedia_upd, mtkswitch_ifmedia_sts,
                          BMSR_DEFCAPMASK, phy, MII_OFFSET_ANY, 0);
