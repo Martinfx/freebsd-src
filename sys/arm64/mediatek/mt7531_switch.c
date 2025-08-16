@@ -218,7 +218,7 @@ mt7531_miipollstat(struct mt7531_switch_softc *sc)
     uint32_t portstatus;
     int i, port_flap = 0;
 
-    mtx_assert(sc->mtx, MA_OWNED);
+    mtx_assert(&sc->mtx, MA_OWNED);
 
     for (i = 0; i < sc->numphys; i++) {
         if (sc->miibus[i] == NULL)
@@ -235,7 +235,7 @@ mt7531_miipollstat(struct mt7531_switch_softc *sc)
             port_flap = 1;
         }
 
-        mtkswitch_update_ifmedia(portstatus, &mii->mii_media_status,
+        mt7531_update_ifmedia(portstatus, &mii->mii_media_status,
                                  &mii->mii_media_active);
         LIST_FOREACH(miisc, &mii->mii_phys, mii_list) {
             if (IFM_INST(mii->mii_media.ifm_cur->ifm_media) !=
@@ -245,8 +245,9 @@ mt7531_miipollstat(struct mt7531_switch_softc *sc)
         }
     }
 
-    if (port_flap)
-        sc->hal.mtkswitch_atu_flush(sc);
+    if (port_flap) {
+        sc->hal.mt7531_switch_atu_flush(sc);
+    }
 }
 
 static void
@@ -487,9 +488,9 @@ mt7531_attach(device_t dev)
 
     callout_init_mtx(&sc->callout_tick, &sc->sc_mtx, 0);
 
-    mtx_lock(sc->mtx);
+    mtx_lock(&sc->mtx);
     mtkswitch_tick(sc);
-    mtx_unlock(sc->mtx);
+    mtx_unlock(&sc->mtx);
 
     device_printf(dev, "Inicialize device....");
 
