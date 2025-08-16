@@ -294,16 +294,15 @@ mt7531_getport(device_t dev, etherswitch_port_t *p)
 static int
 mt7531_setport(device_t dev, etherswitch_port_t *p)
 {
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    /*struct mt7531_switch_softc *sc = device_get_softc(dev);
     int port = p->es_port;
     uint32_t pmcr = 0;
 
     if (port < 0 || port > 6)
         return (EINVAL);
 
-    /* Force MAC side for CPU/uplink a basic 1G full-duplex */
     pmcr = PMCR_FORCE_MODE | PMCR_TX_EN | PMCR_RX_EN | PMCR_FORCE_FDX | PMCR_FORCE_SPEED_1000;
-
+    */
     return (0);
 }
 
