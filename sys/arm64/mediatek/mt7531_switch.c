@@ -87,6 +87,14 @@
 #define MT7531_SWITCH_HDR_LEN   4
 #define MT7530_SWITCH_NUM_FDB_RECORDS  2048
 #define MT7530_SWITCH_ALL_MEMBERS      0xff
+#define	MTKSWITCH_LINK_UP	(1<<0)
+#define	MTKSWITCH_SPEED_MASK	(3<<1)
+#define	MTKSWITCH_SPEED_10	(0<<1)
+#define MTKSWITCH_SPEED_100	(1<<1)
+#define	MTKSWITCH_SPEED_1000	(2<<1)
+#define	MTKSWITCH_DUPLEX	(1<<3)
+#define MTKSWITCH_TXFLOW	(1<<4)
+#define MTKSWITCH_RXFLOW	(1<<5)
 
 struct mt7531_switch_softc {
     struct mtx	mtx;
@@ -154,55 +162,100 @@ static struct ofw_compat_data compat_data[] = {
         { NULL, 0 }
 };
 
-static inline void
-mt7531_lock(struct mt7531_switch_softc *sc) { mtx_lock(&sc->mtx); }
-static inline void
-mt7531_unlock(struct mt7531_switch_softc *sc) { mtx_unlock(&sc->mtx); }
-
-/* Clause-45 MMD 16-bit read/write on devad=VEND2 */
-static int
-mt7531_mmd_read16(struct mt7531_switch_softc *sc, uint16_t reg, uint16_t *val)
+/* PHY <-> port mapping is currently 1:1 */
+static inline int
+mt7531_portforphy(int phy)
 {
-    //int pa = sc->phy_addr;
 
-    /* Set MMD device (VEND2) and target address */
-    //MDIO_WRITEREG(sc->dev, pa, MII_MMD_CTRL, MDIO_MMD_VEND2);
-    //MDIO_WRITEREG(sc->dev, pa, MII_MMD_DATA, reg);
-    /* Switch to data (no incr) */
-    //MDIO_WRITEREG(sc->dev, pa, MII_MMD_CTRL,
-    // MDIO_MMD_VEND2 | MDIO_MMD_CTRL_DATA_NOINCR);
-    //*val = MDIO_READREG(sc->dev, pa, MII_MMD_DATA);
-    return (0);
+    return (phy);
 }
 
-static int
-mt7531_mmd_write16(struct mt7531_switch_softc *sc, uint16_t reg, uint16_t val)
+/*
+ * Convert port status to ifmedia.
+ */
+static void
+mt7531_update_ifmedia(uint32_t portstatus, u_int *media_status,
+                         u_int *media_active)
 {
-    /*int pa = sc->phy_addr;
+    *media_active = IFM_ETHER;
+    *media_status = IFM_AVALID;
 
-    MDIO_WRITEREG(sc->dev, pa, MII_MMD_CTRL, MDIO_MMD_VEND2);
-    MDIO_WRITEREG(sc->dev, pa, MII_MMD_DATA, reg);
-    MDIO_WRITEREG(sc->dev, pa, MII_MMD_CTRL,
-                  MDIO_MMD_VEND2 | MDIO_MMD_CTRL_DATA_NOINCR);
-    MDIO_WRITEREG(sc->dev, pa, MII_MMD_DATA, val);*/
-    return (0);
-}
-static int
-mt7531_read32(struct mt7531_switch_softc *sc, uint16_t reg, uint32_t *val)
-{
-    uint16_t lo, hi;
-    mt7531_mmd_read16(sc, reg + 0, &lo);
-    mt7531_mmd_read16(sc, reg + 1, &hi);
-    *val = REG32(lo, hi);
-    return (0);
+    if ((portstatus & MTKSWITCH_LINK_UP) != 0)
+        *media_status |= IFM_ACTIVE;
+    else {
+        *media_active |= IFM_NONE;
+        return;
+    }
+
+    switch (portstatus & MTKSWITCH_SPEED_MASK) {
+        case MTKSWITCH_SPEED_10:
+            *media_active |= IFM_10_T;
+            break;
+        case MTKSWITCH_SPEED_100:
+            *media_active |= IFM_100_TX;
+            break;
+        case MTKSWITCH_SPEED_1000:
+            *media_active |= IFM_1000_T;
+            break;
+    }
+
+    if ((portstatus & MTKSWITCH_DUPLEX) != 0)
+        *media_active |= IFM_FDX;
+    else
+        *media_active |= IFM_HDX;
+
+    if ((portstatus & MTKSWITCH_TXFLOW) != 0)
+        *media_active |= IFM_ETH_TXPAUSE;
+    if ((portstatus & MTKSWITCH_RXFLOW) != 0)
+        *media_active |= IFM_ETH_RXPAUSE;
 }
 
-static int
-mt7531_write32(struct mt7531_switch_softc *sc, uint16_t reg, uint32_t v)
+static void
+mt7531_miipollstat(struct mt7531_switch_softc *sc)
 {
-    mt7531_mmd_write16(sc, reg + 0, (uint16_t)(v & 0xffff));
-    mt7531_mmd_write16(sc, reg + 1, (uint16_t)(v >> 16));
-    return (0);
+    struct mii_data *mii;
+    struct mii_softc *miisc;
+    uint32_t portstatus;
+    int i, port_flap = 0;
+
+    mtx_assert(sc->mtx, MA_OWNED);
+
+    for (i = 0; i < sc->numphys; i++) {
+        if (sc->miibus[i] == NULL)
+            continue;
+        mii = device_get_softc(sc->miibus[i]);
+        portstatus = sc->hal.mt7531_switch_get_port_status(sc,
+                                                           mt7531_portforphy(i));
+
+        /* If a port has flapped - mark it so we can flush the ATU */
+        if (((mii->mii_media_status & IFM_ACTIVE) == 0 &&
+             (portstatus & MTKSWITCH_LINK_UP) != 0) ||
+            ((mii->mii_media_status & IFM_ACTIVE) != 0 &&
+             (portstatus & MTKSWITCH_LINK_UP) == 0)) {
+            port_flap = 1;
+        }
+
+        mtkswitch_update_ifmedia(portstatus, &mii->mii_media_status,
+                                 &mii->mii_media_active);
+        LIST_FOREACH(miisc, &mii->mii_phys, mii_list) {
+            if (IFM_INST(mii->mii_media.ifm_cur->ifm_media) !=
+                miisc->mii_inst)
+                continue;
+            mii_phy_update(miisc, MII_POLLSTAT);
+        }
+    }
+
+    if (port_flap)
+        sc->hal.mtkswitch_atu_flush(sc);
+}
+
+static void
+mt7531_tick(void *arg)
+{
+    struct mt7531_switch_softc *sc = arg;
+
+    mt7531_miipollstat(sc);
+    callout_reset(&sc->callout_tick, hz, mt7531_tick, sc);
 }
 
 static etherswitch_info_t *
@@ -221,10 +274,6 @@ mt7531_getport(device_t dev, etherswitch_port_t *p)
 
     if (port < 0 || port > 6)
         return (EINVAL);
-
-    mt7531_lock(sc);
-    mt7531_read32(sc, (uint16_t)MT753X_PMSR_P(port), &pmsr);
-    mt7531_unlock(sc);
 
     p->es_pvid = 1;
     p->es_flags = 0;
@@ -253,10 +302,6 @@ mt7531_setport(device_t dev, etherswitch_port_t *p)
 
     /* Force MAC side for CPU/uplink a basic 1G full-duplex */
     pmcr = PMCR_FORCE_MODE | PMCR_TX_EN | PMCR_RX_EN | PMCR_FORCE_FDX | PMCR_FORCE_SPEED_1000;
-
-    mt7531_lock(sc);
-    mt7531_write32(sc, (uint16_t)MT753X_PMCR_P(port), pmcr);
-    mt7531_unlock(sc);
 
     return (0);
 }
@@ -320,14 +365,61 @@ mt7531_statchg(device_t dev)
 }
 
 static int
+mt7531_attach_phys(struct mt7531_switch_softc *sc)
+{
+    int phy, err = 0;
+    char name[IFNAMSIZ];
+
+    /* PHYs need an interface, so we generate a dummy one */
+    snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->sc_dev));
+    for (phy = 0; phy < sc->numphys; phy++) {
+        if ((sc->phymap & (1u << phy)) == 0) {
+            sc->ifp[phy] = NULL;
+            sc->ifname[phy] = NULL;
+            sc->miibus[phy] = NULL;
+            continue;
+        }
+        sc->ifp[phy] = if_alloc(IFT_ETHER);
+        if (sc->ifp[phy] == NULL) {
+            device_printf(sc->sc_dev, "couldn't allocate ifnet structure\n");
+            err = ENOMEM;
+            break;
+        }
+
+        sc->ifp[phy]->if_softc = sc;
+        sc->ifp[phy]->if_flags |= IFF_UP | IFF_BROADCAST |
+                                  IFF_DRV_RUNNING | IFF_SIMPLEX;
+        sc->ifname[phy] = malloc(strlen(name) + 1, M_DEVBUF, M_WAITOK);
+        bcopy(name, sc->ifname[phy], strlen(name) + 1);
+        if_initname(sc->ifp[phy], sc->ifname[phy],
+                    mtkswitch_portforphy(phy));
+        err = mii_attach(sc->sc_dev, &sc->miibus[phy], sc->ifp[phy],
+                         mtkswitch_ifmedia_upd, mtkswitch_ifmedia_sts,
+                         BMSR_DEFCAPMASK, phy, MII_OFFSET_ANY, 0);
+        if (err != 0) {
+            device_printf(sc->dev,
+                          "attaching PHY %d failed\n",
+                          phy);
+        } else {
+            device_printf(sc->dev, "%s attached to pseudo interface "
+                                "%s\n", device_get_nameunit(sc->miibus[phy]),
+                    sc->ifp[phy]->if_xname);
+        }
+    }
+    return (err);
+}
+
+
+static int
 mt7531_probe(device_t dev)
 {
-    if (!ofw_bus_status_okay(dev))
-        return (ENXIO);
+    //if (!ofw_bus_status_okay(dev))
+    //    return (ENXIO);
 
     if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data)
         return (ENXIO);
 
+    device_printf(dev, "%s", __func__);
     device_set_desc(dev, "MediaTek MT7531 Gigabit Switch");
     return (BUS_PROBE_DEFAULT);
 }
@@ -336,11 +428,13 @@ static int
 mt7531_attach(device_t dev)
 {
     struct mt7531_switch_softc *sc = device_get_softc(dev);
-    //phandle_t node = ofw_bus_get_node(dev);
     int err, rid;
 
+    sc->numports = MTKSWITCH_MAX_PORTS;
+    sc->numphys = MTKSWITCH_MAX_PHYS;
+    sc->cpuport = MTKSWITCH_CPU_PORT;
     sc->dev = dev;
-    /* Allocate resources */
+
     rid = 0;
     sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
     if (sc->res == NULL) {
@@ -366,6 +460,36 @@ mt7531_attach(device_t dev)
     if (err != 0) {
         return (err);
     }
+
+    /* Initialize the switch ports */
+    for (port = 0; port < sc->numports; port++) {
+        sc->hal.mt7531_switch_port_init(sc, port);
+    }
+
+    /* Attach the PHYs and complete the bus enumeration */
+    err = mt7531_attach_phys(sc);
+    device_printf(dev, "%s: attach_phys: err=%d\n", __func__, err);
+    if (err != 0)
+        return (err);
+
+    /* Default to ingress filters off. */
+    err = mtkswitch_set_vlan_mode(sc, ETHERSWITCH_VLAN_DOT1Q);
+    device_printf(dev, "%s: set_vlan_mode: err=%d\n", __func__, err);
+    if (err != 0)
+        return (err);
+
+    bus_generic_probe(dev);
+    bus_enumerate_hinted_children(dev);
+    err = bus_generic_attach(dev);
+    device_printf(dev, "%s: bus_generic_attach: err=%d\n", __func__, err);
+    if (err != 0)
+        return (err);
+
+    callout_init_mtx(&sc->callout_tick, &sc->sc_mtx, 0);
+
+    mtx_lock(sc->mtx);
+    mtkswitch_tick(sc);
+    mtx_unlock(sc->mtx);
 
     device_printf(dev, "Inicialize device....");
 
