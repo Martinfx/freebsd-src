@@ -367,6 +367,7 @@ mt7531_attach(device_t dev)
         return (err);
     }
 
+    device_printf(dev, "Inicialize device....");
 
     return (0);
 }
