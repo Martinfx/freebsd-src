@@ -1083,16 +1083,8 @@ mtkswitch_vlan_setvgroup(struct mt7531_switch_softc *sc, etherswitch_vlangroup_t
 
     mtx_lock(&sc->mtx);;
     while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
-    if (sc->sc_switchtype == MTK_SWITCH_MT7620) {
-        val = sc->hal.mt7531_switch_read(sc,
-                                     MTKSWITCH_VTIM(v->es_vlangroup));
-        val &= ~(VTIM_MASK << VTIM_OFF(v->es_vlangroup));
-        val |= ((v->es_vid & VTIM_MASK) << VTIM_OFF(v->es_vlangroup));
-        sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTIM(v->es_vlangroup),
-                                val);
-        vid = v->es_vlangroup;
-    } else
-        vid = v->es_vid;
+
+    vid = v->es_vid;
 
     /* We use FID 0 */
     val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID;
@@ -1156,15 +1148,10 @@ mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
     sc->info.es_nvlangroups = 16;
     sprintf(sc->info.es_name, "Mediatek GSW");
 
-    if (sc->sc_switchtype == MTK_SWITCH_MT7621) {
-        sc->hal.mt7531_switch_read = mtkswitch_reg_read32_mt7621;
-        sc->hal.mt7531_switch_write = mtkswitch_reg_write32_mt7621;
-        sc->info.es_nvlangroups = 4096;
-    } else {
-        sc->hal.mt7531_switch_read = mtkswitch_reg_read32;
-        sc->hal.mt7531_switch_write = mtkswitch_reg_write32;
-    }
-
+    sc->hal.mt7531_switch_read = mtkswitch_reg_read32_mt7621;
+    sc->hal.mt7531_switch_write = mtkswitch_reg_write32_mt7621;
+    sc->info.es_nvlangroups = 4096;
+    
     sc->hal.mt7531_switch_reset = mtkswitch_reset;
     sc->hal.mt7531_switch_hw_setup = mtkswitch_hw_setup;
     sc->hal.mt7531_switch_hw_global_setup = mtkswitch_hw_global_setup;
