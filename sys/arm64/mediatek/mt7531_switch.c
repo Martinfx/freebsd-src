@@ -70,6 +70,122 @@
 #define MTKSWITCH_TXFLOW	(1<<4)
 #define MTKSWITCH_RXFLOW	(1<<5)
 
+#define	MTKSWITCH_ATC	0x0080
+#define		ATC_BUSY		(1u<<15)
+#define		ATC_AC_MAT_NON_STATIC_MACS	(4u<<8)
+#define		ATC_AC_CMD_CLEAN	(2u<<0)
+
+#define	MTKSWITCH_VTCR	0x0090
+#define		VTCR_BUSY		(1u<<31)
+#define		VTCR_FUNC_VID_READ	(0u<<12)
+#define		VTCR_FUNC_VID_WRITE	(1u<<12)
+#define		VTCR_FUNC_VID_INVALID	(2u<<12)
+#define		VTCR_FUNC_VID_VALID	(3u<<12)
+#define		VTCR_IDX_INVALID	(1u<<16)
+#define		VTCR_VID_MASK		0xfff
+
+#define	MTKSWITCH_VAWD1	0x0094
+#define		VAWD1_IVL_MAC		(1u<<30)
+#define		VAWD1_VTAG_EN		(1u<<28)
+#define		VAWD1_PORT_MEMBER(p)	((1u<<16)<<(p))
+#define		VAWD1_MEMBER_OFF	16
+#define		VAWD1_MEMBER_MASK	0xff
+#define		VAWD1_FID_OFFSET	1
+#define		VAWD1_VALID		(1u<<0)
+
+#define	MTKSWITCH_VAWD2	0x0098
+#define		VAWD2_PORT_UNTAGGED(p)	(0u<<((p)*2))
+#define		VAWD2_PORT_TAGGED(p)	(2u<<((p)*2))
+#define		VAWD2_PORT_MASK(p)	(3u<<((p)*2))
+
+#define	MTKSWITCH_VTIM(v)	((((v) >> 1) * 4) + 0x100)
+#define		VTIM_OFF(v)	(((v) & 1) ? 12 : 0)
+#define		VTIM_MASK	0xfff
+
+#define	MTKSWITCH_PIAC	0x7004
+#define		PIAC_PHY_ACS_ST		(1u<<31)
+#define		PIAC_MDIO_REG_ADDR_OFF	25
+#define		PIAC_MDIO_PHY_ADDR_OFF	20
+#define		PIAC_MDIO_CMD_WRITE	(1u<<18)
+#define		PIAC_MDIO_CMD_READ	(2u<<18)
+#define		PIAC_MDIO_ST		(1u<<16)
+#define		PIAC_MDIO_RW_DATA_MASK	0xffff
+
+#define	MTKSWITCH_PORTREG(r, p)	((r) + ((p) * 0x100))
+
+#define	MTKSWITCH_PCR(x)	MTKSWITCH_PORTREG(0x2004, (x))
+#define		PCR_PORT_VLAN_SECURE	(3u<<0)
+
+#define	MTKSWITCH_PVC(x)	MTKSWITCH_PORTREG(0x2010, (x))
+#define		PVC_VLAN_ATTR_MASK	(3u<<6)
+
+#define	MTKSWITCH_PPBV1(x)	MTKSWITCH_PORTREG(0x2014, (x))
+#define	MTKSWITCH_PPBV2(x)	MTKSWITCH_PORTREG(0x2018, (x))
+#define		PPBV_VID(v)		(((v)<<16) | (v))
+#define		PPBV_VID_FROM_REG(x)	((x) & 0xfff)
+#define		PPBV_VID_MASK		0xfff
+
+#define	MTKSWITCH_PMCR(x)	MTKSWITCH_PORTREG(0x3000, (x))
+#define		PMCR_FORCE_LINK		(1u<<0)
+#define		PMCR_FORCE_DPX		(1u<<1)
+#define		PMCR_FORCE_SPD_1000	(2u<<2)
+#define		PMCR_FORCE_TX_FC	(1u<<4)
+#define		PMCR_FORCE_RX_FC	(1u<<5)
+#define		PMCR_BACKPR_EN		(1u<<8)
+#define		PMCR_BKOFF_EN		(1u<<9)
+#define		PMCR_MAC_RX_EN		(1u<<13)
+#define		PMCR_MAC_TX_EN		(1u<<14)
+#define		PMCR_FORCE_MODE		(1u<<15)
+#define		PMCR_RES_1		(1u<<16)
+#define		PMCR_IPG_CFG_RND	(1u<<18)
+#define		PMCR_CFG_DEFAULT	(PMCR_BACKPR_EN | PMCR_BKOFF_EN | \
+		    PMCR_MAC_RX_EN | PMCR_MAC_TX_EN | PMCR_IPG_CFG_RND |  \
+		    PMCR_FORCE_RX_FC | PMCR_FORCE_TX_FC | PMCR_RES_1)
+
+#define	MTKSWITCH_PMSR(x)	MTKSWITCH_PORTREG(0x3008, (x))
+#define		PMSR_MAC_LINK_STS	(1u<<0)
+#define		PMSR_MAC_DPX_STS	(1u<<1)
+#define		PMSR_MAC_SPD_STS	(3u<<2)
+#define		PMSR_MAC_SPD(x)		(((x)>>2) & 0x3)
+#define		PMSR_MAC_SPD_10		0
+#define		PMSR_MAC_SPD_100	1
+#define		PMSR_MAC_SPD_1000	2
+#define		PMSR_TX_FC_STS		(1u<<4)
+#define		PMSR_RX_FC_STS		(1u<<5)
+
+#define	MTKSWITCH_READ(_sc, _reg)		\
+	    bus_read_4((_sc)->res, (_reg))
+#define MTKSWITCH_WRITE(_sc, _reg, _val)	\
+	    bus_write_4((_sc)->res, (_reg), (_val))
+#define	MTKSWITCH_MOD(_sc, _reg, _clr, _set)	\
+	    MTKSWITCH_WRITE((_sc), (_reg),	\
+	        ((MTKSWITCH_READ((_sc), (_reg)) & ~(_clr)) | (_set))
+
+#define	MTKSWITCH_REG32(addr)	((addr) & ~(0x3))
+#define	MTKSWITCH_IS_HI16(addr)	(((addr) & 0x3) > 0x1)
+#define	MTKSWITCH_HI16(x)	(((x) >> 16) & 0xffff)
+#define	MTKSWITCH_LO16(x)	((x) & 0xffff)
+#define	MTKSWITCH_TO_HI16(x)	(((x) & 0xffff) << 16)
+#define	MTKSWITCH_TO_LO16(x)	((x) & 0xffff)
+#define	MTKSWITCH_HI16_MSK	0xffff0000
+#define MTKSWITCH_LO16_MSK	0x0000ffff
+
+#define	MTKSWITCH_LAN_VID	0x001
+#define	MTKSWITCH_WAN_VID	0x002
+#define	MTKSWITCH_INVALID_VID	0xfff
+
+#define	MTKSWITCH_LAN_FID	1
+#define	MTKSWITCH_WAN_FID	2
+
+#define	MTKSWITCH_REG_ADDR(r)	(((r) >> 6) & 0x3ff)
+#define	MTKSWITCH_REG_LO(r)	(((r) >> 2) & 0xf)
+#define	MTKSWITCH_REG_HI(r)	(1 << 4)
+#define MTKSWITCH_VAL_LO(v)	((v) & 0xffff)
+#define MTKSWITCH_VAL_HI(v)	(((v) >> 16) & 0xffff)
+#define MTKSWITCH_GLOBAL_PHY	31
+#define	MTKSWITCH_GLOBAL_REG	31
+
+
 struct mt7531_switch_softc {
     struct mtx	mtx;
     device_t	dev;
@@ -126,7 +242,7 @@ struct mt7531_switch_softc {
 
         /* Internal register access functions */
         uint32_t (* mt7531_switch_read) (struct mt7531_switch_softc *, int);
-        uint32_t (* mt7531_switchwrite) (struct mt7531_switch_softc *, int,
+        uint32_t (* mt7531_switch_write) (struct mt7531_switch_softc *, int,
                                          uint32_t);
     } hal;
 };
@@ -135,6 +251,9 @@ static struct ofw_compat_data compat_data[] = {
         { "mediatek,mt7531",	1 },
         { NULL, 0 }
 };
+
+static void
+mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc);
 
 /* PHY <-> port mapping is currently 1:1 */
 static inline int
@@ -462,6 +581,8 @@ mt7531_attach(device_t dev)
     sc->cpuport = MTKSWITCH_CPU_PORT;
     sc->dev = dev;
 
+    mtk_attach_switch_mt7531(sc);
+
     rid = 0;
     sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
     if (sc->res == NULL) {
@@ -570,3 +691,495 @@ DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mt7531_switch, 1);
 MODULE_DEPEND(mt7531_switch, miibus, 1, 1, 1);
 MODULE_DEPEND(mt7531_switch, etherswitch, 1, 1, 1);
+
+
+static int
+mtkswitch_phy_read_locked(struct mt7531_switch_softc *sc, int phy, int reg)
+{
+    uint32_t data;
+
+    MTKSWITCH_WRITE(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST | PIAC_MDIO_ST |
+                                        (reg << PIAC_MDIO_REG_ADDR_OFF) | (phy << PIAC_MDIO_PHY_ADDR_OFF) |
+                                        PIAC_MDIO_CMD_READ);
+    while ((data = MTKSWITCH_READ(sc, MTKSWITCH_PIAC)) & PIAC_PHY_ACS_ST);
+
+    return ((int)(data & PIAC_MDIO_RW_DATA_MASK));
+}
+
+static int
+mtkswitch_phy_read(device_t dev, int phy, int reg)
+{
+    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    int data;
+
+    if ((phy < 0 || phy >= 32) || (reg < 0 || reg >= 32))
+        return (ENXIO);
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    mtx_lock(&sc->mtx);
+    data = mtkswitch_phy_read_locked(sc, phy, reg);
+    mtx_unlock(&sc->mtx);
+
+    return (data);
+}
+
+static int
+mtkswitch_phy_write_locked(struct mt7531_switch_softc *sc, int phy, int reg,
+                           int val)
+{
+
+    MTKSWITCH_WRITE(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST | PIAC_MDIO_ST |
+                                        (reg << PIAC_MDIO_REG_ADDR_OFF) | (phy << PIAC_MDIO_PHY_ADDR_OFF) |
+                                        (val & PIAC_MDIO_RW_DATA_MASK) | PIAC_MDIO_CMD_WRITE);
+    while (MTKSWITCH_READ(sc, MTKSWITCH_PIAC) & PIAC_PHY_ACS_ST);
+
+    return (0);
+}
+
+static int
+mtkswitch_phy_write(device_t dev, int phy, int reg, int val)
+{
+    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    int res;
+
+    if ((phy < 0 || phy >= 32) || (reg < 0 || reg >= 32))
+        return (ENXIO);
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    mtx_lock(&sc->mtx);
+    res = mtkswitch_phy_write_locked(sc, phy, reg, val);
+    mtx_unlock(&sc->mtx);
+
+    return (res);
+}
+
+static uint32_t
+mtkswitch_reg_read32(struct mt7531_switch_softc *sc, int reg)
+{
+
+    return (MTKSWITCH_READ(sc, reg));
+}
+
+static uint32_t
+mtkswitch_reg_write32(struct mt7531_switch_softc *sc, int reg, uint32_t val)
+{
+
+    MTKSWITCH_WRITE(sc, reg, val);
+    return (0);
+}
+
+static uint32_t
+mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg)
+{
+    uint32_t low, hi;
+
+    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                               MTKSWITCH_GLOBAL_REG, MTKSWITCH_REG_ADDR(reg));
+    low = mtkswitch_phy_read_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                                    MTKSWITCH_REG_LO(reg));
+    hi = mtkswitch_phy_read_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                                   MTKSWITCH_REG_HI(reg));
+    return (low | (hi << 16));
+}
+
+static uint32_t
+mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t val)
+{
+
+    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                               MTKSWITCH_GLOBAL_REG, MTKSWITCH_REG_ADDR(reg));
+    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                               MTKSWITCH_REG_LO(reg), MTKSWITCH_VAL_LO(val));
+    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
+                               MTKSWITCH_REG_HI(reg), MTKSWITCH_VAL_HI(val));
+    return (0);
+}
+
+static int
+mtkswitch_reg_read(device_t dev, int reg)
+{
+    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    uint32_t val;
+
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_REG32(reg));
+    if (MTKSWITCH_IS_HI16(reg))
+        return (MTKSWITCH_HI16(val));
+    return (MTKSWITCH_LO16(val));
+}
+
+static int
+mtkswitch_reg_write(device_t dev, int reg, int val)
+{
+    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    uint32_t tmp;
+
+    tmp = sc->hal.mt7531_switch_read(sc, MTKSWITCH_REG32(reg));
+    if (MTKSWITCH_IS_HI16(reg)) {
+        tmp &= MTKSWITCH_LO16_MSK;
+        tmp |= MTKSWITCH_TO_HI16(val);
+    } else {
+        tmp &= MTKSWITCH_HI16_MSK;
+        tmp |= MTKSWITCH_TO_LO16(val);
+    }
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_REG32(reg), tmp);
+
+    return (0);
+}
+
+static int
+mtkswitch_reset(struct mt7531_switch_softc *sc)
+{
+
+    /* We don't reset the switch for now */
+    return (0);
+}
+
+static int
+mtkswitch_hw_setup(struct mt7531_switch_softc *sc)
+{
+
+    /*
+     * TODO: parse the device tree and see if we need to configure
+     *       ports, etc. differently. For now we fallback to defaults.
+     */
+
+    /* Called early and hence unlocked */
+    return (0);
+}
+
+static int
+mtkswitch_hw_global_setup(struct mt7531_switch_softc *sc)
+{
+    /* Currently does nothing */
+
+    /* Called early and hence unlocked */
+    return (0);
+}
+
+static void
+mtkswitch_port_init(struct mt7531_switch_softc *sc, int port)
+{
+    uint32_t val;
+
+    /* Called early and hence unlocked */
+
+    /* Set the port to secure mode */
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_PCR(port));
+    val |= PCR_PORT_VLAN_SECURE;
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_PCR(port), val);
+
+    /* Set port's vlan_attr to user port */
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_PVC(port));
+    val &= ~PVC_VLAN_ATTR_MASK;
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_PVC(port), val);
+
+    val = PMCR_CFG_DEFAULT;
+    if (port == sc->cpuport)
+        val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
+               PMCR_FORCE_MODE;
+    /* Set port's MAC to default settings */
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_PMCR(port), val);
+}
+
+static uint32_t
+mtkswitch_get_port_status(struct mt7531_switch_softc *sc, int port)
+{
+    uint32_t val, res, tmp;
+
+    mtx_assert(&sc->mtx, MA_OWNED);
+    res = 0;
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_PMSR(port));
+
+    if (val & PMSR_MAC_LINK_STS)
+        res |= MTKSWITCH_LINK_UP;
+    if (val & PMSR_MAC_DPX_STS)
+        res |= MTKSWITCH_DUPLEX;
+    tmp = PMSR_MAC_SPD(val);
+    if (tmp == 0)
+        res |= MTKSWITCH_SPEED_10;
+    else if (tmp == 1)
+        res |= MTKSWITCH_SPEED_100;
+    else if (tmp == 2)
+        res |= MTKSWITCH_SPEED_1000;
+    if (val & PMSR_TX_FC_STS)
+        res |= MTKSWITCH_TXFLOW;
+    if (val & PMSR_RX_FC_STS)
+        res |= MTKSWITCH_RXFLOW;
+
+    return (res);
+}
+
+static int
+mtkswitch_atu_flush(struct mt7531_switch_softc *sc)
+{
+
+    mtx_assert(&sc->mtx, MA_OWNED);
+
+    /* Flush all non-static MAC addresses */
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_ATC) & ATC_BUSY);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_ATC, ATC_BUSY |
+                                               ATC_AC_MAT_NON_STATIC_MACS | ATC_AC_CMD_CLEAN);
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_ATC) & ATC_BUSY);
+
+    return (0);
+}
+
+static int
+mtkswitch_port_vlan_setup(struct mt7531_switch_softc *sc, etherswitch_port_t *p)
+{
+    int err;
+
+    /*
+     * Port behaviour wrt tag/untag/stack is currently defined per-VLAN.
+     * So we say we don't support it here.
+     */
+    if ((p->es_flags & (ETHERSWITCH_PORT_DOUBLE_TAG |
+                        ETHERSWITCH_PORT_ADDTAG | ETHERSWITCH_PORT_STRIPTAG)) != 0)
+        return (ENOTSUP);
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    mtx_lock(&sc->mtx);
+
+    /* Set the PVID */
+    if (p->es_pvid != 0) {
+        err = sc->hal.mt7531_switch_vlan_set_pvid(sc, p->es_port,
+                                              p->es_pvid);
+        if (err != 0) {
+            mtx_unlock(&sc->mtx);
+            return (err);
+        }
+    }
+
+    mtx_unlock(&sc->mtx);
+
+    return (0);
+}
+
+static int
+mtkswitch_port_vlan_get(struct mt7531_switch_softc *sc, etherswitch_port_t *p)
+{
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    mtx_lock(&sc->mtx);
+
+    /* Retrieve the PVID */
+    sc->hal.mt7531_switch_vlan_get_pvid(sc, p->es_port, &p->es_pvid);
+
+    /*
+     * Port flags are not supported at the moment.
+     * Port's tag/untag/stack behaviour is defined per-VLAN.
+     */
+    p->es_flags = 0;
+
+    mtx_unlock(&sc->mtx);
+
+    return (0);
+}
+
+static void
+mtkswitch_invalidate_vlan(struct mt7531_switch_softc *sc, uint32_t vid)
+{
+
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
+                                                VTCR_FUNC_VID_INVALID | (vid & VTCR_VID_MASK));
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
+}
+
+static void
+mtkswitch_vlan_init_hw(struct mt7531_switch_softc *sc)
+{
+    uint32_t val, vid, i;
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    mtx_lock(&sc->mtx);
+    /* Reset all VLANs to defaults first */
+    for (i = 0; i < sc->info.es_nvlangroups; i++) {
+        mtkswitch_invalidate_vlan(sc, i);
+        //
+    }
+
+    /* Now, add all ports as untagged members of VLAN 1 */
+    vid = 1;
+    val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID;
+    for (i = 0; i < sc->info.es_nports; i++)
+        val |= VAWD1_PORT_MEMBER(i);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VAWD1, val);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VAWD2, 0);
+    val = VTCR_BUSY | VTCR_FUNC_VID_WRITE | vid;
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTCR, val);
+
+    /* Set all port PVIDs to 1 */
+    for (i = 0; i < sc->info.es_nports; i++) {
+        sc->hal.mt7531_switch_vlan_set_pvid(sc, i, 1);
+    }
+
+    mtx_unlock(&sc->mtx);
+}
+
+static int
+mtkswitch_vlan_getvgroup(struct mt7531_switch_softc *sc, etherswitch_vlangroup_t *v)
+{
+    uint32_t val, i;
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+
+    if ((sc->vlan_mode != ETHERSWITCH_VLAN_DOT1Q) ||
+        (v->es_vlangroup > sc->info.es_nvlangroups))
+        return (EINVAL);
+
+    /* Reset the member ports. */
+    v->es_untagged_ports = 0;
+    v->es_member_ports = 0;
+
+    /* Not supported for now */
+    v->es_fid = 0;
+
+    mtx_lock(&sc->mtx);;
+
+    v->es_vid = v->es_vlangroup;
+
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
+                                                VTCR_FUNC_VID_READ | (v->es_vlangroup & VTCR_VID_MASK));
+    while ((val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR)) & VTCR_BUSY);
+    if (val & VTCR_IDX_INVALID) {
+        mtx_unlock(&sc->mtx);
+        return (0);
+    }
+
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_VAWD1);
+    if (val & VAWD1_VALID)
+        v->es_vid |= ETHERSWITCH_VID_VALID;
+    else {
+        mtx_unlock(&sc->mtx);
+        return (0);
+    }
+    v->es_member_ports = (val >> VAWD1_MEMBER_OFF) & VAWD1_MEMBER_MASK;
+
+    val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_VAWD2);
+    for (i = 0; i < sc->info.es_nports; i++) {
+        if ((val & VAWD2_PORT_MASK(i)) == VAWD2_PORT_UNTAGGED(i))
+            v->es_untagged_ports |= (1<<i);
+    }
+
+    mtx_unlock(&sc->mtx);;
+    return (0);
+}
+
+static int
+mtkswitch_vlan_setvgroup(struct mt7531_switch_softc *sc, etherswitch_vlangroup_t *v)
+{
+    uint32_t val, i, vid;
+
+    mtx_assert(&sc->mtx, MA_NOTOWNED);
+    if ((sc->vlan_mode != ETHERSWITCH_VLAN_DOT1Q) ||
+        (v->es_vlangroup > sc->info.es_nvlangroups))
+        return (EINVAL);
+
+    /* We currently don't support FID */
+    if (v->es_fid != 0)
+        return (EINVAL);
+
+    mtx_lock(&sc->mtx);;
+    while (sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
+    if (sc->sc_switchtype == MTK_SWITCH_MT7620) {
+        val = sc->hal.mt7531_switch_read(sc,
+                                     MTKSWITCH_VTIM(v->es_vlangroup));
+        val &= ~(VTIM_MASK << VTIM_OFF(v->es_vlangroup));
+        val |= ((v->es_vid & VTIM_MASK) << VTIM_OFF(v->es_vlangroup));
+        sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTIM(v->es_vlangroup),
+                                val);
+        vid = v->es_vlangroup;
+    } else
+        vid = v->es_vid;
+
+    /* We use FID 0 */
+    val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID;
+    val |= ((v->es_member_ports & VAWD1_MEMBER_MASK) << VAWD1_MEMBER_OFF);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VAWD1, val);
+
+    /* Set tagged ports */
+    val = 0;
+    for (i = 0; i < sc->info.es_nports; i++)
+        if (((1<<i) & v->es_untagged_ports) == 0)
+            val |= VAWD2_PORT_TAGGED(i);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VAWD2, val);
+
+    /* Write the VLAN entry */
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
+                                                VTCR_FUNC_VID_WRITE | (vid & VTCR_VID_MASK));
+    while ((val = sc->hal.mt7531_switch_read(sc, MTKSWITCH_VTCR)) & VTCR_BUSY);
+
+    mtx_unlock(&sc->mtx);
+
+    if (val & VTCR_IDX_INVALID)
+        return (EINVAL);
+
+    return (0);
+}
+
+static int
+mtkswitch_vlan_get_pvid(struct mt7531_switch_softc *sc, int port, int *pvid)
+{
+
+    mtx_assert(&sc->mtx, MA_OWNED);
+
+    *pvid = sc->hal.mt7531_switch_read(sc, MTKSWITCH_PPBV1(port));
+    *pvid = PPBV_VID_FROM_REG(*pvid);
+
+    return (0);
+}
+
+static int
+mtkswitch_vlan_set_pvid(struct mt7531_switch_softc *sc, int port, int pvid)
+{
+    uint32_t val;
+
+    mtx_assert(&sc->mtx, MA_OWNED);
+    val = PPBV_VID(pvid & PPBV_VID_MASK);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_PPBV1(port), val);
+    sc->hal.mt7531_switch_write(sc, MTKSWITCH_PPBV2(port), val);
+
+    return (0);
+}
+
+static void
+mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
+{
+
+    sc->portmap = 0x7f;
+    sc->phymap = 0x1f;
+
+    sc->info.es_nports = 7;
+    sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;
+    sc->info.es_nvlangroups = 16;
+    sprintf(sc->info.es_name, "Mediatek GSW");
+
+    if (sc->sc_switchtype == MTK_SWITCH_MT7621) {
+        sc->hal.mt7531_switch_read = mtkswitch_reg_read32_mt7621;
+        sc->hal.mt7531_switch_write = mtkswitch_reg_write32_mt7621;
+        sc->info.es_nvlangroups = 4096;
+    } else {
+        sc->hal.mt7531_switch_read = mtkswitch_reg_read32;
+        sc->hal.mt7531_switch_write = mtkswitch_reg_write32;
+    }
+
+    sc->hal.mt7531_switch_reset = mtkswitch_reset;
+    sc->hal.mt7531_switch_hw_setup = mtkswitch_hw_setup;
+    sc->hal.mt7531_switch_hw_global_setup = mtkswitch_hw_global_setup;
+    sc->hal.mt7531_switchport_init = mtkswitch_port_init;
+    sc->hal.mt7531_switch_get_port_status = mtkswitch_get_port_status;
+    sc->hal.mt7531_switch_atu_flush = mtkswitch_atu_flush;
+    sc->hal.mt7531_switch_port_vlan_setup = mtkswitch_port_vlan_setup;
+    sc->hal.mt7531_switch_port_vlan_get = mtkswitch_port_vlan_get;
+    sc->hal.mt7531_switch_vlan_init_hw = mtkswitch_vlan_init_hw;
+    sc->hal.mt7531_switch_vlan_getvgroup = mtkswitch_vlan_getvgroup;
+    sc->hal.mt7531_switch_vlan_setvgroup = mtkswitch_vlan_setvgroup;
+    sc->hal.mt7531_switch_vlan_get_pvid = mtkswitch_vlan_get_pvid;
+    sc->hal.mt7531_switch_vlan_set_pvid = mtkswitch_vlan_set_pvid;
+    sc->hal.mt7531_switch_phy_read = mtkswitch_phy_read;
+    sc->hal.mt7531_switch_phy_write = mtkswitch_phy_write;
+    sc->hal.mt7531_switch_reg_read = mtkswitch_reg_read;
+    sc->hal.mt7531_switch_reg_write = mtkswitch_reg_write;
+}

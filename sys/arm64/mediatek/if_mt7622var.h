@@ -264,24 +264,21 @@ struct rt_softc
     uint32_t        rx_drx_idx[RT_SOFTC_RX_RING_COUNT];
 };
 
-#ifdef IF_RT_DEBUG
-enum
-{
-	RT_DEBUG_RX = 0x00000001,
-	RT_DEBUG_TX = 0x00000002,
-	RT_DEBUG_INTR = 0x00000004,
-	RT_DEBUG_STATE = 0x00000008,
-	RT_DEBUG_STATS = 0x00000010,
-	RT_DEBUG_PERIODIC = 0x00000020,
-	RT_DEBUG_WATCHDOG = 0x00000040,
-	RT_DEBUG_ANY = 0xffffffff
-};
+#define	MTKSWITCH_READ(_sc, _reg)		\
+        bus_read_4((_sc)->sc_res, (_reg))
+#define MTKSWITCH_WRITE(_sc, _reg, _val)	\
+        bus_write_4((_sc)->sc_res, (_reg), (_val))
+#define	MTKSWITCH_MOD(_sc, _reg, _clr, _set)	\
+        MTKSWITCH_WRITE((_sc), (_reg),	\
+            ((MTKSWITCH_READ((_sc), (_reg)) & ~(_clr)) | (_set))
 
-#define	RT_DPRINTF(sc, m, fmt, ...)		\
-	do { if ((sc)->debug & (m)) 		\
-	    device_printf(sc->dev, fmt, ## __VA_ARGS__); } while (0)
-#else
-#define	RT_DPRINTF(sc, m, fmt, ...)
-#endif /* #ifdef IF_RT_DEBUG */
+#define	MTKSWITCH_REG32(addr)	((addr) & ~(0x3))
+#define	MTKSWITCH_IS_HI16(addr)	(((addr) & 0x3) > 0x1)
+#define	MTKSWITCH_HI16(x)	(((x) >> 16) & 0xffff)
+#define	MTKSWITCH_LO16(x)	((x) & 0xffff)
+#define	MTKSWITCH_TO_HI16(x)	(((x) & 0xffff) << 16)
+#define	MTKSWITCH_TO_LO16(x)	((x) & 0xffff)
+#define	MTKSWITCH_HI16_MSK	0xffff0000
+#define MTKSWITCH_LO16_MSK	0x0000ffff
 
 #endif /* #ifndef _IF_MT7622VAR_H_ */
