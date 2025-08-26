@@ -700,30 +700,33 @@ pci_dw_get_dma_tag(device_t dev, device_t child)
 int
 pci_dw_init(device_t dev)
 {
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	struct pci_dw_softc *sc;
 	int rv, rid;
 	bool unroll_mode;
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	mtx_init(&sc->mtx, "pci_dw_mtx", NULL, MTX_DEF);
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	/* XXXn Should not be this configurable ? */
 	sc->bus_start = 0;
 	sc->bus_end = 255;
 	sc->root_bus = 0;
 	sc->sub_bus = 1;
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	/* Read FDT properties */
 	if (!sc->coherent)
 		sc->coherent = OF_hasprop(sc->node, "dma-coherent");
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	rv = OF_getencprop(sc->node, "num-lanes", &sc->num_lanes,
 	    sizeof(sc->num_lanes));
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	if (rv != sizeof(sc->num_lanes))
 		sc->num_lanes = 1;
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	if (sc->num_lanes != 1 && sc->num_lanes != 2 &&
 	    sc->num_lanes != 4 && sc->num_lanes != 8) {
 		device_printf(dev,
@@ -732,6 +735,7 @@ pci_dw_init(device_t dev)
 		rv = ENXIO;
 		goto out;
 	}
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 
 	rid = 0;
 	rv = ofw_bus_find_string_index(sc->node, "reg-names", "config", &rid);
@@ -740,19 +744,23 @@ pci_dw_init(device_t dev)
 		rv = ENXIO;
 		goto out;
 	}
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	sc->cfg_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE);
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	if (sc->cfg_res == NULL) {
 		device_printf(dev, "Cannot allocate config space(rid: %d)\n",
 		    rid);
 		rv = ENXIO;
 		goto out;
 	}
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 
 	/* Fill up config region related variables */
 	sc->cfg_size = rman_get_size(sc->cfg_res);
 	sc->cfg_pa = rman_get_start(sc->cfg_res) ;
 
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	if (bootverbose)
 		device_printf(dev, "Bus is%s cache-coherent\n",
 		    sc->coherent ? "" : " not");
@@ -767,27 +775,35 @@ pci_dw_init(device_t dev)
 	    sc->coherent ? BUS_DMA_COHERENT : 0, /* flags */
 	    NULL, NULL,				/* lockfunc, lockarg */
 	    &sc->dmat);
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	if (rv != 0)
 		goto out;
 
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	rv = ofw_pcib_init(dev);
 	if (rv != 0)
 		goto out;
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	rv = pci_dw_decode_ranges(sc, sc->ofw_pci.sc_range,
 	    sc->ofw_pci.sc_nrange);
 	if (rv != 0)
 		goto out;
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	unroll_mode = pci_dw_detect_atu_unroll(sc);
-	if (bootverbose)
+	if (bootverbose) {
 		device_printf(dev, "Using iATU %s mode\n",
-		    unroll_mode ? "unroll" : "legacy");
+					  unroll_mode ? "unroll" : "legacy");
+		device_printf(dev, "%d : %d\n", __func__, __LINE__);
+	}
 	if (unroll_mode) {
 		rid = 0;
+		device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 		rv = ofw_bus_find_string_index(sc->node, "reg-names", "atu", &rid);
 		if (rv == 0) {
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 			sc->iatu_ur_res = bus_alloc_resource_any(dev,
 			    SYS_RES_MEMORY, &rid, RF_ACTIVE);
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 			if (sc->iatu_ur_res == NULL) {
 				device_printf(dev,
 				    "Cannot allocate iATU space (rid: %d)\n",
@@ -796,34 +812,45 @@ pci_dw_init(device_t dev)
 				goto out;
 			}
 			sc->iatu_ur_offset = 0;
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 			sc->iatu_ur_size = rman_get_size(sc->iatu_ur_res);
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 		} else if (rv == ENOENT) {
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 			sc->iatu_ur_res = sc->dbi_res;
 			sc->iatu_ur_offset = DW_DEFAULT_IATU_UR_DBI_OFFSET;
 			sc->iatu_ur_size = DW_DEFAULT_IATU_UR_DBI_SIZE;
+			device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 		} else {
 			device_printf(dev, "Cannot get iATU space memory\n");
 			rv = ENXIO;
 			goto out;
 		}
 	}
-
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	rv = pci_dw_detect_out_atu_regions(sc);
 	if (rv != 0)
 		goto out;
 
-	if (bootverbose)
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
+	if (bootverbose) {
 		device_printf(sc->dev, "Detected outbound iATU regions: %d\n",
-		    sc->num_out_regions);
-
+					  sc->num_out_regions);
+		device_printf(dev, "%d : %d\n", __func__, __LINE__);
+	}
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	rv = pci_dw_setup_hw(sc);
 	if (rv != 0)
 		goto out;
 
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
+
 	device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	return (0);
 out:
+	device_printf(dev, "%d : %d\n",__func__ ,__LINE__);
 	/* XXX Cleanup */
 	return (rv);
 }
