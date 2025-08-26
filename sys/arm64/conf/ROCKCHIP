@@ -22,6 +22,10 @@
 cpu		ARM64
 ident		ROCKCHIP
 
+options BOOTVERBOSE
+makeoptions	DEBUG=-g  # Enable kernel debugging sybmbols
+makeoptions	WITH_KERNEL_BIN=1
+
 include		"std.arm64"
 include		"std.dev"
 include		"std.rockchip"
