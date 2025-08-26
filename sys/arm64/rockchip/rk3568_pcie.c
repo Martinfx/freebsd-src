@@ -292,6 +292,7 @@ rk3568_pcie_detach(device_t dev)
 static int
 rk3568_pcie_attach(device_t dev)
 {
+    panic("not implemented yet");
 	struct rk3568_pcie_softc *sc = device_get_softc(dev);
 	int error;
     device_printf(dev, "pcie attach: %d\n", __LINE__);

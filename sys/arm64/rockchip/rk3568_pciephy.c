@@ -161,7 +161,6 @@ rk3568_pciephy_probe(device_t dev)
 static int
 rk3568_pciephy_attach(device_t dev)
 {
-	panic("not implemented yet");
 	struct rk3568_pciephy_softc *sc = device_get_softc(dev);
 	struct phynode_init_def phy_init;
 	struct phynode *phynode;
