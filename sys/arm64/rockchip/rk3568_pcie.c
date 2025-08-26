@@ -138,83 +138,97 @@ rk3568_pcie_init_soc(device_t dev)
 	struct rk3568_pcie_softc *sc = device_get_softc(dev);
 	int err, count;
 	bool status;
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Assert PCIe reset */
 	if (sc->reset_gpio != NULL) {
+		device_printf(dev, "pcie init soc: %d\n", __LINE__);
 		if (gpio_pin_setflags(sc->reset_gpio, GPIO_PIN_OUTPUT)) {
 			device_printf(dev, "Could not setup PCIe reset\n");
 			return (ENXIO);
 		}
+		device_printf(dev, "pcie init soc: %d\n", __LINE__);
 		if (gpio_pin_set_active(sc->reset_gpio, true)) {
 			device_printf(dev, "Could not set PCIe reset\n");
 			return (ENXIO);
 		}
+		device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	}
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Assert reset */
 	if (hwreset_assert(sc->hwreset)) {
 		device_printf(dev, "Could not assert reset\n");
 		return (ENXIO);
 	}
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Powerup PCIe */
 	if (sc->regulator != NULL) {
+		device_printf(dev, "pcie init soc: %d\n", __LINE__);
 		if (regulator_enable(sc->regulator)) {
 			device_printf(dev, "Cannot enable regulator\n");
 			return (ENXIO);
 		}
+		device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	}
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Enable PHY */
 	if (phy_enable(sc->phy)) {
 		device_printf(dev, "Cannot enable phy\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Deassert reset */
 	if (hwreset_deassert(sc->hwreset)) {
 		device_printf(dev, "Could not deassert reset\n");
 		return (ENXIO);
 	}
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Enable clocks */
 	if ((err = clk_enable(sc->aclk_mst))) {
 		device_printf(dev, "Could not enable aclk_mst clk\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	if ((err = clk_enable(sc->aclk_slv))) {
 		device_printf(dev, "Could not enable aclk_slv clk\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	if ((err = clk_enable(sc->aclk_dbi))) {
 		device_printf(dev, "Could not enable aclk_dbi clk\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	if ((err = clk_enable(sc->pclk))) {
 		device_printf(dev, "Could not enable pclk clk\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	if ((err = clk_enable(sc->aux))) {
 		device_printf(dev, "Could not enable aux clk\n");
 		return (ENXIO);
 	}
 
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Set Root Complex (RC) mode */
 	bus_write_4(sc->apb_res, PCIE_CLIENT_HOT_RESET_CTRL,
 	    (APP_LSSTM_ENABLE_ENHANCE << 16) | APP_LSSTM_ENABLE_ENHANCE);
 	bus_write_4(sc->apb_res, PCIE_CLIENT_GENERAL_CON,
 	    (DEVICE_TYPE_MASK << 16) | DEVICE_TYPE_RC);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Deassert PCIe reset */
 	if ((err = gpio_pin_set_active(sc->reset_gpio, false)))
 		device_printf(dev, "reset_gpio set failed\n");
+
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 
 	/* Start Link Training and Status State Machine (LTSSM) */
 	bus_write_4(sc->apb_res, PCIE_CLIENT_GENERAL_CON,
 	    (LINK_REQ_RST_GRT | LTSSM_ENABLE) << 16 |
 	    (LINK_REQ_RST_GRT | LTSSM_ENABLE));
 	DELAY(100000);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Release PCIe reset */
 	if (sc->reset_gpio != NULL) {
 		if (gpio_pin_set_active(sc->reset_gpio, true)) {
@@ -222,6 +236,8 @@ rk3568_pcie_init_soc(device_t dev)
 			return (ENXIO);
 		}
 	}
+
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 
 	/* Wait for link up/stable */
 	for (count = 20; count; count--) {
@@ -234,22 +250,24 @@ rk3568_pcie_init_soc(device_t dev)
 			return (ENXIO);
 		}
 	}
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 
 	if ((err = pci_dw_init(dev)))
 		return (ENXIO);
 
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Delay to have things settle */
 	DELAY(100000);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Enable all MSG interrupts */
 	bus_write_4(sc->apb_res, PCIE_CLIENT_INTR_MASK_MSG_RX, 0x7fff0000);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Enable all Legacy interrupts */
 	bus_write_4(sc->apb_res, PCIE_CLIENT_INTR_MASK_LEGACY, 0x00ff0000);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	/* Enable all Error interrupts */
 	bus_write_4(sc->apb_res, PCIE_CLIENT_INTR_MASK_ERR, 0x0fff0000);
-
+	device_printf(dev, "pcie init soc: %d\n", __LINE__);
 	return (0);
 }
 
