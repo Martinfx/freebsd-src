@@ -166,7 +166,7 @@ rk3568_pciephy_attach(device_t dev)
 	struct phynode *phynode;
 	uint32_t data_lanes[2] = { 0, 0 };
 	int rid = 0;
-`   device_printf(dev, "pciephy attach: %d\n", __LINE__);
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
 	device_printf(dev, "pciephy attach: %d\n", __LINE__);
