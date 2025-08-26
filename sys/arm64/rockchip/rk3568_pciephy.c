@@ -166,49 +166,56 @@ rk3568_pciephy_attach(device_t dev)
 	struct phynode *phynode;
 	uint32_t data_lanes[2] = { 0, 0 };
 	int rid = 0;
-
+`   device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Get memory resource */
 	if (!(sc->mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE))) {
 		device_printf(dev, "Cannot allocate memory resources\n");
 		return (ENXIO);
 	}
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Get syncons handle */
 	if (OF_hasprop(sc->node, "rockchip,phy-grf") &&
 	    syscon_get_by_ofw_property(dev, sc->node, "rockchip,phy-grf",
 	    &sc->phy_grf))
 		return (ENXIO);
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Get & enable clocks */
 	if (clk_get_by_ofw_name(dev, 0, "refclk_m", &sc->refclk_m)) {
 		device_printf(dev, "getting refclk_m failed\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (clk_enable(sc->refclk_m))
 		device_printf(dev, "enable refclk_m failed\n");
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (clk_get_by_ofw_name(dev, 0, "refclk_n", &sc->refclk_n)) {
 		device_printf(dev, "getting refclk_n failed\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (clk_enable(sc->refclk_n))
 		device_printf(dev, "enable refclk_n failed\n");
+
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (clk_get_by_ofw_name(dev, 0, "pclk", &sc->pclk)) {
 		device_printf(dev, "getting pclk failed\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (clk_enable(sc->pclk))
 		device_printf(dev, "enable pclk failed\n");
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Get & assert reset */
 	if (hwreset_get_by_ofw_idx(dev, sc->node, 0, &sc->phy_reset)) {
 		device_printf(dev, "Cannot get reset\n");
 	} else
 		hwreset_assert(sc->phy_reset);
 
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Set RC/EP mode not implemented yet (RC mode only) */
 
 	/* Set bifurcation according to "data-lanes" entry */
@@ -219,13 +226,14 @@ rk3568_pciephy_attach(device_t dev)
 		if (bootverbose)
 			device_printf(dev, "lane 1 & 2 @pcie3x2\n");
 
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Deassert PCIe PMA output clamp mode */
 	SYSCON_WRITE_4(sc->phy_grf, GRF_PCIE30PHY_CON9, GRF_PCIE30PHY_DA_OCM);
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	/* Configure PHY HW accordingly */
 	rk3568_pciephy_bifurcate(dev, GRF_PCIE30PHY_CON5, data_lanes[0]);
 	rk3568_pciephy_bifurcate(dev, GRF_PCIE30PHY_CON6, data_lanes[1]);
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (data_lanes[0] || data_lanes[1])
 		SYSCON_WRITE_4(sc->phy_grf, GRF_PCIE30PHY_CON1,
 		    GRF_PCIE30PHY_DA_OCM);
@@ -233,20 +241,25 @@ rk3568_pciephy_attach(device_t dev)
 		SYSCON_WRITE_4(sc->phy_grf, GRF_PCIE30PHY_CON1,
 		    GRF_PCIE30PHY_DA_OCM_MASK);
 
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
+
 	bzero(&phy_init, sizeof(phy_init));
 	phy_init.id = PHY_NONE;
 	phy_init.ofw_node = sc->node;
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (!(phynode = phynode_create(dev, &rk3568_pciephy_phynode_class,
 	    &phy_init))) {
 		device_printf(dev, "failed to create pciephy PHY\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	if (!phynode_register(phynode)) {
 		device_printf(dev, "failed to register pciephy PHY\n");
 		return (ENXIO);
 	}
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	sc->phynode = phynode;
-
+	device_printf(dev, "pciephy attach: %d\n", __LINE__);
 	return (0);
 }
 
