@@ -782,3 +782,6 @@ dev/clk/xilinx/zynqmp_clk_gate.c		optional fdt soc_xilinx_zynq
 dev/clk/xilinx/zynqmp_clk_mux.c			optional fdt soc_xilinx_zynq
 dev/clk/xilinx/zynqmp_clk_pll.c			optional fdt soc_xilinx_zynq
 dev/clk/xilinx/zynqmp_reset.c			optional fdt soc_xilinx_zynq
+
+# Mediatek
+arm64/mediatek/mt7531_switch.c		    	optional fdt mt7531_switch soc_mediatek
