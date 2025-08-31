@@ -41,6 +41,7 @@ device		uart_snps
 device		dwc			# Synopsys DesignWare GMAC controller
 device		dwc_rk			# Rockchip Designware
 device		eqos			# Synopsys Designware Ethernet QoS controller
+device      mt7531_switch   # mt7531 switch
 
 # IO Domains
 device		rk_iodomain
