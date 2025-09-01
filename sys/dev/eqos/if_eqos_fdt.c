@@ -46,6 +46,7 @@
 #include <net/if_media.h>
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
+#include <dev/mdio/mdio.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -57,6 +58,7 @@
 
 #include <dev/eqos/if_eqos_var.h>
 
+#include "mdio_if.h"
 #include "if_eqos_if.h"
 #include "syscon_if.h"
 #include "gpio_if.h"
@@ -84,7 +86,8 @@
 #define	WR4(sc, o, v)		bus_write_4(sc->res[EQOS_RES_MEM], (o), (v))
 
 static const struct ofw_compat_data compat_data[] = {
-	{"snps,dwmac-4.20a",	1},
+    {"rockchip,rk3568-gmac", 1},
+    {"snps,dwmac-4.20a",	1},
 	{ NULL, 0 }
 };
 
@@ -279,10 +282,13 @@ static int
 eqos_fdt_probe(device_t dev)
 {
 
-	if (!ofw_bus_status_okay(dev))
-		return (ENXIO);
-        if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
-		return (ENXIO);
+	if (!ofw_bus_status_okay(dev)) {
+        return (ENXIO);
+    }
+
+    if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0) {
+        return (ENXIO);
+    }
 
 	device_set_desc(dev, "DesignWare EQOS Gigabit ethernet");
 
@@ -297,6 +303,10 @@ static device_method_t eqos_fdt_methods[] = {
 	/* EQOS interface */
 	DEVMETHOD(if_eqos_init,		eqos_fdt_init),
 
+    /* MDIO interface */
+    DEVMETHOD(mdio_readreg,		eqos_miibus_readreg),
+    DEVMETHOD(mdio_writereg,	eqos_miibus_writereg),
+
 	DEVMETHOD_END
 };
 
@@ -305,3 +315,4 @@ DEFINE_CLASS_1(eqos, eqos_fdt_driver, eqos_fdt_methods,
 DRIVER_MODULE(eqos, simplebus, eqos_fdt_driver, 0, 0);
 MODULE_DEPEND(eqos, ether, 1, 1, 1);
 MODULE_DEPEND(eqos, miibus, 1, 1, 1);
+MODULE_DEPEND(eqos, mdio, 1, 1, 1);
