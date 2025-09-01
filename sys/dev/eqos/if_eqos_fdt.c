@@ -148,6 +148,8 @@ eqos_fdt_init(device_t dev)
 {
 	struct eqos_softc *sc = device_get_softc(dev);
 	phandle_t node = ofw_bus_get_node(dev);
+    phandle_t node_child;
+    device_t dev_child;
 	hwreset_t eqos_reset;
 	regulator_t eqos_supply;
 	uint32_t rx_delay, tx_delay;
@@ -261,6 +263,17 @@ eqos_fdt_init(device_t dev)
 
 	if (eqos_reset)
 		hwreset_deassert(eqos_reset);
+
+    for (node_child = OF_child(node); node_child != 0; node_child = OF_peer(node_child) {
+        if (ofw_bus_node_is_compatible(c, "snps,dwmac-mdio")) {
+            child = ofw_bus_add_fdt_child(dev, 0, "mdio", -1, node_child);
+            if (child != NULL) {
+				error = device_probe_and_attach(child);
+				if (error != 0) {
+					device_printf(dev,"device_probe_and_attach() failed\n");
+				}
+            }
+    }
 
 	/* set the MAC address if we have OTP data handy */
 	if (!RK_OTP_READ(dev, buffer, 0, sizeof(buffer))) {
