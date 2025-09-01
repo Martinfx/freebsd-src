@@ -264,7 +264,7 @@ eqos_fdt_init(device_t dev)
 	if (eqos_reset)
 		hwreset_deassert(eqos_reset);
 
-    for (node_child = OF_child(node); node_child != 0; node_child = OF_peer(node_child) {
+    for (node_child = OF_child(node); node_child != 0; node_child = OF_peer(node_child)) {
         if (ofw_bus_node_is_compatible(c, "snps,dwmac-mdio")) {
             child = ofw_bus_add_fdt_child(dev, 0, "mdio", -1, node_child);
             if (child != NULL) {
