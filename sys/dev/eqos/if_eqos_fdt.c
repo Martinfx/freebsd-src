@@ -295,6 +295,29 @@ eqos_fdt_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+static int
+eqos_mdio_readreg(device_t dev, int phy, int reg)
+{
+    struct eqos_softc *sc = device_get_softc(dev);
+    int data;
+    EQOS_LOCK(sc);
+    data = MDIO_READREG(device_get_parent(dev), phy, reg);
+    EQOS_UNLOCK(sc);
+
+    return (data);
+}
+
+static int
+eqos_mdio_writereg(device_t dev, int phy, int reg, int val)
+{
+    struct eqos_softc *sc = device_get_softc(dev);
+    int err;
+    EQOS_LOCK(sc);
+    err = MDIO_WRITEREG(device_get_parent(dev), phy, reg, val);
+    EQOS_UNLOCK(sc);
+
+    return err;
+}
 
 static device_method_t eqos_fdt_methods[] = {
 	/* Device interface */
@@ -304,8 +327,8 @@ static device_method_t eqos_fdt_methods[] = {
 	DEVMETHOD(if_eqos_init,		eqos_fdt_init),
 
     /* MDIO interface */
-    DEVMETHOD(mdio_readreg,		eqos_miibus_readreg),
-    DEVMETHOD(mdio_writereg,	eqos_miibus_writereg),
+    DEVMETHOD(mdio_readreg,		eqos_mdio_readreg),
+    DEVMETHOD(mdio_writereg,	eqos_mdio_writereg),
 
 	DEVMETHOD_END
 };
