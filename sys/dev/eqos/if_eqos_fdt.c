@@ -300,9 +300,9 @@ eqos_mdio_readreg(device_t dev, int phy, int reg)
 {
     struct eqos_softc *sc = device_get_softc(dev);
     int data;
-    mtx_lock(&(sc)->lock)
+    mtx_lock(&(sc)->lock);
     data = MDIO_READREG(device_get_parent(dev), phy, reg);
-    mtx_unlock(&(sc)->lock)
+    mtx_unlock(&(sc)->lock);
 
     return (data);
 }
@@ -312,9 +312,9 @@ eqos_mdio_writereg(device_t dev, int phy, int reg, int val)
 {
     struct eqos_softc *sc = device_get_softc(dev);
     int err;
-    mtx_lock(&(sc)->lock)
+    mtx_lock(&(sc)->lock);
     err = MDIO_WRITEREG(device_get_parent(dev), phy, reg, val);
-    mtx_unlock(&(sc)->lock)
+    mtx_unlock(&(sc)->lock);
 
     return err;
 }
