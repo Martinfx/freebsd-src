@@ -208,13 +208,12 @@ static struct ofw_compat_data compat_data[] = {
         { NULL, 0 }
 };
 
-static uint32_t
-mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg);
-static uint32_t
-mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t val);
-static void
-mt7531_switch_vlan_init_hw(struct mt7531_switch_softc *sc);
-
+static uint32_t mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg);
+static uint32_t mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t val);
+static void mt7531_switch_vlan_init_hw(struct mt7531_switch_softc *sc);
+static void mt7531_switchport_init(struct mt7531_switch_softc *sc, int port);
+static int mt7531_switch_vlan_set_pvid(struct mt7531_switch_softc *sc, int port, int pvid);
+static int mt7531_switch_vlan_get_pvid(struct mt7531_switch_softc *sc, int port, int *pvid);
 
 /* PHY <-> port mapping is currently 1:1 */
 static inline int
