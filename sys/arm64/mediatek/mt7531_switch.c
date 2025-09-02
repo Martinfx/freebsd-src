@@ -185,7 +185,6 @@
 #define MTKSWITCH_GLOBAL_PHY	31
 #define	MTKSWITCH_GLOBAL_REG	31
 
-
 struct mt7531_switch_softc {
     struct mtx	mtx;
     device_t	dev;
@@ -196,55 +195,12 @@ struct mt7531_switch_softc {
     uint32_t	portmap;
     int		cpuport;
     uint32_t	valid_vlans;
-    //mtk_switch_type	sc_switchtype;
     char		*ifname[MT7531_SWITCH_MAX_PHYS];
     device_t	miibus[MT7531_SWITCH_MAX_PHYS];
     if_t ifp[MT7531_SWITCH_MAX_PHYS];
     struct callout	callout_tick;
     etherswitch_info_t info;
     uint32_t	vlan_mode;
-
-    struct {
-        /* Global setup */
-        int (* mt7531_switch_reset) (struct mt7531_switch_softc *);
-        int (* mt7531_switch_hw_setup) (struct mt7531_switch_softc *);
-        int (* mt7531_switch_hw_global_setup) (struct mt7531_switch_softc *);
-
-        /* Port functions */
-        void (* mt7531_switchport_init) (struct mt7531_switch_softc *, int);
-        uint32_t (* mt7531_switch_get_port_status) (struct mt7531_switch_softc *, int);
-
-        /* ATU functions */
-        int (* mt7531_switch_atu_flush) (struct mt7531_switch_softc *);
-
-        /* VLAN functions */
-        int (* mt7531_switch_port_vlan_setup) (struct mt7531_switch_softc *,
-                                               etherswitch_port_t *);
-        int (* mt7531_switch_port_vlan_get) (struct mt7531_switch_softc *,
-                                             etherswitch_port_t *);
-        void (* mt7531_switch_vlan_init_hw) (struct mt7531_switch_softc *);
-        int (* mt7531_switch_vlan_getvgroup) (struct mt7531_switch_softc *,
-                                              etherswitch_vlangroup_t *);
-        int (* mt7531_switch_vlan_setvgroup) (struct mt7531_switch_softc *,
-                                              etherswitch_vlangroup_t *);
-        int (* mt7531_switch_vlan_get_pvid) (struct mt7531_switch_softc *,
-                                             int, int *);
-        int (* mt7531_switch_vlan_set_pvid) (struct mt7531_switch_softc *,
-                                             int, int);
-
-        /* PHY functions */
-        int (* mt7531_switch_phy_read) (device_t, int, int);
-        int (* mt7531_switch_phy_write) (device_t, int, int, int);
-
-        /* Register functions */
-        int (* mt7531_switch_reg_read) (device_t, int);
-        int (* mt7531_switch_reg_write) (device_t, int, int);
-
-        /* Internal register access functions */
-        uint32_t (* mt7531_switch_read) (struct mt7531_switch_softc *, int);
-        uint32_t (* mt7531_switch_write) (struct mt7531_switch_softc *, int,
-                                          uint32_t);
-    } hal;
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -422,41 +378,25 @@ mt7531_reset(struct mt7531_switch_softc *sc)
 }
 
 static int
-mt7531_readphy(device_t dev, int phy, int reg)
-{
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
-
-    return (sc->hal.mt7531_switch_phy_read(dev, phy, reg));
-}
-
-static int
-mt7531_writephy(device_t dev, int phy, int reg, int val)
-{
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
-
-    return (sc->hal.mt7531_switch_phy_write(dev, phy, reg, val));
-}
-
-static int
 mt7531_readreg(device_t dev, int addr)
 {
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    int devaddr, regaddr;
 
-    return (sc->hal.mt7531_switch_reg_read(dev, addr));
+    devaddr = (addr >> 5) & 0x1f;
+    regaddr = addr & 0x1f;
+
+    return MDIO_READREG(device_get_parent(dev), devaddr, regaddr);
 }
 
 static int
 mt7531_writereg(device_t dev, int addr, int value)
 {
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    int devaddr, regaddr;
 
-    return (sc->hal.mt7531_switch_reg_write(dev, addr, value));
-}
+    devaddr = (addr >> 5) & 0x1f;
+    regaddr = addr & 0x1f;
 
-static void
-mt7531_statchg(device_t dev)
-{
-    device_printf(dev, "func %s\n", __func__ );
+    return (MDIO_WRITEREG(device_get_parent(dev), devaddr, regaddr, value));
 }
 
 static inline struct mii_data *
@@ -647,48 +587,6 @@ mt7531_detach(device_t dev)
     return (0);
 }
 
-static device_method_t mt7531_methods[] = {
-        /* Device interface */
-        DEVMETHOD(device_probe,     mt7531_probe),
-        DEVMETHOD(device_attach,    mt7531_attach),
-        DEVMETHOD(device_detach,    mt7531_detach),
-
-        /* bus interface */
-        DEVMETHOD(bus_add_child,	device_add_child_ordered),
-
-        /* etherswitch interface */
-        DEVMETHOD(etherswitch_getinfo,      mt7531_getinfo),
-        DEVMETHOD(etherswitch_readreg,      mt7531_readreg),
-        DEVMETHOD(etherswitch_writereg,     mt7531_writereg),
-        DEVMETHOD(etherswitch_getport,      mt7531_getport),
-        DEVMETHOD(etherswitch_setport,      mt7531_setport),
-        DEVMETHOD(etherswitch_getvgroup, mt7531_getvlangroup),
-        DEVMETHOD(etherswitch_setvgroup, mt7531_setvlangroup),
-
-        /* MII interface */
-        DEVMETHOD(miibus_readreg,	mt7531_readphy),
-        DEVMETHOD(miibus_writereg,	mt7531_writephy),
-        DEVMETHOD(miibus_statchg,	mt7531_statchg),
-
-        /* MDIO interface */
-        DEVMETHOD(mdio_readreg,		mt7531_readphy),
-        DEVMETHOD(mdio_writereg,	mt7531_writephy),
-
-        DEVMETHOD_END
-};
-
-
-DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
-DRIVER_MODULE(mt7531_switch, simplebus, mt7531_switch_driver, 0, 0);
-DRIVER_MODULE(miibus, mt7531_switch, miibus_driver, 0, 0);
-DRIVER_MODULE(mdio, mt7531_switch, mdio_driver, 0, 0);
-DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
-MODULE_VERSION(mt7531_switch, 1);
-MODULE_DEPEND(mt7531_switch, miibus, 1, 1, 1);
-MODULE_DEPEND(mt7531_switch, etherswitch, 1, 1, 1);
-MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
-
-
 static int
 mtkswitch_phy_read_locked(struct mt7531_switch_softc *sc, int phy, int reg)
 {
@@ -789,41 +687,6 @@ mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t v
     mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
                                MTKSWITCH_REG_HI(reg), MTKSWITCH_VAL_HI(val));
     return (0);
-}
-
-#define MDIO_MMD_VEND1		30	/* Vendor specific 1 */
-#define MDIO_MMD_VEND2		31	/* Vendor specific 2 */
-#define MII_MMD_CTRL_NOINCR	0x4000	/* no post increment */                         \
-#define	MII_MMD_CTRL		0x0d	/* MMD Access Control Register */
-#define	MII_MMD_DATA		0x0e	/* MMD Access Data Register */
-
-static int
-mt7531_mmd_write32_locked(struct mt7531_switch_softc *sc, uint32_t reg, uint32_t val)
-{
-    device_t mdio_parent = device_get_parent(sc->dev);
-    int phy = ofw_bus_get_addr(sc->dev);
-    int err;
-
-    err  = MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2);
-    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, reg);
-    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
-    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, val);
-    return (err ? EIO : 0);
-}
-
-static int
-mt7531_mmd_read32_locked(struct mt7531_switch_softc *sc, uint32_t reg, uint32_t *val)
-{
-    device_t mdio_parent = device_get_parent(sc->dev);
-    int phy = ofw_bus_get_addr(sc->dev);
-    int err;
-
-    err  = MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2);
-    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, reg);
-    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
-    if (err) return EIO;
-    *val = (uint32_t)MDIO_READREG(mdio_parent, phy, MII_MMD_DATA);
-    return 0;
 }
 
 static int
@@ -1166,7 +1029,7 @@ mtkswitch_vlan_set_pvid(struct mt7531_switch_softc *sc, int port, int pvid)
 
     return (0);
 }
-
+/*
 static void
 mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
 {
@@ -1181,8 +1044,6 @@ mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
 
     sc->hal.mt7531_switch_read = mtkswitch_reg_read32_mt7621;
     sc->hal.mt7531_switch_write = mtkswitch_reg_write32_mt7621;
-    sc->hal.mt7531_switch_read = mt7531_mmd_read32_locked;
-    sc->hal.mt7531_switch_write = mt7531_mmd_write32_locked;
     sc->info.es_nvlangroups = 4096;
 
     sc->hal.mt7531_switch_reset = mtkswitch_reset;
@@ -1203,3 +1064,44 @@ mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
     sc->hal.mt7531_switch_reg_read = mtkswitch_reg_read;
     sc->hal.mt7531_switch_reg_write = mtkswitch_reg_write;
 }
+*/
+static device_method_t mt7531_methods[] = {
+        /* Device interface */
+        DEVMETHOD(device_probe,     mt7531_probe),
+        DEVMETHOD(device_attach,    mt7531_attach),
+        DEVMETHOD(device_detach,    mt7531_detach),
+
+        /* bus interface */
+        DEVMETHOD(bus_add_child,	device_add_child_ordered),
+
+        /* etherswitch interface */
+        DEVMETHOD(etherswitch_getinfo,      mt7531_getinfo),
+        DEVMETHOD(etherswitch_readreg,      mt7531_readreg),
+        DEVMETHOD(etherswitch_writereg,     mt7531_writereg),
+        DEVMETHOD(etherswitch_getport,      mt7531_getport),
+        DEVMETHOD(etherswitch_setport,      mt7531_setport),
+        DEVMETHOD(etherswitch_getvgroup,    mt7531_getvlangroup),
+        DEVMETHOD(etherswitch_setvgroup,    mt7531_setvlangroup),
+        DEVMETHOD(etherswitch_readphyreg,	mt7531_readreg),
+        DEVMETHOD(etherswitch_writephyreg,	mt7531_writereg),
+        /* MII interface */
+        /*DEVMETHOD(miibus_readreg,	mt7531_readphy),
+        DEVMETHOD(miibus_writereg,	mt7531_writephy),
+        DEVMETHOD(miibus_statchg,	mt7531_statchg),*/
+
+        /* MDIO interface */
+        DEVMETHOD(mdio_readreg,		mt7531_readphy),
+        DEVMETHOD(mdio_writereg,	mt7531_writephy),
+
+        DEVMETHOD_END
+};
+
+
+DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
+DRIVER_MODULE(miibus, mt7531_switch, miibus_driver, 0, 0);
+DRIVER_MODULE(mdio, mt7531_switch, mdio_driver, 0, 0);
+DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
+MODULE_VERSION(mt7531_switch, 1);
+MODULE_DEPEND(mt7531_switch, miibus, 1, 1, 1);
+MODULE_DEPEND(mt7531_switch, etherswitch, 1, 1, 1);
+MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
