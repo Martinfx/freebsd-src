@@ -208,6 +208,14 @@ static struct ofw_compat_data compat_data[] = {
         { NULL, 0 }
 };
 
+static uint32_t
+mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg);
+static uint32_t
+mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t val);
+static void
+mt7531_switch_vlan_init_hw(struct mt7531_switch_softc *sc);
+
+
 /* PHY <-> port mapping is currently 1:1 */
 static inline int
 mt7531_portforphy(int phy)
