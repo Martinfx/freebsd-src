@@ -184,7 +184,7 @@
 #define MTKSWITCH_VAL_HI(v)	(((v) >> 16) & 0xffff)
 #define MTKSWITCH_GLOBAL_PHY	31
 #define	MTKSWITCH_GLOBAL_REG	31
-
+#define MDIO_MMD_VEND2		31
 MALLOC_DECLARE(MT7531_SWITCH);
 MALLOC_DEFINE(MT7531_SWITCH, "mt7531", "mt7531 data structures");
 
@@ -723,7 +723,7 @@ mtkswitch_reg_write32_mdio(struct mt7531_switch_softc *sc, uint32_t reg, uint32_
     int e = MDIO_WRITEEXTREG(device_get_parent(sc->dev),
                                                            sc->mdio_addr, MDIO_MMD_VEND2, reg, val);
     return (e == 0) ? 0 : 0xffffffffU;
-+}
+}
 
 static uint32_t
 mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg)
