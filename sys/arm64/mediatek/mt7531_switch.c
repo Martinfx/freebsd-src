@@ -263,6 +263,47 @@ mt7531_update_ifmedia(uint32_t portstatus, u_int *media_status,
         *media_active |= IFM_ETH_RXPAUSE;
 }
 
+static uint32_t
+mt7531_switch_get_port_status(struct mt7531_switch_softc *sc, int port)
+{
+    uint32_t val, res, tmp;
+
+    mtx_assert(&sc->mtx, MA_OWNED);
+    res = 0;
+    val = mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_PMSR(port));
+
+    if (val & PMSR_MAC_LINK_STS)
+        res |= MTKSWITCH_LINK_UP;
+    if (val & PMSR_MAC_DPX_STS)
+        res |= MTKSWITCH_DUPLEX;
+    tmp = PMSR_MAC_SPD(val);
+    if (tmp == 0)
+        res |= MTKSWITCH_SPEED_10;
+    else if (tmp == 1)
+        res |= MTKSWITCH_SPEED_100;
+    else if (tmp == 2)
+        res |= MTKSWITCH_SPEED_1000;
+    if (val & PMSR_TX_FC_STS)
+        res |= MTKSWITCH_TXFLOW;
+    if (val & PMSR_RX_FC_STS)
+        res |= MTKSWITCH_RXFLOW;
+
+    return (res);
+}
+
+static int
+mt7531_switch_atu_flush(struct mt7531_switch_softc *sc)
+{
+    mtx_assert(&sc->mtx, MA_OWNED);
+    /* Flush all non-static MAC addresses */
+    while (mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_ATC) & ATC_BUSY);
+    mtkswitch_reg_write32_mt7621(sc, MTKSWITCH_ATC, ATC_BUSY |
+                                                    ATC_AC_MAT_NON_STATIC_MACS | ATC_AC_CMD_CLEAN);
+    while (mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_ATC) & ATC_BUSY);
+
+    return (0);
+}
+
 static void
 mt7531_miipollstat(struct mt7531_switch_softc *sc)
 {
@@ -512,7 +553,14 @@ mt7531_attach(device_t dev)
     sc->cpuport = MTKSWITCH_CPU_PORT;
     sc->dev = dev;
 
-    mtk_attach_switch_mt7531(sc);
+    sc->portmap = 0x7f;
+    sc->phymap = 0x1f;
+
+    sc->info.es_nports = 7;
+    sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;
+    sc->info.es_nvlangroups = 16;
+    sprintf(sc->info.es_name, "Mediatek 7531 Switch");
+    sc->info.es_nvlangroups = 4096;
 
     rid = 0;
     sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
@@ -771,47 +819,6 @@ mt7531_switchport_init(struct mt7531_switch_softc *sc, int port)
     mtkswitch_reg_write32_mt7621(sc, MTKSWITCH_PMCR(port), val);
 }
 
-static uint32_t
-mt7531_switch_get_port_status(struct mt7531_switch_softc *sc, int port)
-{
-    uint32_t val, res, tmp;
-
-    mtx_assert(&sc->mtx, MA_OWNED);
-    res = 0;
-    val = mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_PMSR(port));
-
-    if (val & PMSR_MAC_LINK_STS)
-        res |= MTKSWITCH_LINK_UP;
-    if (val & PMSR_MAC_DPX_STS)
-        res |= MTKSWITCH_DUPLEX;
-    tmp = PMSR_MAC_SPD(val);
-    if (tmp == 0)
-        res |= MTKSWITCH_SPEED_10;
-    else if (tmp == 1)
-        res |= MTKSWITCH_SPEED_100;
-    else if (tmp == 2)
-        res |= MTKSWITCH_SPEED_1000;
-    if (val & PMSR_TX_FC_STS)
-        res |= MTKSWITCH_TXFLOW;
-    if (val & PMSR_RX_FC_STS)
-        res |= MTKSWITCH_RXFLOW;
-
-    return (res);
-}
-
-static int
-mt7531_switch_atu_flush(struct mt7531_switch_softc *sc)
-{
-    mtx_assert(&sc->mtx, MA_OWNED);
-    /* Flush all non-static MAC addresses */
-    while (mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_ATC) & ATC_BUSY);
-    mtkswitch_reg_write32_mt7621(sc, MTKSWITCH_ATC, ATC_BUSY |
-                                                   ATC_AC_MAT_NON_STATIC_MACS | ATC_AC_CMD_CLEAN);
-    while (mtkswitch_reg_read32_mt7621(sc, MTKSWITCH_ATC) & ATC_BUSY);
-
-    return (0);
-}
-
 static int
 mtkswitch_port_vlan_setup(struct mt7531_switch_softc *sc, etherswitch_port_t *p)
 {
@@ -1031,16 +1038,16 @@ mt7531_readphy(device_t dev, int phy, int reg)
     int data;
 
     sc = device_get_softc(dev);
-    mtx_assert(&(sc)->mtx,  MA_NOTOWNED)
+    mtx_assert(&(sc)->mtx,  MA_NOTOWNED);
 
     if (phy < 0 || phy >= 32)
         return (ENXIO);
     if (reg < 0 || reg >= 32)
         return (ENXIO);
 
-    mtx_lock(&(sc)->mtx)
+    mtx_lock(&(sc)->mtx);
     data = MDIO_READREG(device_get_parent(dev), phy, reg);
-    mtx_unlock(&(sc)->mtx)
+    mtx_unlock(&(sc)->mtx);
 
     return (data);
 }
@@ -1052,51 +1059,20 @@ mt7531_writephy(device_t dev, int phy, int reg, int data)
     int err;
 
     sc = device_get_softc(dev);
-    mtx_assert(&(sc)->mtx,  MA_NOTOWNED)
+    mtx_assert(&(sc)->mtx,  MA_NOTOWNED);
 
     if (phy < 0 || phy >= 32)
         return (ENXIO);
     if (reg < 0 || reg >= 32)
         return (ENXIO);
 
-    mtx_lock(&(sc)->mtx)
+    mtx_lock(&(sc)->mtx);
     err = MDIO_WRITEREG(device_get_parent(dev), phy, reg, data);
-    mtx_unlock(&(sc)->mtx)
+    mtx_unlock(&(sc)->mtx);
 
     return (err);
 }
-/*
-static void
-mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
-{
 
-    sc->portmap = 0x7f;
-    sc->phymap = 0x1f;
-
-    sc->info.es_nports = 7;
-    sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;
-    sc->info.es_nvlangroups = 16;
-    sprintf(sc->info.es_name, "Mediatek GSW");
-    sc->info.es_nvlangroups = 4096;
-
-    sc->hal.mt7531_switch_hw_setup = mtkswitch_hw_setup;
-    sc->hal.mt7531_switch_hw_global_setup = mtkswitch_hw_global_setup;
-    sc->hal.mt7531_switchport_init = mtkswitch_port_initmtkswitch_port_init;
-    sc->hal.mt7531_switch_get_port_status = mtkswitch_get_port_status;
-    sc->hal.mt7531_switch_atu_flush = mtkswitch_atu_flush;
-    sc->hal.mt7531_switch_port_vlan_setup = mtkswitch_port_vlan_setup;
-    sc->hal.mt7531_switch_port_vlan_get = mtkswitch_port_vlan_get;
-    sc->hal.mt7531_switch_vlan_init_hw = mtkswitch_vlan_init_hw;
-    sc->hal.mt7531_switch_vlan_getvgroup = mtkswitch_vlan_getvgroup;
-    sc->hal.mt7531_switch_vlan_setvgroup = mtkswitch_vlan_setvgroup;
-    sc->hal.mt7531_switch_vlan_get_pvid = mtkswitch_vlan_get_pvid;
-    sc->hal.mt7531_switch_vlan_set_pvid = mtkswitch_vlan_set_pvid;
-    sc->hal.mt7531_switch_phy_read = mtkswitch_phy_read;
-    sc->hal.mt7531_switch_phy_write = mtkswitch_phy_write;
-    sc->hal.mt7531_switch_reg_read = mtkswitch_reg_read;
-    sc->hal.mt7531_switch_reg_write = mtkswitch_reg_write;
-}
-*/
 static device_method_t mt7531_methods[] = {
         /* Device interface */
         DEVMETHOD(device_probe,     mt7531_probe),
