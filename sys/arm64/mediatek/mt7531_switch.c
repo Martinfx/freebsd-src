@@ -204,6 +204,7 @@ struct mt7531_switch_softc {
     struct callout	callout_tick;
     etherswitch_info_t info;
     uint32_t	vlan_mode;
+    int         mdio_addr;
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -557,6 +558,15 @@ mt7531_attach(device_t dev)
 {
     struct mt7531_switch_softc *sc = device_get_softc(dev);
     int err;
+    phandle_t node = ofw_bus_get_node(dev);
+    pcell_t regcell = 0;
+
+    if (OF_getencprop(node, "reg", &regcell, sizeof(regcell)) <= 0) {
+        device_printf(dev, "missing 'reg' property\n");
+        return (ENXIO);
+    }
+
+    sc->mdio_addr = (int)regcell & 0x1f;
 
     sc->numports = MT7531_SWITCH_MAX_PORTS;
     sc->numphys = MT7531_SWITCH_MAX_PHYS;
@@ -700,30 +710,31 @@ mtkswitch_reg_write32(struct mt7531_switch_softc *sc, int reg, uint32_t val)
 }
 
 static uint32_t
+mtkswitch_reg_read32_mdio(struct mt7531_switch_softc *sc, uint32_t reg)
+{
+    int v = MDIO_READEXTREG(device_get_parent(sc->dev),
+                             +                            sc->mdio_addr, MDIO_MMD_VEND2, reg);
+    return (v < 0) ? 0xffffffffU : (uint32_t)v;
+}
+
+static uint32_t
+mtkswitch_reg_write32_mdio(struct mt7531_switch_softc *sc, uint32_t reg, uint32_t val)
+{
+    int e = MDIO_WRITEEXTREG(device_get_parent(sc->dev),
+                                                           sc->mdio_addr, MDIO_MMD_VEND2, reg, val);
+    return (e == 0) ? 0 : 0xffffffffU;
++}
+
+static uint32_t
 mtkswitch_reg_read32_mt7621(struct mt7531_switch_softc *sc, int reg)
 {
-    uint32_t low, hi;
-
-    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                               MTKSWITCH_GLOBAL_REG, MTKSWITCH_REG_ADDR(reg));
-    low = mtkswitch_phy_read_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                                    MTKSWITCH_REG_LO(reg));
-    hi = mtkswitch_phy_read_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                                   MTKSWITCH_REG_HI(reg));
-    return (low | (hi << 16));
+    return mtkswitch_reg_read32_mdio(sc, reg);
 }
 
 static uint32_t
 mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t val)
 {
-
-    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                               MTKSWITCH_GLOBAL_REG, MTKSWITCH_REG_ADDR(reg));
-    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                               MTKSWITCH_REG_LO(reg), MTKSWITCH_VAL_LO(val));
-    mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
-                               MTKSWITCH_REG_HI(reg), MTKSWITCH_VAL_HI(val));
-    return (0);
+    return mtkswitch_reg_write32_mdio(sc, reg, val);
 }
 
 static int
@@ -1105,7 +1116,7 @@ static device_method_t mt7531_methods[] = {
 
 
 DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
-DRIVER_MODULE(mt7531_switch, simplebus, mt7531_switch_driver, 0, 0);
+DRIVER_MODULE(mt7531_switch, mdio, mt7531_switch_driver, 0, 0);
 DRIVER_MODULE(miibus, mt7531_switch, miibus_driver, 0, 0);
 DRIVER_MODULE(mdio, mt7531_switch, mdio_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
