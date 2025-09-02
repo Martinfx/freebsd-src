@@ -556,7 +556,7 @@ static int
 mt7531_attach(device_t dev)
 {
     struct mt7531_switch_softc *sc = device_get_softc(dev);
-    int err, rid;
+    int err;
 
     sc->numports = MT7531_SWITCH_MAX_PORTS;
     sc->numphys = MT7531_SWITCH_MAX_PHYS;
