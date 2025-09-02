@@ -1097,8 +1097,8 @@ static device_method_t mt7531_methods[] = {
         DEVMETHOD(etherswitch_setport,      mt7531_setport),
         DEVMETHOD(etherswitch_getvgroup,    mt7531_getvlangroup),
         DEVMETHOD(etherswitch_setvgroup,    mt7531_setvlangroup),
-        DEVMETHOD(etherswitch_readphyreg,	mt7531_readreg),
-        DEVMETHOD(etherswitch_writephyreg,	mt7531_writereg),
+        DEVMETHOD(etherswitch_readphyreg,	mt7531_readphy),
+        DEVMETHOD(etherswitch_writephyreg,	mt7531_writephy),
         /* MII interface */
         DEVMETHOD(miibus_readreg,	mt7531_readphy),
         DEVMETHOD(miibus_writereg,	mt7531_writephy),
