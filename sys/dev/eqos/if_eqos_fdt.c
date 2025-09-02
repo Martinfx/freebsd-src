@@ -265,14 +265,16 @@ eqos_fdt_init(device_t dev)
 		hwreset_deassert(eqos_reset);
 
     for (node_child = OF_child(node); node_child != 0; node_child = OF_peer(node_child)) {
-        if (ofw_bus_node_is_compatible(c, "snps,dwmac-mdio")) {
-            child = ofw_bus_add_fdt_child(dev, 0, "mdio", -1, node_child);
-            if (child != NULL) {
-				error = device_probe_and_attach(child);
-				if (error != 0) {
-					device_printf(dev,"device_probe_and_attach() failed\n");
-				}
-            }
+        if (ofw_bus_node_is_compatible(node_child, "snps,dwmac-mdio")) {
+			dev_child = device_add_child(dev, "mdio", DEVICE_UNIT_ANY);
+			if(dev_child) {
+				bus_attach_children(dev);
+			}
+			else {
+				device_printf(dev, "could not add mdio child");
+				return (ENXIO);
+			}
+		}
     }
 
 	/* set the MAC address if we have OTP data handy */

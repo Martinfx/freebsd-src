@@ -686,6 +686,7 @@ DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mt7531_switch, 1);
 MODULE_DEPEND(mt7531_switch, miibus, 1, 1, 1);
 MODULE_DEPEND(mt7531_switch, etherswitch, 1, 1, 1);
+MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
 
 
 static int
@@ -788,6 +789,41 @@ mtkswitch_reg_write32_mt7621(struct mt7531_switch_softc *sc, int reg, uint32_t v
     mtkswitch_phy_write_locked(sc, MTKSWITCH_GLOBAL_PHY,
                                MTKSWITCH_REG_HI(reg), MTKSWITCH_VAL_HI(val));
     return (0);
+}
+
+#define MDIO_MMD_VEND1		30	/* Vendor specific 1 */
+#define MDIO_MMD_VEND2		31	/* Vendor specific 2 */
+#define MII_MMD_CTRL_NOINCR	0x4000	/* no post increment */                         \
+#define	MII_MMD_CTRL		0x0d	/* MMD Access Control Register */
+#define	MII_MMD_DATA		0x0e	/* MMD Access Data Register */
+
+static int
+mt7531_mmd_write32_locked(struct mt7531_switch_softc *sc, uint32_t reg, uint32_t val)
+{
+    device_t mdio_parent = device_get_parent(sc->dev);
+    int phy = ofw_bus_get_addr(sc->dev);
+    int err;
+
+    err  = MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2);
+    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, reg);
+    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
+    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, val);
+    return (err ? EIO : 0);
+}
+
+static int
+mt7531_mmd_read32_locked(struct mt7531_switch_softc *sc, uint32_t reg, uint32_t *val)
+{
+    device_t mdio_parent = device_get_parent(sc->dev);
+    int phy = ofw_bus_get_addr(sc->dev);
+    int err;
+
+    err  = MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2);
+    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_DATA, reg);
+    err |= MDIO_WRITEREG(mdio_parent, phy, MII_MMD_CTRL, MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
+    if (err) return EIO;
+    *val = (uint32_t)MDIO_READREG(mdio_parent, phy, MII_MMD_DATA);
+    return 0;
 }
 
 static int
@@ -1145,6 +1181,8 @@ mtk_attach_switch_mt7531(struct mt7531_switch_softc *sc)
 
     sc->hal.mt7531_switch_read = mtkswitch_reg_read32_mt7621;
     sc->hal.mt7531_switch_write = mtkswitch_reg_write32_mt7621;
+    sc->hal.mt7531_switch_read = mt7531_mmd_read32_locked;
+    sc->hal.mt7531_switch_write = mt7531_mmd_write32_locked;
     sc->info.es_nvlangroups = 4096;
 
     sc->hal.mt7531_switch_reset = mtkswitch_reset;
