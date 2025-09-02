@@ -1080,6 +1080,12 @@ mt7531_writephy(device_t dev, int phy, int reg, int data)
     return (err);
 }
 
+static void
+mt7531_statchg(device_t dev)
+{
+    device_printf(dev, "%s\n", __func__);
+}
+
 static device_method_t mt7531_methods[] = {
         /* Device interface */
         DEVMETHOD(device_probe,     mt7531_probe),
