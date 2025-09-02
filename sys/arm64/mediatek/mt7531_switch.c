@@ -185,6 +185,9 @@
 #define MTKSWITCH_GLOBAL_PHY	31
 #define	MTKSWITCH_GLOBAL_REG	31
 
+MALLOC_DECLARE(MT7531_SWITCH);
+MALLOC_DEFINE(MT7531_SWITCH, "mt7531", "mt7531 data structures");
+
 struct mt7531_switch_softc {
     struct mtx	mtx;
     device_t	dev;
@@ -569,31 +572,14 @@ mt7531_attach(device_t dev)
     sprintf(sc->info.es_name, "Mediatek 7531 Switch");
     sc->info.es_nvlangroups = 4096;
 
-    rid = 0;
-    sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
-    if (sc->res == NULL) {
-        device_printf(dev, "Could not map memory\n");
-        return (ENXIO);
-    }
-
     mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
-    /*if (sc->hal.mt7531_switch_reset(sc)) {
-        device_printf(dev, "%s: mtkswitch_reset: failed\n", __func__);
-        return (ENXIO);
-    }*/
-
-    /*err = sc->hal.mt7531_switch_hw_setup(sc);
-    device_printf(dev, "%s: hw_setup: err=%d\n", __func__, err);
-    if (err != 0) {
-        return (err);
-    }*/
-
-    /*err = sc->hal.mt7531_switch_hw_global_setup(sc);
-    device_printf(dev, "%s: hw_global_setup: err=%d\n", __func__, err);
-    if (err != 0) {
-        return (err);
-    }*/
+    (void) resource_int_value(device_get_name(dev), device_get_unit(dev),
+                              "numports", &sc->numports);
+    (void) resource_int_value(device_get_name(dev), device_get_unit(dev),
+                              "phymap", &sc->phymap);
+    (void) resource_int_value(device_get_name(dev), device_get_unit(dev),
+                              "cpuport", &sc->cpuport);
 
     /* Initialize the switch ports */
     for (int port = 0; port < sc->numports; port++) {
@@ -1119,7 +1105,7 @@ static device_method_t mt7531_methods[] = {
 
 
 DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
-DRIVER_MODULE((mt7531_switch, simplebus, mt7531_switch_driver, 0, 0);
+DRIVER_MODULE(mt7531_switch, simplebus, mt7531_switch_driver, 0, 0);
 DRIVER_MODULE(miibus, mt7531_switch, miibus_driver, 0, 0);
 DRIVER_MODULE(mdio, mt7531_switch, mdio_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
