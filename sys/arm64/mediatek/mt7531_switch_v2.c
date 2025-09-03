@@ -295,7 +295,6 @@ mt7531_attach(device_t dev)
 {
     struct mt7531_softc *sc = device_get_softc(dev);
     phandle_t node = ofw_bus_get_node(dev);
-    uint32_t cpu_port = 6;
 
     sc->dev = dev;
     mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
@@ -318,7 +317,7 @@ mt7531_attach(device_t dev)
     bus_identify_children(dev);
     bus_enumerate_hinted_children(dev);
     bus_attach_children(dev);
-    device_printf(dev, "%s: bus_generic_attach: err=%d\n", __func__);
+    device_printf(dev, "%s: bus_generic_attach\n", __func__);
 
     return (0);
 }
@@ -351,5 +350,4 @@ DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struc
 DRIVER_MODULE(mt7531_switch, mdio, mt7531_switch_driver, 0, 0);
 MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
 DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
-MODULE_VERSION(mt7531_switch, 1);
 MODULE_VERSION(mt7531_switch, 1);
