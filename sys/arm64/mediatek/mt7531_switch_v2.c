@@ -277,7 +277,53 @@ mt7531_setport(device_t dev, etherswitch_port_t *p)
     return (0);
 }
 
-/* ---------- newbus ---------- */
+static int
+mt7531_readphy(device_t dev, int phy, int reg)
+{
+    struct mt7531_softc *sc;
+    int data;
+
+    sc = device_get_softc(dev);
+    mtx_assert(&(sc)->mtx,  MA_NOTOWNED);
+
+    if (phy < 0 || phy >= 32)
+        return (ENXIO);
+    if (reg < 0 || reg >= 32)
+        return (ENXIO);
+
+    mtx_lock(&(sc)->mtx);
+    data = MDIO_READREG(device_get_parent(dev), phy, reg);
+    mtx_unlock(&(sc)->mtx);
+
+    return (data);
+}
+
+static int
+mt7531_writephy(device_t dev, int phy, int reg, int data)
+{
+    struct mt7531_softc *sc;
+    int err;
+
+    sc = device_get_softc(dev);
+    mtx_assert(&(sc)->mtx,  MA_NOTOWNED);
+
+    if (phy < 0 || phy >= 32)
+        return (ENXIO);
+    if (reg < 0 || reg >= 32)
+        return (ENXIO);
+
+    mtx_lock(&(sc)->mtx);
+    err = MDIO_WRITEREG(device_get_parent(dev), phy, reg, data);
+    mtx_unlock(&(sc)->mtx);
+
+    return (err);
+}
+
+static void
+mt7531_statchg(device_t dev)
+{
+    device_printf(dev, "%s\n", __func__);
+}
 
 static int
 mt7531_probe(device_t dev)
@@ -342,6 +388,10 @@ static device_method_t mt7531_methods[] = {
         DEVMETHOD(etherswitch_getport,  mt7531_getport),
         DEVMETHOD(etherswitch_setport,  mt7531_setport),
 
+        /* MDIO interface */
+        DEVMETHOD(mdio_readreg,		mt7531_readphy),
+        DEVMETHOD(mdio_writereg,	mt7531_writephy),
+        
         DEVMETHOD_END
 };
 

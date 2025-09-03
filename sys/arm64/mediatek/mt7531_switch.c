@@ -1114,7 +1114,6 @@ static device_method_t mt7531_methods[] = {
         DEVMETHOD_END
 };
 
-
 DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
 DRIVER_MODULE(mt7531_switch, mdio, mt7531_switch_driver, 0, 0);
 DRIVER_MODULE(miibus, mt7531_switch, miibus_driver, 0, 0);
