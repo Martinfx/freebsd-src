@@ -68,15 +68,26 @@
 #define PMCR_FORCE_DPX_FULL   (1U << 5)
 #define PMCR_FORCE_SPD_1000   (1U << 4)     /* Simplified example */
 
+#define MT7531_SWITCH_MAX_PORTS 7
+#define MT7531_SWITCH_MAX_PHYS  5
+
 /* ---------- Softc ---------- */
 
 struct mt7531_softc {
     device_t      dev;
-    struct sx     sx;
-    int           sw_addr;      /* MDIO address (default 0x1f) */
-    int           cpu_port;     /* 5 (RGMII/SGMII) or 6 (HSGMII/2.5G) */
+    struct mtx     mtx;
+    int           sw_addr;
+    int           cpu_port;
     enum { IF_RGMII, IF_SGMII, IF_2500X } cpu_if;
     bool          an_enable;
+    uint32_t	valid_vlans;
+    char		*ifname[MT7531_SWITCH_MAX_PHYS];
+    device_t	miibus[MT7531_SWITCH_MAX_PHYS];
+    if_t ifp[MT7531_SWITCH_MAX_PHYS];
+    struct callout	callout_tick;
+    etherswitch_info_t info;
+    uint32_t	vlan_mode;
+    int         mdio_addr;
 };
 
 /* ---------- C45 MMD helpers (16/32-bit) ---------- */
@@ -245,35 +256,18 @@ mt7531_attach(device_t dev)
     struct mt7531_softc *sc = device_get_softc(dev);
     phandle_t node = ofw_bus_get_node(dev);
     const char *ifmode = NULL;
-    uint32_t cpu_port = 6; /* default to P6 (HSGMII) */
-    uint32_t an = 0;
+    uint32_t cpu_port = 6;
 
     sc->dev = dev;
-    sx_init(&sc->sx, MT7531_NAME);
+    mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
     /* MDIO address (reg), default 0x1f */
-    if (OF_hasprop(node, "reg"))
+    if (OF_hasprop(node, "reg")) {
         OF_getencprop(node, "reg", &sc->sw_addr, sizeof(sc->sw_addr));
-    else
-        sc->sw_addr = MT7531_DEFAULT_ADDR;
-
-    /* CPU port and mode (DT properties for this driver) */
-    OF_getencprop(node, "mediatek,cpu-port", &cpu_port, sizeof(cpu_port));
-    sc->cpu_port = (int)cpu_port;
-
-    if (OF_getprop_alloc(node, "mediatek,cpu-port-mode", 1, (void **)&ifmode) > 0) {
-        if (strcmp(ifmode, "rgmii") == 0)      sc->cpu_if = IF_RGMII;
-        else if (strcmp(ifmode, "sgmii") == 0) sc->cpu_if = IF_SGMII;
-        else if (!strcmp(ifmode, "2500base-x") || !strcmp(ifmode, "usxgmii"))
-            sc->cpu_if = IF_2500X;
-        else sc->cpu_if = IF_SGMII;
-        OF_prop_free(__DECONST(char *, ifmode));
-    } else {
-        sc->cpu_if = IF_2500X; /* sane default for P6 */
     }
-
-    OF_getencprop(node, "mediatek,cpu-port-an", &an, sizeof(an));
-    sc->an_enable = (an != 0);
+    else {
+        sc->sw_addr = MT7531_DEFAULT_ADDR;
+    }
 
     /* Bring up PCS/SGMII and MAC for CPU port */
     mt7531_setup_pcs(sc);
@@ -282,14 +276,19 @@ mt7531_attach(device_t dev)
     device_printf(dev, "MT7531 ready at MDIO addr 0x%x, CPU port %d, mode %d, AN=%d\n",
                   sc->sw_addr, sc->cpu_port, sc->cpu_if, sc->an_enable);
 
+    bus_identify_children(dev);
+    bus_enumerate_hinted_children(dev);
+    bus_attach_children(dev);
+    device_printf(dev, "%s: bus_generic_attach: err=%d\n", __func__, err);
+
     return (0);
 }
 
 static int
 mt7531_detach(device_t dev)
 {
-    struct mt7531_softc *sc = device_get_softc(dev);
-    sx_destroy(&sc->sx);
+    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    mtx_destroy(&sc->mtx);
     return (0);
 }
 
