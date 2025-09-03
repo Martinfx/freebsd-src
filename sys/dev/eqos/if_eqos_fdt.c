@@ -103,34 +103,47 @@ eqos_phy_reset(device_t dev)
 	uint32_t pin_value;
 
 	node = ofw_bus_get_node(dev);
+    device_printf(dev, "trace %d\n", __LINE__);
 	if (OF_getencprop(node, "snps,reset-gpio",
 	    gpio_prop, sizeof(gpio_prop)) <= 0)
+        device_printf(dev, "trace %d\n", __LINE__);
 		return (0);
 
+    device_printf(dev, "trace %d\n", __LINE__);
 	if (OF_getencprop(node, "snps,reset-delays-us",
 	    delay_prop, sizeof(delay_prop)) <= 0) {
 		device_printf(dev,
 		    "Wrong property for snps,reset-delays-us");
+        device_printf(dev, "trace %d\n", __LINE__);
 		return (ENXIO);
 	}
 
+    device_printf(dev, "trace %d\n", __LINE__);
 	gpio_node = OF_node_from_xref(gpio_prop[0]);
 	if ((gpio = OF_device_from_xref(gpio_prop[0])) == NULL) {
 		device_printf(dev,
 		    "Can't find gpio controller for phy reset\n");
+        device_printf(dev, "trace %d\n", __LINE__);
 		return (ENXIO);
 	}
 
+    device_printf(dev, "trace %d\n", __LINE__);
 	if (GPIO_MAP_GPIOS(gpio, node, gpio_node,
 	    nitems(gpio_prop) - 1,
 	    gpio_prop + 1, &pin, &flags) != 0) {
+        device_printf(dev, "trace %d\n", __LINE__);
 		device_printf(dev, "Can't map gpio for phy reset\n");
 		return (ENXIO);
 	}
 
+    device_printf(dev, "trace %d\n", __LINE__);
 	pin_value = GPIO_PIN_LOW;
-	if (OF_hasprop(node, "snps,reset-active-low"))
-		pin_value = GPIO_PIN_HIGH;
+	if (OF_hasprop(node, "snps,reset-active-low")) {
+        device_printf(dev, "trace %d\n", __LINE__);
+        pin_value = GPIO_PIN_HIGH;
+    }
+
+    device_printf(dev, "trace %d\n", __LINE__);
 
 	GPIO_PIN_SETFLAGS(gpio, pin, GPIO_PIN_OUTPUT);
 	GPIO_PIN_SET(gpio, pin, pin_value);
@@ -151,7 +164,6 @@ eqos_fdt_init(device_t dev)
     phandle_t node_child;
     device_t dev_child;
 	hwreset_t eqos_reset;
-	regulator_t eqos_supply;
 	uint32_t rx_delay, tx_delay;
 	uint8_t buffer[16];
 	clk_t stmmaceth, mac_clk_rx, mac_clk_tx, aclk_mac, pclk_mac;
@@ -249,14 +261,6 @@ eqos_fdt_init(device_t dev)
 	    EQOS_GMAC_PHY_INTF_SEL_RGMII |
 	    EQOS_GMAC_RXCLK_DLY_ENABLE |
 	    EQOS_GMAC_TXCLK_DLY_ENABLE);
-
-	if (!regulator_get_by_ofw_property(dev, 0, "phy-supply",
-	    &eqos_supply)) {
-		if (regulator_enable(eqos_supply))
-			device_printf(dev, "cannot enable 'phy' regulator\n");
-	}
-	else
-		device_printf(dev, "no phy-supply property\n");
 
 	if (eqos_phy_reset(dev))
 		return (ENXIO);

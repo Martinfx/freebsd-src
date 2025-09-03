@@ -1241,7 +1241,7 @@ eqos_attach(device_t dev)
 	if_setcapenable(ifp, if_getcapabilities(ifp));
 
 	/* Attach MII driver */
-	if ((error = mii_attach(sc->dev, &sc->miibus, ifp, eqos_media_change,
+    if ((error = mii_attach(sc->dev, &sc->miibus, ifp, eqos_media_change,
 	    eqos_media_status, BMSR_DEFCAPMASK, MII_PHY_ANY,
 	    MII_OFFSET_ANY, 0))) {
 		device_printf(sc->dev, "PHY attach failed\n");
