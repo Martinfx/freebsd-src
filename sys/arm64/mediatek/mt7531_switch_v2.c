@@ -295,7 +295,6 @@ mt7531_attach(device_t dev)
 {
     struct mt7531_softc *sc = device_get_softc(dev);
     phandle_t node = ofw_bus_get_node(dev);
-    const char *ifmode = NULL;
     uint32_t cpu_port = 6;
 
     sc->dev = dev;
@@ -310,7 +309,7 @@ mt7531_attach(device_t dev)
     }
 
     /* Bring up PCS/SGMII and MAC for CPU port */
-    mt7531_setup_pcs(sc);
+   // mt7531_setup_pcs(sc);
     mt7531_enable_cpu_port(sc);
 
     device_printf(dev, "MT7531 ready at MDIO addr 0x%x, CPU port %d, mode %d\n",
@@ -348,7 +347,7 @@ static device_method_t mt7531_methods[] = {
 };
 
 
-DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_switch_softc));
+DEFINE_CLASS_0(mt7531_switch, mt7531_switch_driver, mt7531_methods, sizeof(struct mt7531_softc));
 DRIVER_MODULE(mt7531_switch, mdio, mt7531_switch_driver, 0, 0);
 MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
 DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
