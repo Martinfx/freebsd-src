@@ -313,13 +313,13 @@ mt7531_attach(device_t dev)
     mt7531_setup_pcs(sc);
     mt7531_enable_cpu_port(sc);
 
-    device_printf(dev, "MT7531 ready at MDIO addr 0x%x, CPU port %d, mode %d, AN=%d\n",
-                  sc->sw_addr, sc->cpu_port, sc->cpu_if, sc->an_enable);
+    device_printf(dev, "MT7531 ready at MDIO addr 0x%x, CPU port %d, mode %d\n",
+                  sc->sw_addr, sc->cpu_port, sc->cpu_if);
 
     bus_identify_children(dev);
     bus_enumerate_hinted_children(dev);
     bus_attach_children(dev);
-    device_printf(dev, "%s: bus_generic_attach: err=%d\n", __func__, err);
+    device_printf(dev, "%s: bus_generic_attach: err=%d\n", __func__);
 
     return (0);
 }
@@ -327,7 +327,7 @@ mt7531_attach(device_t dev)
 static int
 mt7531_detach(device_t dev)
 {
-    struct mt7531_switch_softc *sc = device_get_softc(dev);
+    struct mt7531_softc *sc = device_get_softc(dev);
     mtx_destroy(&sc->mtx);
     return (0);
 }
