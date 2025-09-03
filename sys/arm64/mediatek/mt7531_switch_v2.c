@@ -55,8 +55,6 @@
 #include "miibus_if.h"
 #include "etherswitch_if.h"
 
-/* ---------- Helpers/macros ---------- */
-
 #define MT7531_NAME           "mt7531"
 #define MT7531_DEFAULT_ADDR   0x1f      /* Typical switch MDIO "phy" addr */
 
@@ -111,7 +109,10 @@
 #define MT7531_SWITCH_MAX_PORTS 7
 #define MT7531_SWITCH_MAX_PHYS  5
 
-/* ---------- Softc ---------- */
+static struct ofw_compat_data compat_data[] = {
+        { "mediatek,mt7531",	1 },
+        { NULL, 0 }
+};
 
 struct mt7531_softc {
     device_t      dev;
@@ -328,10 +329,12 @@ mt7531_statchg(device_t dev)
 static int
 mt7531_probe(device_t dev)
 {
-    if (!ofw_bus_is_compatible(dev, "mediatek,mt7531") &&
-        !ofw_bus_is_compatible(dev, "mediatek,mt7531be"))
+    device_printf(dev, "%s\n", __func__);
+    if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data) {
         return (ENXIO);
+    }
 
+    device_printf(dev, "%s\n", __func__);
     device_set_desc(dev, "MediaTek MT7531 Switch");
     return (BUS_PROBE_DEFAULT);
 }
@@ -391,7 +394,7 @@ static device_method_t mt7531_methods[] = {
         /* MDIO interface */
         DEVMETHOD(mdio_readreg,		mt7531_readphy),
         DEVMETHOD(mdio_writereg,	mt7531_writephy),
-        
+
         DEVMETHOD_END
 };
 
@@ -403,4 +406,3 @@ DRIVER_MODULE(etherswitch, mt7531_switch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mt7531_switch, 1);
 MODULE_DEPEND(mt7531_switch, miibus, 1, 1, 1);
 MODULE_DEPEND(mt7531_switch, etherswitch, 1, 1, 1);
-MODULE_DEPEND(mt7531_switch, mdio, 1, 1, 1);
