@@ -54,3 +54,22 @@ CFLAGS += -fno-omit-frame-pointer -fno-optimize-sibling-calls
 %RULES
 
 .include "$S/conf/kern.post.mk"
+
+# Create a kernel.bin file...
+# Copy the kernel to u-boot's booti image format (the elf headers are
+# stripped and a custom binary head blob is prepended), saving the
+# output in a temp file.  We also strip arm "marker" symbols which are
+# used only by elf toolchains.  Read the symbols from kernel.full and pass
+# them to arm_kernel_boothdr.awk, which generates a binary header blob
+# that goes on the front of the stripped kernel.  Cat the header blob
+# and the temp file together to make the kernel.bin file.
+${KERNEL_KO}.bin: ${FULLKERNEL}
+	@${OBJCOPY} --wildcard --strip-symbol='$$[adtx]*' \
+	    --output-target=binary ${FULLKERNEL} ${.TARGET}.temp
+	@{ ${NM} ${FULLKERNEL} | \
+	    LC_ALL=C \
+	    ${AWK} -f $S/tools/riscv_kernel_boothdr.awk -v hdrtype=rvbooti && \
+	    cat ${.TARGET}.temp; \
+	 } > ${.TARGET}
+	@rm ${.TARGET}.temp
+	@echo "created ${.TARGET} from ${.ALLSRC}"
