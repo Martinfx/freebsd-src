@@ -85,7 +85,7 @@ BROKEN_OPTIONS+=EFI
 .endif
 
 # We only generate kernel.bin on arm and arm64, otherwise they break the build.
-.if ${MACHINE} != "arm" && ${MACHINE} != "arm64"
+.if ${MACHINE} != "arm" && ${MACHINE} != "arm64"  && ${MACHINE} != "riscv"
 BROKEN_OPTIONS+=KERNEL_BIN
 .endif
 
