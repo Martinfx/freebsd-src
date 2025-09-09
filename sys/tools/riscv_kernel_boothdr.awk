@@ -96,7 +96,7 @@ function write_padding() {
 }
 
 function write_rvjump() {
-    write_le32(hexstr_to_num("F38FE06F") + gStartOff)
+    write_le32(hexstr_to_num("F38FE06F"))
 }
 function write_rvbooti() {
 
