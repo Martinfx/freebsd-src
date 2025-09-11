@@ -96,7 +96,7 @@ function write_padding() {
 }
 
 function write_rvjump() {
-    write_le32(hexstr_to_num("FFDFF06F") + (gStartOff))
+    write_le32(hexstr_to_num(00000013))
 }
 function write_rvbooti() {
 
@@ -118,11 +118,11 @@ function write_rvbooti() {
     write_le64(0)                            # text_offset (0 => auto)
     write_le64(gEndOff)                      # image_size (od 0 po _end)
     write_le64(0)                            # flags (0 = LE)
-    write_le32(hexstr_to_num("00000002"))  # version (v0.2 => minor=2)
+    write_le32(hexstr_to_num("00000002"))    # version (v0.2 => minor=2)
     write_le32(0)                            # res1
     write_le64(0)                            # res2
-    write_le64(hexstr_to_num("5643534952"))# "RISCV" (LE)
-    write_le32(hexstr_to_num("05435352"))  # "RSC\x05" (LE)
+    write_le64(hexstr_to_num("5643534952"))  # RISCV" (LE)
+    write_le32(hexstr_to_num("05435352"))    # RSC\x05" (LE)
     write_le32(0)                            # res3 (PE/COFF offset placeholder)
 }
 
