@@ -96,8 +96,24 @@ function write_padding() {
 }
 
 function write_rvjump() {
-    write_le32(hexstr_to_num(00000013))
+    offset = gStartOff
+    imm = rshift(offset, 1)
+
+    inst = 0
+    imm_20    = and(rshift(imm, 20), 0x1)
+    imm_10_1  = and(rshift(imm,  1), 0x3FF)
+    imm_11    = and(rshift(imm, 11), 0x1)
+    imm_19_12 = and(rshift(imm, 12), 0xFF)
+
+    inst = or(inst, lshift(imm_20,    31))
+    inst = or(inst, lshift(imm_10_1,  21))
+    inst = or(inst, lshift(imm_11,    20))
+    inst = or(inst, lshift(imm_19_12, 12))
+    inst = or(inst, lshift(and(rd, 0x1F), 7))
+    inst = or(inst, 0x6F)  # opcode
+    write_le32(hexstr_to_num(inst))
 }
+
 function write_rvbooti() {
 
     # We are writing this struct...
