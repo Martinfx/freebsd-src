@@ -35,18 +35,13 @@ INCLUDES+= -I$S/contrib/libfdt -I$S/contrib/device-tree/include
 KERNEL_LMA?=	0x80200000
 LDFLAGS+= --defsym='kernel_lma=${KERNEL_LMA}'
 
-# Use a custom SYSTEM_LD command to generate the elf kernel, so we can
-# set the text segment start address, and also strip the "arm mapping
-# symbols" which have names like $a.0 and $d.2; see the document
-# "ELF for the ARM architecture" for more info on the mapping symbols.
+# Use a custom SYSTEM_LD command to generate the ELF kernel, so we can
+# set the text segment start address (text starts after ELF headers).
+# (On RISC-V we do NOT strip ARM mapping symbols.)
 SYSTEM_LD= \
 	${SYSTEM_LD_BASECMD} \
 	    --defsym='text_start=kernbase + SIZEOF_HEADERS' \
-	    -o ${.TARGET} ${SYSTEM_OBJS} vers.o; \
-	$(OBJCOPY) \
-	    --wildcard \
-	    --strip-symbol='$$[adtx]*' \
-	    ${.TARGET}
+        -o ${.TARGET} ${SYSTEM_OBJS} vers.o
 
 .if !empty(DDB_ENABLED) || !empty(DTRACE_ENABLED) || !empty(HWPMC_ENABLED)
 CFLAGS += -fno-omit-frame-pointer -fno-optimize-sibling-calls
