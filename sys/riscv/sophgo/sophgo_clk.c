@@ -133,7 +133,7 @@ sophgo_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
 }
 
 int
-sophgoclkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val)
+sophgo_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val)
 {
 	struct sophgo_clk_softc *sc;
 
