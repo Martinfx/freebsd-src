@@ -152,11 +152,6 @@
 		clocks = <&pclk>;
 	};
 
-	spacc: cvi_spacc@02060000 {
-		reg = <0x0 0x02060000 0x0 0x1000>;
-		compatible = "cvitek,spacc";
-	};
-
 	pwm0: pwm@3060000 {
 		compatible = "cvitek,cvi-pwm";
 		reg = <0x0 0x3060000 0x0 0x1000>;
@@ -466,8 +461,7 @@
 		clock-names = "stmmaceth", "ptp_ref";
 		clocks = <&eth_csrclk>, <&eth_ptpclk>;
 		//phy-reset-gpios = <&porta 26 0>;
-		ephy_base_reg = <0x3009000>;
-		ephy_top_reg = <0x3009800>;
+
 		tx-fifo-depth = <8192>;
 		rx-fifo-depth = <8192>;
 		/* no hash filter and perfect filter support */
@@ -486,7 +480,6 @@
 	};
 
 	emmc:cv-emmc@4300000 {
-		u-boot,dm-spl;
 		compatible = "cvitek,cv181x-emmc";
 		reg = <0x0 0x4300000 0x0 0x1000>;
 		reg-names = "core_mem";
@@ -494,7 +487,6 @@
 		non-removable;
 		no-sdio;
 		no-sd;
-		cap-mmc-hw-reset;
 		src-frequency = <375000000>;
 		min-frequency = <400000>;
 		max-frequency = <200000000>;
@@ -661,7 +653,7 @@
 		cvi,card_name = "cv182x_internal_PDM";
 	};
 
-	wifi_pin: wifi_pin {
+	wifi_pin {
 		compatible = "cvitek,wifi-pin";
 		poweron-gpio = <&porta 18 GPIO_ACTIVE_HIGH>;
 		wakeup-gpio = <&porte 7 GPIO_ACTIVE_HIGH>;
@@ -765,7 +757,6 @@
 		fb_reserved: cvifb {
 			alloc-ranges = <0x0 CVIMMAP_FRAMEBUFFER_ADDR 0 CVIMMAP_FRAMEBUFFER_SIZE>;
 			size = <0x0 CVIMMAP_FRAMEBUFFER_SIZE>;
-			no-map;
 		};
 	};
 
@@ -894,6 +885,13 @@
 		};
 	};
 
+#if 0
+	cvipctrl: pinctrl@3001000 {
+		compatible = "cvitek,pinctrl-cv182x";
+		reg = <0 0x03001000 0 0x1000>;
+	};
+#endif
+
 	cviaudio_core {
 		compatible = "cvitek,audio";
 	};
@@ -908,10 +906,6 @@
 #endif
 		};
 
-	cvipctrl: pinctrl@3001000 {
-		compatible = "cvitek,pinctrl-cv181x";
-		reg = <0 0x03001000 0 0x1000>;
-	};
 
 	aliases {
 		i2c0 = &i2c0;
