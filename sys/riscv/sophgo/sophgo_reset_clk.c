@@ -73,7 +73,7 @@ sophfo_reset_clk_attach(device_t dev)
 	sc->rid = 0;
 	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->rid,
 	    RF_ACTIVE);
-	if(!sc->res) {
+	if(sc->res == NULL) {
 		device_printf(sc->dev, "Cannot allocation resourcer\n");
 		return (ENXIO);
 	}
