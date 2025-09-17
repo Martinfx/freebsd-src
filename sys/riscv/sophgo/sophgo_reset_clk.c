@@ -71,7 +71,7 @@ sophfo_reset_clk_attach(device_t dev)
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->rid = 0;
-	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->rid,
+	sc->res = bus_alloc_resource_any(sc->dev, SYS_RES_MEMORY, &sc->rid,
 	    RF_ACTIVE);
 	if(sc->res == NULL) {
 		device_printf(sc->dev, "Cannot allocation resourcer\n");
@@ -92,6 +92,9 @@ sophfo_reset_clk_detach(device_t dev)
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->rid, sc->res);
 		sc->res = NULL;
 	}
+
+	mtx_destroy(&sc->mtx);
+
 	return (0);
 }
 
