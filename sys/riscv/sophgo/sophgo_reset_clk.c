@@ -113,26 +113,6 @@ sophfo_reset_clk_assert(device_t dev, intptr_t id, bool reset)
 	return (0);
 }
 
-static int
-sophfo_reset_clk_deassert(device_t dev, intptr_t id, bool *reset)
-{
-	struct sophgo_reset_clk_softc *sc;
-	uint32_t offset, val, bank;
-
-	sc = device_get_softc(dev);
-	bank = id % 32;
-	offset = id / 32;
-
-	mtx_lock(&sc->mtx);
-	val = bus_read_4(sc->res, bank * 4);
-	val &= ~(1 << offset);
-	bus_write_4(sc->res, bank * 4, val);
-	mtx_unlock(&sc->mtx);
-
-	return (0);
-}
-
-
 static device_method_t sophgo_reset_clk_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,     sophgo_reset_clk_probe),
@@ -141,7 +121,6 @@ static device_method_t sophgo_reset_clk_methods[] = {
 
 	/* Reset interface */
 	DEVMETHOD(hwreset_assert,	sophfo_reset_clk_assert),
-	DEVMETHOD(hwreset_deassert, sophfo_reset_clk_deassert),
 	DEVMETHOD_END
 };
 
