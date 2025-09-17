@@ -90,6 +90,7 @@ sophfo_reset_clk_detach(device_t dev)
 		bus_release_resource(dev, SYS_RES_MEMORY, sc->rid, sc->res);
 		sc->res = NULL;
 	}
+	return (0);
 }
 
 static int
