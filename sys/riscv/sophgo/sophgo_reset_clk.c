@@ -39,6 +39,8 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
+#include "hwreset_if.h"
+
 struct sophgo_reset_clk_softc {
 	device_t            dev;
 	struct resource     *res;
@@ -67,7 +69,7 @@ sophfo_reset_clk_attach(device_t dev)
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->rid = 0;
-	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->reg_rid,
+	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->rid,
 	    RF_ACTIVE);
 	if(!sc->res) {
 		device_printf(sc->dev, "Cannot allocation resourcer\n");
@@ -94,7 +96,7 @@ static int
 sophfo_reset_clk_assert(device_t dev, intptr_t id, bool reset)
 {
 	struct sophgo_reset_clk_softc *sc;
-	uint32_t offset, val;
+	uint32_t offset, val, bank;
 
 	sc = device_get_softc(dev);
 	bank = id % 32;
@@ -112,7 +114,7 @@ static int
 sophfo_reset_clk_deassert(device_t dev, intptr_t id, bool *reset)
 {
 	struct sophgo_reset_clk_softc *sc;
-	uint32_t offset, val;
+	uint32_t offset, val, bank;
 
 	sc = device_get_softc(dev);
 	bank = id % 32;
