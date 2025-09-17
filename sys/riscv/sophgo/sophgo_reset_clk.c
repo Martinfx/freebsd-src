@@ -124,5 +124,6 @@ static device_method_t sophgo_reset_clk_methods[] = {
 	DEVMETHOD_END
 };
 
-static DEFINE_CLASS_0(struct sophgo_reset_clk,  sophgo_reset_driver, sophgo_reset_clk_methods,
+static DEFINE_CLASS_0(sophgo_reset_clk,  sophgo_reset_clk_driver, sophgo_reset_clk_methods,
     sizeof(struct sophgo_reset_clk_softc));
+DRIVER_MODULE(sophgo_reset_clk, simplebus, sophgo_reset_clk_driver, NULL, NULL);
