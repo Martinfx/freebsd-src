@@ -782,7 +782,7 @@ dev/clk/xilinx/zynqmp_clk_mux.c			optional fdt soc_xilinx_zynq
 dev/clk/xilinx/zynqmp_clk_pll.c			optional fdt soc_xilinx_zynq
 dev/clk/xilinx/zynqmp_reset.c			optional fdt soc_xilinx_zynq
 
-# mediatek
+# mediatek 7622
 arm64/mediatek/mt7622_uart.c			optional fdt soc_mediatek
 arm64/mediatek/mt7622_clk_topckgen.c		optional clk fdt soc_mediatek
 arm64/mediatek/mt7622_clk_pericfg.c             optional clk fdt soc_mediatek
@@ -803,3 +803,6 @@ arm64/mediatek/mt7622_ahci.c		    	optional fdt soc_mediatek
 arm64/mediatek/mt_tphy_if.m			optional fdt soc_mediatek
 #arm64/mediatek/mt_xhci.c                        optional fdt soc_mediatek
 arm64/mediatek/mt7531_switch.c		    	optional fdt mt7531_switch soc_mediatek
+
+# mediatek 7986
+arm64/mediatek/mt7986_clk_topckgen.c		optional clk fdt soc_mediatek
