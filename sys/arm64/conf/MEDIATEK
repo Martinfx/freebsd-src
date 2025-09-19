@@ -3,7 +3,7 @@
 #
 
 cpu         ARM64
-ident       MEDIATEK
+ident		MEDIATEK
 
 include		"std.arm64"
 include		"std.dev"
