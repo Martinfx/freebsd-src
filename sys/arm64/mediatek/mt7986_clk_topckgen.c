@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2025 Martin Filla, Michal Meloun <mmel@FreeBSD.org>
+ * Copyright (c) 2025 Martin Filla
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,6 +46,12 @@
 #include <arm64/mediatek/mdtk_clk.h>
 #include <dev/hwreset/hwreset.h>
 #include "clkdev_if.h"
+
+static struct ofw_compat_data compat_data[] = {
+        {"mediatek,mt7986-topckgen",	1},
+        {NULL,		 	0},
+};
+
 
 static struct clk_fixed_def fixed_clk[] = {
         FRATE(CLK_TOP_XTAL, "top_xtal", "clkxtal", 40000000),
