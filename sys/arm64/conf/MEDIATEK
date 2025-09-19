@@ -1,9 +1,9 @@
 #
-# BANANAPI-R64 -- BANANAPI-R64 kernel configuration file for FreeBSD/arm64
+# MEDIATEK -- MEDIATEK kernel configuration file for FreeBSD/arm64
 #
 
-cpu             ARM64
-ident		BANANAPI-R64
+cpu         ARM64
+ident       MEDIATEK
 
 include		"std.arm64"
 include		"std.dev"
