@@ -52,6 +52,38 @@ static struct ofw_compat_data compat_data[] = {
         {NULL,		 	0},
 };
 
+PLIST(fi1x_ck_parents) = {
+    "top_xtal",
+    "top_mmpll_d8",
+    "top_net1pll_d8_d2",
+    "top_net2pll_d3_d2",
+    "top_mpll_d4",
+    "top_mmpll_d8_d2",
+    "top_wedmcupll_d5_d2",
+    "top_mpll_d8"
+};
+
+PLIST(spinfi_ck_parents) = {
+        "top_xtal_d2",
+        "top_xtal",
+        "top_net1pll_d5_d4",
+        "top_mpll_d4",
+        "top_mmpll_d8_d2",
+        "top_wedmcupll_d5_d2",
+        "top_mmpll_d3_d8",
+        "top_mpll_d8"
+};
+
+PLIST(spi_ck_parents) = {
+        "top_xtal",
+        "top_mpll_d2",
+        "top_mmpll_d8",
+        "top_net1pll_d8_d2",
+        "top_net2pll_d3_d2",
+        "top_net1pll_d5_d4",
+        "top_mpll_d4",
+        "top_wedmcupll_d5_d2"
+};
 
 static struct clk_fixed_def fixed_clk[] = {
         FRATE(CLK_TOP_XTAL, "top_xtal", "clkxtal", 40000000),
@@ -90,9 +122,27 @@ static struct clk_fixed_def fixed_clk[] = {
         FFACT(CLK_TOP_WEDMCUPLL_D5_D2, "top_wedmcupll_d5_d2", "wedmcupll", 1, 10),
 };
 
+static struct clk_gate_def gatesclk[] = {
+        /* CLK_CFG_0 */
+        GATE(CLK_TOP_NFI1X, "nfi1x_sel", "nfi1x_sel_mux", 0x000, 3),
+        GATE(CLK_TOP_SPINFI, "spinfi_sel", "spinfi_sel_mux",       0x000, 15),
+        GATE(CLK_TOP_SPI, "spi_sel",  "spi_sel_mux",          0x000, 23),
+        GATE(CLK_TOP_SPIM_MST, "spim_mst_sel", "spim_mst_sel_mux",     0x000, 31),s
+};
+
+static struct clk_mux_def muxes_clk[] = {
+        MUX0(0, "nfi1x_sel_mux", fi1x_ck_parents, 0x000, 24, 3),
+        MUX0(0, "spinfi_sel_mux", spinfi_ck_parents, 0x000, 16, 1),
+        MUX0(0, "spi_sel_mux", mem_ck_parents, 0x000, 8, 1),
+};
+
 static struct mdtk_clk_def clk_def = {
         .fixed_def = fixed_clk,
         .num_fixed = nitems(fixed_clk),
+        .gates_def = gates_clk,
+        .num_gates = nitems(gates_clk),
+        .muxes_def = muxes_clk,
+        .num_muxes = nitems(muxes_clk),
 };
 
 static int
