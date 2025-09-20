@@ -423,10 +423,9 @@ psci_acpi_callfn(psci_callfn_t *callfn)
 static int
 psci_find_callfn(psci_callfn_t *callfn)
 {
-	int error;
-
 	*callfn = NULL;
 #ifdef FDT
+	int error;
 	if (USE_FDT) {
 		error = psci_fdt_callfn(callfn);
 		if (error != 0)
