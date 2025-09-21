@@ -23,6 +23,7 @@ ident		GENERIC
 include		"std.arm64"
 include		"std.dev"
 makeoptions	WITH_KERNEL_BIN=1
+options BOOTVERBOSE
 
 # Include SoC specific configuration
 include		"std.al"
