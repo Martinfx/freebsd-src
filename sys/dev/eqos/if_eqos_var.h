@@ -99,6 +99,10 @@ struct eqos_softc {
 
 	struct eqos_ring	tx;
 	struct eqos_ring	rx;
+
+	struct ifmedia eqos_ifmedia;
+	int switch_attached;
+	int	phy_attached;
 };
 
 DECLARE_CLASS(eqos_driver);

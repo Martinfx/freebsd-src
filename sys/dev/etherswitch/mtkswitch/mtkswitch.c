@@ -38,6 +38,7 @@
 #include <sys/sockio.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/rman.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -45,7 +46,9 @@
 #include <net/if_media.h>
 #include <net/if_types.h>
 
+#include <machine/resource.h>
 #include <machine/bus.h>
+
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 #include <dev/mdio/mdio.h>
@@ -78,10 +81,18 @@ static const struct ofw_compat_data compat_data[] = {
 	{ "mediatek,mt7620-gsw",	MTK_SWITCH_MT7620 },
 	{ "mediatek,mt7621-gsw",	MTK_SWITCH_MT7621 },
 	{ "mediatek,mt7628-esw",	MTK_SWITCH_MT7628 },
+	{ "mediatek,mt7531", 		MTK_SWITCH_MT7531 },
 
 	/* Sentinel */
 	{ NULL,				MTK_SWITCH_NONE }
 };
+
+static void
+mtkswitch_identify(driver_t *driver, device_t parent)
+{
+	if (device_find_child(parent, "mtkswitch", -1) == NULL)
+		BUS_ADD_CHILD(parent, 0, "mtkswitch", -1);
+}
 
 static int
 mtkswitch_probe(device_t dev)
@@ -100,9 +111,25 @@ mtkswitch_probe(device_t dev)
 	bzero(sc, sizeof(*sc));
 	sc->sc_switchtype = switch_type;
 
-	device_set_desc(dev, "MTK Switch Driver");
+	switch (sc->sc_switchtype ) {
+		case MTK_SWITCH_RT3050:   device_set_desc(dev, "Detected switch: Ralink RT3050 embedded switch");
+		break;
+		case MTK_SWITCH_RT3352:   device_set_desc(dev,  "Detected switch:  Ralink RT3352 embedded switch");
+		break;
+		case MTK_SWITCH_RT5350:   device_set_desc(dev,  "Detected switch: Ralink RT5350 embedded switch");
+		break;
+		case MTK_SWITCH_MT7620:   device_set_desc(dev,  "Detected switch: MediaTek MT7620 GSW");
+		break;
+		case MTK_SWITCH_MT7621:   device_set_desc(dev,  "Detected switch: MediaTek MT7621 GSW");
+		break;
+		case MTK_SWITCH_MT7628:   device_set_desc(dev,  "Detected switch: MediaTek MT7628 embedded switch");
+		break;
+		case MTK_SWITCH_MT7531:   device_set_desc(dev,  "Detected switch: MediaTek MT7531 switch");
+		break;
+		default:                  device_set_desc(dev,  "Detected switch: MediaTek/Ralink Ethernet switch");
+	}
 
-	return (0);
+	return (BUS_PROBE_DEFAULT);
 }
 
 static int
@@ -165,14 +192,19 @@ mtkswitch_attach(device_t dev)
 {
 	struct mtkswitch_softc *sc;
 	int err = 0;
-	int port, rid;
+	int port;//, rid;
 
 	sc = device_get_softc(dev);
 
 	/* sc->sc_switchtype is already decided in mtkswitch_probe() */
 	sc->numports = MTKSWITCH_MAX_PORTS;
 	sc->numphys = MTKSWITCH_MAX_PHYS;
-	sc->cpuport = MTKSWITCH_CPU_PORT;
+	if( sc->sc_switchtype == MTK_SWITCH_MT7531) {
+		sc->cpuport = MTKSWITCH_MT7531_CPU_PORT;
+	}
+	else {
+		sc->cpuport = MTKSWITCH_CPU_PORT;
+	}
 	sc->sc_dev = dev;
 
 	/* Attach switch related functions */
@@ -184,11 +216,15 @@ mtkswitch_attach(device_t dev)
 	if (sc->sc_switchtype == MTK_SWITCH_MT7620 ||
 	    sc->sc_switchtype == MTK_SWITCH_MT7621)
 		mtk_attach_switch_mt7620(sc);
-	else
+	else if (sc->sc_switchtype == MTK_SWITCH_RT3050) {
 		mtk_attach_switch_rt3050(sc);
+	}
+	else if (sc->sc_switchtype == MTK_SWITCH_MT7531) {
+		mtk_attach_switch_mt7531(sc);
+	}
 
 	/* Allocate resources */
-	rid = 0;
+	int rid = 0;
 	sc->sc_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE);
 	if (sc->sc_res == NULL) {
@@ -615,7 +651,24 @@ mtkswitch_writereg(device_t dev, int addr, int value)
 	return (sc->hal.mtkswitch_reg_write(dev, addr, value));
 }
 
+static int
+mtkswitch_readphy_mii(device_t dev, int phy, int reg)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
+}
+
+static int
+mtkswitch_writephy_mii(device_t dev, int phy, int reg, int val)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
+}
+
 static device_method_t mtkswitch_methods[] = {
+	DEVMETHOD(device_identify,	mtkswitch_identify),
 	/* Device interface */
 	DEVMETHOD(device_probe,		mtkswitch_probe),
 	DEVMETHOD(device_attach,	mtkswitch_attach),
@@ -625,8 +678,10 @@ static device_method_t mtkswitch_methods[] = {
 	DEVMETHOD(bus_add_child,	device_add_child_ordered),
 
 	/* MII interface */
-	DEVMETHOD(miibus_readreg,	mtkswitch_readphy),
-	DEVMETHOD(miibus_writereg,	mtkswitch_writephy),
+	DEVMETHOD(miibus_readreg,	mtkswitch_readphy_mii),
+	DEVMETHOD(miibus_writereg,	mtkswitch_writephy_mii),
+	//DEVMETHOD(miibus_readreg,	mtkswitch_readphy),
+    //DEVMETHOD(miibus_writereg,	mtkswitch_writephy),
 	DEVMETHOD(miibus_statchg,	mtkswitch_statchg),
 
 	/* MDIO interface */
@@ -654,10 +709,8 @@ static device_method_t mtkswitch_methods[] = {
 DEFINE_CLASS_0(mtkswitch, mtkswitch_driver, mtkswitch_methods,
     sizeof(struct mtkswitch_softc));
 
-DRIVER_MODULE(mtkswitch, simplebus, mtkswitch_driver, 0, 0);
+DRIVER_MODULE(mtkswitch, mdio, mtkswitch_driver, 0, 0);
 DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
-DRIVER_MODULE(mdio, mtkswitch, mdio_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mtkswitch, 1);
-MODULE_DEPEND(mtkswitch, miibus, 1, 1, 1);
-MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
