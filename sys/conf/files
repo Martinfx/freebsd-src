@@ -1658,6 +1658,10 @@ dev/etherswitch/e6000sw/e6060sw.c	optional e6060sw
 dev/etherswitch/infineon/adm6996fc.c	optional adm6996fc
 dev/etherswitch/micrel/ksz8995ma.c	optional ksz8995ma
 dev/etherswitch/ukswitch/ukswitch.c	optional ukswitch
+dev/etherswitch/mtkswitch/mtkswitch.c   optional mtkswitch
+dev/etherswitch/mtkswitch/mtkswitch_mt7531.c  optional mtkswitch
+dev/etherswitch/mtkswitch/mtkswitch_mt7620.c  optional mtkswitch
+dev/etherswitch/mtkswitch/mtkswitch_rt3050.c  optional mtkswitch
 dev/evdev/cdev.c			optional evdev
 dev/evdev/evdev.c			optional evdev
 dev/evdev/evdev_mt.c			optional evdev

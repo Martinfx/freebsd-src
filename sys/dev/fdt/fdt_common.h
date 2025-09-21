@@ -82,5 +82,5 @@ int fdt_regsize(phandle_t, u_long *, u_long *);
 int fdt_is_compatible_strict(phandle_t, const char *);
 int fdt_parent_addr_cells(phandle_t);
 int fdt_get_chosen_bootargs(char *bootargs, size_t max_size);
-
+boolean_t fdt_find_ethernet_prop_switch(phandle_t ethernet, phandle_t node);
 #endif /* _FDT_COMMON_H_ */
