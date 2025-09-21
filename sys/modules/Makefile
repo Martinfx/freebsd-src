@@ -543,6 +543,7 @@ SUBDIR+=	iscsi
 
 .if !empty(OPT_FDT)
 SUBDIR+=	fdt
+SUBDIR+=	mtkswitch
 .endif
 
 # Linuxulator

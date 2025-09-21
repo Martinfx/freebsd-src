@@ -1716,6 +1716,10 @@ dev/etherswitch/e6000sw/e6000sw.c	optional e6000sw fdt
 dev/etherswitch/e6000sw/e6060sw.c	optional e6060sw
 dev/etherswitch/infineon/adm6996fc.c	optional adm6996fc
 dev/etherswitch/micrel/ksz8995ma.c	optional ksz8995ma
+dev/etherswitch/mtkswitch/mtkswitch.c	optional mtkswitch fdt
+dev/etherswitch/mtkswitch/mtkswitch_mt7531.c	optional mtkswitch fdt
+dev/etherswitch/mtkswitch/mtkswitch_mt7620.c	optional mtkswitch fdt
+dev/etherswitch/mtkswitch/mtkswitch_rt3050.c	optional mtkswitch fdt
 dev/etherswitch/ukswitch/ukswitch.c	optional ukswitch
 dev/evdev/cdev.c			optional evdev
 dev/evdev/evdev.c			optional evdev
@@ -2441,8 +2445,8 @@ dev/malo/if_malo.c		optional malo
 dev/malo/if_malohal.c		optional malo
 dev/malo/if_malo_pci.c		optional malo pci
 dev/md/md.c			optional md
-dev/mdio/mdio_if.m		optional miiproxy | mdio
-dev/mdio/mdio.c			optional miiproxy | mdio
+dev/mdio/mdio_if.m		optional miiproxy | mdio | eqos
+dev/mdio/mdio.c			optional miiproxy | mdio | eqos
 dev/mem/memdev.c		optional mem
 dev/mem/memutil.c		optional mem
 dev/mfi/mfi.c			optional mfi

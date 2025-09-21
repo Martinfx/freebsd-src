@@ -27,6 +27,8 @@
 #ifndef	__MTKSWITCHVAR_H__
 #define	__MTKSWITCHVAR_H__
 
+#include <dev/ofw/openfirm.h>
+
 typedef enum {
 	MTK_SWITCH_NONE,
 	MTK_SWITCH_RT3050,
@@ -35,6 +37,7 @@ typedef enum {
 	MTK_SWITCH_MT7620,
 	MTK_SWITCH_MT7621,
 	MTK_SWITCH_MT7628,
+	MTK_SWITCH_MT7531,
 } mtk_switch_type;
 
 #define	MTK_IS_SWITCH(_sc, _type)		\
@@ -43,6 +46,10 @@ typedef enum {
 #define	MTKSWITCH_MAX_PORTS	7
 #define MTKSWITCH_MAX_PHYS	7
 #define	MTKSWITCH_CPU_PORT	6
+#define	MTKSWITCH_MT7531_CPU_PORT	5
+
+/* Chip ID as read from the chip revision register. */
+#define	MTKSWITCH_MT7531_ID	0x7531
 
 #define	MTKSWITCH_LINK_UP	(1<<0)
 #define	MTKSWITCH_SPEED_MASK	(3<<1)
@@ -56,6 +63,22 @@ typedef enum {
 struct mtkswitch_softc {
 	struct mtx	sc_mtx;
 	device_t	sc_dev;
+	phandle_t	sc_node;
+	int		sc_mdio_addr;	/* MDIO address, MT7531 only. */
+	uint32_t	sc_strap;	/* Strap status, MT7531 only. */
+	bool		sc_mdio_error;	/* Parent bus failed a transfer. */
+	bool		sc_vlans_dirty;	/* VLAN table touched since reset. */
+	bool		sc_use_psr;	/* PHY status registers are fed. */
+	/*
+	 * CPU facing port, as described by the DSA binding: the port node,
+	 * its "phy-mode" (a mii_contype_t) and the media and flow control
+	 * of its "fixed-link".  There is no PHY on this port; both MACs are
+	 * set up from the device tree, each by its own driver.
+	 */
+	phandle_t	sc_cpuport_node;
+	int		sc_cpuport_contype;
+	u_int		sc_cpuport_media;
+	bool		sc_cpuport_pause;
 	struct resource *sc_res;
 	int		numphys;
 	uint32_t	phymap;
@@ -68,6 +91,13 @@ struct mtkswitch_softc {
 	device_t	miibus[MTKSWITCH_MAX_PHYS];
 	if_t ifp[MTKSWITCH_MAX_PHYS];
 	struct callout	callout_tick;
+	/*
+	 * Port state as last read from the switch.  This is the only source
+	 * of link state: the PHY drivers attached to the ports are used for
+	 * media selection but never polled, as the switch polls the PHYs
+	 * itself and the two views would disagree.
+	 */
+	uint32_t	portstatus[MTKSWITCH_MAX_PORTS];
 	etherswitch_info_t info;
 
 	uint32_t	vlan_mode;
@@ -82,6 +112,13 @@ struct mtkswitch_softc {
 		void (* mtkswitch_port_init) (struct mtkswitch_softc *, int);
 		uint32_t (* mtkswitch_get_port_status)
 		    (struct mtkswitch_softc *, int);
+		/*
+		 * Optional.  Called when a port's link state changed, for
+		 * parts whose MAC does not follow its PHY on its own and
+		 * has to be told the negotiated parameters.
+		 */
+		void (* mtkswitch_port_link_update)
+		    (struct mtkswitch_softc *, int, uint32_t);
 
 		/* ATU functions */
 		int (* mtkswitch_atu_flush) (struct mtkswitch_softc *);
@@ -158,5 +195,6 @@ struct mtkswitch_softc {
 
 extern void mtk_attach_switch_rt3050(struct mtkswitch_softc *);
 extern void mtk_attach_switch_mt7620(struct mtkswitch_softc *);
+extern void mtk_attach_switch_mt7531(struct mtkswitch_softc *);
 
 #endif	/* __MTKSWITCHVAR_H__ */

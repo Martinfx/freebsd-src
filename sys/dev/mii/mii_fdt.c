@@ -173,6 +173,85 @@ mii_fdt_get_contype(phandle_t macnode)
 	return (mii_fdt_contype_from_name(val));
 }
 
+int
+mii_fdt_get_fixed_link(phandle_t macnode, struct mii_fixed_link *fl)
+{
+	pcell_t cells[5];
+	phandle_t node;
+	ssize_t len;
+
+	bzero(fl, sizeof(*fl));
+
+	node = ofw_bus_find_child(macnode, "fixed-link");
+	if (node != 0) {
+		if (OF_getencprop(node, "speed", &cells[0],
+		    sizeof(cells[0])) <= 0)
+			return (EINVAL);
+		fl->fl_speed = cells[0];
+		fl->fl_fdx = OF_hasprop(node, "full-duplex") != 0;
+		fl->fl_pause = OF_hasprop(node, "pause") != 0;
+		fl->fl_asym_pause = OF_hasprop(node, "asym-pause") != 0;
+		return (0);
+	}
+
+	/*
+	 * Deprecated property form:
+	 *	fixed-link = <phy_id duplex speed pause asym_pause>
+	 * Note that duplex comes before speed.
+	 */
+	len = OF_getencprop(macnode, "fixed-link", cells, sizeof(cells));
+	if (len <= 0)
+		return (ENOENT);
+	if (len != (ssize_t)sizeof(cells))
+		return (EINVAL);
+	fl->fl_legacy = true;
+	fl->fl_fdx = cells[1] != 0;
+	fl->fl_speed = cells[2];
+	fl->fl_pause = cells[3] != 0;
+	fl->fl_asym_pause = cells[4] != 0;
+
+	return (0);
+}
+
+int
+mii_fdt_fixed_link_media(const struct mii_fixed_link *fl, u_int *mediap)
+{
+	u_int subtype;
+
+	switch (fl->fl_speed) {
+	case 10:
+		subtype = IFM_10_T;
+		break;
+	case 100:
+		subtype = IFM_100_TX;
+		break;
+	case 1000:
+		subtype = IFM_1000_T;
+		break;
+	case 2500:
+		subtype = IFM_2500_T;
+		break;
+	case 5000:
+		subtype = IFM_5000_T;
+		break;
+	case 10000:
+		subtype = IFM_10G_T;
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	/*
+	 * Half duplex is the binding's default.  "pause" and "asym-pause"
+	 * are deliberately not folded into the media word: flow control on
+	 * a fixed link is a MAC policy, and callers that want them can read
+	 * them from the parsed binding.
+	 */
+	*mediap = IFM_ETHER | subtype | (fl->fl_fdx ? IFM_FDX : IFM_HDX);
+
+	return (0);
+}
+
 void
 mii_fdt_free_config(struct mii_fdt_phy_config *cfg)
 {

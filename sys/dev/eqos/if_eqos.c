@@ -59,8 +59,10 @@
 
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
+#include <dev/mdio/mdio.h>
 
 #include "miibus_if.h"
+#include "mdio_if.h"
 #include "if_eqos_if.h"
 
 #ifdef FDT
@@ -68,6 +70,7 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/clk/clk.h>
+#include <dev/mii/mii_fdt.h>
 #endif
 
 #include <dev/eqos/if_eqos_reg.h>
@@ -107,13 +110,23 @@ static struct resource_spec eqos_spec[] = {
 static void eqos_tick(void *softc);
 
 
+#define	EQOS_MDIO_LOCK(sc)	mtx_lock(&(sc)->mdio_lock)
+#define	EQOS_MDIO_UNLOCK(sc)	mtx_unlock(&(sc)->mdio_lock)
+
+/*
+ * MDIO register access, shared by the miibus(4) and mdio(4) methods.  Both
+ * drive the same MAC registers, so every transfer is done under
+ * mdio_lock.  Returns the register value, or -1 on a timeout, as mdio(4)
+ * consumers expect.
+ */
 static int
-eqos_miibus_readreg(device_t dev, int phy, int reg)
+eqos_mdio_readreg(device_t dev, int phy, int reg)
 {
 	struct eqos_softc *sc = device_get_softc(dev);
 	uint32_t addr;
 	int retry, val;
 
+	EQOS_MDIO_LOCK(sc);
 	addr = sc->csr_clock_range |
 	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
 	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) |
@@ -131,21 +144,23 @@ eqos_miibus_readreg(device_t dev, int phy, int reg)
 		}
 		DELAY(10);
 	}
+	EQOS_MDIO_UNLOCK(sc);
 	if (!retry) {
 		device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		    phy, reg);
-		return (ETIMEDOUT);
+		return (-1);
 	}
 	return (val);
 }
 
 static int
-eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
+eqos_mdio_writereg(device_t dev, int phy, int reg, int val)
 {
 	struct eqos_softc *sc = device_get_softc(dev);
 	uint32_t addr;
 	int retry;
 
+	EQOS_MDIO_LOCK(sc);
 	WR4(sc, GMAC_MAC_MDIO_DATA, val);
 
 	addr = sc->csr_clock_range |
@@ -163,6 +178,7 @@ eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
 			break;
 		DELAY(10);
 	}
+	EQOS_MDIO_UNLOCK(sc);
 	if (!retry) {
 		device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
 		    phy, reg);
@@ -171,23 +187,40 @@ eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
 	return (0);
 }
 
-static void
-eqos_miibus_statchg(device_t dev)
+static int
+eqos_miibus_readreg(device_t dev, int phy, int reg)
 {
-	struct eqos_softc *sc = device_get_softc(dev);
-	struct mii_data *mii = device_get_softc(sc->miibus);
+	int val;
+
+	/*
+	 * miibus(4) has no notion of a failed read.  Hand it what an idle
+	 * bus reads as, so that a PHY that does not answer is not mistaken
+	 * for one that is there.
+	 */
+	val = eqos_mdio_readreg(dev, phy, reg);
+	return (val < 0 ? 0xffff : val);
+}
+
+static int
+eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
+{
+
+	return (eqos_mdio_writereg(dev, phy, reg, val));
+}
+
+/*
+ * Program the MAC speed/duplex configuration for the given media word.
+ */
+static void
+eqos_set_mac_media(struct eqos_softc *sc, uint32_t media)
+{
 	uint32_t reg;
 
 	EQOS_ASSERT_LOCKED(sc);
 
-	if (mii->mii_media_status & IFM_ACTIVE)
-		sc->link_up = true;
-	else
-		sc->link_up = false;
-
 	reg = RD4(sc, GMAC_MAC_CONFIGURATION);
 
-	switch (IFM_SUBTYPE(mii->mii_media_active)) {
+	switch (IFM_SUBTYPE(media)) {
 	case IFM_10_T:
 		reg |= GMAC_MAC_CONFIGURATION_PS;
 		reg &= ~GMAC_MAC_CONFIGURATION_FES;
@@ -211,24 +244,47 @@ eqos_miibus_statchg(device_t dev)
 		return;
 	}
 
-	if ((IFM_OPTIONS(mii->mii_media_active) & IFM_FDX))
+	if ((IFM_OPTIONS(media) & IFM_FDX))
 		reg |= GMAC_MAC_CONFIGURATION_DM;
 	else
 		reg &= ~GMAC_MAC_CONFIGURATION_DM;
 
 	WR4(sc, GMAC_MAC_CONFIGURATION, reg);
 
-	IF_EQOS_SET_SPEED(dev, IFM_SUBTYPE(mii->mii_media_active));
+	IF_EQOS_SET_SPEED(sc->dev, IFM_SUBTYPE(media));
 
 	WR4(sc, GMAC_MAC_1US_TIC_COUNTER, (sc->csr_clock / 1000000) - 1);
+}
+
+static void
+eqos_miibus_statchg(device_t dev)
+{
+	struct eqos_softc *sc = device_get_softc(dev);
+	struct mii_data *mii = device_get_softc(sc->miibus);
+
+	EQOS_ASSERT_LOCKED(sc);
+
+	if (mii->mii_media_status & IFM_ACTIVE)
+		sc->link_up = true;
+	else
+		sc->link_up = false;
+
+	eqos_set_mac_media(sc, mii->mii_media_active);
 }
 
 static void
 eqos_media_status(if_t ifp, struct ifmediareq *ifmr)
 {
 	struct eqos_softc *sc = if_getsoftc(ifp);
-	struct mii_data *mii = device_get_softc(sc->miibus);
+	struct mii_data *mii;
 
+	if (sc->fixed_link) {
+		ifmr->ifm_active = sc->fixed_media;
+		ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
+		return;
+	}
+
+	mii = device_get_softc(sc->miibus);
 	EQOS_LOCK(sc);
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
@@ -242,11 +298,80 @@ eqos_media_change(if_t ifp)
 	struct eqos_softc *sc = if_getsoftc(ifp);
 	int error;
 
+	/* ifmedia_ioctl() already refused anything but the one media. */
+	if (sc->fixed_link)
+		return (0);
+
 	EQOS_LOCK(sc);
 	error = mii_mediachg(device_get_softc(sc->miibus));
 	EQOS_UNLOCK(sc);
 	return (error);
 }
+
+#ifdef FDT
+/*
+ * The MDIO address of the PHY named by "phy-handle", or MII_PHY_ANY.
+ * Probing every address is not safe: many PHYs, the RTL8211F among them,
+ * also answer at the broadcast address 0 and would be attached twice.
+ */
+static int
+eqos_fdt_phy_addr(struct eqos_softc *sc)
+{
+	phandle_t node;
+	pcell_t xref, reg;
+
+	node = ofw_bus_get_node(sc->dev);
+	if (node == 0 || node == (phandle_t)-1)
+		return (MII_PHY_ANY);
+	if (OF_getencprop(node, "phy-handle", &xref, sizeof(xref)) <= 0)
+		return (MII_PHY_ANY);
+	node = OF_node_from_xref(xref);
+	if (OF_getencprop(node, "reg", &reg, sizeof(reg)) <= 0 ||
+	    reg >= MII_NPHY)
+		return (MII_PHY_ANY);
+
+	return (reg);
+}
+
+/*
+ * A MAC whose link partner is another MAC - here the CPU port of an
+ * ethernet switch - is described by a "fixed-link" node.  There is no PHY
+ * to talk to, so rather than invent one, set up a single media entry from
+ * the device tree and program the MAC from it directly.  The other end of
+ * the link is configured from its own node by its own driver.
+ */
+static int
+eqos_fixed_link_attach(struct eqos_softc *sc)
+{
+	struct mii_fixed_link fl;
+	phandle_t node;
+	int error;
+
+	node = ofw_bus_get_node(sc->dev);
+	if (node == 0 || node == (phandle_t)-1)
+		return (ENOENT);
+	error = mii_fdt_get_fixed_link(node, &fl);
+	if (error != 0)
+		return (error);
+	error = mii_fdt_fixed_link_media(&fl, &sc->fixed_media);
+	if (error != 0) {
+		device_printf(sc->dev, "unsupported fixed-link speed %u\n",
+		    fl.fl_speed);
+		return (error);
+	}
+
+	sc->fixed_link = true;
+	ifmedia_init(&sc->media, 0, eqos_media_change, eqos_media_status);
+	ifmedia_add(&sc->media, sc->fixed_media, 0, NULL);
+	ifmedia_set(&sc->media, sc->fixed_media);
+
+	if (bootverbose)
+		device_printf(sc->dev, "fixed link, %u Mbit/s %s duplex\n",
+		    fl.fl_speed, fl.fl_fdx ? "full" : "half");
+
+	return (0);
+}
+#endif
 
 static void
 eqos_setup_txdesc(struct eqos_softc *sc, int index, int flags,
@@ -493,7 +618,6 @@ eqos_init(void *if_softc)
 {
 	struct eqos_softc *sc = if_softc;
 	if_t ifp = sc->ifp;
-	struct mii_data *mii = device_get_softc(sc->miibus);
 	uint32_t val, mtl_tx_val, mtl_rx_val;
 
 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
@@ -578,7 +702,12 @@ eqos_init(void *if_softc)
 
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, IFF_DRV_OACTIVE);
 
-	mii_mediachg(mii);
+	if (sc->fixed_link) {
+		sc->link_up = true;
+		eqos_set_mac_media(sc, sc->fixed_media);
+		if_link_state_change(ifp, LINK_STATE_UP);
+	} else
+		mii_mediachg(device_get_softc(sc->miibus));
 	callout_reset(&sc->callout, hz, eqos_tick, sc);
 
 	EQOS_UNLOCK(sc);
@@ -818,7 +947,6 @@ static void
 eqos_tick(void *softc)
 {
 	struct eqos_softc *sc = softc;
-	struct mii_data *mii = device_get_softc(sc->miibus);
 	bool link_status;
 
 	EQOS_ASSERT_LOCKED(sc);
@@ -829,10 +957,12 @@ eqos_tick(void *softc)
 			eqos_txintr(sc);
 		}
 
-	link_status = sc->link_up;
-	mii_tick(mii);
-	if (sc->link_up && !link_status)
-		eqos_start_locked(sc->ifp);
+	if (!sc->fixed_link) {
+		link_status = sc->link_up;
+		mii_tick(device_get_softc(sc->miibus));
+		if (sc->link_up && !link_status)
+			eqos_start_locked(sc->ifp);
+	}
 
 	callout_reset(&sc->callout, hz, eqos_tick, sc);
 }
@@ -918,6 +1048,10 @@ eqos_ioctl(if_t ifp, u_long cmd, caddr_t data)
 
 	case SIOCSIFMEDIA:
 	case SIOCGIFMEDIA:
+		if (sc->fixed_link) {
+			error = ifmedia_ioctl(ifp, ifr, &sc->media, cmd);
+			break;
+		}
 		mii = device_get_softc(sc->miibus);
 		error = ifmedia_ioctl(ifp, ifr, &mii->mii_media, cmd);
 		break;
@@ -946,19 +1080,56 @@ eqos_ioctl(if_t ifp, u_long cmd, caddr_t data)
 	return (error);
 }
 
+#ifdef FDT
+/*
+ * The device tree is the most authoritative source there is: the
+ * bootloader puts the board's real address there.  Both the current and
+ * the deprecated spelling are in use.
+ */
+static bool
+eqos_get_eaddr_fdt(struct eqos_softc *sc, uint8_t *eaddr)
+{
+	static const char *props[] = { "local-mac-address", "mac-address" };
+	phandle_t node;
+	u_int i;
+
+	node = ofw_bus_get_node(sc->dev);
+	if (node == 0 || node == (phandle_t)-1)
+		return (false);
+
+	for (i = 0; i < nitems(props); i++) {
+		if (OF_getprop(node, props[i], eaddr, ETHER_ADDR_LEN) !=
+		    ETHER_ADDR_LEN)
+			continue;
+		if (ETHER_IS_MULTICAST(eaddr) || ETHER_IS_ZERO(eaddr))
+			continue;
+		return (true);
+	}
+
+	return (false);
+}
+#endif
+
 static void
 eqos_get_eaddr(struct eqos_softc *sc, uint8_t *eaddr)
 {
+	struct ether_addr addr;
 	uint32_t maclo, machi;
+
+#ifdef FDT
+	if (eqos_get_eaddr_fdt(sc, eaddr))
+		return;
+#endif
 
 	maclo = htobe32(RD4(sc, GMAC_MAC_ADDRESS0_LOW));
 	machi = htobe16(RD4(sc, GMAC_MAC_ADDRESS0_HIGH) & 0xFFFF);
 
-	/* if no valid MAC address generate random */
 	if (maclo == 0xffffffff && machi == 0xffff) {
-		maclo = 0xf2 | (arc4random() & 0xffff0000);
-		machi = arc4random() & 0x0000ffff;
+		ether_gen_addr_byname(device_get_nameunit(sc->dev), &addr);
+		memcpy(eaddr, addr.octet, ETHER_ADDR_LEN);
+		return;
 	}
+
 	eaddr[0] = maclo & 0xff;
 	eaddr[1] = (maclo >> 8) & 0xff;
 	eaddr[2] = (maclo >> 16) & 0xff;
@@ -1145,6 +1316,46 @@ eqos_setup_dma(struct eqos_softc *sc)
 	return (0);
 }
 
+static void
+eqos_free_dma(struct eqos_softc *sc)
+{
+	int i;
+
+	if (sc->tx.desc_tag) {
+		if (sc->tx.desc_map) {
+			bus_dmamap_unload(sc->tx.desc_tag, sc->tx.desc_map);
+			bus_dmamem_free(sc->tx.desc_tag, sc->tx.desc_ring,
+			    sc->tx.desc_map);
+		}
+		bus_dma_tag_destroy(sc->tx.desc_tag);
+	}
+	if (sc->tx.buf_tag) {
+		for (i = 0; i < TX_DESC_COUNT; i++) {
+			m_free(sc->tx.buf_map[i].mbuf);
+			bus_dmamap_destroy(sc->tx.buf_tag,
+			    sc->tx.buf_map[i].map);
+		}
+		bus_dma_tag_destroy(sc->tx.buf_tag);
+	}
+
+	if (sc->rx.desc_tag) {
+		if (sc->rx.desc_map) {
+			bus_dmamap_unload(sc->rx.desc_tag, sc->rx.desc_map);
+			bus_dmamem_free(sc->rx.desc_tag, sc->rx.desc_ring,
+			    sc->rx.desc_map);
+		}
+		bus_dma_tag_destroy(sc->rx.desc_tag);
+	}
+	if (sc->rx.buf_tag) {
+		for (i = 0; i < RX_DESC_COUNT; i++) {
+			m_free(sc->rx.buf_map[i].mbuf);
+			bus_dmamap_destroy(sc->rx.buf_tag,
+			    sc->rx.buf_map[i].map);
+		}
+		bus_dma_tag_destroy(sc->rx.buf_tag);
+	}
+}
+
 static int
 eqos_attach(device_t dev)
 {
@@ -1154,7 +1365,7 @@ eqos_attach(device_t dev)
 	uint8_t eaddr[ETHER_ADDR_LEN];
 	u_int userver, snpsver;
 	int error;
-	int n;
+	int n, phy;
 
 	/* default values */
 	sc->thresh_dma_mode = false;
@@ -1198,6 +1409,7 @@ eqos_attach(device_t dev)
 	}
 
 	mtx_init(&sc->lock, "eqos lock", MTX_NETWORK_LOCK, MTX_DEF);
+	mtx_init(&sc->mdio_lock, "eqos mdio", NULL, MTX_DEF);
 	callout_init_mtx(&sc->callout, &sc->lock, 0);
 
 	eqos_get_eaddr(sc, eaddr);
@@ -1240,33 +1452,55 @@ eqos_attach(device_t dev)
 	if_setcapabilities(ifp, IFCAP_VLAN_MTU /*| IFCAP_HWCSUM*/);
 	if_setcapenable(ifp, if_getcapabilities(ifp));
 
-	/* Attach MII driver */
-	if ((error = mii_attach(sc->dev, &sc->miibus, ifp, eqos_media_change,
-	    eqos_media_status, BMSR_DEFCAPMASK, MII_PHY_ANY,
-	    MII_OFFSET_ANY, 0))) {
-		device_printf(sc->dev, "PHY attach failed\n");
+	error = ENOENT;
+	phy = MII_PHY_ANY;
+#ifdef FDT
+	error = eqos_fixed_link_attach(sc);
+	phy = eqos_fdt_phy_addr(sc);
+#endif
+	if (error == ENOENT)
+		error = mii_attach(dev, &sc->miibus, ifp, eqos_media_change,
+		    eqos_media_status, BMSR_DEFCAPMASK, phy,
+		    MII_OFFSET_ANY, 0);
+	if (error != 0) {
+		device_printf(dev, "PHY attach failed\n");
+		bus_teardown_intr(dev, sc->res[EQOS_RES_IRQ0], sc->irq_handle);
+		if_free(ifp);
+		sc->ifp = NULL;
+		callout_drain(&sc->callout);
+		eqos_free_dma(sc);
+		mtx_destroy(&sc->mdio_lock);
+		mtx_destroy(&sc->lock);
+		bus_release_resources(dev, eqos_spec, sc->res);
 		return (ENXIO);
 	}
 
 	/* Attach ethernet interface */
 	ether_ifattach(ifp, eaddr);
 
+	if (sc->mdio_node != 0 &&
+	    device_add_child(dev, "mdio", DEVICE_UNIT_ANY) == NULL)
+		device_printf(dev, "cannot add mdio bus\n");
+
+	bus_attach_children(dev);
+
 	return (0);
 }
 
-static int
+int
 eqos_detach(device_t dev)
 {
 	struct eqos_softc *sc = device_get_softc(dev);
-	int i;
 
 	if (device_is_attached(dev)) {
-		EQOS_LOCK(sc);
+		/* eqos_stop() takes the lock itself. */
 		eqos_stop(sc);
-		EQOS_UNLOCK(sc);
 		if_setflagbits(sc->ifp, 0, IFF_UP);
 		ether_ifdetach(sc->ifp);
 	}
+
+	/* The callout may still be pending; it uses the lock. */
+	callout_drain(&sc->callout);
 
 	bus_generic_detach(dev);
 
@@ -1279,40 +1513,12 @@ eqos_detach(device_t dev)
 
 	bus_release_resources(dev, eqos_spec, sc->res);
 
-	if (sc->tx.desc_tag) {
-		if (sc->tx.desc_map) {
-			bus_dmamap_unload(sc->tx.desc_tag, sc->tx.desc_map);
-			bus_dmamem_free(sc->tx.desc_tag, sc->tx.desc_ring,
-			    sc->tx.desc_map);
-		}
-		bus_dma_tag_destroy(sc->tx.desc_tag);
-	}
-	if (sc->tx.buf_tag) {
-		for (i = 0; i < TX_DESC_COUNT; i++) {
-			m_free(sc->tx.buf_map[i].mbuf);
-			bus_dmamap_destroy(sc->tx.buf_tag,
-			    sc->tx.buf_map[i].map);
-		}
-		bus_dma_tag_destroy(sc->tx.buf_tag);
-	}
+	eqos_free_dma(sc);
 
-	if (sc->rx.desc_tag) {
-		if (sc->rx.desc_map) {
-			bus_dmamap_unload(sc->rx.desc_tag, sc->rx.desc_map);
-			bus_dmamem_free(sc->rx.desc_tag, sc->rx.desc_ring,
-			    sc->rx.desc_map);
-		}
-		bus_dma_tag_destroy(sc->rx.desc_tag);
-	}
-	if (sc->rx.buf_tag) {
-		for (i = 0; i < RX_DESC_COUNT; i++) {
-			m_free(sc->rx.buf_map[i].mbuf);
-			bus_dmamap_destroy(sc->rx.buf_tag,
-			    sc->rx.buf_map[i].map);
-		}
-		bus_dma_tag_destroy(sc->rx.buf_tag);
-	}
+	if (sc->fixed_link)
+		ifmedia_removeall(&sc->media);
 
+	mtx_destroy(&sc->mdio_lock);
 	mtx_destroy(&sc->lock);
 
 	return (0);
@@ -1329,6 +1535,10 @@ static device_method_t eqos_methods[] = {
 	DEVMETHOD(miibus_writereg,	eqos_miibus_writereg),
 	DEVMETHOD(miibus_statchg,	eqos_miibus_statchg),
 
+	/* MDIO interface, for devices on the bus other than our PHY */
+	DEVMETHOD(mdio_readreg,		eqos_mdio_readreg),
+	DEVMETHOD(mdio_writereg,	eqos_mdio_writereg),
+
 	DEVMETHOD_END
 };
 
@@ -1339,3 +1549,4 @@ driver_t eqos_driver = {
 };
 
 DRIVER_MODULE(miibus, eqos, miibus_driver, 0, 0);
+DRIVER_MODULE(mdio, eqos, mdio_driver, 0, 0);

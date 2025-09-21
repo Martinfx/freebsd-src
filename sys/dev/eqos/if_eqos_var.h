@@ -97,10 +97,34 @@ struct eqos_softc {
 	struct mtx		lock;
 	struct callout		callout;
 
+	/*
+	 * Serialises the MDIO registers.  They are shared by miibus(4), for
+	 * a PHY the MAC talks to itself, and mdio(4), for whatever else
+	 * hangs off the bus, such as an ethernet switch.  Neither path
+	 * holds, or may take, the other's locks.
+	 */
+	struct mtx		mdio_lock;
+
+	/*
+	 * MAC to MAC link described by a "fixed-link" node, e.g. the CPU
+	 * port of an ethernet switch.  There is no PHY and no miibus(4);
+	 * the MAC is set up once from the device tree and the link is
+	 * reported as always up.
+	 */
+	bool			fixed_link;
+	u_int			fixed_media;
+	struct ifmedia		media;
+
+	/* Phandle of the MDIO bus subnode, 0 if the MAC has none. */
+	uint32_t		mdio_node;
+
 	struct eqos_ring	tx;
 	struct eqos_ring	rx;
 };
 
 DECLARE_CLASS(eqos_driver);
+
+/* For subclasses that override device_detach. */
+int	eqos_detach(device_t);
 
 #endif

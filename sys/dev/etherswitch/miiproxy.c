@@ -341,7 +341,15 @@ mdioproxy_probe(device_t dev)
 {
 	device_set_desc(dev, "MII/MDIO proxy, MDIO side");
 
-	return (BUS_PROBE_SPECIFIC);
+	/*
+	 * This device only ever exists because mdioproxy_identify() or a
+	 * hint created it by name.  mdio(4) also creates nameless children
+	 * for the devices the device tree puts on the bus, and those are
+	 * offered to every driver in the mdio devclass; a bid of
+	 * BUS_PROBE_SPECIFIC would take them from the driver that actually
+	 * matches, e.g. an ethernet switch.
+	 */
+	return (BUS_PROBE_NOWILDCARD);
 }
 
 static int
