@@ -1396,9 +1396,9 @@ eqos_attach(device_t dev)
 		if (eqos_has_switch(dev)) {
 			device_t child;
 			child = device_add_child(dev, "mdio", -1);
-			bus_generic_attach(dev);
-			bus_generic_attach(child);
-			// device_printf(dev, "Switch attached.\n");
+			bus_attach_children(dev);
+			bus_attach_children(child);
+			device_printf(dev, "Switch attached.\n");
 			sc->switch_attached = 1;
 		} else {
 			device_printf(dev, "PHY not attached.\n");
