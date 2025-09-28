@@ -5,6 +5,16 @@ device		uart_ns8250
 # GPIO / PINCTRL
 device		mt7622_pinctrl
 
+# eth switch
+device 		etherswitch
+device 		miibus
+device 		mdio
+
+# MMC/SD/SDIO Card slot support
+device		sdhci		# SD controller
+device		mmc		# mmc/sd bus
+device		mmcsd		# mmc/sd flash cards
+
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
