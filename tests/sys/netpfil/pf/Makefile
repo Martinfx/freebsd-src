@@ -5,6 +5,7 @@ TESTS_SUBDIRS+=	ioctl
 
 ATF_TESTS_SH+=	altq \
 		anchor \
+		counters \
 		debug \
 		divert-to \
 		dup \
@@ -30,6 +31,7 @@ ATF_TESTS_SH+=	altq \
 		names \
 		nat \
 		nat64 \
+		once \
 		pass_block \
 		pflog \
 		pflow \

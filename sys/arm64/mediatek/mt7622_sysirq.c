@@ -39,7 +39,6 @@
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <dt-bindings/interrupt-controller/irq.h>
-
 #include "pic_if.h"
 
 static struct ofw_compat_data compat_data[] = {
@@ -179,7 +178,6 @@ mt7622_sysirq_setup_intr(device_t dev, struct intr_irqsrc *isrc,
 	return (PIC_SETUP_INTR(sc->parent, isrc, res, data));
 }
 
-static int
 mt7622_sysirq_teardown_intr(device_t dev, struct intr_irqsrc *isrc,
     struct resource *res, struct intr_map_data *data)
 {
@@ -235,6 +233,7 @@ mt7622_sysirq_post_filter(device_t dev, struct intr_irqsrc *isrc)
 }
 
 static int
+
 mt7622_sysirq_probe(device_t dev)
 {
     if (!ofw_bus_status_okay(dev))
@@ -347,3 +346,4 @@ static DEFINE_CLASS_0(mt7622_sysirq, mt7622_sysirq_driver, mt7622_sysirq_methods
 sizeof(struct mt7622_sysirq_sc));
 EARLY_DRIVER_MODULE(mt7622_sysirq, simplebus, mt7622_sysirq_driver, NULL, NULL,
         BUS_PASS_INTERRUPT + BUS_PASS_ORDER_MIDDLE + 1);
+
