@@ -6,7 +6,8 @@ device		uart_ns8250
 device		mt7622_pinctrl
 
 # eth switch
-device 		etherswitch
+device		etherswitch     # Enable etherswitch support
+device		mtkswitch       # Enable mediatek 7531 switch
 device 		miibus
 device 		mdio
 
