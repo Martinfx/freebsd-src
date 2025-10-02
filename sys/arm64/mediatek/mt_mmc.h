@@ -40,11 +40,15 @@
 #define  MTK_MSDC_CFG_BV18PSS			(1U << 6)
 #define  MTK_MSDC_CFG_CCKSB			(1U << 7)
 #define  MTK_MSDC_CFG_CCKDIV_SHIFT		8
+#define	 MTK_MSDC_CFG_CCKDIV_MASK		(0xFFF << 8)
+#if 0
 #define  MTK_MSDC_CFG_CCKDIV_MASK		(0xFF << 8)
-//#define  MTK_MSDC_CFG_CCKMD			(1U << 16)
-//#define  MTK_MSDC_CFG_DDR			(1U << 17)
+#define  MTK_MSDC_CFG_CCKMD			(1U << 16)
+#define  MTK_MSDC_CFG_DDR			(1U << 17)
+#endif
 #define  MTK_MSDC_CFG_CCKMD			(1U << 20)
 #define  MTK_MSDC_CFG_DDR			(1U << 21)
+#define	 MTK_MSDC_CFG_HS400_CK_MODE_EXTRA	(1U << 22)
 #define	MTK_MSDC_IOCON		(0x04)
 #define  MTK_MSDC_IOCON_SDR104CKS		(1U << 0)
 #define  MTK_MSDC_IOCON_RSPL			(1U << 1)
@@ -222,6 +226,7 @@
 #define  MTK_MSDC_PATCH_BIT1_MWCTLCKEN		(1U << 29)
 #define  MTK_MSDC_PATCH_BIT1_MRCTLCKEN		(1U << 30)
 #define  MTK_MSDC_PATCH_BIT1_MSHBFCKEN		(1U << 31)
+#if 0
 #define	MTK_MSDC_PAD_TUNE	(0xec)
 #define  MTK_MSDC_PAD_TUNE_DATWRDLY_MASK	(0x1F << 0)
 #define  MTK_MSDC_PAD_TUNE_DATRRDLY_MASK	(0x1F << 8)
@@ -245,6 +250,18 @@
 #define  MTK_MSDC_HW_DBG_DBGWTSEL_MASK		(0x03 << 22)
 #define  MTK_MSDC_HW_DBG_DBG0SEL_MASK		(0x3F << 24)
 #define  MTK_MSDC_HW_DBG_DBGWSEL		(1U << 30)
+#endif
+#define	MTK_MSDC_PAD_TUNE	(0xf0)
+#define  MTK_MSDC_PAD_TUNE_DATWRDLY_MASK	(0x1F << 0)
+#define	 MTK_MSDC_PAD_TUNE_DELAYEN		(1U << 7)
+#define  MTK_MSDC_PAD_TUNE_DATRRDLY_MASK	(0x1F << 8)
+#define	 MTK_MSDC_PAD_TUNE_DATRRDLYSEL		(1U << 13)
+#define	 MTK_MSDC_PAD_TUNE_RXDLYSEL		(1U << 15)
+#define  MTK_MSDC_PAD_TUNE_CMDRDLY_MASK		(0x1F << 16)
+#define	 MTK_MSDC_PAD_TUNE_CMDRRDLYSEL		(1U << 21)
+#define  MTK_MSDC_PAD_TUNE_CMDRRDLY_MASK	(0x1F << 22)
+#define  MTK_MSDC_PAD_TUNE_CLKTDLY_MASK		(0x1F << 27)
+
 #define	MTK_MSDC_VERSION	(0x100)
 #define	MTK_MSDC_ECO_VER	(0x104)
 
@@ -258,7 +275,7 @@ struct mtk_mmc_dma_gpd {
 #define	MTK_GPD_INT		(1U << 1)	/* Interrupt Generation Mask */
 	uint32_t		next_gpd;	/* Next DMA GPD Pointer */
 	uint32_t		buf_addr;	/* Data Buffer Pointer/
-						   DMA BD pointer */
+				 DMA BD pointer */
 	uint16_t		buf_len;	/* Data Buffer Length */
 	uint8_t			desc_ext_len;	/* Descriptor Extension len */
 	uint8_t			resv;
@@ -269,16 +286,16 @@ struct mtk_mmc_dma_gpd {
 
 /* DMA Buffer Descriptor (BD) Format */
 struct mtk_mmc_dma_bd {
-        uint8_t			bd_cfg1;
+	uint8_t			bd_cfg1;
 #define	MTK_BD_EOL		(1U << 0)	/* End of List */
-        uint8_t			bd_chksum;	/* Buffer Descriptor Checksum */
-        uint16_t		bd_cfg2;
+	uint8_t			bd_chksum;	/* Buffer Descriptor Checksum */
+	uint16_t		bd_cfg2;
 #define	MTK_BD_B		(1U << 1)	/* Block Padding */
 #define	MTK_BD_D		(1U << 2)
-        uint32_t		next_bd;	/* Next BD Pointer */
-        uint32_t		buf_addr;	/* Data Buffer Pointer */
-        uint16_t		buf_len;	/* Data Buffer Length */
-        uint16_t		resv;
+	uint32_t		next_bd;	/* Next BD Pointer */
+	uint32_t		buf_addr;	/* Data Buffer Pointer */
+	uint16_t		buf_len;	/* Data Buffer Length */
+	uint16_t		resv;
 };
 
 #endif
