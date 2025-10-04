@@ -820,7 +820,7 @@ rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
 	data = &ring->data[ring->data_cur];
 
 	error = bus_dmamap_load_mbuf_sg(ring->data_dma_tag, data->dma_map, m,
-	    dma_seg, &ndmasegs, BUS_DMA_NOWAIT);
+	    dma_seg, &ndmasegs, BUS_DMA_WAITOK);
 	if (error != 0)	{
 		/* too many fragments, linearize */
 
@@ -840,7 +840,7 @@ rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
 		sc->tx_defrag_packets++;
 
 		error = bus_dmamap_load_mbuf_sg(ring->data_dma_tag,
-		    data->dma_map, m, dma_seg, &ndmasegs, 0);
+		    data->dma_map, m, dma_seg, &ndmasegs, BUS_DMA_WAITOK);
 		if (error != 0)	{
 			device_printf(sc->dev, "could not load mbuf DMA map: "
 			    "ndmasegs=%d, len=%d, error=%d\n",
@@ -1809,7 +1809,7 @@ rt_alloc_rx_ring(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int qid)
 		data->m->m_len = data->m->m_pkthdr.len = MCLBYTES;
 
 		error = bus_dmamap_load_mbuf_sg(ring->data_dma_tag,
-		    data->dma_map, data->m, segs, &nsegs, BUS_DMA_NOWAIT);
+		    data->dma_map, data->m, segs, &nsegs, BUS_DMA_WAITOK);
 		if (error != 0)	{
 			device_printf(sc->dev,
 			    "could not load Rx mbuf DMA map\n");
