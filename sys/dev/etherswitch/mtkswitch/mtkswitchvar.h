@@ -44,11 +44,23 @@ typedef enum {
 
 #define	MTKSWITCH_MAX_PORTS	7
 #define MTKSWITCH_MAX_PHYS	7
+
+/*bpi-r2-pro cpu port 5*/
+#if 0
 #ifndef MT7531
 #define	MTKSWITCH_CPU_PORT	6
 #else
 #define	MTKSWITCH_CPU_PORT	5
 #define	MTKSWITCH_NUM_VLANS	4096
+/* Size of the ALR table in hardware */
+#define MTKSWITCH_NUM_ARL_ENTRIES	4096
+#endif
+#else
+/*bpi-r64 cpu port 6*/
+#define MTKSWITCH_CPU_PORT      6
+#define	MTKSWITCH_NUM_VLANS	4096
+/* Size of the ALR table in hardware */
+#define MTKSWITCH_NUM_ARL_ENTRIES	4096
 #endif
 
 #define	MTKSWITCH_LINK_UP	(1<<0)
@@ -84,6 +96,11 @@ struct mtkswitch_softc {
 
 #ifdef	MT7531
 	int		vlans[MTKSWITCH_NUM_VLANS];
+	/* ARL (address resolution table) */
+	struct {
+		int count;
+		etherswitch_atu_entry_t entries[MTKSWITCH_NUM_ARL_ENTRIES];
+	} atu;
 #endif
 	uint32_t	vlan_mode;
 
@@ -181,6 +198,8 @@ extern void mtk_attach_switch_mt7620(struct mtkswitch_softc *);
 #else
 extern void mtk_attach_switch_mt7631(struct mtkswitch_softc *);
 extern int mt7531_sysctl_attach(struct mtkswitch_softc *sc);
+extern int mt7531_atu_fetch_table(device_t dev, etherswitch_atu_table_t *table);
+extern int mt7531_atu_fetch_table_entry(device_t dev, etherswitch_atu_entry_t *e);
 #endif
 
 #endif	/* __MTKSWITCHVAR_H__ */
