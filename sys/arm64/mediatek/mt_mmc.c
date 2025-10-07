@@ -459,7 +459,7 @@ mtk_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
        uint32_t dma_bd_addr;
        int i;
 
-       sc = (struct mtk_mmc_softc *)arg;
+       sc = (struct mt_mmc_softc *)arg;
        sc->sc_dma_map_err = err;
 
        if (err)
@@ -642,7 +642,7 @@ mtk_mmc_timeout(void *arg)
 {
        struct mt_mmc_softc *sc;
 
-       sc = (struct mtk_mmc_softc *)arg;
+       sc = (struct mt_mmc_softc *)arg;
        if (sc->sc_req != NULL) {
 	       device_printf(sc->sc_dev,
 		   "controller timeout, msdc_int %#x msdc_inten %#x\n",
