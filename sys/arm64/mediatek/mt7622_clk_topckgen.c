@@ -400,7 +400,7 @@ static struct clk_fixed_def fixed_clk[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	I_GATE(GATE(CLK_TOP_ETH_SEL, "eth_sel", "eth_sel_mux", CLK_CFG_0, 31),
+	I_GATE(CLK_TOP_ETH_SEL, "eth_sel", "eth_sel_mux", CLK_CFG_0, 31),
 	I_GATE(CLK_TOP_DDRPHYCFG_SEL, "ddrphycfg_sel", "ddrphycfg_sel_mux", CLK_CFG_0, 23),
 	I_GATE(CLK_TOP_MEM_SEL, "mem_sel", "mem_sel_mux", CLK_CFG_0, 15),
 	I_GATE(CLK_TOP_AXI_SEL, "axi_sel", "axi_sel_mux", CLK_CFG_0, 7),
