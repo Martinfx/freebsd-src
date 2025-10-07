@@ -13,7 +13,6 @@ device iicbus
 device iicbb
 
 # Ethernet, BPF and bridge support
-device          rt
 device          bpf
 device          if_bridge
 
