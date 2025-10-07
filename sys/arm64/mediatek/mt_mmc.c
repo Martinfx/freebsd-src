@@ -616,7 +616,7 @@ mtk_mmc_req_done(struct mt_mmc_softc *sc)
 static void
 mtk_mmc_req_ok(struct mt_mmc_softc *sc)
 {
-       struct mt_mmc_softc *cmd;
+       struct mmc_command *cmd;
 
        cmd = sc->sc_req->cmd;
 
