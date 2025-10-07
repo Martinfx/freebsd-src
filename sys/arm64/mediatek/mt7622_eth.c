@@ -35,10 +35,11 @@
 #include "opt_platform.h"
 
 #include <sys/cdefs.h>
-#include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/kenv.h>
 #include <sys/rman.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
