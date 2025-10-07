@@ -663,7 +663,7 @@ mtk_mmc_intr(void *arg)
        struct mmc_data *data;
        uint32_t rint;
 
-       sc = (struct mtk_mmc_softc *)arg;
+       sc = (struct mt_mmc_softc *)arg;
        MTK_MMC_LOCK(sc);
        rint  = MTK_MMC_READ_4(sc, MTK_MSDC_INT);
 #if defined(MTK_MMC_DEBUG)
