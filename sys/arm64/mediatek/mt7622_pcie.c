@@ -185,7 +185,7 @@ mt7622_pcie_attach(device_t dev) {
         device_printf(dev, "Cannot get 'pcie_irq' IRQ\n");
         return (ENXIO);
     }
-    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, ,
+    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->rid,
                                              RF_ACTIVE | RF_SHAREABLE);
     if (sc->pcie_irq_res == NULL) {
         device_printf(dev, "Cannot allocate 'pcie' IRQ resource\n");
