@@ -58,7 +58,7 @@
 #include "pcib_if.h"
 
 struct mt7622_pcie_softc {
-    struct pci_dw_softc dw_sc;
+    struct ofw_pci_softc	ofw_pci;
     device_t dev;
     struct resource *res_mem;
     int rid;
@@ -77,6 +77,51 @@ static int
 mt7622_pcie_sys_irq(void *arg)
 {
     return (FILTER_HANDLED);
+}
+
+static int
+mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ranges,
+                      int nranges)
+{
+    int i;
+
+    for (i = 0; i < nranges; i++) {
+        switch(ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) {
+            case OFW_PCI_PHYS_HI_SPACE_IO:
+                if (sc->io_range.size != 0) {
+                    device_printf(sc->dev,
+                                  "Duplicated IO range found in DT\n");
+                    return (ENXIO);
+                }
+                sc->io_range = ranges[i];
+                break;
+            case OFW_PCI_PHYS_HI_SPACE_MEM32:
+            case OFW_PCI_PHYS_HI_SPACE_MEM64:
+                if (ranges[i].pci_hi & OFW_PCI_PHYS_HI_PREFETCHABLE) {
+                    if (sc->pref_mem_range.size != 0) {
+                        device_printf(sc->dev,
+                                      "Duplicated memory range found "
+                                      "in DT\n");
+                        return (ENXIO);
+                    }
+                    sc->pref_mem_range = ranges[i];
+                } else {
+                    if (sc->mem_range.size != 0) {
+                        device_printf(sc->dev,
+                                      "Duplicated memory range found "
+                                      "in DT\n");
+                        return (ENXIO);
+                    }
+                    sc->mem_range = ranges[i];
+                }
+        }
+    }
+    if (sc->mem_range.size == 0) {
+        device_printf(sc->dev,
+                      " At least memory range should be defined in DT.\n");
+        return (ENXIO);
+    }
+    return (0);
 }
 
 static int
@@ -181,8 +226,17 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
+    error = mt7622_pcie_decode_ranges(sc, sc->ofw_pci.sc_range,
+                               sc->ofw_pci.sc_nrange);
+    if (error != 0)
+        goto out_full;
+
     bus_attach_children(dev);
     return (0);
+
+    out_full:
+        bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
+        fw_pcib_fini(dev);
 }
 
 static int
