@@ -133,6 +133,7 @@ mt7622_pcie_get_port(phandle_t node)
     if (ofw_bus_find_string_index(node, "reg-names", "port0", &idx) == 0) {
         return 0;
     }
+
     if (ofw_bus_find_string_index(node, "reg-names", "port1", &idx) == 0) {
         return 1;
     }
@@ -220,28 +221,60 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->sys_ck0)) {
-        device_printf(dev, "Can not get sys_ck0 clk\n");
-        return (ENXIO);
+    if(sc->port == 0) {
+        if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->sys_ck0)) {
+            device_printf(dev, "Can not get sys_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "ahb_ck0", &sc->ahb_ck0)) {
+            device_printf(dev, "Can not get ahb_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "aux_ck0", &sc->aux_ck0)) {
+            device_printf(dev, "Can not get aux_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "axi_ck0", &sc->axi_ck0)) {
+            device_printf(dev, "Can not get axi_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "obff_ck0", &sc->obff_ck0)) {
+            device_printf(dev, "Can not get obff_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "pipe_ck0", &sc->pipe_ck0)) {
+            device_printf(dev, "Can not get pipe_ck0 clk\n");
+            return (ENXIO);
+        }
     }
-    if (clk_get_by_ofw_name(dev, 0, "ahb_ck0", &sc->ahb_ck0)) {
-        device_printf(dev, "Can not get ahb_ck0 clk\n");
-        return (ENXIO);
+    elseif(sc->port == 1) {
+        if (clk_get_by_ofw_name(dev, 0, "sys_ck1", &sc->sys_ck0)) {
+            device_printf(dev, "Can not get sys_ck1 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "ahb_ck1", &sc->ahb_ck0)) {
+            device_printf(dev, "Can not get ahb_ck1 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "aux_ck1", &sc->aux_ck0)) {
+            device_printf(dev, "Can not get aux_ck1 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "axi_ck1", &sc->axi_ck0)) {
+            device_printf(dev, "Can not get axi_ck1 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "obff_ck1", &sc->obff_ck0)) {
+            device_printf(dev, "Can not get obff_ck0 clk\n");
+            return (ENXIO);
+        }
+        if (clk_get_by_ofw_name(dev, 0, "pipe_ck1", &sc->pipe_ck0)) {
+            device_printf(dev, "Can not get pipe_ck0 clk\n");
+            return (ENXIO);
+        }
     }
-    if (clk_get_by_ofw_name(dev, 0, "aux_ck0", &sc->aux_ck0)) {
-        device_printf(dev, "Can not get aux_ck0 clk\n");
-        return (ENXIO);
-    }
-    if (clk_get_by_ofw_name(dev, 0, "axi_ck0", &sc->axi_ck0)) {
-        device_printf(dev, "Can not get axi_ck0 clk\n");
-        return (ENXIO);
-    }
-    if (clk_get_by_ofw_name(dev, 0, "obff_ck0", &sc->obff_ck0)) {
-        device_printf(dev, "Can not get obff_ck0 clk\n");
-        return (ENXIO);
-    }
-    if (clk_get_by_ofw_name(dev, 0, "pipe_ck0", &sc->pipe_ck0)) {
-        device_printf(dev, "Can not get pipe_ck0 clk\n");
+    else {
+        device_printf(dev, "CLocks not found.\n");
         return (ENXIO);
     }
 
@@ -287,5 +320,4 @@ static device_method_t mt7622_pcie_methods[] = {
 
 DEFINE_CLASS_1(pcib, mt7622_pcie_driver, mt7622_pcie_methods,
 sizeof(struct mt7622_pcie_softc), ofw_pcib_driver);
-DRIVER_MODULE(mt7622_pcie, simplebus, mt7622_pcie_driver, NULL, NULL
-);
+DRIVER_MODULE(mt7622_pcie, simplebus, mt7622_pcie_driver, NULL, NULL);
