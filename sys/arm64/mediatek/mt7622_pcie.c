@@ -193,7 +193,7 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = bus_setup_intr(dev, sc->pcie_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
-                        mt_pcie_sys_irq, NULL, sc, &sc->pcie_irq_cookie);
+                           mt7622_pcie_sys_irq, NULL, sc, &sc->pcie_irq_cookie);
     if (error != 0) {
         device_printf(dev, "cannot setup client interrupt handler\n");
         return (ENXIO);
