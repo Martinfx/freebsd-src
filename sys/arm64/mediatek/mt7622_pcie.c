@@ -185,7 +185,7 @@ mt7622_pcie_attach(device_t dev) {
         device_printf(dev, "Cannot get 'pcie_irq' IRQ\n");
         return (ENXIO);
     }
-    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->rid,
+    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, ,
                                              RF_ACTIVE | RF_SHAREABLE);
     if (sc->pcie_irq_res == NULL) {
         device_printf(dev, "Cannot allocate 'pcie' IRQ resource\n");
@@ -193,7 +193,7 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = bus_setup_intr(dev, sc->pcie_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
-                           mt7622_pcie_sys_irq, NULL, sc, &sc->pcie_irq_cookie);
+                        mt_pcie_sys_irq, NULL, sc, &sc->pcie_irq_cookie);
     if (error != 0) {
         device_printf(dev, "cannot setup client interrupt handler\n");
         return (ENXIO);
@@ -231,8 +231,9 @@ mt7622_pcie_attach(device_t dev) {
 
     error = mt7622_pcie_decode_ranges(sc, sc->ofw_pci.sc_range,
                                sc->ofw_pci.sc_nrange);
-    if (error != 0)
-        goto out_full;
+    if (error != 0) {
+        bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
+    }
 
     bus_attach_children(dev);
     return (0);
@@ -262,5 +263,5 @@ static device_method_t mt7622_pcie_methods[] = {
 };
 
 DEFINE_CLASS_1(pcib, mt7622_pcie_driver, mt7622_pcie_methods,
-sizeof(struct mt7622_pcie_softc), pci_dw_driver);
+sizeof(struct mt7622_pcie_softc), ofw_pcib_driver);
 DRIVER_MODULE(mt7622_pcie, simplebus, mt7622_pcie_driver, NULL, NULL);
