@@ -65,7 +65,7 @@ struct mt7622_pcie_softc {
     struct resource	*pcie_irq_res;
     void *pcie_irq_cookie;
     phandle_t node;
-    clk_t ays_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
+    clk_t sys_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
     struct ofw_pci_range	mem_range;
     struct ofw_pci_range	pref_mem_range;
     struct ofw_pci_range	io_range;
@@ -131,8 +131,8 @@ static int
 mt7622_pcie_detach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
 
-    if (sc->ays_ck0) {
-        clk_release(sc->ays_ck0);
+    if (sc->sys_ck0) {
+        clk_release(sc->sys_ck0);
     }
     if (sc->ahb_ck0) {
         clk_release(sc->ahb_ck0);
@@ -199,8 +199,8 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    if (clk_get_by_ofw_name(dev, 0, "ays_ck0", &sc->ays_ck0)) {
-        device_printf(dev, "Can not get ays_ck0 clk\n");
+    if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->ays_ck0)) {
+        device_printf(dev, "Can not get sys_ck0 clk\n");
         return (ENXIO);
     }
     if (clk_get_by_ofw_name(dev, 0, "ahb_ck0", &sc->ahb_ck0)) {
