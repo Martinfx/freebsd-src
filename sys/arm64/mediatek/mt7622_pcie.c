@@ -66,6 +66,9 @@ struct mt7622_pcie_softc {
     void *pcie_irq_cookie;
     phandle_t node;
     clk_t ays_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
+    struct ofw_pci_range	mem_range;
+    struct ofw_pci_range	pref_mem_range;
+    struct ofw_pci_range	io_range;
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -158,7 +161,7 @@ mt7622_pcie_detach(device_t dev) {
 static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    int error;
+    int error = 0;
 
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
@@ -177,12 +180,12 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = ofw_bus_find_string_index(sc->node, "interrupt-names",
-                                   "pcie_irq", &rid);
+                                   "pcie_irq", &sc->rid);
     if (error != 0) {
         device_printf(dev, "Cannot get 'pcie_irq' IRQ\n");
         return (ENXIO);
     }
-    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid,
+    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->rid,
                                              RF_ACTIVE | RF_SHAREABLE);
     if (sc->pcie_irq_res == NULL) {
         device_printf(dev, "Cannot allocate 'pcie' IRQ resource\n");
@@ -233,10 +236,6 @@ mt7622_pcie_attach(device_t dev) {
 
     bus_attach_children(dev);
     return (0);
-
-    out_full:
-        bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
-        fw_pcib_fini(dev);
 }
 
 static int
