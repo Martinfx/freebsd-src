@@ -58,38 +58,37 @@
 #include "pcib_if.h"
 
 struct mt7622_pcie_softc {
-    struct ofw_pci_softc	ofw_pci;
+    struct ofw_pci_softc ofw_pci;
     device_t dev;
     struct resource *res_mem;
     int rid;
-    struct resource	*pcie_irq_res;
+    struct resource *pcie_irq_res;
     void *pcie_irq_cookie;
     phandle_t node;
     clk_t sys_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
-    struct ofw_pci_range	mem_range;
-    struct ofw_pci_range	pref_mem_range;
-    struct ofw_pci_range	io_range;
+    struct ofw_pci_range mem_range;
+    struct ofw_pci_range pref_mem_range;
+    struct ofw_pci_range io_range;
+    int port;
 };
 
 static struct ofw_compat_data compat_data[] = {
-        {"mediatek,mt7622-pcie",	1},
-        {NULL,				0}
+        {"mediatek,mt7622-pcie", 1},
+        {NULL,                   0}
 };
 
 static int
-mt7622_pcie_sys_irq(void *arg)
-{
+mt7622_pcie_sys_irq(void *arg) {
     return (FILTER_HANDLED);
 }
 
 static int
 mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ranges,
-                      int nranges)
-{
+                          int nranges) {
     int i;
 
     for (i = 0; i < nranges; i++) {
-        switch(ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) {
+        switch (ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) {
             case OFW_PCI_PHYS_HI_SPACE_IO:
                 if (sc->io_range.size != 0) {
                     device_printf(sc->dev,
@@ -166,9 +165,11 @@ mt7622_pcie_attach(device_t dev) {
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
 
-    if ((error = ofw_bus_find_string_index(sc->node, "reg-names", "port0",
-                                           &sc->rid))) {
-        device_printf(dev, "Cannot get port0 memory: %d\n", error);
+    error = ofw_bus_find_string_index(sc->node, "reg-names",
+                                      sc->port == 0 ? "port0" : "port1",
+                                      &sc->rid);
+    if(error != 0) {
+        device_printf(dev, "Cannot get port memory: %d\n", error);
         return (ENXIO);
     }
 
@@ -180,13 +181,13 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = ofw_bus_find_string_index(sc->node, "interrupt-names",
-                                   "pcie_irq", &sc->rid);
+                                      "pcie_irq", &sc->rid);
     if (error != 0) {
         device_printf(dev, "Cannot get 'pcie_irq' IRQ\n");
         return (ENXIO);
     }
     sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->rid,
-                                             RF_ACTIVE | RF_SHAREABLE);
+                                              RF_ACTIVE | RF_SHAREABLE);
     if (sc->pcie_irq_res == NULL) {
         device_printf(dev, "Cannot allocate 'pcie' IRQ resource\n");
         return (ENXIO);
@@ -230,9 +231,10 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = mt7622_pcie_decode_ranges(sc, sc->ofw_pci.sc_range,
-                               sc->ofw_pci.sc_nrange);
+                                      sc->ofw_pci.sc_nrange);
     if (error != 0) {
         bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
+        return (ENXIO);
     }
 
     bus_attach_children(dev);
@@ -240,21 +242,22 @@ mt7622_pcie_attach(device_t dev) {
 }
 
 static int
-mt7622_pcie_probe(device_t dev)
-{
-    if (!ofw_bus_status_okay(dev))
+mt7622_pcie_probe(device_t dev) {
+    if (!ofw_bus_status_okay(dev)) {
         return (ENXIO);
-    if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data)
+    }
+    if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data) {
         return (ENXIO);
+    }
     device_set_desc(dev, "Mediatek 7622 PCI controller");
     return (BUS_PROBE_DEFAULT);
 }
 
 static device_method_t mt7622_pcie_methods[] = {
         /* Device interface */
-        DEVMETHOD(device_probe,		mt7622_pcie_probe),
-        DEVMETHOD(device_attach,	mt7622_pcie_attach),
-        DEVMETHOD(device_detach,	mt7622_pcie_detach),
+        DEVMETHOD(device_probe, mt7622_pcie_probe),
+        DEVMETHOD(device_attach, mt7622_pcie_attach),
+        DEVMETHOD(device_detach, mt7622_pcie_detach),
 
         /* PCI DW interface */
         //DEVMETHOD(pci_dw_get_link,	rk3568_pcie_get_link),
@@ -264,4 +267,5 @@ static device_method_t mt7622_pcie_methods[] = {
 
 DEFINE_CLASS_1(pcib, mt7622_pcie_driver, mt7622_pcie_methods,
 sizeof(struct mt7622_pcie_softc), ofw_pcib_driver);
-DRIVER_MODULE(mt7622_pcie, simplebus, mt7622_pcie_driver, NULL, NULL);
+DRIVER_MODULE(mt7622_pcie, simplebus, mt7622_pcie_driver, NULL, NULL
+);
