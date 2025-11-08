@@ -199,7 +199,7 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->ays_ck0)) {
+    if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->sys_ck0)) {
         device_printf(dev, "Can not get sys_ck0 clk\n");
         return (ENXIO);
     }
