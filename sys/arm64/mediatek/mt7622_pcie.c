@@ -127,6 +127,20 @@ mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ra
 }
 
 static int
+mt7622_pcie_get_port(phandle_t node)
+{
+    int idx;
+    if (ofw_bus_find_string_index(node, "reg-names", "port0", &idx) == 0) {
+        return 0;
+    }
+    if (ofw_bus_find_string_index(node, "reg-names", "port1", &idx) == 0) {
+        return 1;
+    }
+
+    return -1;
+}
+
+static int
 mt7622_pcie_detach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
 
@@ -164,6 +178,12 @@ mt7622_pcie_attach(device_t dev) {
 
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
+
+    sc->port = mt7622_pcie_get_port(sc->node);
+    if (sc->port == -1) {
+        device_printf(dev, "Cannot determine port (reg-names missing)\n");
+        return ENXIO;
+    }
 
     error = ofw_bus_find_string_index(sc->node, "reg-names",
                                       sc->port == 0 ? "port0" : "port1",
