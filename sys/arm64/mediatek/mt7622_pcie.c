@@ -226,24 +226,65 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(dev, "Can not get sys_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->sys_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable sys_ck0 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "ahb_ck0", &sc->ahb_ck0)) {
             device_printf(dev, "Can not get ahb_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->ahb_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable ahb_ck0 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "aux_ck0", &sc->aux_ck0)) {
             device_printf(dev, "Can not get aux_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->aux_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable aux_ck0 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "axi_ck0", &sc->axi_ck0)) {
             device_printf(dev, "Can not get axi_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->axi_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable axi_ck0 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "obff_ck0", &sc->obff_ck0)) {
             device_printf(dev, "Can not get obff_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->obff_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable obff_ck0 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "pipe_ck0", &sc->pipe_ck0)) {
             device_printf(dev, "Can not get pipe_ck0 clk\n");
+            return (ENXIO);
+        }
+
+        error = clk_enable(sc->pipe_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable pipe_ck0 clock\n");
             return (ENXIO);
         }
     }
@@ -252,24 +293,65 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(dev, "Can not get sys_ck1 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->sys_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable sys_ck1 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "ahb_ck1", &sc->ahb_ck0)) {
             device_printf(dev, "Can not get ahb_ck1 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->ahb_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable ahb_ck1 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "aux_ck1", &sc->aux_ck0)) {
             device_printf(dev, "Can not get aux_ck1 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->aux_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable aux_ck1 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "axi_ck1", &sc->axi_ck0)) {
             device_printf(dev, "Can not get axi_ck1 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->axi_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable axi_ck1 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "obff_ck1", &sc->obff_ck0)) {
             device_printf(dev, "Can not get obff_ck0 clk\n");
             return (ENXIO);
         }
+
+        error = clk_enable(sc->obff_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable obff_ck1 clock\n");
+            return (ENXIO);
+        }
+
         if (clk_get_by_ofw_name(dev, 0, "pipe_ck1", &sc->pipe_ck0)) {
             device_printf(dev, "Can not get pipe_ck0 clk\n");
+            return (ENXIO);
+        }
+
+        error = clk_enable(sc->pipe_ck0);
+        if (error != 0) {
+            device_printf(sc->dev, "could not enable pipe_ck1 clock\n");
             return (ENXIO);
         }
     }
