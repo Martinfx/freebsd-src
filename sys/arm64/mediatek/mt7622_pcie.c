@@ -62,6 +62,7 @@ struct mt7622_pcie_softc {
     device_t dev;
     struct resource *res_mem;
     int rid;
+    int irq_rid;
     struct resource *pcie_irq_res;
     void *pcie_irq_cookie;
     phandle_t node;
@@ -202,12 +203,12 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     error = ofw_bus_find_string_index(sc->node, "interrupt-names",
-                                      "pcie_irq", &sc->rid);
+                                      "pcie_irq", &sc->irq_rid);
     if (error != 0) {
         device_printf(dev, "Cannot get 'pcie_irq' IRQ\n");
         return (ENXIO);
     }
-    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->rid,
+    sc->pcie_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->irq_rid,
                                               RF_ACTIVE | RF_SHAREABLE);
     if (sc->pcie_irq_res == NULL) {
         device_printf(dev, "Cannot allocate 'pcie' IRQ resource\n");
