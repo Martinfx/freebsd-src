@@ -154,7 +154,7 @@ mt7622_pcie_init_soc(device_t dev)
     val &= ~PCIE_LINKDOWN_RST_EN;
     val &= ~(PCIE_PHY_RSTB | PCIE_PIPE_SRSTB | PCIE_MAC_SRSTB | PCIE_CRSTB);
     val &= ~PCIE_PERSTB;
-    bus_write_4(sc->res_mem, PCIE_RST_CTRL, value);
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
     DELAY(1000);
 
     return 0;
