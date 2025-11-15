@@ -68,9 +68,12 @@
 #define MTK_LINK_TIMEOUT_US       2000000
 #define MTK_LINK_POLL_US          1000
 
-#define PCIE_CONF_VEND_ID	0x100
-#define PCIE_CONF_DEVICE_ID	0x102
-#define PCIE_CONF_CLASS_ID	0x106
+#define PCIE_CONF_VEND_ID	    0x100
+#define PCIE_CONF_DEVICE_ID	    0x102
+#define PCIE_CONF_CLASS_ID	    0x106
+
+#define PCI_VENDOR_ID_MEDIATEK		0x14c3
+#define PCI_CLASS_BRIDGE_PCI		0x0604
 
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
