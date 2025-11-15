@@ -158,39 +158,31 @@ mt7622_pcie_port_start(device_t dev, int port) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     uint64_t waited;
 
-    /* Link-down reset off */
     uint32_t val;
-    val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
-    val &= ~PCIE_LINKDOWN_RST_EN;
-    val &= ~(PCIE_PHY_RSTB | PCIE_PIPE_SRSTB | PCIE_MAC_SRSTB | PCIE_CRSTB);
-    val &= ~PCIE_PERSTB;
-    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(10000);
-
-    /* 2) LTSSM + ASPM L1 v PCIE_SYS_CFG_V2 */
     val = bus_read_4(sc->res_mem, PCIE_SYS_CFG_V2);
     val |= PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port);
     bus_write_4(sc->res_mem, PCIE_SYS_CFG_V2, val);
+
+    /* Assert all reset signals */
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, 0x0);
+
+    /* Assert all reset signals */
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
+
+    /*Described in PCIe CEM specification sections 2.2 (PERST# Signal) and
+    * 2.2.1 (Initial Power-Up (G3 to S0))*/
     DELAY(1000);
 
-    /* 3) Reset sekvence: PHY -> PIPE -> MAC+CORE -> PERST# */
+    /* De-assert PHY, PE, PIPE, MAC and configuration reset	*/
     val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
-    val |= PCIE_PHY_RSTB;
+    val |= PCIE_PHY_RSTB | PCIE_PERSTB | PCIE_PIPE_SRSTB |
+           PCIE_MAC_SRSTB | PCIE_CRSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000);
 
-    val |= PCIE_PIPE_SRSTB;
-    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000);
-
-    val |= PCIE_MAC_SRSTB | PCIE_CRSTB;
-    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000);
-
-    val |= PCIE_PERSTB;
-    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(10000);
-
+    /* Set up vendor ID and class code */
+    bus_write_4(sc->res_mem, PCIE_CONF_VEND_ID, PCI_VENDOR_ID_MEDIATEK);
+    bus_write_4(sc->res_mem, PCIE_CONF_CLASS_ID, PCI_CLASS_BRIDGE_PCI);
+    
     /* 4) Poll na LINK UP */
     for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
         val = bus_read_4(sc->res_mem, PCIE_LINK_STATUS_V2);
