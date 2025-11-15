@@ -78,7 +78,7 @@
 #define PCI_CLASS_BRIDGE_PCI		0x0604
 
 struct mt7622_pcie_softc {
-    ofw_pci_softc ofw_pci;
+    struct ofw_pci_softc ofw_pci;
     device_t dev;
     struct resource *res_mem;
     int rid;
@@ -87,9 +87,9 @@ struct mt7622_pcie_softc {
     void *pcie_irq_cookie;
     phandle_t node;
     clk_t sys_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
-    struct ofw_pci_range mem_range;
     struct ofw_pci_range pref_mem_range;
     struct ofw_pci_range io_range;
+    struct ofw_pci_range *mem_ranges;
     int	num_mem_ranges;
     int port;
     bus_dma_tag_t dmat;
@@ -141,7 +141,7 @@ static int
 mt7622_pcie_port_start(device_t dev, int port)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    int count, error;
+    int count; //, error;
     bool status;
 
     uint32_t val;
