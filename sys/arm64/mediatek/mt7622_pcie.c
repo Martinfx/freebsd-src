@@ -68,6 +68,10 @@
 #define MTK_LINK_TIMEOUT_US       2000000
 #define MTK_LINK_POLL_US          1000
 
+#define PCIE_CONF_VEND_ID	0x100
+#define PCIE_CONF_DEVICE_ID	0x102
+#define PCIE_CONF_CLASS_ID	0x106
+
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
     device_t dev;
@@ -182,7 +186,7 @@ mt7622_pcie_port_start(device_t dev, int port) {
     /* Set up vendor ID and class code */
     bus_write_4(sc->res_mem, PCIE_CONF_VEND_ID, PCI_VENDOR_ID_MEDIATEK);
     bus_write_4(sc->res_mem, PCIE_CONF_CLASS_ID, PCI_CLASS_BRIDGE_PCI);
-    
+
     /* 4) Poll na LINK UP */
     for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
         val = bus_read_4(sc->res_mem, PCIE_LINK_STATUS_V2);
