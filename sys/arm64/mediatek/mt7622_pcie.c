@@ -51,13 +51,23 @@
 #include <dev/ofw/ofw_bus.h>
 #include "pcib_if.h"
 
-#define  PCIE_RST_CTRL            0x510
-#define  PCIE_PHY_RSTB            (1U << 0)
-#define  PCIE_PIPE_SRSTB          (1U << 1)
-#define  PCIE_MAC_SRSTB           (1U << 2)
-#define  PCIE_CRSTB               (1U << 3)
-#define  PCIE_PERSTB              (1U << 8)
-#define  PCIE_LINKDOWN_RST_EN     (7U << 13)
+#define PCIE_SYS_CFG_V2          0x000
+#define PCIE_CSR_LTSSM_EN(p)     (1U << (0 + (p) * 8))
+#define PCIE_CSR_ASPM_L1_EN(p)   (1U << (1 + (p) * 8))
+
+#define PCIE_RST_CTRL            0x510
+#define PCIE_PHY_RSTB            (1U << 0)
+#define PCIE_PIPE_SRSTB          (1U << 1)
+#define PCIE_MAC_SRSTB           (1U << 2)
+#define PCIE_CRSTB               (1U << 3)
+#define PCIE_PERSTB              (1U << 8)
+#define PCIE_LINKDOWN_RST_EN     (7U << 13)
+
+#define PCIE_LINK_STATUS_V2       0x804
+#define PCIE_PORT_LINKUP_V2       (1U << 10)
+#define MTK_LINK_TIMEOUT_US       2000000
+#define MTK_LINK_POLL_US          1000
+
 
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
@@ -145,9 +155,10 @@ mt7622_pcie_get_port(phandle_t node)
 }
 
 static int
-mt7622_pcie_init_soc(device_t dev)
-{
+mt7622_pcie_port_start(device_t dev, int port) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    uint64_t waited;
+
     /* Link-down reset off */
     uint32_t val;
     val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
@@ -157,7 +168,44 @@ mt7622_pcie_init_soc(device_t dev)
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
     DELAY(1000);
 
-    return 0;
+    /* 2) LTSSM + ASPM L1 v PCIE_SYS_CFG_V2 */
+    val = bus_read_4(sc->res_mem, PCIE_SYS_CFG_V2);
+    val |= PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port);
+    bus_write_4(sc->res_mem, PCIE_SYS_CFG_V2, val);
+    DELAY(1000);
+
+    /* 3) Reset sekvence: PHY -> PIPE -> MAC+CORE -> PERST# */
+    val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
+    val |= PCIE_PHY_RSTB;
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
+    DELAY(1000)
+
+    val |= PCIE_PIPE_SRSTB;
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
+    DELAY(1000);
+
+    val |= PCIE_MAC_SRSTB | PCIE_CRSTB;
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
+    DELAY(1000);
+
+    val |= PCIE_PERSTB;
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
+    DELAY(1000);
+
+    /* 4) Poll na LINK UP */
+    for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
+        val = bus_write_4(sc->res_mem, PCIE_LINK_STATUS_V2);
+        if (v & PCIE_PORT_LINKUP_V2) {
+            return (0);
+        }
+
+        DELAY(MTK_LINK_POLL_US);
+    }
+
+    device_printf(sc->dev, "PCIe port%d: link-up timeout (status=0x%08x)\n",
+                  port, val);
+
+    return (ETIMEDOUT);
 }
 
 static int
@@ -397,9 +445,10 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    error = mt7622_pcie_init_soc(dev);
-    if(error != 0) {
-
+    error = mt7622_pcie_port_start(dev, sc->port);
+    if (error != 0) {
+        device_printf(dev, "port%d: link bring-up failed: %d\n", sc->port, error);
+        return (ENXIO);
     }
 
     error = ofw_pcib_init(dev);
