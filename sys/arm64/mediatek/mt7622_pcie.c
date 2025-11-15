@@ -68,7 +68,6 @@
 #define MTK_LINK_TIMEOUT_US       2000000
 #define MTK_LINK_POLL_US          1000
 
-
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
     device_t dev;
@@ -166,7 +165,7 @@ mt7622_pcie_port_start(device_t dev, int port) {
     val &= ~(PCIE_PHY_RSTB | PCIE_PIPE_SRSTB | PCIE_MAC_SRSTB | PCIE_CRSTB);
     val &= ~PCIE_PERSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000);
+    DELAY(10000);
 
     /* 2) LTSSM + ASPM L1 v PCIE_SYS_CFG_V2 */
     val = bus_read_4(sc->res_mem, PCIE_SYS_CFG_V2);
@@ -190,7 +189,7 @@ mt7622_pcie_port_start(device_t dev, int port) {
 
     val |= PCIE_PERSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000);
+    DELAY(10000);
 
     /* 4) Poll na LINK UP */
     for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
