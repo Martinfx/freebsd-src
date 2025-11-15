@@ -178,7 +178,7 @@ mt7622_pcie_port_start(device_t dev, int port) {
     val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
     val |= PCIE_PHY_RSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
-    DELAY(1000)
+    DELAY(1000);
 
     val |= PCIE_PIPE_SRSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
@@ -194,8 +194,8 @@ mt7622_pcie_port_start(device_t dev, int port) {
 
     /* 4) Poll na LINK UP */
     for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
-        val = bus_write_4(sc->res_mem, PCIE_LINK_STATUS_V2);
-        if (v & PCIE_PORT_LINKUP_V2) {
+        val = bus_read_4(sc->res_mem, PCIE_LINK_STATUS_V2);
+        if (val & PCIE_PORT_LINKUP_V2) {
             return (0);
         }
 
