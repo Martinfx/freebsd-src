@@ -161,9 +161,27 @@ mt7622_pcie_get_port(phandle_t node)
 }
 
 static int
-mt7622_pcie_port_start(device_t dev, int port) {
+mt7622_pcie_get_link(device_t dev, bool *status)
+{
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint64_t waited;
+    uint32_t val;
+
+    val = bus_read_4(sc->res_mem, PCIE_LINK_STATUS_V2);
+    if (val & PCIE_PORT_LINKUP_V2) {
+        *status = true;
+    }
+    else {
+        *status = false;
+    }
+
+    return (0);
+}
+
+static int
+mt7622_pcie_port_start(device_t dev, int port)
+{
+    struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    uint64_t count;
 
     uint32_t val;
     val = bus_read_4(sc->res_mem, PCIE_SYS_CFG_V2);
@@ -173,7 +191,7 @@ mt7622_pcie_port_start(device_t dev, int port) {
     /* Assert all reset signals */
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, 0x0);
 
-    /* Assert all reset signals */
+    /* Enable PCIe link down reset */
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
 
     /*Described in PCIe CEM specification sections 2.2 (PERST# Signal) and
@@ -190,20 +208,26 @@ mt7622_pcie_port_start(device_t dev, int port) {
     //bus_write_4(sc->res_mem, PCIE_CONF_VEND_ID, PCI_VENDOR_ID_MEDIATEK);
     //bus_write_4(sc->res_mem, PCIE_CONF_CLASS_ID, PCI_CLASS_BRIDGE_PCI);
 
-    /* 4) Poll na LINK UP */
-    for (waited = 0; waited < MTK_LINK_TIMEOUT_US; waited += MTK_LINK_POLL_US) {
-        val = bus_read_4(sc->res_mem, PCIE_LINK_STATUS_V2);
-        if (val & PCIE_PORT_LINKUP_V2) {
-            return (0);
+    /* Wait for link up/stable */
+    for (count = 20; count; count--) {
+        mt7622_pcie_get_link(dev, &status);
+        if (status) {
+            break;
         }
 
-        DELAY(MTK_LINK_POLL_US);
+        DELAY(100000);
+        if (count == 0) {
+            device_printf(sc->dev, "PCIe port%d: link-up timeout (status=0x%08x)\n",
+                          port, val);
+            return (ENXIO);
+        }
     }
 
-    device_printf(sc->dev, "PCIe port%d: link-up timeout (status=0x%08x)\n",
-                  port, val);
+    if ((err = pci_dw_init(dev))) {
+        return (ENXIO);
+    }
 
-    return (ETIMEDOUT);
+    return (0);
 }
 
 static int
