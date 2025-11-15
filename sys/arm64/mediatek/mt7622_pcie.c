@@ -45,10 +45,12 @@
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
 #include <dev/ofw/ofwpci.h>
+
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
-#include <dev/ofw/ofw_bus.h>
+#include <dev/pci/pci_dw.h>
+
 #include "pcib_if.h"
 
 #define PCIE_SYS_CFG_V2          0x000
@@ -181,7 +183,8 @@ static int
 mt7622_pcie_port_start(device_t dev, int port)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint64_t count;
+    int count, error;
+    bool status;
 
     uint32_t val;
     val = bus_read_4(sc->res_mem, PCIE_SYS_CFG_V2);
@@ -223,9 +226,12 @@ mt7622_pcie_port_start(device_t dev, int port)
         }
     }
 
-    if ((err = pci_dw_init(dev))) {
+    if ((error = pci_dw_init(dev))) {
         return (ENXIO);
     }
+
+    /* Delay to have things settle */
+    DELAY(100000);
 
     return (0);
 }
