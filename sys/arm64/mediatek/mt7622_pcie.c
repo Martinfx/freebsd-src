@@ -557,6 +557,13 @@ static device_method_t mt7622_pcie_methods[] = {
         /* PCI DW interface */
         DEVMETHOD(pci_dw_get_link,	mt7622_pcie_get_link),
 
+        /* OFW bus interface */
+        DEVMETHOD(ofw_bus_get_compat,	ofw_bus_gen_get_compat),
+        DEVMETHOD(ofw_bus_get_model,	ofw_bus_gen_get_model),
+        DEVMETHOD(ofw_bus_get_name,	ofw_bus_gen_get_name),
+        DEVMETHOD(ofw_bus_get_node,	ofw_bus_gen_get_node),
+        DEVMETHOD(ofw_bus_get_type,	ofw_bus_gen_get_type),
+
         DEVMETHOD_END
 };
 
