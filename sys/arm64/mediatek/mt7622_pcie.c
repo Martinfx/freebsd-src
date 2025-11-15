@@ -41,10 +41,6 @@
 #include <machine/resource.h>
 
 #include <dev/clk/clk.h>
-#include <dev/hwreset/hwreset.h>
-#include <dev/phy/phy.h>
-#include <dev/regulator/regulator.h>
-#include <dev/gpio/gpiobusvar.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
@@ -52,10 +48,16 @@
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
-
 #include <dev/ofw/ofw_bus.h>
-
 #include "pcib_if.h"
+
+#define  PCIE_RST_CTRL            0x510
+#define  PCIE_PHY_RSTB            (1U << 0)
+#define  PCIE_PIPE_SRSTB          (1U << 1)
+#define  PCIE_MAC_SRSTB           (1U << 2)
+#define  PCIE_CRSTB               (1U << 3)
+#define  PCIE_PERSTB              (1U << 8)
+#define  PCIE_LINKDOWN_RST_EN     (7U << 13)
 
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
@@ -143,32 +145,66 @@ mt7622_pcie_get_port(phandle_t node)
 }
 
 static int
+mt7622_pcie_init_soc(device_t dev)
+{
+    struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    /* Link-down reset off */
+    uint32_t val;
+    val = bus_read_4(sc->res_mem, PCIE_RST_CTRL);
+    val &= ~PCIE_LINKDOWN_RST_EN;
+    val &= ~(PCIE_PHY_RSTB | PCIE_PIPE_SRSTB | PCIE_MAC_SRSTB | PCIE_CRSTB);
+    val &= ~PCIE_PERSTB;
+    bus_write_4(sc->res_mem, PCIE_RST_CTRL, value);
+    DELAY(1000);
+
+    return 0;
+}
+
+static int
 mt7622_pcie_detach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
 
     if (sc->sys_ck0) {
+        clk_disable(sc->sys_ck0);
         clk_release(sc->sys_ck0);
     }
+
     if (sc->ahb_ck0) {
+        clk_disable(sc->ahb_ck0);
         clk_release(sc->ahb_ck0);
     }
+
     if (sc->aux_ck0) {
+        clk_disable(sc->aux_ck0);
         clk_release(sc->aux_ck0);
     }
+
     if (sc->axi_ck0) {
+        clk_disable(sc->axi_ck0);
         clk_release(sc->axi_ck0);
     }
+
     if (sc->obff_ck0) {
+        clk_disable(sc->obff_ck0);
         clk_release(sc->obff_ck0);
     }
-    if (sc->pcie_irq_res) {
-        bus_release_resource(dev, SYS_RES_IRQ, sc->rid,
-                             sc->pcie_irq_res);
+
+    if (sc->pcie_irq_cookie != NULL) {
+        bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
+        sc->pcie_irq_cookie = NULL;
     }
+
     if (sc->res_mem) {
         bus_release_resource(dev, SYS_RES_MEMORY, sc->rid,
                              sc->res_mem);
     }
+
+    if (sc->pcie_irq_res) {
+        bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid,
+                             sc->pcie_irq_res);
+    }
+
+    ofw_pcib_fini(sc->dev);
 
     return (0);
 }
@@ -361,6 +397,11 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
+    error = mt7622_pcie_init_soc(dev);
+    if(error != 0) {
+
+    }
+
     error = ofw_pcib_init(dev);
     if (error != 0) {
         return (ENXIO);
@@ -394,6 +435,9 @@ static device_method_t mt7622_pcie_methods[] = {
         DEVMETHOD(device_probe, mt7622_pcie_probe),
         DEVMETHOD(device_attach, mt7622_pcie_attach),
         DEVMETHOD(device_detach, mt7622_pcie_detach),
+        DEVMETHOD(device_shutdown, bus_generic_shutdown),
+        DEVMETHOD(device_suspend, bus_generic_suspend),
+        DEVMETHOD(device_resume, bus_generic_resume),
 
         /* PCI DW interface */
         //DEVMETHOD(pci_dw_get_link,	rk3568_pcie_get_link),
