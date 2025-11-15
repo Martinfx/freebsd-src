@@ -78,19 +78,21 @@
 #define PCI_CLASS_BRIDGE_PCI		0x0604
 
 struct mt7622_pcie_softc {
-    struct ofw_pci_softc ofw_pci;
+    ofw_pci_softc ofw_pci;
     device_t dev;
     struct resource *res_mem;
     int rid;
-    int irq_rid;
     struct resource *pcie_irq_res;
+    int irq_rid;
     void *pcie_irq_cookie;
     phandle_t node;
     clk_t sys_ck0, ahb_ck0, aux_ck0, axi_ck0, obff_ck0, pipe_ck0;
     struct ofw_pci_range mem_range;
     struct ofw_pci_range pref_mem_range;
     struct ofw_pci_range io_range;
+    int	num_mem_ranges;
     int port;
+    bus_dma_tag_t dmat;
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -101,50 +103,6 @@ static struct ofw_compat_data compat_data[] = {
 static int
 mt7622_pcie_sys_irq(void *arg) {
     return (FILTER_HANDLED);
-}
-
-static int
-mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ranges,
-                          int nranges) {
-    int i;
-
-    for (i = 0; i < nranges; i++) {
-        switch (ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) {
-            case OFW_PCI_PHYS_HI_SPACE_IO:
-                if (sc->io_range.size != 0) {
-                    device_printf(sc->dev,
-                                  "Duplicated IO range found in DT\n");
-                    return (ENXIO);
-                }
-                sc->io_range = ranges[i];
-                break;
-            case OFW_PCI_PHYS_HI_SPACE_MEM32:
-            case OFW_PCI_PHYS_HI_SPACE_MEM64:
-                if (ranges[i].pci_hi & OFW_PCI_PHYS_HI_PREFETCHABLE) {
-                    if (sc->pref_mem_range.size != 0) {
-                        device_printf(sc->dev,
-                                      "Duplicated memory range found "
-                                      "in DT\n");
-                        return (ENXIO);
-                    }
-                    sc->pref_mem_range = ranges[i];
-                } else {
-                    if (sc->mem_range.size != 0) {
-                        device_printf(sc->dev,
-                                      "Duplicated memory range found "
-                                      "in DT\n");
-                        return (ENXIO);
-                    }
-                    sc->mem_range = ranges[i];
-                }
-        }
-    }
-    if (sc->mem_range.size == 0) {
-        device_printf(sc->dev,
-                      " At least memory range should be defined in DT.\n");
-        return (ENXIO);
-    }
-    return (0);
 }
 
 static int
@@ -226,9 +184,9 @@ mt7622_pcie_port_start(device_t dev, int port)
         }
     }
 
-    if ((error = pci_dw_init(dev))) {
+    /*if ((error = pci_dw_init(dev))) {
         return (ENXIO);
-    }
+    }*/
 
     /* Delay to have things settle */
     DELAY(100000);
@@ -237,7 +195,74 @@ mt7622_pcie_port_start(device_t dev, int port)
 }
 
 static int
-mt7622_pcie_detach(device_t dev) {
+mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ranges, int nranges)
+{
+    int i, nmem, rv;
+
+    nmem = 0;
+    for (i = 0; i < nranges; i++) {
+        if ((ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) ==
+            OFW_PCI_PHYS_HI_SPACE_MEM32)
+            ++nmem;
+    }
+
+    sc->mem_ranges = malloc(nmem * sizeof(*sc->mem_ranges), M_DEVBUF,
+                            M_WAITOK);
+    sc->num_mem_ranges = nmem;
+
+    nmem = 0;
+    for (i = 0; i < nranges; i++) {
+        if ((ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK)  ==
+            OFW_PCI_PHYS_HI_SPACE_IO) {
+            if (sc->io_range.size != 0) {
+                device_printf(sc->dev,
+                              "Duplicated IO range found in DT\n");
+                rv = ENXIO;
+                goto out;
+            }
+
+            sc->io_range = ranges[i];
+            if (sc->io_range.size > UINT32_MAX) {
+                device_printf(sc->dev,
+                              "ATU IO window size is too large. "
+                              "Up to 4GB windows are supported, "
+                              "trimming window size to 4GB\n");
+                sc->io_range.size = UINT32_MAX;
+            }
+        }
+        if ((ranges[i].pci_hi & OFW_PCI_PHYS_HI_SPACEMASK) ==
+            OFW_PCI_PHYS_HI_SPACE_MEM32) {
+            MPASS(nmem < sc->num_mem_ranges);
+            sc->mem_ranges[nmem] = ranges[i];
+            if (sc->mem_ranges[nmem].size > UINT32_MAX) {
+                device_printf(sc->dev,
+                              "ATU MEM window size is too large. "
+                              "Up to 4GB windows are supported, "
+                              "trimming window size to 4GB\n");
+                sc->mem_ranges[nmem].size = UINT32_MAX;
+            }
+            ++nmem;
+        }
+    }
+
+    MPASS(nmem == sc->num_mem_ranges);
+
+    if (nmem == 0) {
+        device_printf(sc->dev,
+                      "Missing required memory range in DT\n");
+        return (ENXIO);
+    }
+
+    return (0);
+
+    out:
+        free(sc->mem_ranges, M_DEVBUF);
+         return (rv);
+}
+
+static int
+mt7622_pcie_detach(device_t dev)
+{
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
 
     if (sc->sys_ck0) {
@@ -302,7 +327,7 @@ mt7622_pcie_attach(device_t dev) {
     error = ofw_bus_find_string_index(sc->node, "reg-names",
                                       sc->port == 0 ? "port0" : "port1",
                                       &sc->rid);
-    if(error != 0) {
+    if (error != 0) {
         device_printf(dev, "Cannot get port memory: %d\n", error);
         return (ENXIO);
     }
@@ -334,7 +359,7 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    if(sc->port == 0) {
+    if (sc->port == 0) {
         if (clk_get_by_ofw_name(dev, 0, "sys_ck0", &sc->sys_ck0)) {
             device_printf(dev, "Can not get sys_ck0 clk\n");
             return (ENXIO);
@@ -400,8 +425,7 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(sc->dev, "could not enable pipe_ck0 clock\n");
             return (ENXIO);
         }
-    }
-    else if(sc->port == 1) {
+    } else if (sc->port == 1) {
         if (clk_get_by_ofw_name(dev, 0, "sys_ck1", &sc->sys_ck0)) {
             device_printf(dev, "Can not get sys_ck1 clk\n");
             return (ENXIO);
@@ -467,8 +491,7 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(sc->dev, "could not enable pipe_ck1 clock\n");
             return (ENXIO);
         }
-    }
-    else {
+    } else {
         device_printf(dev, "CLocks not found.\n");
         return (ENXIO);
     }
@@ -476,6 +499,21 @@ mt7622_pcie_attach(device_t dev) {
     error = mt7622_pcie_port_start(dev, sc->port);
     if (error != 0) {
         device_printf(dev, "port%d: link bring-up failed: %d\n", sc->port, error);
+        return (ENXIO);
+    }
+
+    error = bus_dma_tag_create(bus_get_dma_tag(dev), /* parent */
+                            1, 0,				/* alignment, bounds */
+                            BUS_SPACE_MAXADDR,			/* lowaddr */
+                            BUS_SPACE_MAXADDR,			/* highaddr */
+                            NULL, NULL,				/* filter, filterarg */
+                            BUS_SPACE_MAXSIZE,			/* maxsize */
+                            BUS_SPACE_UNRESTRICTED,		/* nsegments */
+                            BUS_SPACE_MAXSIZE,			/* maxsegsize */
+                            0, /* flags */
+                            NULL, NULL,				/* lockfunc, lockarg */
+                            &sc->dmat);
+    if (error != 0) {
         return (ENXIO);
     }
 
@@ -487,11 +525,11 @@ mt7622_pcie_attach(device_t dev) {
     error = mt7622_pcie_decode_ranges(sc, sc->ofw_pci.sc_range,
                                       sc->ofw_pci.sc_nrange);
     if (error != 0) {
-        bus_teardown_intr(dev, sc->pcie_irq_res, sc->pcie_irq_cookie);
         return (ENXIO);
     }
 
-    bus_attach_children(dev);
+    device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+
     return (0);
 }
 
@@ -517,7 +555,7 @@ static device_method_t mt7622_pcie_methods[] = {
         DEVMETHOD(device_resume, bus_generic_resume),
 
         /* PCI DW interface */
-        //DEVMETHOD(pci_dw_get_link,	rk3568_pcie_get_link),
+        DEVMETHOD(pci_dw_get_link,	mt7622_pcie_get_link),
 
         DEVMETHOD_END
 };
