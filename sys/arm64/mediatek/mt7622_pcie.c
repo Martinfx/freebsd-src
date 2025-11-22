@@ -281,9 +281,9 @@ mt7622_pcie_startup_port(device_t dev, int port)
     //if (sc->syscon == NULL)
     //    return;
 
-    val = SYSCON_READ_4(sc->pciecfg, PCIE_SYS_CFG_V2);
+    val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
     val |= (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
-    SYSCON_WRITE_4(sc->pciecfg, PCIE_SYS_CFG_V2, val);
+    SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
 
     device_printf(sc->dev,
                   "PCIECFG: enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
