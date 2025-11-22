@@ -352,9 +352,13 @@ mt7622_pcie_attach(device_t dev) {
     // get syscon
     node = ofw_bus_find_compatible(OF_finddevice("/"), "mediatek,generic-pciecfg");
     if (node == 0) {
-        device_printf(sc->dev,
-                      "Cannot mediatek,generic-pciecfg syscon node found\n");
-        return (ENXIO);
+        node = ofw_bus_find_compatible(OF_finddevice("/"), "mediatek,generic-pciecfg");
+
+        if(node == 0) {
+            device_printf(sc->dev,
+                          "Cannot mediatek,generic-pciecfg syscon node found\n");
+            return (ENXIO);
+        }
     }
 
     error = syscon_get_by_ofw_node(sc->dev, node, &sc->syscon);
