@@ -344,15 +344,24 @@ static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     int error = 0;
+    phandle_t node;
 
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
 
     // get syscon
-    if (OF_hasprop(sc->node, "mediatek,generic-pciecfg") &&
-        syscon_get_by_ofw_property(sc->dev, sc->node, "mediatek,generic-pciecfg",
-                                   &sc->syscon)) {
+    node = ofw_bus_find_compatible(OF_finddevice("/"), "mediatek,generic-pciecfg");
+    if (node == 0) {
+        device_printf(sc->dev,
+                      "Cannot mediatek,generic-pciecfg syscon node found\n");
         return (ENXIO);
+    }
+
+    error = syscon_get_by_ofw_node(sc->dev, node, &sc->syscon);
+    if (error != 0) {
+        device_printf(sc->dev,
+                      "Cannot get syscon handle for pciecfg: %d\n", error);
+        return (error);
     }
 
     mt7622_pcie_startup_port(sc->dev, 0);
