@@ -363,9 +363,6 @@ mt7622_pcie_attach(device_t dev) {
         return (error);
     }
 
-    mt7622_pcie_startup_port(sc->dev, 0);
-    mt7622_pcie_startup_port(sc->dev, 1);
-
     sc->port = mt7622_pcie_get_port(sc->node);
     if (sc->port == -1) {
         device_printf(dev, "Cannot determine port (reg-names missing)\n");
@@ -473,7 +470,10 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(sc->dev, "could not enable pipe_ck0 clock\n");
             return (ENXIO);
         }
-    } else if (sc->port == 1) {
+
+        mt7622_pcie_startup_port(sc->dev, 0);
+    }
+    else if (sc->port == 1) {
         if (clk_get_by_ofw_name(dev, 0, "sys_ck1", &sc->sys_ck0)) {
             device_printf(dev, "Can not get sys_ck1 clk\n");
             return (ENXIO);
@@ -539,6 +539,8 @@ mt7622_pcie_attach(device_t dev) {
             device_printf(sc->dev, "could not enable pipe_ck1 clock\n");
             return (ENXIO);
         }
+        
+        mt7622_pcie_startup_port(sc->dev, 1);
     } else {
         device_printf(dev, "CLocks not found.\n");
         return (ENXIO);
@@ -576,15 +578,12 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    /*device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+    device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
     error = ofw_pcib_attach(dev);
     if (error != 0) {
         return (ENXIO);
-    }*/
-
-    device_add_child(dev, "pci", DEVICE_UNIT_ANY);
-    bus_attach_children(dev);
+    }
 
     return (0);
 }
