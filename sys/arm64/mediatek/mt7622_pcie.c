@@ -344,12 +344,12 @@ static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     int error = 0;
-    phandle_t nodecfg, root;
+    //phandle_t nodecfg, root;
 
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
 
-    root = OF_finddevice("/");
+    /*root = OF_finddevice("/");
     if (root == -1) {
         device_printf(sc->dev, "No FDT root\n");
         return (ENXIO);
@@ -361,9 +361,9 @@ mt7622_pcie_attach(device_t dev) {
         device_printf(sc->dev,
                       "Cannot mediatek,generic-pciecfg syscon node found\n");
         return (ENXIO);
-    }
+    }*/
 
-    error = syscon_get_by_ofw_node(sc->dev, nodecfg, &sc->syscon);
+    error = syscon_get_by_ofw_node(sc->dev, OF_parent(ofw_bus_get_node(dev)), &sc->syscon);
     if (error != 0) {
         device_printf(sc->dev,
                       "Cannot get syscon handle for pciecfg: %d\n", error);
