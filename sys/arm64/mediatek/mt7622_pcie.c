@@ -278,11 +278,8 @@ mt7622_pcie_startup_port(device_t dev, int port)
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     uint32_t val;
 
-    //KASSERT(sc->syscon == NULL,
-    //        ("sc->syscon == NULL"));
-
     val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-    val = (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
+    val |= PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port);
     SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
 
     device_printf(sc->dev,
@@ -584,6 +581,11 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+
+    error = ofw_pcib_attach(dev);
+    if (error != 0) {
+        return (ENXIO);
+    }
 
     return (0);
 }
