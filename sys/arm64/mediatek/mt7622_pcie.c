@@ -271,6 +271,25 @@ mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ra
          return (rv);
 }
 
+
+static void
+mt7622_pcie_startup_port(device_t dev, int port)
+{
+    struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    uint32_t val;
+
+    //if (sc->syscon == NULL)
+    //    return;
+
+    val = SYSCON_READ_4(sc->pciecfg, PCIE_SYS_CFG_V2);
+    val |= (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
+    SYSCON_WRITE_4(sc->pciecfg, PCIE_SYS_CFG_V2, val);
+
+    device_printf(sc->dev,
+                  "PCIECFG: enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
+                  port, val);
+}
+
 static int
 mt7622_pcie_detach(device_t dev)
 {
@@ -336,10 +355,13 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
+    mt7622_pcie_startup_port(sc->dev, 0);
+    mt7622_pcie_startup_port(sc->dev, 1);
+
     sc->port = mt7622_pcie_get_port(sc->node);
     if (sc->port == -1) {
         device_printf(dev, "Cannot determine port (reg-names missing)\n");
-        return ENXIO;
+        return (ENXIO);
     }
 
     error = ofw_bus_find_string_index(sc->node, "reg-names",
