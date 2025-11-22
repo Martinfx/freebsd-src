@@ -344,7 +344,7 @@ static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     int error = 0;
-    //phandle_t nodecfg, root;
+    phandle_t nodecfg, root;
 
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
