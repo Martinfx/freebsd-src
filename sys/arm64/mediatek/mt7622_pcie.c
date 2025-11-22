@@ -282,7 +282,7 @@ mt7622_pcie_startup_port(device_t dev, int port)
     //    return;
 
     val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-    val |= (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
+    val = (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
     SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
 
     device_printf(sc->dev,
