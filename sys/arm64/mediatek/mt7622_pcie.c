@@ -278,8 +278,8 @@ mt7622_pcie_startup_port(device_t dev, int port)
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     uint32_t val;
 
-    KASSERT(sc->syscon == NULL,
-            ("sc->syscon == NULL"));
+    //KASSERT(sc->syscon == NULL,
+    //        ("sc->syscon == NULL"));
 
     val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
     val = (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
@@ -349,21 +349,21 @@ mt7622_pcie_attach(device_t dev) {
     sc->dev = dev;
     sc->node = ofw_bus_get_node(dev);
 
-    /*root = OF_finddevice("/");
+    root = OF_finddevice("/");
     if (root == -1) {
         device_printf(sc->dev, "No FDT root\n");
         return (ENXIO);
     }
-    // get syscon
+
     nodecfg = ofw_bus_find_compatible(root, "mediatek,generic-pciecfg");
 
     if (nodecfg == 0) {
         device_printf(sc->dev,
                       "Cannot mediatek,generic-pciecfg syscon node found\n");
         return (ENXIO);
-    }*/
+    }
 
-    error = syscon_get_by_ofw_node(sc->dev, OF_parent(ofw_bus_get_node(dev)), &sc->syscon);
+    error = syscon_get_by_ofw_node(sc->dev, nodecfg, &sc->syscon);
     if (error != 0) {
         device_printf(sc->dev,
                       "Cannot get syscon handle for pciecfg: %d\n", error);
