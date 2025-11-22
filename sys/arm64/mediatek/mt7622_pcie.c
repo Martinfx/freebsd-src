@@ -195,10 +195,6 @@ mt7622_pcie_port_start(device_t dev, int port)
         }
     }
 
-    /*if ((error = pci_dw_init(dev))) {
-        return (ENXIO);
-    }*/
-
     /* Delay to have things settle */
     DELAY(100000);
 
@@ -283,7 +279,7 @@ mt7622_pcie_startup_port(device_t dev, int port)
     SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
 
     device_printf(sc->dev,
-                  "PCIECFG: enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
+                  "enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
                   port, val);
 }
 
@@ -580,12 +576,15 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+    /*device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
     error = ofw_pcib_attach(dev);
     if (error != 0) {
         return (ENXIO);
-    }
+    }*/
+
+    device_add_child(dev, "pci", DEVICE_UNIT_ANY);
+    bus_attach_children(dev);
 
     return (0);
 }
