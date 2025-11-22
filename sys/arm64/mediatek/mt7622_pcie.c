@@ -278,8 +278,8 @@ mt7622_pcie_startup_port(device_t dev, int port)
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
     uint32_t val;
 
-    //if (sc->syscon == NULL)
-    //    return;
+    KASSERT(sc->syscon == NULL,
+            ("sc->syscon == NULL"));
 
     val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
     val = (PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port));
