@@ -106,7 +106,7 @@
     (CFG_DW0_LENGTH(1) | CFG_DW0_TYPE(type) | CFG_DW0_FMT(fmt))
 
 #define CFG_HEADER_DW1(where, size) \
-    (GENMASK32(((size) - 1), 0) << ((where) & 0x3))
+    ((((1U << (size)) - 1U)) << (((where) & 0x3) * 8))
 
 #define CFG_HEADER_DW2(regn, fun, dev, bus) \
     (CFG_DW2_REGN(regn) | CFG_DW2_FUN(fun) | \
