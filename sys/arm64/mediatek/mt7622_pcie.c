@@ -349,41 +349,39 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
                        u_int reg, int bytes)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint32_t val, tmp;
+    uint32_t data, offset;
 
-    /* Write PCIe configuration transaction header for read */
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER0,
-               CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
+    sc = device_get_softc(dev);
+    offset = PCIE_ADDR_OFFSET(bus, slot, func, reg);
 
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
-                CFG_HEADER_DW1(reg, bytes));
-
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_DW2(reg, func, slot, bus));
-
-    /* Trigger hardware to transmit Cfgrd TLP */
-    tmp = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
-    tmp |= APP_CFG_REQ;
-    bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, tmp);
-
-    /* Check completion status */
-    val = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
-    if (val & APP_CPL_STATUS) {
-        device_printf(sc->dev,
-                      "PCIe cfg read completion error: APP_CPL_STATUS set\n");
+    /* Certain config registers are not supposed to be accessed from here */
+    if (bus == 0 && (offset == PCIR_BAR(0) || offset == PCIR_BAR(1)))
         return (~0U);
 
-    }
-
     /* Read payload of config read */
-    val = bus_read_4(sc->res_mem, PCIE_CFG_RDATA);
+    /*val = bus_read_4(sc->res_mem, PCIE_CFG_RDATA);
     if (bytes == 1) {
         val = (val >> (8 * (reg & 3))) & 0xff;
     }
     else if (bytes == 2) {
         val = (val >> (8 * (reg & 3))) & 0xffff;
+    }*/
+
+    switch (bytes) {
+        case 1:
+            data = bus_read_1(sc->cfg_mem_res, offset);
+            break;
+        case 2:
+            data = le16toh(bus_read_2(sc->cfg_mem_res, offset));
+            break;
+        case 4:
+            data = le32toh(bus_read_4(sc->cfg_mem_res, offset));
+            break;
+        default:
+            return (~0U);
     }
 
-    return (val);
+    return (data);
 }
 
 static void
