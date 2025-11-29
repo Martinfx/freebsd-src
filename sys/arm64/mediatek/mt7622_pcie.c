@@ -50,6 +50,7 @@
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
 #include <dev/pci/pci_dw.h>
+#include <dev/pci/pci_host_generic.h>
 #include <dev/syscon/syscon.h>
 
 #include "pcib_if.h"
@@ -369,13 +370,13 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
 
     switch (bytes) {
         case 1:
-            data = bus_read_1(sc->cfg_mem_res, offset);
+            data = bus_read_1(sc->res_mem, offset);
             break;
         case 2:
-            data = le16toh(bus_read_2(sc->cfg_mem_res, offset));
+            data = le16toh(bus_read_2(sc->res_mem, offset));
             break;
         case 4:
-            data = le32toh(bus_read_4(sc->cfg_mem_res, offset));
+            data = le32toh(bus_read_4(sc->res_mem, offset));
             break;
         default:
             return (~0U);
