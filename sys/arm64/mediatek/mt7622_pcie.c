@@ -154,7 +154,8 @@ static struct ofw_compat_data compat_data[] = {
 static int
 mt7622_pcib_maxslots(device_t dev)
 {
-    return (2);
+    // 0 for PCIE
+    return (0);
 }
 
 static int
@@ -667,6 +668,7 @@ mt7622_pcie_attach(device_t dev) {
 
     error = ofw_pcib_init(dev);
     if (error != 0) {
+        device_printf(dev, "ofw_pcib_init() fails\n");
         return (ENXIO);
     }
 
