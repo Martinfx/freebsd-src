@@ -50,7 +50,6 @@
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
 #include <dev/pci/pci_dw.h>
-#include <dev/pci/pci_host_generic.h>
 #include <dev/syscon/syscon.h>
 
 #include "pcib_if.h"
@@ -94,14 +93,14 @@
 
 #define PCIB_MAX_PORTS_MT7622 2
 
-#define CFG_DW0_LENGTH(length)  ((uint32_t)(length) & 0x000003FFu)
-#define CFG_DW0_TYPE(type)      (((uint32_t)(type) << 24) & 0x1F000000u)
-#define CFG_DW0_FMT(fmt)        (((uint32_t)(fmt) << 29) & 0xE0000000u)
+#define CFG_DW0_LENGTH(length)  ((length) & 0x000003FFu)
+#define CFG_DW0_TYPE(type)      (((type) << 24) & 0x1F000000u)
+#define CFG_DW0_FMT(fmt)        (((fmt) << 29) & 0xE0000000u)
 
-#define CFG_DW2_REGN(regn)      ((uint32_t)(regn) & 0x00000FFCu)
-#define CFG_DW2_FUN(fun)        (((uint32_t)(fun) << 16) & 0x00070000u)
-#define CFG_DW2_DEV(dev)        (((uint32_t)(dev) << 19) & 0x00F80000u)
-#define CFG_DW2_BUS(bus)        (((uint32_t)(bus) << 24) & 0xFF000000u)
+#define CFG_DW2_REGN(regn)      ((regn) & 0x00000FFCu)
+#define CFG_DW2_FUN(fun)        (((fun) << 16) & 0x00070000u)
+#define CFG_DW2_DEV(dev)        (((dev) << 19) & 0x00F80000u)
+#define CFG_DW2_BUS(bus)        (((bus) << 24) & 0xFF000000u)
 
 #define CFG_HEADER_DW0(type, fmt) \
     (CFG_DW0_LENGTH(1) | CFG_DW0_TYPE(type) | CFG_DW0_FMT(fmt))
@@ -350,39 +349,41 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
                        u_int reg, int bytes)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint32_t data, offset;
+    uint32_t val, tmp;
 
-    sc = device_get_softc(dev);
-    offset = PCIE_ADDR_OFFSET(bus, slot, func, reg);
+    /* Write PCIe configuration transaction header for read */
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER0,
+               CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
 
-    /* Certain config registers are not supposed to be accessed from here */
-    if (bus == 0 && (offset == PCIR_BAR(0) || offset == PCIR_BAR(1)))
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
+                CFG_HEADER_DW1(reg, bytes));
+
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_DW2(reg, func, slot, bus));
+
+    /* Trigger hardware to transmit Cfgrd TLP */
+    tmp = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
+    tmp |= APP_CFG_REQ;
+    bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, tmp);
+
+    /* Check completion status */
+    val = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
+    if (val & APP_CPL_STATUS) {
+        device_printf(sc->dev,
+                      "PCIe cfg read completion error: APP_CPL_STATUS set\n");
         return (~0U);
 
+    }
+
     /* Read payload of config read */
-    /*val = bus_read_4(sc->res_mem, PCIE_CFG_RDATA);
+    val = bus_read_4(sc->res_mem, PCIE_CFG_RDATA);
     if (bytes == 1) {
         val = (val >> (8 * (reg & 3))) & 0xff;
     }
     else if (bytes == 2) {
         val = (val >> (8 * (reg & 3))) & 0xffff;
-    }*/
-
-    switch (bytes) {
-        case 1:
-            data = bus_read_1(sc->res_mem, offset);
-            break;
-        case 2:
-            data = le16toh(bus_read_2(sc->res_mem, offset));
-            break;
-        case 4:
-            data = le32toh(bus_read_4(sc->res_mem, offset));
-            break;
-        default:
-            return (~0U);
     }
 
-    return (data);
+    return (val);
 }
 
 static void
