@@ -22,6 +22,9 @@
 cpu		ARM64
 ident		ALLWINNER
 
+makeoptions     WITH_KERNEL_BIN=1
+options         BOOTVERBOSE
+
 include		"std.arm64"
 include		"std.dev"
 include		"std.allwinner"
