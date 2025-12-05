@@ -46,7 +46,7 @@
 #include <dt-bindings/clock/sun55i-a523-ccu.h>
 #include <dt-bindings/reset/sun55i-a523-ccu.h>
 
-static const char *pll_ddr_parent[] = { "hosc" };
+static const char *pll_ddr_parent[] = { "osc24M" };
 NKMP_CLK(pll_ddr_clk,
         CLK_PLL_DDR0,				/* id */
         "pll-ddr0", pll_ddr_parent,		/* name, parents */
@@ -59,7 +59,7 @@ NKMP_CLK(pll_ddr_clk,
         0,
         AW_CLK_HAS_GATE | AW_CLK_HAS_LOCK );		/* flags */
 
-static const char *pll_periph0_4x_parent[] = { "hosc" };
+static const char *pll_periph0_4x_parent[] = { "osc24M" };
 NM_CLK(pll_periph0_4x_clk,
         CLK_PLL_PERIPH0_4X,					/* id */
         "pll-periph0-4x", pll_periph0_4x_parent,	/* name, parents */
@@ -74,12 +74,12 @@ static struct aw_ccung_clk a523_ccu_clks[] = {
         { .type = AW_CLK_NKMP, .clk.nkmp = &pll_ddr_clk},
         { .type = AW_CLK_NM, .clk.nm = &pll_periph0_4x_clk},
 };
-
+/*
 static struct aw_clk_init a523_init_clks[] = {
         {"pll-periph0-4x", "hosc", 0, false},
         {"pll-ddr0", "hosc", 0, false},
 };
-
+*/
 static int
 ccu_a523_probe(device_t dev)
 {
@@ -107,8 +107,8 @@ ccu_a523_attach(device_t dev)
     //sc->ngates = nitems(a64_ccu_gates);
     sc->clks = a523_ccu_clks;
     sc->nclks = nitems(a523_ccu_clks);
-    sc->clk_init = a523_init_clks;
-    sc->n_clk_init = nitems(a523_init_clks);
+    //sc->clk_init = a523_init_clks;
+    //sc->n_clk_init = nitems(a523_init_clks);
 
     return (aw_ccung_attach(dev));
 }
