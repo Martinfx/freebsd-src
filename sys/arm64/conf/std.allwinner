@@ -71,5 +71,7 @@ device		aw_mmc			# Allwinner SD/MMC controller
 
 options 	FDT
 
+files		"../allwinner/a523/files.a523"
+
 # DTBs
 makeoptions	MODULES_EXTRA+="dtb/allwinner"
