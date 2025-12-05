@@ -46,8 +46,7 @@
 #include <dt-bindings/clock/sun55i-a523-ccu.h>
 #include <dt-bindings/reset/sun55i-a523-ccu.h>
 
-static const char *pll_ddr_parent = { "hosc" };
-
+static const char *pll_ddr_parent[] = { "hosc" };
 NKMP_CLK(pll_ddr_clk,
         CLK_PLL_DDR0,				/* id */
         "pll-ddr0", pll_ddr_parent,		/* name, parents */
