@@ -52,6 +52,7 @@ NKMP_CLK(pll_ddr_clk,
         "pll-ddr0", pll_ddr_parent,		/* name, parents */
         0x010,					/* offset */
         8, 8, 11, 0,					/* n factor */
+        0, 0, 0, 0,		            /* k factor (fake) */
         1, 1, 0, 0,					/* m factor */
         0, 1, 0, AW_CLK_FACTOR_POWER_OF_TWO,	/* p factor */
         28, 0,					/* lock */
