@@ -59,8 +59,20 @@ NKMP_CLK(pll_ddr_clk,
         0,
         AW_CLK_HAS_GATE | AW_CLK_HAS_LOCK );		/* flags */
 
+static const char *pll_periph0_4x_parent[] = { "hosc" };
+NM_CLK(pll_periph0_4x_clk,
+        CLK_PLL_PERIPH0_4X,					/* id */
+        "pll-periph0-4x", pll_periph0_4x_parent,	/* name, parents */
+        0x020,					/* offset */
+        8, 8, 11, 0,	/* n factor */
+        1, 1, 0, 0,					/* m factor */
+        0, 0,					/* mux */
+        31,						/* gate */
+        AW_CLK_HAS_GATE);
+
 static struct aw_ccung_clk a523_ccu_clks[] = {
-        {.type = AW_CLK_NKMP, .clk.nkmp = &pll_ddr_clk},
+        { .type = AW_CLK_NKMP, .clk.nkmp = &pll_ddr_clk},
+        { .type = AW_CLK_NM, .clk.nm = &pll_periph0_4x_clk},
 };
 
 static int
