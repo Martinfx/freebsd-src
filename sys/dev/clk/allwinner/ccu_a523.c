@@ -75,6 +75,11 @@ static struct aw_ccung_clk a523_ccu_clks[] = {
         { .type = AW_CLK_NM, .clk.nm = &pll_periph0_4x_clk},
 };
 
+static struct aw_clk_init a523_init_clks[] = {
+        {"pll-periph0-4x", "hosc", 0, false},
+        {"pll-ddr0", "hosc", 0, false},
+};
+
 static int
 ccu_a523_probe(device_t dev)
 {
@@ -102,8 +107,8 @@ ccu_a523_attach(device_t dev)
     //sc->ngates = nitems(a64_ccu_gates);
     sc->clks = a523_ccu_clks;
     sc->nclks = nitems(a523_ccu_clks);
-    //sc->clk_init = a64_init_clks;
-    //sc->n_clk_init = nitems(a64_init_clks);
+    sc->clk_init = a523_init_clks;
+    sc->n_clk_init = nitems(a523_init_clks);
 
     return (aw_ccung_attach(dev));
 }
