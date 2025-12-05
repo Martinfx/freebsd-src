@@ -49,7 +49,7 @@
 static const char *pll_ddr_parent[] = { "hosc" };
 NKMP_CLK(pll_ddr_clk,
         CLK_PLL_DDR0,				/* id */
-        "pll-ddr0", pll_ddr_parent, nitems(pll_ddr_parent)		/* name, parents */
+        "pll-ddr0", pll_ddr_parent, nitems(pll_ddr_parent),		/* name, parents */
         0x010,					/* offset */
         8, 8, 11, 0,					/* n factor */
         0, 0, 0, 0,		            /* k factor (fake) */
