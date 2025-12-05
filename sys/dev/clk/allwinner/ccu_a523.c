@@ -50,13 +50,14 @@ static const char *pll_ddr_parent = { "hosc" };
 
 NKMP_CLK(pll_ddr_clk,
         CLK_PLL_DDR0,				/* id */
-"pll-ddr0", pll_ddr_parent,		/* name, parents */
-0x010,					/* offset */
-8, 8, 11, 0,					/* n factor */
-1, 1, 0, 0,					/* m factor */
-0, 1, 0, AW_CLK_FACTOR_POWER_OF_TWO,	/* p factor */
-28, 0,					/* lock */
-AW_CLK_HAS_GATE | AW_CLK_HAS_LOCK );		/* flags */
+        "pll-ddr0", pll_ddr_parent,		/* name, parents */
+        0x010,					/* offset */
+        8, 8, 11, 0,					/* n factor */
+        1, 1, 0, 0,					/* m factor */
+        0, 1, 0, AW_CLK_FACTOR_POWER_OF_TWO,	/* p factor */
+        28, 0,					/* lock */
+        0,
+        AW_CLK_HAS_LOCK );		/* flags */
 
 static struct aw_ccung_clk a523_ccu_clks[] = {
         {.type = AW_CLK_NKMP, .clk.nkmp = &pll_ddr_clk},
@@ -106,5 +107,5 @@ static device_method_t ccu_a523_methods[] = {
 DEFINE_CLASS_1(ccu_a523, ccu_a523_driver, ccu_a523_methods,
 sizeof(struct aw_ccung_softc), aw_ccung_driver);
 
-EARLY_DRIVER_MODULE(ccu_a523ng, simplebus, ccu_a523ng_driver, 0, 0,
+EARLY_DRIVER_MODULE(ccu_a523, simplebus, ccu_a523_driver, 0, 0,
 BUS_PASS_RESOURCE + BUS_PASS_ORDER_MIDDLE);
