@@ -40,7 +40,9 @@
 #include <dev/clk/clk_div.h>
 #include <dev/clk/clk_fixed.h>
 #include <dev/clk/clk_mux.h>
+
 #include <dev/clk/allwinner/aw_ccung.h>
+
 #include <dt-bindings/clock/sun55i-a523-ccu.h>
 #include <dt-bindings/reset/sun55i-a523-ccu.h>
 
@@ -48,7 +50,7 @@ static const char *pll_ddr_parent = { "hosc" };
 
 NKMP_CLK(pll_ddr_clk,
         CLK_PLL_DDR0,				/* id */
-"pll-ddr0", pll_cpux_parents,		/* name, parents */
+"pll-ddr0", pll_ddr_parent,		/* name, parents */
 0x010,					/* offset */
 8, 8, 11, 0,					/* n factor */
 1, 1, 0, 0,					/* m factor */
