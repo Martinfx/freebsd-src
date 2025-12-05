@@ -57,6 +57,7 @@ NKMP_CLK(pll_ddr_clk,
         0, 1, 0, 0,	/* p factor */
         28, 0,					/* lock */
         0,
+        AW_CLK_HAS_GATE,
         AW_CLK_HAS_LOCK );		/* flags */
 
 static struct aw_ccung_clk a523_ccu_clks[] = {
