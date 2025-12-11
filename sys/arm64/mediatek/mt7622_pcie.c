@@ -49,7 +49,6 @@
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcib_private.h>
-#include <dev/pci/pci_dw.h>
 #include <dev/syscon/syscon.h>
 
 #include "pcib_if.h"
@@ -76,6 +75,7 @@
 #define PCIE_CONF_DEVICE_ID	    0x102
 #define PCIE_CONF_CLASS_ID	    0x106
 #define PCI_VENDOR_ID_MEDIATEK		0x14c3
+#define PCI_DEVICE_ID_MT7622        0x5396
 #define PCI_CLASS_BRIDGE_PCI		0x0604
 
 #define PCIE_INT_MASK		0x420
@@ -128,6 +128,18 @@
 
 #define UPPER_32_BITS(x)  ((uint32_t)(((x) >> 32) & 0xFFFFFFFFU))
 
+#define	MT7622_PCIE_MAX_PORTS 2
+
+struct mt7622_pcie_port {
+    int	enabled;
+    int port_idx;		/* chip port index */
+
+    /* Config space properties. */
+    bus_addr_t	rp_base_addr;		/* PA of config window */
+    bus_size_t	rp_size;		/* size of config window */
+    bus_space_handle_t cfg_handle;		/* handle of config window */
+};
+
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
     device_t dev;
@@ -143,7 +155,9 @@ struct mt7622_pcie_softc {
     struct ofw_pci_range mem_range;
     int	num_mem_ranges;
     int port;
-    struct syscon		*syscon;
+    int	num_ports;
+    struct syscon *syscon;
+    struct mt7622_pcie_port *ports[MT7622_PCIE_MAX_PORTS];
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -234,8 +248,9 @@ mt7622_pcie_port_start(device_t dev, int port)
            PCIE_MAC_SRSTB | PCIE_CRSTB;
     bus_write_4(sc->res_mem, PCIE_RST_CTRL, val);
 
-    /* Set up vendor ID and class code */
-    bus_write_2(sc->res_mem, PCIE_CONF_VEND_ID, PCI_VENDOR_ID_MEDIATEK);
+    /* set right vendor id and device id */
+    val = PCI_VENDOR_ID_MEDIATEK | (PCI_DEVICE_ID_MT7622 << 16);
+    bus_write_4(sc->res_mem, PCIE_CONF_VEND_ID, val);
     bus_write_2(sc->res_mem, PCIE_CONF_CLASS_ID, PCI_CLASS_BRIDGE_PCI);
 
     /* Wait for link up/stable */
@@ -328,22 +343,6 @@ mt7622_pcie_decode_ranges(struct mt7622_pcie_softc *sc, struct ofw_pci_range *ra
     return (0);
 }
 
-
-static void
-mt7622_pcie_startup_port(device_t dev, int port)
-{
-    struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint32_t val;
-
-    val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-    val = PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port);
-    SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
-
-    device_printf(sc->dev,
-                  "enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
-                      port, val);
-}
-
 static uint32_t
 mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
                        u_int reg, int bytes)
@@ -355,10 +354,10 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
     bus_write_4(sc->res_mem, PCIE_CFG_HEADER0,
                CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
 
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
-                CFG_HEADER_DW1(reg, bytes));
+    //bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
+    //            CFG_HEADER_DW1(reg, bytes));
 
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_DW2(reg, func, slot, bus));
+    //bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_DW2(reg, func, slot, bus));
 
     /* Trigger hardware to transmit Cfgrd TLP */
     tmp = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
@@ -371,7 +370,6 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
         device_printf(sc->dev,
                       "PCIe cfg read completion error: APP_CPL_STATUS set\n");
         return (~0U);
-
     }
 
     /* Read payload of config read */
@@ -399,17 +397,82 @@ mt7622_pcib_write_config(device_t dev, u_int bus, u_int slot, u_int func,
                 CFG_HEADER_DW1(reg, bytes));
 
     val2 = bus_read_4(sc->res_mem, PCIE_CFG_HEADER2);
-    val2 |= CFG_DW2_REG(reg) | CFG_DW2_FUN(func) | CFG_DW2_DEV(slot) | CFG_DW2_BUS(bus);
-    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, val2); */
-
-    /* Write Cfgwr data */
+    val2 |= CFG_DW2_REGN(reg) | CFG_DW2_FUN(func) | CFG_DW2_DEV(slot) | CFG_DW2_BUS(bus);
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, val2);
+    */
+    // /* Write Cfgwr data */
     //val2 = val2 << 8 * (reg & 3);
     //bus_write_4(sc->res_mem, PCIE_CFG_WDATA, val2);
 
-    /* Trigger h/w to transmit Cfgwr TLP */
+    // /* Trigger h/w to transmit Cfgwr TLP */
     //val2 = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
     //val2 |= APP_CFG_REQ;
-    //bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, val2);
+    //bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, val2);*/
+}
+
+static struct mt7622_pcie_port *
+mt7622_pcie_parse_port(struct mt7622_pcie_softc *sc, phandle_t node)
+{
+    struct mt7622_pcie_port *port;
+    uint32_t tmp[5];
+    char tmpstr[6];
+    int rv;
+
+    port = malloc(sizeof(struct mt7622_pcie_port), M_DEVBUF, M_WAITOK);
+
+    rv = OF_getprop(node, "status", tmpstr, sizeof(tmpstr));
+    if (rv <= 0 || strcmp(tmpstr, "okay") == 0 ||
+        strcmp(tmpstr, "ok") == 0) {
+        port->enabled = 1;
+    }
+    else {
+        port->enabled = 0;
+    }
+
+    port->rp_base_addr = tmp[2];
+    port->rp_size = tmp[4];
+    port->port_idx = OFW_PCI_PHYS_HI_DEVICE(tmp[0]) - 1;
+    if (port->port_idx >= MT7622_PCIE_MAX_PORTS) {
+        device_printf(sc->dev, "Invalid port index: %d\n",
+                      port->port_idx);
+        goto fail;
+    }
+
+    /*rv = OF_getencprop(node, "reg", tmp, sizeof(tmp));
+    if (rv != sizeof(tmp)) {
+        device_printf(sc->dev, "Cannot parse reg: %d\n", rv);
+        goto fail;
+    }*/
+
+    port->rp_base_addr += tmp[2];
+    return (port);
+
+    fail:
+        free(port, M_DEVBUF);
+        return (NULL);
+}
+
+static void
+mt7622_pcie_port_enable(struct mt7622_pcie_softc *sc, int port_num)
+{
+    struct mt7622_pcie_port *port;
+    uint32_t val;
+
+    port = sc->ports[port_num];
+
+    val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
+    val = PCIE_CSR_LTSSM_EN(port->port_idx) | PCIE_CSR_ASPM_L1_EN(port->port_idx);
+    SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
+
+    device_printf(sc->dev,
+                  "enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
+                  port->port_idx, val);
+}
+
+static void
+mt7622_pcie_port_disable(struct mt7622_pcie_softc *sc, int port_num)
+{
+
 }
 
 static int
@@ -465,6 +528,7 @@ mt7622_pcie_detach(device_t dev)
 static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    struct mt7622_pcie_port *port;
     int error = 0;
     phandle_t nodecfg, root;
 
@@ -478,7 +542,6 @@ mt7622_pcie_attach(device_t dev) {
     }
 
     nodecfg = ofw_bus_find_compatible(root, "mediatek,generic-pciecfg");
-
     if (nodecfg == 0) {
         device_printf(sc->dev,
                       "Cannot mediatek,generic-pciecfg syscon node found\n");
@@ -585,7 +648,7 @@ mt7622_pcie_attach(device_t dev) {
             return (ENXIO);
         }
 
-        mt7622_pcie_startup_port(sc->dev, 0);
+        //mt7622_pcie_startup_port(sc->dev, 0);
     }
     else if (sc->port == 1) {
         if (clk_get_by_ofw_name(dev, 0, "sys_ck1", &sc->sys_ck0)) {
@@ -654,11 +717,19 @@ mt7622_pcie_attach(device_t dev) {
             return (ENXIO);
         }
 
-        mt7622_pcie_startup_port(sc->dev, 1);
+        //mt7622_pcie_startup_port(sc->dev, 1);
     } else {
         device_printf(dev, "CLocks not found.\n");
         return (ENXIO);
     }
+
+    sc->num_ports = 0;
+    port = mt7622_pcie_parse_port(sc, sc->node);
+    if (port == NULL) {
+        device_printf(sc->dev, "Cannot parse PCIe port node\n");
+        return (ENXIO);
+    }
+    sc->ports[sc->num_ports++] = port;
 
     error = mt7622_pcie_port_start(dev, sc->port);
     if (error != 0) {
@@ -685,6 +756,18 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
+    for (int i = 0; i < MT7622_PCIE_MAX_PORTS; i++) {
+        if (sc->ports[i] == NULL) {
+            continue;
+        }
+        if (sc->ports[i]->enabled) {
+            mt7622_pcie_port_enable(sc, i);
+        } else {
+            mt7622_pcie_port_disable(sc, i);
+        }
+    }
+
+
     device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
     error = ofw_pcib_attach(dev);
@@ -703,7 +786,7 @@ mt7622_pcie_probe(device_t dev) {
     if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data) {
         return (ENXIO);
     }
-    device_set_desc(dev, "Mediatek 7622 PCI controller");
+    device_set_desc(dev, "Mediatek 7622 PCIe controller");
     return (BUS_PROBE_DEFAULT);
 }
 
