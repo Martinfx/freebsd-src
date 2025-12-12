@@ -154,8 +154,7 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static int
-mt7622_pcib_maxslots(device_t dev)
-{
+mt7622_pcib_maxslots(device_t dev) {
     // 0 for PCIE
     return (0);
 }
