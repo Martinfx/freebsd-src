@@ -91,24 +91,25 @@
 #define WIN_ENABLE    (1U << 7)
 #define PCIE2AHB_SIZE	0x21
 
-#define PCIB_MAX_PORTS_MT7622 2
-
-#define CFG_DW0_LENGTH(length)  ((length) & 0x000003FFu)
-#define CFG_DW0_TYPE(type)      (((type) << 24) & 0x1F000000u)
-#define CFG_DW0_FMT(fmt)        (((fmt) << 29) & 0xE0000000u)
-
-#define CFG_DW2_REGN(regn)      ((regn) & 0x00000FFCu)
-#define CFG_DW2_FUN(fun)        (((fun) << 16) & 0x00070000u)
-#define CFG_DW2_DEV(dev)        (((dev) << 19) & 0x00F80000u)
-#define CFG_DW2_BUS(bus)        (((bus) << 24) & 0xFF000000u)
-
-#define CFG_HEADER_DW0(type, fmt) \
+/* CFG_HEADER_0 fields (DW0) */
+#define	CFG_DW0_LENGTH(length)		((uint32_t)(length) & 0x3ffU)
+#define	CFG_DW0_TYPE(type)		(((uint32_t)(type) & 0x1fU) << 24)
+#define	CFG_DW0_FMT(fmt)		(((uint32_t)(fmt) & 0x7U) << 29)
+#define CFG_HEADER_TLP_DW0(type, fmt) \
     (CFG_DW0_LENGTH(1) | CFG_DW0_TYPE(type) | CFG_DW0_FMT(fmt))
 
-#define CFG_HEADER_DW1(where, size) \
-    ((((1U << (size)) - 1U)) << (((where) & 0x3) * 8))
+/* CFG_HEADER_1 fields (DW1) */
+#define CFG_HEADER_TLP_DW1(where, size) \
+  ((((1U << (size)) - 1U)) << (((where) & 0x3)))
 
-#define CFG_HEADER_DW2(regn, fun, dev, bus) \
+/* CFG_HEADER_2 fields (DW1) */
+#define CFG_DW2_BUS(bus)        (((uint32_t)(bus) & 0xFFU) << 24)
+#define CFG_DW2_DEV(dev)        (((uint32_t)(dev) & 0x1FU) << 19)
+#define CFG_DW2_FUN(fun)        (((uint32_t)(fun) & 0x7U) << 16)
+#define CFG_EXT_REG(reg)        ((((uint32_t)(reg) >> 8) & 0xFU) << 8)
+#define CFG_DW2_REGN(reg)        ((uint32_t)(reg) & 0xFCU)
+
+#define CFG_HEADER_TLP_DW2(regn, fun, dev, bus) \
     (CFG_DW2_REGN(regn) | CFG_DW2_FUN(fun) | \
      CFG_DW2_DEV(dev) | CFG_DW2_BUS(bus))
 
@@ -126,19 +127,7 @@
 #define CFG_WR_FMT		2
 #define CFG_RD_FMT		0
 
-#define UPPER_32_BITS(x)  ((uint32_t)(((x) >> 32) & 0xFFFFFFFFU))
-
-#define	MT7622_PCIE_MAX_PORTS 2
-
-struct mt7622_pcie_port {
-    int	enabled;
-    int port_idx;		/* chip port index */
-
-    /* Config space properties. */
-    bus_addr_t	rp_base_addr;		/* PA of config window */
-    bus_size_t	rp_size;		/* size of config window */
-    bus_space_handle_t cfg_handle;		/* handle of config window */
-};
+#define UPPER_32_BITS(x) ((uint32_t)(((x) >> 16) >> 16))
 
 struct mt7622_pcie_softc {
     struct ofw_pci_softc ofw_pci;
@@ -157,7 +146,6 @@ struct mt7622_pcie_softc {
     int port;
     int	num_ports;
     struct syscon *syscon;
-    struct mt7622_pcie_port *ports[MT7622_PCIE_MAX_PORTS];
 };
 
 static struct ofw_compat_data compat_data[] = {
@@ -229,7 +217,8 @@ static int
 mt7622_pcie_port_start(device_t dev, int port)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    int count, val;
+    uint32_t timeout;
+    uint32_t val;
     bool status;
 
     /* Assert all reset signals */
@@ -254,14 +243,15 @@ mt7622_pcie_port_start(device_t dev, int port)
     bus_write_2(sc->res_mem, PCIE_CONF_CLASS_ID, PCI_CLASS_BRIDGE_PCI);
 
     /* Wait for link up/stable */
-    for (count = 20; count; count--) {
+    timeout = 10000;
+    while (timeout-- > 0) {
         mt7622_pcie_get_link(dev, &status);
-        if (status) {
+        if ((status  & PCIE_PORT_LINKUP_V2) == 0) {
+            device_printf(sc->dev, "PCIe port %d: link is DOWN\n", port);
             break;
         }
 
-        DELAY(100000);
-        if (count == 0) {
+        if (timeout == 0) {
             device_printf(sc->dev, "PCIe port%d: link-up timeout (status=0x%08x)\n",
                           port, val);
             return (ENXIO);
@@ -273,20 +263,18 @@ mt7622_pcie_port_start(device_t dev, int port)
     val &= ~INTX_MASK;
     bus_write_4(sc->res_mem, PCIE_INT_MASK, val);
 
-    bus_addr_t start = rman_get_start(sc->res_mem);
-    bus_addr_t size  = rman_get_size(sc->res_mem);
+    bus_addr_t base = rman_get_start(sc->res_mem);
+    bus_size_t size = rman_get_size(sc->res_mem);
 
-    val = (uint32_t)(start & 0xffffffffUL);
-    val |= AHB2PCIE_SIZE(fls(size));
-
+    val = (uint32_t)(base & 0xffffffff);
+    val |= AHB2PCIE_SIZE((fls(size)));
     bus_write_4(sc->res_mem, PCIE_AHB_TRANS_BASE0_L, val);
 
-    bus_addr_t base = rman_get_start(sc->res_mem);
     val = UPPER_32_BITS(base);
     bus_write_4(sc->res_mem, PCIE_AHB_TRANS_BASE0_H, val);
 
     /* Set PCIe to AXI translation memory space.*/
-    val = fls(0xffffffff) | WIN_ENABLE;
+    val = PCIE2AHB_SIZE | WIN_ENABLE;
     bus_write_4(sc->res_mem, PCIE_AXI_WINDOW0, val);
 
     return (0);
@@ -348,37 +336,46 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
                        u_int reg, int bytes)
 {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    uint32_t val, tmp;
+    uint32_t val, timeout;
 
     /* Write PCIe configuration transaction header for read */
     bus_write_4(sc->res_mem, PCIE_CFG_HEADER0,
-               CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
-
-    //bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
-    //            CFG_HEADER_DW1(reg, bytes));
-
-    //bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_DW2(reg, func, slot, bus));
+                CFG_HEADER_TLP_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER1, CFG_HEADER_TLP_DW1(reg, bytes));
+    bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, CFG_HEADER_TLP_DW2(reg, func, slot, bus));
 
     /* Trigger hardware to transmit Cfgrd TLP */
-    tmp = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
-    tmp |= APP_CFG_REQ;
-    bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, tmp);
-
-    /* Check completion status */
     val = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
-    if (val & APP_CPL_STATUS) {
-        device_printf(sc->dev,
-                      "PCIe cfg read completion error: APP_CPL_STATUS set\n");
-        return (~0U);
+    val |= APP_CFG_REQ;
+    bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, val);
+
+    timeout = 10000;
+    while (timeout-- > 0) {
+        val = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
+        if ((val & APP_CFG_REQ) == 0) {
+            break;
+        }
+        DELAY(100);
+
+        if (val & APP_CPL_STATUS) {
+            device_printf(sc->dev,
+                          "PCIe cfg read completion error: APP_CPL_STATUS set\n");
+            return (~0U);
+        }
     }
 
     /* Read payload of config read */
     val = bus_read_4(sc->res_mem, PCIE_CFG_RDATA);
-    if (bytes == 1) {
-        val = (val >> (8 * (reg & 3))) & 0xff;
-    }
-    else if (bytes == 2) {
-        val = (val >> (8 * (reg & 3))) & 0xffff;
+    switch (bytes) {
+        case 1:
+            val = (val >> (8 * (reg & 3))) & 0xff;
+            break;
+        case 2:
+            val = (val >> (8 * (reg & 3))) & 0xffff;
+            break;
+        default:
+            return (~0U);
+            break;
     }
 
     return (val);
@@ -388,91 +385,38 @@ static void
 mt7622_pcib_write_config(device_t dev, u_int bus, u_int slot, u_int func,
                         u_int reg, uint32_t val, int bytes)
 {
-    /*struct mt7622_pcie_softc *sc = device_get_softc(dev);
+    struct mt7622_pcie_softc *sc = device_get_softc(dev);
     uint32_t val2;
 
     bus_write_4(sc->res_mem, PCIE_CFG_HEADER0,
-                CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
+                CFG_HEADER_TLP_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
     bus_write_4(sc->res_mem, PCIE_CFG_HEADER1,
-                CFG_HEADER_DW1(reg, bytes));
+                CFG_HEADER_TLP_DW1(reg, bytes));
 
     val2 = bus_read_4(sc->res_mem, PCIE_CFG_HEADER2);
     val2 |= CFG_DW2_REGN(reg) | CFG_DW2_FUN(func) | CFG_DW2_DEV(slot) | CFG_DW2_BUS(bus);
     bus_write_4(sc->res_mem, PCIE_CFG_HEADER2, val2);
-    */
+
     // /* Write Cfgwr data */
-    //val2 = val2 << 8 * (reg & 3);
-    //bus_write_4(sc->res_mem, PCIE_CFG_WDATA, val2);
+    val = val << 8 * (reg & 3);
+    bus_write_4(sc->res_mem, PCIE_CFG_WDATA, val);
 
     // /* Trigger h/w to transmit Cfgwr TLP */
-    //val2 = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
-    //val2 |= APP_CFG_REQ;
-    //bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, val2);*/
-}
-
-static struct mt7622_pcie_port *
-mt7622_pcie_parse_port(struct mt7622_pcie_softc *sc, phandle_t node)
-{
-    struct mt7622_pcie_port *port;
-    uint32_t tmp[5];
-    char tmpstr[6];
-    int rv;
-
-    port = malloc(sizeof(struct mt7622_pcie_port), M_DEVBUF, M_WAITOK);
-
-    rv = OF_getprop(node, "status", tmpstr, sizeof(tmpstr));
-    if (rv <= 0 || strcmp(tmpstr, "okay") == 0 ||
-        strcmp(tmpstr, "ok") == 0) {
-        port->enabled = 1;
-    }
-    else {
-        port->enabled = 0;
-    }
-
-    port->rp_base_addr = tmp[2];
-    port->rp_size = tmp[4];
-    port->port_idx = OFW_PCI_PHYS_HI_DEVICE(tmp[0]) - 1;
-    if (port->port_idx >= MT7622_PCIE_MAX_PORTS) {
-        device_printf(sc->dev, "Invalid port index: %d\n",
-                      port->port_idx);
-        goto fail;
-    }
-
-    /*rv = OF_getencprop(node, "reg", tmp, sizeof(tmp));
-    if (rv != sizeof(tmp)) {
-        device_printf(sc->dev, "Cannot parse reg: %d\n", rv);
-        goto fail;
-    }*/
-
-    port->rp_base_addr += tmp[2];
-    return (port);
-
-    fail:
-        free(port, M_DEVBUF);
-        return (NULL);
+    val = bus_read_4(sc->res_mem, PCIE_APP_TLP_REQ);
+    val |= APP_CFG_REQ;
+    bus_write_4(sc->res_mem, PCIE_APP_TLP_REQ, val);
 }
 
 static void
-mt7622_pcie_port_enable(struct mt7622_pcie_softc *sc, int port_num)
+mt7622_pcie_port_enable(struct mt7622_pcie_softc *sc, int port)
 {
-    struct mt7622_pcie_port *port;
     uint32_t val;
-
-    port = sc->ports[port_num];
-
     val = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-    val = PCIE_CSR_LTSSM_EN(port->port_idx) | PCIE_CSR_ASPM_L1_EN(port->port_idx);
+    val = PCIE_CSR_LTSSM_EN(port) | PCIE_CSR_ASPM_L1_EN(port);
     SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, val);
-
     device_printf(sc->dev,
                   "enabled LTSSM+ASPM L1 for port %u (0x%08x)\n",
-                  port->port_idx, val);
-}
-
-static void
-mt7622_pcie_port_disable(struct mt7622_pcie_softc *sc, int port_num)
-{
-
+                  port, val);
 }
 
 static int
@@ -528,7 +472,6 @@ mt7622_pcie_detach(device_t dev)
 static int
 mt7622_pcie_attach(device_t dev) {
     struct mt7622_pcie_softc *sc = device_get_softc(dev);
-    struct mt7622_pcie_port *port;
     int error = 0;
     phandle_t nodecfg, root;
 
@@ -648,7 +591,7 @@ mt7622_pcie_attach(device_t dev) {
             return (ENXIO);
         }
 
-        //mt7622_pcie_startup_port(sc->dev, 0);
+        mt7622_pcie_port_enable(sc, sc->port);
     }
     else if (sc->port == 1) {
         if (clk_get_by_ofw_name(dev, 0, "sys_ck1", &sc->sys_ck0)) {
@@ -717,23 +660,10 @@ mt7622_pcie_attach(device_t dev) {
             return (ENXIO);
         }
 
-        //mt7622_pcie_startup_port(sc->dev, 1);
+        mt7622_pcie_port_enable(sc, sc->port);
+
     } else {
         device_printf(dev, "CLocks not found.\n");
-        return (ENXIO);
-    }
-
-    sc->num_ports = 0;
-    port = mt7622_pcie_parse_port(sc, sc->node);
-    if (port == NULL) {
-        device_printf(sc->dev, "Cannot parse PCIe port node\n");
-        return (ENXIO);
-    }
-    sc->ports[sc->num_ports++] = port;
-
-    error = mt7622_pcie_port_start(dev, sc->port);
-    if (error != 0) {
-        device_printf(dev, "port%d: link bring-up failed: %d\n", sc->port, error);
         return (ENXIO);
     }
 
@@ -749,6 +679,14 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
+    pcib_bridge_init(sc->dev);
+
+    error = mt7622_pcie_port_start(dev, sc->port);
+    if (error != 0) {
+        device_printf(dev, "port%d: link bring-up failed: %d\n", sc->port, error);
+        return (ENXIO);
+    }
+
     error = bus_setup_intr(dev, sc->pcie_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
                            mt7622_pcie_sys_irq, NULL, sc, &sc->pcie_irq_cookie);
     if (error != 0) {
@@ -756,18 +694,7 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    for (int i = 0; i < MT7622_PCIE_MAX_PORTS; i++) {
-        if (sc->ports[i] == NULL) {
-            continue;
-        }
-        if (sc->ports[i]->enabled) {
-            mt7622_pcie_port_enable(sc, i);
-        } else {
-            mt7622_pcie_port_disable(sc, i);
-        }
-    }
-
-
+    DELAY(250000);
     device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
     error = ofw_pcib_attach(dev);
