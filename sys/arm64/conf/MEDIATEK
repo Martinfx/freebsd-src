@@ -15,8 +15,9 @@ options KDB_TRACE
 options BREAK_TO_DEBUGGER # If need to enter DDB from console
 
 options EARLY_PRINTF=ns8250
+options BOOTVERBOSE
 
 # Include SoC specific configuration
 include "std.arm64"
 include "std.dev"
-#include		"std.mediatek"
+include "std.mediatek"

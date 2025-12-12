@@ -1,8 +1,8 @@
-options 	SOC_MEDIATEK
+options	SOC_MEDIATEK
 
 # Uart
-device		uart_ns8250
+device uart_ns8250
 
-options         FDT
+options	FDT
 # DTBs
-makeoptions     MODULES_EXTRA+="dtb/mediatek"
+makeoptions MODULES_EXTRA+="dtb/mediatek"
