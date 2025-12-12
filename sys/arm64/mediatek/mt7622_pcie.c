@@ -678,9 +678,7 @@ mt7622_pcie_attach(device_t dev) {
     if (error != 0) {
         return (ENXIO);
     }
-
-    pcib_bridge_init(sc->dev);
-
+    
     error = mt7622_pcie_port_start(dev, sc->port);
     if (error != 0) {
         device_printf(dev, "port%d: link bring-up failed: %d\n", sc->port, error);
@@ -694,7 +692,6 @@ mt7622_pcie_attach(device_t dev) {
         return (ENXIO);
     }
 
-    DELAY(250000);
     device_add_child(dev, "pci", DEVICE_UNIT_ANY);
 
     error = ofw_pcib_attach(dev);
