@@ -111,60 +111,41 @@ uart_ns8250_early_putc(int c)
 	outb(tx, c);
 }
 #elif (defined(__arm__) || defined(__aarch64__))
+#ifndef UART_NS8250_EARLY_REG_IO_WIDTH
+#error Option 'UART_NS8250_EARLY_REG_IO_WIDTH' is missing.
+#endif
+#ifndef UART_NS8250_EARLY_REG_SHIFT
+#error Option 'UART_NS8250_EARLY_REG_SHIFT' is missing.
+#endif
+
+#if UART_NS8250_EARLY_REG_IO_WIDTH == 1
+#define T uint8_t
+#elif UART_NS8250_EARLY_REG_IO_WIDTH == 2
+#define T uint16_t
+#elif UART_NS8250_EARLY_REG_IO_WIDTH == 4
+#define T uint32_t
+#else
+#error Invalid/unsupported UART_NS8250_EARLY_REG_IO_WIDTH value
+#endif
+
 static void
 uart_ns8250_early_putc(int c)
 {
-	volatile uint8_t  *stat8  = NULL, *tx8 = NULL;
-    volatile uint16_t *stat16 = NULL, *tx16 = NULL;
-    volatile uint32_t *stat32 = NULL, *tx32 = NULL;
+	volatile T *stat;
+	volatile T *tx;
 
-	switch(UART_NS8250_EARLY_IOWIDTH) {
-    case 1:
-        stat8 = (volatile uint8_t *)(socdev_va + (REG_LSR << UART_NS8250_EARLY_REGSHIFT));
-        tx8   = (volatile uint8_t *)(socdev_va + (REG_DATA << UART_NS8250_EARLY_REGSHIFT));
-        break;
+	stat = (T *)(socdev_va + (REG_LSR << UART_NS8250_EARLY_REG_SHIFT));
+	tx = (T *)(socdev_va + (REG_DATA << UART_NS8250_EARLY_REG_SHIFT));
 
-    case 2:
-        stat16 = (volatile uint16_t *)(socdev_va + (REG_LSR << UART_NS8250_EARLY_REGSHIFT));
-        tx16   = (volatile uint16_t *)(socdev_va + (REG_DATA << UART_NS8250_EARLY_REGSHIFT));
-        break;
-
-    case 4:
-        stat32 = (volatile uint32_t *)(socdev_va + (REG_LSR << UART_NS8250_EARLY_REGSHIFT));
-        tx32   = (volatile uint32_t *)(socdev_va + (REG_DATA << UART_NS8250_EARLY_REGSHIFT));
-        break;
-  		default:
-			  printf("uart: ns8250: size of iowidth is unknow %d\n", UART_NS8250_EARLY_IOWIDTH);
-	}
-
-    int limit = 1000000;
-
-    switch (UART_NS8250_EARLY_IOWIDTH) {
-    case 1:
-        while ((*stat8 & LSR_THRE) == 0 && --limit > 0)
-            continue;
-        *tx8 = (c & 0xff);
-        break;
-
-    case 2:
-        while ((*stat16 & LSR_THRE) == 0 && --limit > 0)
-            continue;
-        *tx16 = (c & 0xff);
-        break;
-
-    case 4:
-        while ((*stat32 & LSR_THRE) == 0 && --limit > 0)
-            continue;
-        *tx32 = (c & 0xff);
-        break;
-	default:
-		printf("uart: ns8250: size of iowidth is unknow %d\n", UART_NS8250_EARLY_IOWIDTH);
-    }
+	while ((*stat & LSR_THRE) == 0)
+		continue;
+	*tx =  c & 0xff;
 }
 #else
-#error ns8250 early putc is not implemented for current  architecture
+#error ns8250 early putc is not implemented for current architecture
 #endif
 early_putc_t *early_putc = uart_ns8250_early_putc;
+#undef DTYPE
 #endif /* EARLY_PRINTF */
 
 /*
