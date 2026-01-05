@@ -21,6 +21,18 @@ device		sdhci		# SD controller
 device		mmc		# mmc/sd bus
 device		mmcsd		# mmc/sd flash cards
 
+# USB support
+options 	USB_DEBUG		# enable debug msgs
+device		ohci			# OHCI USB interface
+device		uhci			# UHCI USB interface
+device		ehci			# EHCI USB interface (USB 2.0)
+device		xhci			# XHCI USB interface (USB 3.0)
+device		usb			    # USB Bus (required)
+device		usbhid			# USB HID Transport
+device		hkbd			# Keyboard
+device		ukbd			# Keyboard
+device		umass			# Disks/Mass storage - Requires scbus and da
+
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
