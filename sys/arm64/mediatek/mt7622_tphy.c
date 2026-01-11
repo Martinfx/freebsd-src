@@ -120,7 +120,6 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
 
     //sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
-    phy_id = phynode_get_id(phynode);
     node = phynode_get_ofw_node(phynode);
 
     /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
