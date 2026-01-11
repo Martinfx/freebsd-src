@@ -114,11 +114,12 @@ static struct ofw_compat_data compat_data[] = {
 static int
 mt_phynode_enable(struct phynode *phynode, bool enable)
 {
-    ///struct mt_phynode_softc *sc;
+    //struct mt_phynode_softc *sc;
     device_t dev;
     phandle_t node;
     intptr_t phy_id;
     char namebuf[64];
+    int rv;
 
     //sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
@@ -128,11 +129,11 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     if (node > 0) {
         rv = OF_getprop(node, "name", namebuf, sizeof(namebuf));
         if (rv > 0) {
-            device_printf(sc->dev, "mt_phynode_enable: node name = %s, pky_id=%ld\n", namebuf, phy_id);
+            device_printf(dev, "mt_phynode_enable: node name = %s, pky_id=%ld\n", namebuf, phy_id);
         }
-        device_printf(sc->dev, "mt_phynode_enable: node = %d\n", node);
+        device_printf(dev, "mt_phynode_enable: node = %d\n", node);
     } else {
-        device_printf(sc->dev, "mt_phynode_enable: node UNKNOWN (<=0)\n");
+        device_printf(dev, "mt_phynode_enable: node UNKNOWN (<=0)\n");
     }
     /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
     tmp &= ~0x00000c00;
@@ -170,6 +171,7 @@ mt_phynode_set_mode(struct phynode *phynode, phy_mode_t mode,
     phandle_t node;
     intptr_t phy_id;
     char namebuf[64];
+    int rv;
 
     sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
@@ -179,11 +181,11 @@ mt_phynode_set_mode(struct phynode *phynode, phy_mode_t mode,
     if (node > 0) {
         rv = OF_getprop(node, "name", namebuf, sizeof(namebuf));
         if (rv > 0) {
-            device_printf(sc->dev, "mt_phynode_set_mode: node name = %s, pky_id=%ld\n", namebuf, phy_id);
+            device_printf(dev, "mt_phynode_set_mode: node name = %s, pky_id=%ld\n", namebuf, phy_id);
         }
-        device_printf(sc->dev, "mt_phynode_set_mode: node = %d\n", node);
+        device_printf(dev, "mt_phynode_set_mode: node = %d\n", node);
     } else {
-        device_printf(sc->dev, "mt_phynode_set_mode: node UNKNOWN (<=0)\n");
+        device_printf(dev, "mt_phynode_set_mode: node UNKNOWN (<=0)\n");
     }
 
     device_printf(dev, "Mode phy %d\n", sc->mode);
