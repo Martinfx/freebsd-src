@@ -146,7 +146,7 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     bus_write_4(sc->mem_res, U3P_U3_PHYD_LFPS1, tmp);*/
 
 
-    device_printf(dev, "phy enable() enable=%d, node=%ld\n",enable, node);
+    device_printf(dev, "phy enable() enable=%d, node=%u\n",enable, node);
 
     return (0);
 }
