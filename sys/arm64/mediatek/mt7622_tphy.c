@@ -253,7 +253,7 @@ mt7622_tphy_attach(device_t dev)
     //struct mt_phynode_softc *phy_sc;
 
     phandle_t child;
-    char *usbname;
+    ///char *usbname;
     int rid = 0, phy_id = 0, rv;
     clk_t clk;
     uint64_t freq;
@@ -317,7 +317,7 @@ mt7622_tphy_attach(device_t dev)
             return (ENXIO);
         }
 
-        rv = OF_getprop_alloc(child, "name", (void **)&usbname);
+       /* rv = OF_getprop_alloc(child, "name", (void **)&usbname);
         if (rv == -1) {
             continue;
         }
@@ -335,7 +335,7 @@ mt7622_tphy_attach(device_t dev)
             /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
             tmp &= ~mask;
             tmp |= val & mask;
-            bus_write_4(sc->mem_res,*/
+            bus_write_4(sc->mem_res,
 
         }
         else if (strcasecmp(usbname, "usb-phy@1a0c5000")) {
@@ -353,7 +353,7 @@ mt7622_tphy_attach(device_t dev)
         }
         else {
             device_printf(sc->dev , "create phynode PHY\n");
-        }
+        }*/
 
         //phy_sc-> = phynode_get_softc(phynode);
         //psc->port = p;
