@@ -117,7 +117,6 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     ///struct mt_phynode_softc *sc;
     device_t dev;
     phandle_t node;
-    intptr_t phy_id;
 
     //sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
