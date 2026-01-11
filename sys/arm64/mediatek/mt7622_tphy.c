@@ -367,7 +367,7 @@ mt7622_tphy_attach(device_t dev)
             device_printf(sc->dev , "create phynode_register PHY\n");
         }
 
-        OF_prop_free(usbname);
+        //OF_prop_free(usbname);
         rid++;
         sc->nports++;
         sc->mode = 0;
