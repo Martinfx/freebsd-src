@@ -116,12 +116,14 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
 {
     ///struct mt_phynode_softc *sc;
     device_t dev;
-    ///phandle_t node;
+    phandle_t node;
     intptr_t phy_id;
 
     //sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
     phy_id = phynode_get_id(phynode);
+    node = phynode_get_ofw_node(phynode);
+
     /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
     tmp &= ~0x00000c00;
     tmp |= ((2 << __builtin_ffs(0x00000c00) - 1) & 0x00000c00);
@@ -144,7 +146,7 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     bus_write_4(sc->mem_res, U3P_U3_PHYD_LFPS1, tmp);*/
 
 
-    device_printf(dev, "phy enable() enable=%d, port_id=%ld\n",enable, phy_id);
+    device_printf(dev, "phy enable() enable=%d, node=%ld\n",enable, node);
 
     return (0);
 }
