@@ -117,11 +117,23 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     ///struct mt_phynode_softc *sc;
     device_t dev;
     phandle_t node;
+    intptr_t phy_id;
+    char namebuf[64];
 
     //sc = phynode_get_softc(phynode);
     dev = phynode_get_device(phynode);
-    node = phynode_get_ofw_node(phynode);
+    phy_id = phynode_get_id(phynode);
 
+    node = phynode_get_ofw_node(phynode);
+    if (node > 0) {
+        rv = OF_getprop(node, "name", namebuf, sizeof(namebuf));
+        if (rv > 0) {
+            device_printf(sc->dev, "mt_phynode_enable: node name = %s, pky_id=%ld\n", namebuf, phy_id);
+        }
+        device_printf(sc->dev, "mt_phynode_enable: node = %d\n", node);
+    } else {
+        device_printf(sc->dev, "mt_phynode_enable: node UNKNOWN (<=0)\n");
+    }
     /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
     tmp &= ~0x00000c00;
     tmp |= ((2 << __builtin_ffs(0x00000c00) - 1) & 0x00000c00);
@@ -144,7 +156,7 @@ mt_phynode_enable(struct phynode *phynode, bool enable)
     bus_write_4(sc->mem_res, U3P_U3_PHYD_LFPS1, tmp);*/
 
 
-    device_printf(dev, "phy enable() enable=%d, node=%u\n",enable, node);
+    ///device_printf(dev, "phy enable() enable=%d, node=%u\n",enable, node);
 
     return (0);
 }
@@ -155,9 +167,24 @@ mt_phynode_set_mode(struct phynode *phynode, phy_mode_t mode,
 {
     struct mt_phynode_softc *sc;
     device_t dev;
+    phandle_t node;
+    intptr_t phy_id;
+    char namebuf[64];
 
-    dev = phynode_get_device(phynode);
     sc = phynode_get_softc(phynode);
+    dev = phynode_get_device(phynode);
+    phy_id = phynode_get_id(phynode);
+
+    node = phynode_get_ofw_node(phynode);
+    if (node > 0) {
+        rv = OF_getprop(node, "name", namebuf, sizeof(namebuf));
+        if (rv > 0) {
+            device_printf(sc->dev, "mt_phynode_set_mode: node name = %s, pky_id=%ld\n", namebuf, phy_id);
+        }
+        device_printf(sc->dev, "mt_phynode_set_mode: node = %d\n", node);
+    } else {
+        device_printf(sc->dev, "mt_phynode_set_mode: node UNKNOWN (<=0)\n");
+    }
 
     device_printf(dev, "Mode phy %d\n", sc->mode);
 
