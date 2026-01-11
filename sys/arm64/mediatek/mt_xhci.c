@@ -293,6 +293,30 @@ mt_xhci_attach(device_t dev)
             return (rv);
         }
 
+        rv = phy_set_mode(sc->phys[i], PHY_MODE_USB_DEVICE, 0);
+        if (rv != 0) {
+            device_printf(sc->dev, "Could not set phy %d to host mode: %d\n",
+                          i, rv);
+            phy_release(sc->phys[i]);
+            return (rv);
+        }
+
+        rv = phy_set_mode(sc->phys[i], PHY_MODE_USB_OTG, 0);
+        if (rv != 0) {
+            device_printf(sc->dev, "Could not set phy %d to host mode: %d\n",
+                          i, rv);
+            phy_release(sc->phys[i]);
+            return (rv);
+        }
+
+        rv = phy_set_mode(sc->phys[i], PHY_MODE_INVALID, 0);
+        if (rv != 0) {
+            device_printf(sc->dev, "Could not set phy %d to host mode: %d\n",
+                          i, rv);
+            phy_release(sc->phys[i]);
+            return (rv);
+        }
+
         rv = phy_enable(sc->phys[i]);
         if (rv != 0) {
             device_printf(sc->dev, "Could not enable phy %d: %d\n", i, rv);
