@@ -340,7 +340,7 @@ mt7622_tphy_attach(device_t dev)
         }
         else if (strcasecmp(usbname, "usb-phy@1a0c5000")) {
             device_printf(sc->dev , "inicialize u2port1\n");
-        }
+        }*/
 
         bzero(&phy_init, sizeof(phy_init));
         phy_init.id = phy_id;
@@ -353,7 +353,7 @@ mt7622_tphy_attach(device_t dev)
         }
         else {
             device_printf(sc->dev , "create phynode PHY\n");
-        }*/
+        }
 
         //phy_sc-> = phynode_get_softc(phynode);
         //psc->port = p;
