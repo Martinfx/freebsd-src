@@ -300,7 +300,7 @@ mt_xhci_attach(device_t dev)
             return (rv);
         }
         else {
-            device_printf(sc->dev, "Enable phy %d\n", i);
+            device_printf(sc->dev, "Enable phy %d - %s\n", i, sc->soc->phy_names[i]);
         }
     }
 
