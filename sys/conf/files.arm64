@@ -847,3 +847,4 @@ arm64/mediatek/mt7622_eth.c			optional mt7622_eth soc_mediatek
 arm64/mediatek/mt7622_pciecfg.c			optional fdt soc_mediatek
 #arm64/mediatek/mt7622_pcie.c			optional fdt pci soc_mediatek
 arm64/mediatek/mt_xhci.c			optional xhci fdt soc_mediatek
+arm64/mediatek/mt7622_tphy.c			optional fdt soc_mediatek
