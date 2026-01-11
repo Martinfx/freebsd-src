@@ -328,11 +328,11 @@ mt7622_tphy_attach(device_t dev)
         else if (strcasecmp(usbname, "usb-phy@1a0c4900")) {
             device_printf(sc->dev , "inicialize u3port0\n");
 
-            /*tmp = bus_read_4(sc->mem_res, U3P_SPLLC_XTALCTL3);
+            tmp = bus_read_4(sc->mem_res, U3P_SPLLC_XTALCTL3);
             tmp |= (XC3_RG_U3_XTAL_RX_PWD | XC3_RG_U3_FRC_XTAL_RX_PWD);
-            bus_write_4(sc->mem_res, U3P_SPLLC_XTALCTL3, tmp);*/
+            bus_write_4(sc->mem_res, U3P_SPLLC_XTALCTL3, tmp);
 
-            /*tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
+            tmp = bus_read_4(sc->mem_res, U3P_U3_PHYA_DA_REG0);
             tmp &= ~mask;
             tmp |= val & mask;
             bus_write_4(sc->mem_res,
