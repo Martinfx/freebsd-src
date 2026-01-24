@@ -4,6 +4,8 @@ device		uart_ns8250
 
 # GPIO / PINCTRL
 device		mt7622_pinctrl
+device      gpioled
+device      gpiokeys
 
 # Ethernet, BPF and bridge support
 device          mt7622_eth
