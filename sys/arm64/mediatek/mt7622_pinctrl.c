@@ -68,7 +68,8 @@
 #define EINT_ACK5     0x054
 #define EINT_ACK6     0x058
 #define MAX_EINT_REGS 7
-
+#define MT622_MAX_PINS 103
+#define	MT_DEFAULT_CAPS	(GPIO_PIN_INPUT | GPIO_PIN_OUTPUT)
 /*#define MT_EINT_STA(n)     (0x000 + ((n) * 0x04))
 #define MT_EINT_MASK_SET(n) (0x0c0 + ((n) * 4))
 #define MT_EINT_MASK_CLR(n) (0x100 + ((n) * 4))
@@ -133,6 +134,7 @@ struct mt7622_pinctrl_softc {
     const struct mt7622_pinmux_desc *pinmux;
     const struct mt7622_functions_desc *functions;
     struct mt7622_pinctrl_irqsrc *irqs;
+    struct gpio_pin	gpio_pins[MT622_MAX_PINS];
     struct mtx mtx;
     int mem_rid;
     int eint_rid;
@@ -496,25 +498,30 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
 
 static int
 mt7622_intr(void *arg) {
-    struct mt7622_pinctrl_softc *sc = arg;
+    struct mt7622_pinctrl_softc *sc;
+    sc = (struct mt7622_pinctrl_softc*)arg;
+
     uint32_t sta_regs[MAX_EINT_REGS];
-    uint32_t ack_regs[MAX_EINT_REGS];
-    uint64_t total_status = 0;
+    //uint32_t ack_regs[MAX_EINT_REGS];
+    //uint64_t total_status = 0;
 
     /* 1) přečti všechny EINT_STA* registry */
-    sta_regs[0] = bus_write_4(sc, EINT_STA0);
-    sta_regs[1] = bus_write_4(sc, EINT_STA1);
-    sta_regs[2] = bus_write_4(sc, EINT_STA2);
-    sta_regs[3] = bus_write_4(sc, EINT_STA3);
-    sta_regs[4] = bus_write_4(sc, EINT_STA4);
-    sta_regs[5] = bus_write_4(sc, EINT_STA5);
-    sta_regs[6] = bus_write_4(sc, EINT_STA6);
+    sta_regs[0] = bus_read_4(sc->eint_res, EINT_STA0);
+    sta_regs[1] = bus_read_4(sc->eint_res, EINT_STA1);
+    sta_regs[2] = bus_read_4(sc->eint_res, EINT_STA2);
+    sta_regs[3] = bus_read_4(sc->eint_res, EINT_STA3);
+    sta_regs[4] = bus_read_4(sc->eint_res, EINT_STA4);
+    sta_regs[5] = bus_read_4(sc->eint_res, EINT_STA5);
+    sta_regs[6] = bus_read_4(sc->eint_res, EINT_STA6);
 
+    for (int i = 0; i < MAX_EINT_REGS; i++) {
+        if (sta_regs[i] == 0)
+            continue;
 
-
+        bus_write_4(sc->eint_res, EINT_ACK0 + (i * 4), sta_regs[i]);
+    }
 
     device_printf(sc->dev, "mt7622_intr (unhandled)\n");
-
     return (FILTER_HANDLED);
 }
 
@@ -617,8 +624,8 @@ mt7622_pinctrl_attach(device_t dev) {
             return (ENXIO);
         }
 
-        if (intr_pic_register(sc->sc_dev,
-            OF_xref_from_node(ofw_bus_get_node(sc->sc_dev))) == NULL)
+        if (intr_pic_register(sc->dev,
+            OF_xref_from_node(ofw_bus_get_node(sc->dev))) == NULL) {
             return (ENXIO);
         }
 
@@ -628,6 +635,17 @@ mt7622_pinctrl_attach(device_t dev) {
             bus_release_resource(dev, SYS_RES_IRQ,
                                  sc->irq_rid, sc->irq_res);
             return (ENXIO);
+        }
+
+        for (int i = 0; i < sc->npins; ++i) {
+            sc->gpio_pins[i].gp_pin = i;
+            sc->gpio_pins[i].gp_caps = MT_DEFAULT_CAPS;
+            /*sc->gpio_pins[i].gp_flags =
+                    ((input_en & (1u << i)) ? GPIO_PIN_INPUT : 0) |
+                    ((output_en & (1u << i)) ? GPIO_PIN_OUTPUT : 0);*/
+            snprintf(sc->gpio_pins[i].gp_name, GPIOMAXNAME, "GPIO%d", i);
+            device_printf(dev, "Pin name: %s GPIO%d\n", sc->gpio_pins[i].gp_name, i);
+            sc->gpio_pins[i].gp_name[GPIOMAXNAME - 1] = '\0';
         }
 
         bus_attach_children(dev);
@@ -686,7 +704,7 @@ static device_method_t mt7622_pinctrl_methods[] = {
         DEVMETHOD(device_probe, mt7622_pinctrl_probe),
         DEVMETHOD(device_attach, mt7622_pinctrl_attach),
         DEVMETHOD(device_detach, mt7622_pinctrl_detach),
-        DEVMETHOD(fdt_pinctrl_configure, mt7622_pinctrl_configure).
+        DEVMETHOD(fdt_pinctrl_configure, mt7622_pinctrl_configure),
 
         DEVMETHOD_END
 };
