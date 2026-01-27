@@ -503,18 +503,11 @@ mt7622_intr(void *arg) {
 
     uint32_t status_regs[MAX_EINT_REGS];
 
-    status_regs[0] = bus_read_4(sc->eint_res, EINT_STA0);
-    status_regs[1] = bus_read_4(sc->eint_res, EINT_STA1);
-    status_regs[2] = bus_read_4(sc->eint_res, EINT_STA2);
-    status_regs[3] = bus_read_4(sc->eint_res, EINT_STA3);
-    status_regs[4] = bus_read_4(sc->eint_res, EINT_STA4);
-    status_regs[5] = bus_read_4(sc->eint_res, EINT_STA5);
-    status_regs[6] = bus_read_4(sc->eint_res, EINT_STA6);
+    for (int i = 0; i < MTK_EINT_STA_REGS; i++) {
+        status_regs[i] = bus_read_4(sc->eint_res, EINT_STA0 + (i * sizeof(uint32_t)));
+    }
 
     for (int i = 0; i < MAX_EINT_REGS; i++) {
-        if (status_regs[i] == 0)
-            continue;
-
         bus_write_4(sc->eint_res, EINT_ACK0 + (i * 4), status_regs[i]);
         device_printf(sc->dev, "EINT pending 0x%x\n", status_regs[i]);
     }
