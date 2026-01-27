@@ -503,7 +503,7 @@ mt7622_intr(void *arg) {
 
     uint32_t status_regs[MAX_EINT_REGS];
 
-    for (int i = 0; i < MTK_EINT_STA_REGS; i++) {
+    for (int i = 0; i < MAX_EINT_REGS; i++) {
         status_regs[i] = bus_read_4(sc->eint_res, EINT_STA0 + (i * sizeof(uint32_t)));
     }
 
