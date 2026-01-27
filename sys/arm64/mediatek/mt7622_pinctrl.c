@@ -512,6 +512,7 @@ mt7622_intr(void *arg) {
         device_printf(sc->dev, "EINT pending 0x%x\n", status_regs[i]);
     }
 
+    device_printf(sc->dev, "mt7622_intr\n");
     return (FILTER_HANDLED);
 }
 
