@@ -51,7 +51,7 @@
 #include "gpio_if.h"
 #include "pic_if.h"
 
-/* EINT register offsets from ap_cirq_eint base */
+/* EINT register offsets from eint base */
 #define EINT_STA0     0x000
 #define EINT_STA1     0x004
 #define EINT_STA2     0x008
