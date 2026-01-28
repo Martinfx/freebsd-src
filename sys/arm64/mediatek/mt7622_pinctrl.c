@@ -510,6 +510,8 @@ mt7622_intr(void *arg) {
     for (int i = 0; i < MAX_EINT_REGS; i++) {
         bus_write_4(sc->eint_res, EINT_ACK0 + (i * 4), status_regs[i]);
         device_printf(sc->dev, "EINT pending 0x%x\n", status_regs[i]);
+        device_printf(sc->dev, "EINT STAT: stat: %#x\n",
+                      bus_read_4(sc->eint_res, EINT_STA0 + (i * sizeof(uint32_t))));
     }
 
     device_printf(sc->dev, "mt7622_intr\n");
