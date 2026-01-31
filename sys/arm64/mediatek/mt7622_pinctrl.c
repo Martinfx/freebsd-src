@@ -838,7 +838,7 @@ mt7622_gpio_pin_set(device_t dev, uint32_t pin, uint32_t value)
 static int
 mt7622_gpio_pin_get(device_t dev, uint32_t pin, uint32_t *value)
 {
-    device_printf(dev, "mt7622_gpio_pin_get: pin %d, not implemented\n", pin);
+    //device_printf(dev, "mt7622_gpio_pin_get: pin %d, not implemented\n", pin);
     return (0);
 }
 
