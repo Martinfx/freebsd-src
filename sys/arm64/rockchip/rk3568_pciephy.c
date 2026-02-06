@@ -167,6 +167,7 @@ rk3568_pciephy_attach(device_t dev)
 	struct phynode *phynode;
 	uint32_t data_lanes[2] = { 0, 0 };
 	int err, rid = 0;
+	int reg_status;
 
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
@@ -185,7 +186,7 @@ rk3568_pciephy_attach(device_t dev)
 		return (ENXIO);
 
 	/* Get regulator */
-	err = regulator_get_by_ofw_property(dev, 0, "vcc3v3_pi6c_05",
+	err = regulator_get_by_ofw_property(dev, 0, "phy-supply",
 										&sc->regulator);
 	if (err != 0 && err != ENOENT) {
 		device_printf(dev, "Cannot get regulator: %d\n", err);
@@ -193,7 +194,12 @@ rk3568_pciephy_attach(device_t dev)
 	}
 
 	if (sc->regulator != NULL) {
+		err = regulator_status(sc->regulator, &reg_status);
+		device_printf(dev, "regulator phy-supply reg_status: %d\n", reg_status);
 		err = regulator_enable(sc->regulator);
+		err = regulator_status(sc->regulator, &reg_status);
+		device_printf(dev, "regulator phy-supply reg_status: %d\n", reg_status);
+		device_printf(dev, "regulator phy-supply err: %d\n", err);
 		if (err != 0) {
 			device_printf(dev, "Cannot enable regulator: %d\n",
 						  err);
