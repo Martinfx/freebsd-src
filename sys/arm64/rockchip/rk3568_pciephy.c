@@ -80,6 +80,7 @@ struct rk3568_pciephy_softc {
 	clk_t		refclk_n;
 	clk_t		pclk;
 	hwreset_t	phy_reset;
+	regulator_t	regulator;
 };
 
 
@@ -165,7 +166,7 @@ rk3568_pciephy_attach(device_t dev)
 	struct phynode_init_def phy_init;
 	struct phynode *phynode;
 	uint32_t data_lanes[2] = { 0, 0 };
-	int rid = 0;
+	int err, rid = 0;
 
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
@@ -182,6 +183,23 @@ rk3568_pciephy_attach(device_t dev)
 	    syscon_get_by_ofw_property(dev, sc->node, "rockchip,phy-grf",
 	    &sc->phy_grf))
 		return (ENXIO);
+
+	/* Get regulator */
+	err = regulator_get_by_ofw_property(dev, 0, "vcc3v3_pi6c_05",
+										&sc->regulator);
+	if (err != 0 && err != ENOENT) {
+		device_printf(dev, "Cannot get regulator: %d\n", err);
+		return (ENXIO);
+	}
+
+	if (sc->regulator != NULL) {
+		err = regulator_enable(sc->regulator);
+		if (err != 0) {
+			device_printf(dev, "Cannot enable regulator: %d\n",
+						  err);
+			return (ENXIO);
+		}
+	}
 
 	/* Get & enable clocks */
 	if (clk_get_by_ofw_name(dev, 0, "refclk_m", &sc->refclk_m)) {
