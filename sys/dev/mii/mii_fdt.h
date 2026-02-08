@@ -44,6 +44,7 @@ struct mii_fdt_phy_config {
 typedef struct mii_fdt_phy_config mii_fdt_phy_config_t;
 
 /* PHY config flags. */
+//#define MIIF_FDT_COMPAT_CLAUSE22    0x0000
 #define	MIIF_FDT_COMPAT_CLAUSE45	0x0001
 #define	MIIF_FDT_BROKEN_TURNAROUND	0x0002
 #define	MIIF_FDT_LANE_SWAP		0x0004
@@ -54,6 +55,7 @@ typedef struct mii_fdt_phy_config mii_fdt_phy_config_t;
 #define	MIIF_FDT_EEE_BROKEN_1000KX	0x0080
 #define	MIIF_FDT_EEE_BROKEN_10GKX4	0x0100
 #define	MIIF_FDT_EEE_BROKEN_10GKR	0x0200
+#define MIIF_FDT_COMPAT_CLAUSE22    0x0400
 
 /*
  * Convert between mii_contype enums and devicetree property strings.
