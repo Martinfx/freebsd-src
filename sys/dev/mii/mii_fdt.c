@@ -215,6 +215,10 @@ mii_fdt_get_config(device_t phydev)
 		cfg->max_speed = val;
 
 	if (ofw_bus_node_is_compatible(cfg->phynode,
+		"ethernet-phy-ieee802.3-c22"))
+		cfg->flags |= MIIF_FDT_COMPAT_CLAUSE22;
+
+	if (ofw_bus_node_is_compatible(cfg->phynode,
 	    "ethernet-phy-ieee802.3-c45"))
 		cfg->flags |= MIIF_FDT_COMPAT_CLAUSE45;
 
