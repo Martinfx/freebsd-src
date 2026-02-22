@@ -77,6 +77,41 @@ rk3568_dwc_ahci_probe(device_t dev)
 	return (BUS_PROBE_VENDOR);
 }
 
+static void
+rk3568_dump_ahci_status(struct rk3568_dwc_ahci_softc *sc)
+{
+	uint32_t v;
+
+	/* AHCI controller registers */
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_P_SSTS);
+	device_printf(sc->dev, "AHCI PxSSTS = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_P_SCTL);
+	device_printf(sc->dev, "AHCI PxSCTL = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_P_SERR); /* or AHCI_P_SERR */
+	device_printf(sc->dev, "AHCI PxSERR = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_P_CMD);
+	device_printf(sc->dev, "AHCI PxCMD = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_P_IS);
+	device_printf(sc->dev, "AHCI PxIS = 0x%08x\n", v);
+
+	/* AHCI global */
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_CAP);
+	device_printf(sc->dev, "AHCI CAP = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_CAP2);
+	device_printf(sc->dev, "AHCI CAP2 = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_PI);
+	device_printf(sc->dev, "AHCI PI = 0x%08x\n", v);
+
+	v = ATA_INL(sc->ahci_ctlr.r_mem, AHCI_GHC);
+	device_printf(sc->dev, "AHCI GHC = 0x%08x\n", v);
+}
+
 static int
 rk3568_dwc_ahci_attach(device_t dev)
 {
@@ -149,15 +184,23 @@ rk3568_dwc_ahci_attach(device_t dev)
 		}
 	}
 
+	rk3568_dump_ahci_status(sc);
+
+
+	uint32_t val;
+	phy_status(sc->phy, &val);
+	device_printf(sc->dev, "phy status: 0x%08x\n", val);
+
 	error = phy_enable(sc->phy);
 	if (error != 0) {
 		device_printf(sc->dev, "Cannot enable sata-phy phy\n");
 		goto fail;
 	}
-
-	int val;
+	
 	phy_status(sc->phy, &val);
-	device_printf(sc->dev, "phy status: %d\n", val);
+	device_printf(sc->dev, "phy status: 0x%08x\n", val);
+
+	rk3568_dump_ahci_status(sc);
 
 	/* Reset controller */
 	error = ahci_ctlr_reset(dev);
@@ -165,6 +208,8 @@ rk3568_dwc_ahci_attach(device_t dev)
 		device_printf(dev, "Failed to reset controller\n");
 		goto fail;
 	}
+
+	rk3568_dump_ahci_status(sc);
 
 	/* Setup controller defaults. */
 	//device_printf(dev, "Defaults value ctlr->msi: %d \n", ctlr->msi);
