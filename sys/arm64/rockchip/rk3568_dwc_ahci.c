@@ -119,7 +119,7 @@ rk3568_dwc_ahci_attach(device_t dev)
 	struct ahci_controller *ctlr;
 	phandle_t node;
 	int rv, error;
-	uint32_t ports, len;
+	uint32_t ports = 0, len;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;;
@@ -130,18 +130,8 @@ rk3568_dwc_ahci_attach(device_t dev)
 	ctlr->r_mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &ctlr->r_rid, RF_ACTIVE);
 	if (ctlr->r_mem == NULL) {
-		panic("Cannot allocate memory resources");
 		return (ENXIO);
 	}
-
-	len = OF_getencprop(node, "ports-implemented",
-	    &ports, sizeof(ports));
-	if (len != sizeof(ports)) {
-		device_printf(dev, "Cannot get ports-implemented\n");
-		return (ENXIO);
-	}
-
-	device_printf(dev, "ports-implemented: %d\n", ports);
 
 	error = clk_get_by_ofw_name(sc->dev, 0,"sata",&sc->clk_sata);
 	if (error != 0) {
@@ -186,7 +176,6 @@ rk3568_dwc_ahci_attach(device_t dev)
 
 	rk3568_dump_ahci_status(sc);
 
-
 	uint32_t val;
 	phy_status(sc->phy, &val);
 	device_printf(sc->dev, "phy status: 0x%08x\n", val);
@@ -196,11 +185,11 @@ rk3568_dwc_ahci_attach(device_t dev)
 		device_printf(sc->dev, "Cannot enable sata-phy phy\n");
 		goto fail;
 	}
+
+	DELAY(100000);
 	
 	phy_status(sc->phy, &val);
 	device_printf(sc->dev, "phy status: 0x%08x\n", val);
-
-	rk3568_dump_ahci_status(sc);
 
 	/* Reset controller */
 	error = ahci_ctlr_reset(dev);
@@ -209,12 +198,21 @@ rk3568_dwc_ahci_attach(device_t dev)
 		goto fail;
 	}
 
-	rk3568_dump_ahci_status(sc);
-
 	/* Setup controller defaults. */
-	//device_printf(dev, "Defaults value ctlr->msi: %d \n", ctlr->msi);
-	ctlr->quirks = AHCI_Q_FORCE_PI | AHCI_Q_SLOWDEV;
+	ctlr->quirks = AHCI_Q_FORCE_PI | AHCI_Q_SATA2;
 	ctlr->numirqs = 1;
+
+	len = OF_getencprop(node, "ports-implemented",
+	    &ports, sizeof(ports));
+	if (len != sizeof(ports)) {
+		device_printf(dev, "Cannot get ports-implemented\n");
+	}
+	else {
+		/*uint32_t val = ATA_INL(ctlr->r_mem, AHCI_PI);
+		ATA_OUTL(ctlr->r_mem, AHCI_PI, val | (ports << 0));*/
+	}
+
+	rk3568_dump_ahci_status(sc);
 
 	/* call generic AHCI attach */
 	rv = ahci_attach(dev);
