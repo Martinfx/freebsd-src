@@ -199,7 +199,7 @@ rk3568_dwc_ahci_attach(device_t dev)
 	}
 
 	/* Setup controller defaults. */
-	ctlr->quirks = AHCI_Q_FORCE_PI | AHCI_Q_SATA2;
+	ctlr->quirks = AHCI_Q_FORCE_PI;
 	ctlr->numirqs = 1;
 
 	len = OF_getencprop(node, "ports-implemented",
