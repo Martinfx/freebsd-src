@@ -212,7 +212,7 @@ rk3568_dwc_ahci_attach(device_t dev)
 	// 3. Proveďte COMRESET (SCTL_DET = 1)
 	uint32_t sctl = ATA_INL(ctlr->r_mem, AHCI_P_SCTL);
 	sctl &= ~AHCI_P_SCTL_DET_MASK;
-	sctl |= AHCI_P_SCTL_DET_INIT;
+	sctl |= 0x00000001;
 	ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, sctl);
 
 	// 4. Čekejte 1-2ms (podle TRM)
