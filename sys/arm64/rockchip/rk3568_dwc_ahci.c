@@ -198,6 +198,24 @@ rk3568_dwc_ahci_attach(device_t dev)
 		goto fail;
 	}
 
+	/* Definice registrů dle RK3568 TRM */
+	#define AHCI_P_CMD_SUD    (1 << 1)  /* Spin-Up Device */
+	#define AHCI_P_CMD_POD    (1 << 2)  /* Power On Device */
+
+	// 1. AHCI Enable
+	val = ATA_INL(ctlr->r_mem, AHCI_GHC);
+	ATA_OUTL(ctlr->r_mem, AHCI_GHC, val | AHCI_GHC_AE);
+
+	// 2. Probuď disk (SUD bit je kritický pro RK3568)
+	val = ATA_INL(ctlr->r_mem, AHCI_P_CMD);
+	val |= AHCI_P_CMD_SUD | AHCI_P_CMD_POD;
+	ATA_OUTL(ctlr->r_mem, AHCI_P_CMD, val);
+
+	// 3. Manuální COMRESET sekvence
+	/*ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, AHCI_P_SCTL_DET_INIT); // 0x1
+	DELAY(2000); // 2ms
+	ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, AHCI_P_SCTL_DET_IDLE); // 0x0 */
+
 	/* Setup controller defaults. */
 	ctlr->quirks = AHCI_Q_FORCE_PI;
 	ctlr->numirqs = 1;
