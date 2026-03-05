@@ -202,25 +202,25 @@ rk3568_dwc_ahci_attach(device_t dev)
 
 	/* Definice registrů dle RK3568 TRM */
 	// 1. Resetujte chyby
-	ATA_OUTL(ch->r_mem, AHCI_P_SERR, 0xFFFFFFFF);
+	ATA_OUTL(ctlr->r_mem, AHCI_P_SERR, 0xFFFFFFFF);
 
 	// 2. Zapněte Spin-up a FIS příjem (DŮLEŽITÉ)
-	uint32_t cmd = ATA_INL(ch->r_mem, AHCI_P_CMD);
+	uint32_t cmd = ATA_INL(ctlr->r_mem, AHCI_P_CMD);
 	cmd |= (AHCI_P_CMD_SUD | AHCI_P_CMD_POD | AHCI_P_CMD_FRE);
-	ATA_OUTL(ch->r_mem, AHCI_P_CMD, cmd);
+	ATA_OUTL(ctlr->r_mem, AHCI_P_CMD, cmd);
 
 	// 3. Proveďte COMRESET (SCTL_DET = 1)
-	uint32_t sctl = ATA_INL(ch->r_mem, AHCI_P_SCTL);
+	uint32_t sctl = ATA_INL(ctlr->r_mem, AHCI_P_SCTL);
 	sctl &= ~AHCI_P_SCTL_DET_MASK;
 	sctl |= AHCI_P_SCTL_DET_INIT;
-	ATA_OUTL(ch->r_mem, AHCI_P_SCTL, sctl);
+	ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, sctl);
 
 	// 4. Čekejte 1-2ms (podle TRM)
 	DELAY(20000);
 
 	// 5. Uvolněte reset (SCTL_DET = 0)
 	sctl &= ~AHCI_P_SCTL_DET_MASK;
-	ATA_OUTL(ch->r_mem, AHCI_P_SCTL, sctl);
+	ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, sctl);
 
 	/* Setup controller defaults. */
 	ctlr->quirks = AHCI_Q_FORCE_PI;
