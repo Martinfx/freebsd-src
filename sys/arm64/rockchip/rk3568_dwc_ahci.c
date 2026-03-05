@@ -198,23 +198,29 @@ rk3568_dwc_ahci_attach(device_t dev)
 		goto fail;
 	}
 
+	#define AHCI_P_SCTL_DET_MASK    0x0000000f
+
 	/* Definice registrů dle RK3568 TRM */
-	//#define AHCI_P_CMD_SUD    (1 << 1)  /* Spin-Up Device */
-	//#define AHCI_P_CMD_POD    (1 << 2)  /* Power On Device */
+	// 1. Resetujte chyby
+	ATA_OUTL(ch->r_mem, AHCI_P_SERR, 0xFFFFFFFF);
 
-	// 1. AHCI Enable
-	val = ATA_INL(ctlr->r_mem, AHCI_GHC);
-	ATA_OUTL(ctlr->r_mem, AHCI_GHC, val | AHCI_GHC_AE);
+	// 2. Zapněte Spin-up a FIS příjem (DŮLEŽITÉ)
+	uint32_t cmd = ATA_INL(ch->r_mem, AHCI_P_CMD);
+	cmd |= (AHCI_P_CMD_SUD | AHCI_P_CMD_POD | AHCI_P_CMD_FRE);
+	ATA_OUTL(ch->r_mem, AHCI_P_CMD, cmd);
 
-	// 2. Probuď disk (SUD bit je kritický pro RK3568)
-	val = ATA_INL(ctlr->r_mem, AHCI_P_CMD);
-	val |= AHCI_P_CMD_SUD | AHCI_P_CMD_POD;
-	ATA_OUTL(ctlr->r_mem, AHCI_P_CMD, val);
+	// 3. Proveďte COMRESET (SCTL_DET = 1)
+	uint32_t sctl = ATA_INL(ch->r_mem, AHCI_P_SCTL);
+	sctl &= ~AHCI_P_SCTL_DET_MASK;
+	sctl |= AHCI_P_SCTL_DET_INIT;
+	ATA_OUTL(ch->r_mem, AHCI_P_SCTL, sctl);
 
-	// 3. Manuální COMRESET sekvence
-	/*ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, AHCI_P_SCTL_DET_INIT); // 0x1
-	DELAY(2000); // 2ms
-	ATA_OUTL(ctlr->r_mem, AHCI_P_SCTL, AHCI_P_SCTL_DET_IDLE); // 0x0 */
+	// 4. Čekejte 1-2ms (podle TRM)
+	DELAY(20000);
+
+	// 5. Uvolněte reset (SCTL_DET = 0)
+	sctl &= ~AHCI_P_SCTL_DET_MASK;
+	ATA_OUTL(ch->r_mem, AHCI_P_SCTL, sctl);
 
 	/* Setup controller defaults. */
 	ctlr->quirks = AHCI_Q_FORCE_PI;
