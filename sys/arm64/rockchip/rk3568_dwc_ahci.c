@@ -199,8 +199,8 @@ rk3568_dwc_ahci_attach(device_t dev)
 	}
 
 	/* Definice registrů dle RK3568 TRM */
-	#define AHCI_P_CMD_SUD    (1 << 1)  /* Spin-Up Device */
-	#define AHCI_P_CMD_POD    (1 << 2)  /* Power On Device */
+	//#define AHCI_P_CMD_SUD    (1 << 1)  /* Spin-Up Device */
+	//#define AHCI_P_CMD_POD    (1 << 2)  /* Power On Device */
 
 	// 1. AHCI Enable
 	val = ATA_INL(ctlr->r_mem, AHCI_GHC);
