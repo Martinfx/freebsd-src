@@ -14,6 +14,9 @@ options GDB               # enter GDB from DDB
 options KDB_TRACE
 options BREAK_TO_DEBUGGER # If need to enter DDB from console
 options ALT_BREAK_TO_DEBUGGER
+options INVARIANTS
+options INVARIANT_SUPPORT
+options WITNESS
 
 options EARLY_PRINTF=ns8250
 options SOCDEV_PA=0x11002000
