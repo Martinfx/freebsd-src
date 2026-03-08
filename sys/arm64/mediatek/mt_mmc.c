@@ -50,6 +50,8 @@
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
 
+#include <dev/hwreset/hwreset.h>
+
 #include <arm64/mediatek/mt_mmc.h>
 
 #ifdef MMCCAM
@@ -98,6 +100,7 @@ struct mt_mmc_softc {
 
        struct mtx		sc_mtx;
        struct resource *	sc_res[MTK_MMC_RESSZ];
+       hwreset_t		hwreset_hrst;
 
        uint32_t		sc_intr_mask;
        uint32_t		sc_intr_wait;
@@ -236,6 +239,22 @@ mtk_mmc_attach(device_t dev)
 	       device_printf(dev, "cannot get clock\n");
 	       goto fail;
        }
+
+       if (hwreset_get_by_ofw_name(dev, 0, "hrst", &sc->hwreset_hrst )) {
+	       device_printf(dev, "Cannot get 'hrst' reset\n");
+	       return (ENXIO);
+       }
+
+       if (hwreset_assert(sc->hwreset_hrst)) {
+	       device_printf(dev, "Cannot assert 'hrst' reset\n");
+	       return (ENXIO);
+       }
+
+       if (hwreset_deassert(sc->hwreset_hrst)) {
+	       device_printf(dev, "Cannot deassert 'hrst' reset\n");
+	       return (ENXIO);
+       }
+
 
        sc->sc_host.f_max = 25000000;
        sc->sc_host.f_min = 260000;
