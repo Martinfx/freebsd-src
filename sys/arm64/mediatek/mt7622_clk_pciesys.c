@@ -132,19 +132,27 @@ mt7622_pciesys_clk_attach(device_t dev) {
 static int
 mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
-	struct mdtk_clk_softc *sc;
-	sc = device_get_softc(dev);
-	uint32_t mask, reset_reg;
+	uint32_t bitmask, reg, val;
+	uint16_t offset;
 
-	CLKDEV_DEVICE_LOCK(sc->dev);
-	KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
+	KASSERT(idx >= 0 && idx < 32, ("%s: reset id out of range", __func__));
+	uint16_t off[] = {0x34, };
 
+	offset = off[idx / 32];
+	bitmask = 1U << (idx % 32);
+	val  = reset ? ~0U : 0U;    /* assert=set bit, deassert=clear bit */
 
-	mask = 1 << (idx % 32);
-	reset_reg = (idx / 32) * 4;
+	CLKDEV_DEVICE_LOCK(dev);
+	CLKDEV_READ_4(dev, offset, &reg);
+	if (bootverbose) {
+		device_printf(dev,
+		    "pciesys rst[%d] before=0x%08x %s idx=%ld mask=0x%08x\n",
+		    offset, reg, reset ? "assert" : "deassert", (long)idx, bitmask);
+	}
 
-	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-	CLKDEV_DEVICE_UNLOCK(sc->dev);
+	reg = (reg & ~bitmask) | (val & bitmask);
+	CLKDEV_WRITE_4(dev, offset, reg);
+	CLKDEV_READ_4(dev, offset, &reg);
 
 	return(0);
 }
