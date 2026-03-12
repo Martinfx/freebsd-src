@@ -124,35 +124,41 @@ mt7622_pciesys_clk_attach(device_t dev) {
         return ENXIO;
     }
 
- 	mdtk_register_clocks(dev, &clk_pcie_def);
- 
+    mdtk_register_clocks(dev, &clk_pcie_def);
+
     return (0);
 }
 
 static int
-mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
+mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool reset)
 {
+	struct mdtk_clk_softc *sc;
+	sc = device_get_softc(dev);
 	uint32_t bitmask, reg, val;
 	uint16_t offset;
 
 	KASSERT(idx >= 0 && idx < 32, ("%s: reset id out of range", __func__));
 	uint16_t off[] = {0x34, };
-
 	offset = off[idx / 32];
 	bitmask = 1U << (idx % 32);
 	val  = reset ? ~0U : 0U;    /* assert=set bit, deassert=clear bit */
 
 	CLKDEV_DEVICE_LOCK(dev);
-	CLKDEV_READ_4(dev, offset, &reg);
+	CLKDEV_READ_4(sc->dev, offset, &reg);
 	if (bootverbose) {
 		device_printf(dev,
-		    "pciesys rst[%d] before=0x%08x %s idx=%ld mask=0x%08x\n",
-		    offset, reg, reset ? "assert" : "deassert", (long)idx, bitmask);
+		    "pciesys rst[0x34] before=0x%08x %s idx=%ld mask=0x%08x\n",
+		    reg, reset ? "assert" : "deassert", (long)idx, bitmask);
 	}
 
 	reg = (reg & ~bitmask) | (val & bitmask);
 	CLKDEV_WRITE_4(dev, offset, reg);
 	CLKDEV_READ_4(dev, offset, &reg);
+	if (bootverbose) {
+		device_printf(dev, "pciesys rst[0x34] after =0x%08x\n", reg);
+	}
+	
+	CLKDEV_DEVICE_UNLOCK(dev);
 
 	return(0);
 }
