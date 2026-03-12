@@ -8,13 +8,13 @@ device      gpioled
 device      gpiokeys
 
 # Ethernet, BPF and bridge support
-device          mt7622_eth
+#device          mt7622_eth
 device          bpf
 device          if_bridge
 
 # eth switch
-device		etherswitch     # Enable etherswitch support
-device		mtkswitch       # Enable mediatek 7531 switch
+#device		etherswitch     # Enable etherswitch support
+#device		mtkswitch       # Enable mediatek 7531 switch
 device 		miibus
 device 		mdio
 
