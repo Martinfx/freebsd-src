@@ -1,0 +1,11 @@
+#
+# MEDIATEK -- MEDIATEK kernel configuration file for FreeBSD/arm64
+#
+
+cpu		ARM64
+ident		MEDIATEK
+
+# Include SoC specific configuration
+include "std.arm64"
+include "std.dev"
+include "std.mediatek"
