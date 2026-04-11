@@ -247,7 +247,7 @@ static kobj_method_t mt_methods[] = {
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
 	KOBJMETHOD(uart_ioctl,		ns8250_bus_ioctl),
 	KOBJMETHOD(uart_ipend,		ns8250_bus_ipend),
-	KOBJMETHOD(uart_param,		mt_bus_param),
+	KOBJMETHOD(uart_param, 		ns8250_bus_param),
 	KOBJMETHOD(uart_receive,	ns8250_bus_receive),
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
