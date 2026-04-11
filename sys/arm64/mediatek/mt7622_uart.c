@@ -60,12 +60,12 @@
 #define	MT_UART_FRACDIV_M	0x16
 
 /* Fractional divisor lookup tables (from Linux 8250_mtk.c) */
-static const uint8_t mt_fraction_L_mapping[] = {
+/*static const uint8_t mt_fraction_L_mapping[] = {
 	0x00, 0x01, 0x05, 0x15, 0x55, 0x57, 0x57, 0x77, 0x7F, 0xFF, 0xFF
 };
 static const uint8_t mt_fraction_M_mapping[] = {
 	0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3
-};
+};*/
 
 /*
  * High-level UART interface.
