@@ -104,49 +104,15 @@ static int
 mt_calc_divisor(struct uart_softc *sc, int baudrate)
 {
 	struct uart_bas *bas = &sc->sc_bas;
-	uint32_t divisor, sample_actual, fraction;
 
-	/* Low baud rates: clear MTK registers, fall back to standard 16x */
-	if (baudrate < 115200) {
-		uart_setreg(bas, MT_UART_HIGHS, 0x0);
-		uart_setreg(bas, MT_UART_SAMPLE_COUNT, 0x00);
-		uart_setreg(bas, MT_UART_SAMPLE_POINT, 0xFF);
-		uart_setreg(bas, MT_UART_FRACDIV_L, 0x00);
-		uart_setreg(bas, MT_UART_FRACDIV_M, 0x00);
-		uart_barrier(bas);
-		return (0);
-	}
-
-	/* Highspeed mode 3 */
-	divisor = (bas->rclk + 256 * baudrate - 1) / (256 * baudrate);
-	if (divisor == 0)
-		divisor = 1;
-	if (divisor >= 65536)
-		return (0);
-
-	sample_actual = bas->rclk / (baudrate * divisor);
-	if (sample_actual == 0)
-		return (0);
-
-	/* Switch to mode 3 BEFORE DLL/DLM is written by caller */
-	uart_setreg(bas, MT_UART_HIGHS, 0x3);
+	/* Let standard 16x handle everything it can. */
+	uart_setreg(bas, MT_UART_HIGHS, 0x0);
+	uart_setreg(bas, MT_UART_SAMPLE_COUNT, 0x00);
+	uart_setreg(bas, MT_UART_SAMPLE_POINT, 0xFF);
+	uart_setreg(bas, MT_UART_FRACDIV_L, 0x00);
+	uart_setreg(bas, MT_UART_FRACDIV_M, 0x00);
 	uart_barrier(bas);
-
-	/* sample_count register = actual - 1 (counter 0..reg) */
-	uart_setreg(bas, MT_UART_SAMPLE_COUNT, sample_actual - 1);
-	/* sample_point = actual / 2 per datasheet page 159 */
-	uart_setreg(bas, MT_UART_SAMPLE_POINT, sample_actual / 2);
-	uart_barrier(bas);
-
-	fraction = ((bas->rclk * 100) / baudrate / divisor) % 100;
-	fraction = (fraction + 5) / 10;
-	if (fraction > 10)
-		fraction = 10;
-	uart_setreg(bas, MT_UART_FRACDIV_L, mt_fraction_L_mapping[fraction]);
-	uart_setreg(bas, MT_UART_FRACDIV_M, mt_fraction_M_mapping[fraction]);
-	uart_barrier(bas);
-
-	return (divisor);
+	return (0);
 }
 
 static kobj_method_t mt_methods[] = {
