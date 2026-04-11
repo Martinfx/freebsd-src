@@ -894,7 +894,7 @@ ns8250_bus_param(struct uart_softc *sc, int baudrate, int databits,
 {
 	struct ns8250_softc *ns8250;
 	struct uart_bas *bas;
-	int error, limitl, divisor;
+	int error, limit, divisor;
 
 	ns8250 = (struct ns8250_softc*)sc;
 	bas = &sc->sc_bas;
