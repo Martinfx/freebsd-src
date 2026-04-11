@@ -221,6 +221,27 @@ ns8250_divisor(int rclk, int baudrate)
 	return (divisor);
 }
 
+static void
+ns8250_set_divisor(struct ns8250_softc *ns8250, struct uart_bas *bas,
+    int divisor)
+{
+	uint8_t lcr;
+
+	lcr = uart_getreg(bas, REG_LCR);
+	uart_setreg(bas, REG_LCR, lcr | CFCR_DLAB);
+	uart_barrier(bas);
+
+	uart_setreg(bas, REG_DATA, divisor & 0xFF);
+	uart_setreg(bas, REG_IER, (divisor >> 8) & 0xFF);
+	uart_barrier(bas);
+
+	uart_setreg(bas, REG_LCR, lcr);
+	uart_barrier(bas);
+
+	uart_setreg(bas, REG_IER, ns8250->ier);
+	uart_barrier(bas);
+}
+
 static int
 ns8250_drain(struct uart_bas *bas, int what)
 {
@@ -873,7 +894,7 @@ ns8250_bus_param(struct uart_softc *sc, int baudrate, int databits,
 {
 	struct ns8250_softc *ns8250;
 	struct uart_bas *bas;
-	int error, limit, divisor;
+	int error, limit;
 
 	ns8250 = (struct ns8250_softc*)sc;
 	bas = &sc->sc_bas;
@@ -900,10 +921,6 @@ ns8250_bus_param(struct uart_softc *sc, int baudrate, int databits,
 		}
 	}
 
-	/*
-	 * If the class provides a custom divisor function, call it.
-	 * Return value 0 means "use standard 16x path".
-	 */
 	divisor = 0;
 	if (sc->sc_class->uc_divisor != NULL && baudrate > 0 &&
 	    bas->rclk > 0)
