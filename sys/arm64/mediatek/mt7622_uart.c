@@ -52,39 +52,20 @@
 
 #include "uart_if.h"
 
-#define MT_UART_RATE_FIX     0x0d /* Rate fix register */
-#define MT_UART_HIGHS	     0x09 /* Highspeed mode register */
-#define MT_UART_SAMPLE_COUNT 0x0a /* Sample count register */
-#define MT_UART_SAMPLE_POINT 0x0b /* Sample point register */
-#define MT_UART_FRACDIV_L    0x15 /* Fractional divisor LSB */
-#define MT_UART_FRACDIV_M    0x16 /* Fractional divisor MSB */
+#define	MT_UART_HIGHS		0x09
+#define	MT_UART_SAMPLE_COUNT	0x0a
+#define	MT_UART_SAMPLE_POINT	0x0b
+#define	MT_UART_RATE_FIX	0x0d
+#define	MT_UART_FRACDIV_L	0x15
+#define	MT_UART_FRACDIV_M	0x16
 
-/*
- * Fractional divisor lookup tables.
- *
- * Indexed by (fraction / 10), where:
- *   fraction = ((rclk * 100) / baud / quot) % 100
- *
- * These come directly from the Linux mtk8250 driver and are used to
- * fine-tune the baud rate accuracy in highspeed mode 3.
- */
-static const uint8_t mt_fraction_L_mapping[] = { 0x00, 0x01, 0x05, 0x15, 0x55,
-	0x57, 0x57, 0x77, 0x7F, 0xFF, 0xFF };
-
-static const uint8_t mt_fraction_M_mapping[] = { 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
-	3 };
-
-/*
- * TODO: Override low-level ops (.init) to support MTK highspeed
- * mode 3 for console path. Currently the console uses standard
- * ns8250 16x divisor, which works for baud rates that divide
- * evenly from rclk (e.g. 25MHz/16/1 = 1562500).
- *
- * For arbitrary baud rates (115200, 921600, etc.), MTK highspeed
- * mode 3 with sample_count/sample_point and fractional divisor
- * is needed for accurate clocking. See Linux 8250_mtk.c.
- *
- */
+/* Fractional divisor lookup tables (from Linux 8250_mtk.c) */
+static const uint8_t mt_fraction_L_mapping[] = {
+	0x00, 0x01, 0x05, 0x15, 0x55, 0x57, 0x57, 0x77, 0x7F, 0xFF, 0xFF
+};
+static const uint8_t mt_fraction_M_mapping[] = {
+	0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3
+};
 
 /*
  * High-level UART interface.
@@ -120,123 +101,52 @@ mt_uart_attach(struct uart_softc *sc)
 }
 
 static int
-mt_bus_param(struct uart_softc *sc, int baudrate, int databits, int stopbits,
-    int parity)
+mt_calc_divisor(struct uart_softc *sc, int baudrate)
 {
-	struct uart_bas *bas;
-	uint8_t lcr;
+	struct uart_bas *bas = &sc->sc_bas;
+	uint32_t divisor, sample_actual, fraction;
 
-	bas = &sc->sc_bas;
-	lcr = 0;
-
-	/* Data bits */
-	switch (databits) {
-	case 5:
-		lcr |= CFCR_5BITS;
-		break;
-	case 6:
-		lcr |= CFCR_6BITS;
-		break;
-	case 7:
-		lcr |= CFCR_7BITS;
-		break;
-	case 8:
-	default:
-		lcr |= CFCR_8BITS;
-		break;
+	/* Low baud rates: clear MTK registers, fall back to standard 16x */
+	if (baudrate < 115200) {
+		uart_setreg(bas, MT_UART_HIGHS, 0x0);
+		uart_setreg(bas, MT_UART_SAMPLE_COUNT, 0x00);
+		uart_setreg(bas, MT_UART_SAMPLE_POINT, 0xFF);
+		uart_setreg(bas, MT_UART_FRACDIV_L, 0x00);
+		uart_setreg(bas, MT_UART_FRACDIV_M, 0x00);
+		uart_barrier(bas);
+		return (0);
 	}
 
-	/* Stop bits */
-	if (stopbits == 2)
-		lcr |= CFCR_STOPB;
+	/* Highspeed mode 3 */
+	divisor = (bas->rclk + 256 * baudrate - 1) / (256 * baudrate);
+	if (divisor == 0)
+		divisor = 1;
+	if (divisor >= 65536)
+		return (0);
 
-	/* Parity */
-	switch (parity) {
-	case UART_PARITY_EVEN:
-		lcr |= CFCR_PENAB | CFCR_PEVEN;
-		break;
-	case UART_PARITY_ODD:
-		lcr |= CFCR_PENAB;
-		break;
-	case UART_PARITY_MARK:
-		lcr |= CFCR_PENAB | CFCR_PONE;
-		break;
-	case UART_PARITY_SPACE:
-		lcr |= CFCR_PENAB | CFCR_PZERO;
-		break;
-	case UART_PARITY_NONE:
-	default:
-		break;
-	}
+	sample_actual = bas->rclk / (baudrate * divisor);
+	if (sample_actual == 0)
+		return (0);
 
-	uart_lock(sc->sc_hwmtx);
-
-	/* Set line control register */
-	uart_setreg(bas, REG_LCR, lcr);
+	/* Switch to mode 3 BEFORE DLL/DLM is written by caller */
+	uart_setreg(bas, MT_UART_HIGHS, 0x3);
 	uart_barrier(bas);
 
-	/* Set baud rate with MTK-specific logic */
-	if (baudrate > 0 && bas->rclk > 0) {
-		uint32_t quot, fraction, tmp;
+	/* sample_count register = actual - 1 (counter 0..reg) */
+	uart_setreg(bas, MT_UART_SAMPLE_COUNT, sample_actual - 1);
+	/* sample_point = actual / 2 per datasheet page 159 */
+	uart_setreg(bas, MT_UART_SAMPLE_POINT, sample_actual / 2);
+	uart_barrier(bas);
 
-		if (baudrate < 115200) {
-			/* Standard mode: 16x oversampling */
-			uart_setreg(bas, MT_UART_HIGHS, 0x0);
-			uart_barrier(bas);
+	fraction = ((bas->rclk * 100) / baudrate / divisor) % 100;
+	fraction = (fraction + 5) / 10;
+	if (fraction > 10)
+		fraction = 10;
+	uart_setreg(bas, MT_UART_FRACDIV_L, mt_fraction_L_mapping[fraction]);
+	uart_setreg(bas, MT_UART_FRACDIV_M, mt_fraction_M_mapping[fraction]);
+	uart_barrier(bas);
 
-			quot = (bas->rclk + 8 * baudrate) / (16 * baudrate);
-			if (quot == 0)
-				quot = 1;
-		} else {
-			/* High-speed mode 3 */
-			uart_setreg(bas, MT_UART_HIGHS, 0x3);
-			uart_barrier(bas);
-
-			quot = (bas->rclk + 256 * baudrate - 1) /
-			    (256 * baudrate);
-			if (quot == 0)
-				quot = 1;
-		}
-
-		/* Program divisor latch */
-		uart_setreg(bas, REG_LCR, lcr | CFCR_DLAB);
-		uart_barrier(bas);
-
-		uart_setreg(bas, REG_DATA, quot & 0xFF);
-		uart_setreg(bas, REG_IER, (quot >> 8) & 0xFF);
-		uart_barrier(bas);
-
-		uart_setreg(bas, REG_LCR, lcr);
-		uart_barrier(bas);
-
-		/* Program sample count/point and fractional divisor */
-		if (baudrate >= 115200) {
-			tmp = (bas->rclk / (baudrate * quot)) - 1;
-			uart_setreg(bas, MT_UART_SAMPLE_COUNT, tmp);
-			uart_setreg(bas, MT_UART_SAMPLE_POINT, (tmp >> 1) - 1);
-			uart_barrier(bas);
-
-			fraction = ((bas->rclk * 100) / baudrate / quot) % 100;
-			fraction = (fraction + 5) / 10;
-			if (fraction > 10)
-				fraction = 10;
-
-			uart_setreg(bas, MT_UART_FRACDIV_L,
-			    mt_fraction_L_mapping[fraction]);
-			uart_setreg(bas, MT_UART_FRACDIV_M,
-			    mt_fraction_M_mapping[fraction]);
-		} else {
-			uart_setreg(bas, MT_UART_SAMPLE_COUNT, 0x00);
-			uart_setreg(bas, MT_UART_SAMPLE_POINT, 0xFF);
-			uart_setreg(bas, MT_UART_FRACDIV_L, 0x00);
-			uart_setreg(bas, MT_UART_FRACDIV_M, 0x00);
-		}
-		uart_barrier(bas);
-	}
-
-	uart_unlock(sc->sc_hwmtx);
-
-	return (0);
+	return (divisor);
 }
 
 static kobj_method_t mt_methods[] = {
@@ -266,6 +176,7 @@ static struct uart_class mt_uart_class = {
 	.uc_rclk = 0,  
     .uc_rshift = 2,
     .uc_riowidth = 4,
+	.uc_divisor = mt_calc_divisor,
 };
 
 /* Compatible devices. */

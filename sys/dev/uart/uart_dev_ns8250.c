@@ -873,7 +873,7 @@ ns8250_bus_param(struct uart_softc *sc, int baudrate, int databits,
 {
 	struct ns8250_softc *ns8250;
 	struct uart_bas *bas;
-	int error, limit;
+	int error, limit, divisor;
 
 	ns8250 = (struct ns8250_softc*)sc;
 	bas = &sc->sc_bas;
@@ -900,7 +900,26 @@ ns8250_bus_param(struct uart_softc *sc, int baudrate, int databits,
 		}
 	}
 
-	error = ns8250_param(bas, baudrate, databits, stopbits, parity);
+	/*
+	 * If the class provides a custom divisor function, call it.
+	 * Return value 0 means "use standard 16x path".
+	 */
+	divisor = 0;
+	if (sc->sc_class->uc_divisor != NULL && baudrate > 0 &&
+	    bas->rclk > 0)
+		divisor = sc->sc_class->uc_divisor(sc, baudrate);
+
+	if (divisor > 0) {
+		/* SoC-provided divisor. Set LCR only, then write DLL/DLM. */
+		error = ns8250_param(bas, 0, databits, stopbits, parity);
+		if (error == 0)
+			ns8250_set_divisor(ns8250, bas, divisor);
+	} else {
+		/* Standard path — unchanged behavior */
+		error = ns8250_param(bas, baudrate, databits, stopbits,
+		    parity);
+	}
+
 	uart_unlock(sc->sc_hwmtx);
 	return (error);
 }

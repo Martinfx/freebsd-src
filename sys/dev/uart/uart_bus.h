@@ -60,6 +60,7 @@
 /*
  * UART class & instance (=softc)
  */
+struct uart_softc;   /* forward declaration */
 struct uart_class {
 	KOBJ_CLASS_FIELDS;
 	struct uart_ops *uc_ops;	/* Low-level console operations. */
@@ -67,6 +68,7 @@ struct uart_class {
 	u_int	uc_rclk;		/* Default rclk for this device. */
 	u_int	uc_rshift;		/* Default regshift for this device. */
 	u_int	uc_riowidth;		/* Default reg io width for this device. */
+	int	(*uc_divisor)(struct uart_softc *sc, int baudrate);
 };
 
 #define	UART_CLASS(class)						\
