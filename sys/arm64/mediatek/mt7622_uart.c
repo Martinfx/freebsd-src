@@ -104,15 +104,37 @@ static int
 mt_calc_divisor(struct uart_softc *sc, int baudrate)
 {
 	struct uart_bas *bas = &sc->sc_bas;
+	int std_div;
 
-	/* Let standard 16x handle everything it can. */
+	/* Reset MTK registers — always mode 0 for now */
 	uart_setreg(bas, MT_UART_HIGHS, 0x0);
 	uart_setreg(bas, MT_UART_SAMPLE_COUNT, 0x00);
 	uart_setreg(bas, MT_UART_SAMPLE_POINT, 0xFF);
 	uart_setreg(bas, MT_UART_FRACDIV_L, 0x00);
 	uart_setreg(bas, MT_UART_FRACDIV_M, 0x00);
 	uart_barrier(bas);
-	return (0);
+
+	/*
+	 * Try standard 16x divisor. If it fails the 3% tolerance
+	 * check, compute a best-effort divisor ourselves so the
+	 * UART gets programmed with something sensible instead of
+	 * leaving it unchanged (which causes console mismatch).
+	 */
+	if (baudrate <= 0 || bas->rclk == 0)
+		return (0);
+
+	std_div = ns8250_divisor(bas->rclk, baudrate);
+	if (std_div > 0)
+		return (0);   /* ns8250 will use it */
+
+	/* 3% tolerance failed — compute best-effort divisor. */
+	std_div = (bas->rclk + 8 * baudrate) / (16 * baudrate);
+	if (std_div == 0)
+		std_div = 1;
+	if (std_div >= 65536)
+		return (0);
+
+	return (std_div);
 }
 
 static kobj_method_t mt_methods[] = {
