@@ -197,7 +197,7 @@ ns8250_delay(struct uart_bas *bas)
 	return (16000 * divisor / (bas->rclk / 1000));
 }
 
-static int
+int
 ns8250_divisor(int rclk, int baudrate)
 {
 	int actual_baud, divisor;
