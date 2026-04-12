@@ -48,6 +48,7 @@ extern struct uart_ops uart_ns8250_ops;
 
 int ns8250_bus_attach(struct uart_softc *);
 int ns8250_bus_detach(struct uart_softc *);
+int ns8250_divisor(int, int);
 int ns8250_bus_flush(struct uart_softc *, int);
 int ns8250_bus_getsig(struct uart_softc *);
 int ns8250_bus_ioctl(struct uart_softc *, int, intptr_t);
