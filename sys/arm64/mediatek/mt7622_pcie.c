@@ -374,6 +374,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 		    PCIE_CSR_ASPM_L1_EN(port->slot);
 		device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
 		SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
+	}
 	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
