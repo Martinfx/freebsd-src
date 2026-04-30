@@ -259,7 +259,7 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
 		return (~0U);
 	}
 
-	mtx_lock(&port->mtx);
+	//mtx_lock(&port->mtx);
 
 	bus_write_4(port->res_mem, PCIE_CFG_HEADER0,
 	    CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_RD_FMT));
@@ -276,16 +276,16 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
 		DELAY(10);
 	}
 	if (i == 10000) {
-		mtx_unlock(&port->mtx);
+		//mtx_unlock(&port->mtx);
 		return (~0U);
 	}
 	if (bus_read_4(port->res_mem, PCIE_APP_TLP_REQ) & APP_CPL_STATUS) {
-		mtx_unlock(&port->mtx);
+		//mtx_unlock(&port->mtx);
 		return (~0U);
 	}
 
 	v = bus_read_4(port->res_mem, PCIE_CFG_RDATA);
-	mtx_unlock(&port->mtx);
+	//mtx_unlock(&port->mtx);
 
 	uint32_t result;
 	switch (bytes) {
