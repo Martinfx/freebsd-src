@@ -378,7 +378,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2),
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 
-	for (i = 0; i < 10000; i++) {
+	for (i = 0; i < 100000; i++) {
 		if (bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2) &
 		    PCIE_PORT_LINKUP_V2) {
 			break;
@@ -392,7 +392,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-	if (i == 10000) {
+	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
 
