@@ -69,6 +69,11 @@
 #define	PCIE_PORT_LINKUP_V2	(1U << 29)
 //#define	PCIE_PORT_LINKUP_V2	(1U << 0)
 
+#define REG_MPCIE_EN              0x570
+#define REG_MPCIE_FUNC_EN         (1U << 0)
+#define REG_MPCIE_SW_LTSSM_EN     (1U << 1)
+#define REG_MPCIE_HSRATE_RATE_A   (1U << 24)
+
 #define PCIE_INT_MASK		0x420
 #define INTX_MASK    		(0xF << 16)
 #define INTX_SHIFT		16
@@ -383,6 +388,14 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2),
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
+
+	/* Enable MPCIe function and start LTSSM */
+	v = bus_read_4(port->res_mem, REG_MPCIE_EN);
+	device_printf(sc->dev, "MPCIE_EN before = 0x%08x\n", v);
+	v |= REG_MPCIE_FUNC_EN | REG_MPCIE_SW_LTSSM_EN;
+	bus_write_4(port->res_mem, REG_MPCIE_EN, v);
+	device_printf(sc->dev, "MPCIE_EN after  = 0x%08x\n",
+	    bus_read_4(port->res_mem, REG_MPCIE_EN));
 
 	for (i = 0; i < 100000; i++) {
 		if (bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2) &
