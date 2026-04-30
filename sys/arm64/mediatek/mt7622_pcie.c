@@ -196,7 +196,7 @@ mt7622_pcie_find_port(struct mt7622_pcie_softc *sc, u_int bus, u_int slot)
 		}
 		return (NULL);
 	}
-	/* deeper bus: vrať libovolný aktivní port — bridge ti nasměruje TLP */
+
 	for (i = 0; i < sc->nports; i++) {
 		if (sc->ports[i].res_mem != NULL)
 			return (&sc->ports[i]);
@@ -291,9 +291,6 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
 	case 4: result = v; break;
 	default: result = ~0U; break;
 	}
-
-	device_printf(dev, "rd b=%u s=%u r=0x%x b=%d -> 0x%x (i=%d)\n",
-	    bus, slot, reg, bytes, result, i);
 
 	return (result);
 }
