@@ -572,6 +572,21 @@ mt7622_pcie_attach(device_t dev)
 		return (error);
 	}
 
+	/* Kontrola, kterou v ní teď nemáš: */
+	char compat[128] = {0};
+	char path[128] = {0};
+	OF_package_to_path(syscon_node, path, sizeof(path));
+	device_printf(dev, "syscon node path=%s compat=%s\n", path, compat);
+
+	uint32_t reg[4];
+	int len = OF_getencprop(syscon_node, "reg", reg, sizeof(reg));
+	device_printf(dev, "syscon reg len=%d, [0]=0x%x [1]=0x%x [2]=0x%x [3]=0x%x\n",
+	    len, reg[0], reg[1], reg[2], reg[3]);
+
+	error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon);
+	device_printf(dev, "syscon_get_by_ofw_node returned %d, sc->syscon=%p\n",
+	    error, sc->syscon);
+
 	/* 2. shared IRQ */
 	if (ofw_bus_find_string_index(sc->node, "interrupt-names",
 		"pcie_irq", &sc->irq_rid) != 0) {
