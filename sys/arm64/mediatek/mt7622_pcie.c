@@ -42,7 +42,6 @@
 
 #include <dev/clk/clk.h>
 #include <dev/ofw/ofw_bus.h>
-#include <dev/ofw/ofw_subr.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
 #include <dev/ofw/ofwpci.h>
@@ -545,20 +544,13 @@ mt7622_pcie_attach(device_t dev)
 	syscon_node = ofw_bus_find_compatible(OF_finddevice("/"),
 	    "mediatek,generic-pciecfg");
 	if (syscon_node <= 0) {
-		device_printf(dev, "no pciecfg node\n");
+		device_printf(dev, "Error: no pciecfg node\n");
 		return (ENXIO);
 	}
 
-	if (ofw_reg_to_paddr(syscon_node, 0, &cfg_addr, &cfg_size, NULL) != 0) {
-		device_printf(dev, "pciecfg reg parse failed\n");
-		return (ENXIO);
-	}
-
-	sc->cfg_res = bus_alloc_resource(dev, SYS_RES_MEMORY, &cfg_rid,
-	    cfg_addr, cfg_addr + cfg_size - 1, cfg_size, RF_ACTIVE);
-	if (sc->cfg_res == NULL) {
-		device_printf(dev, "cannot map pciecfg\n");
-		return (ENXIO);
+	if ((error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon)) != 0) {
+		device_printf(dev, "Error: syscon get: %d\n", error);
+		return (error);
 	}
 
 	/* 2. shared IRQ */
