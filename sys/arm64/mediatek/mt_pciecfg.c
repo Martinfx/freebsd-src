@@ -146,14 +146,21 @@ static uint32_t
 mt_pciecfg_read_4(struct syscon *syscon, bus_size_t offset)
 {
 	struct mt_pciecfg_softc *sc = device_get_softc(syscon->pdev);
-	return (bus_read_4(sc->mem_res, offset));
+	uint32_t val;
+
+	mtx_lock(&sc->mtx);
+	val = bus_read_4(sc->mem_res, offset);
+	mtx_unlock(&sc->mtx);
+	return (val);
 }
 
 static int
 mt_pciecfg_write_4(struct syscon *syscon, bus_size_t offset, uint32_t val)
 {
 	struct mt_pciecfg_softc *sc = device_get_softc(syscon->pdev);
+	mtx_lock(&sc->mtx);
 	bus_write_4(sc->mem_res, offset, val);
+	mtx_unlock(&sc->mtx);
 	return (0);
 }
 
