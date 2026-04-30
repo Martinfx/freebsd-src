@@ -101,7 +101,7 @@ mt_pciecfg_attach(device_t dev)
 }
 
 static int
-mt_pciecfg_attach(device_t dev)
+mt_pciecfg_detach(device_t dev)
 {
 	device_printf(dev, "Error: Pciecfg driver cannot be detached\n");
 	return (EBUSY);
@@ -111,7 +111,7 @@ static device_method_t mt_pcie_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, mt_pciecfg_probe),
 	DEVMETHOD(device_attach, mt_pciecfg_attach),
-	DEVMETHOD(device_detach, mt7622_pcie_detach),
+	DEVMETHOD(device_detach, mt_pciecfg_detach),
 	DEVMETHOD_END
 };
 
