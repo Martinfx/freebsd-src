@@ -142,6 +142,36 @@ mt_pciecfg_syscon_unlock(device_t dev)
 	mtx_unlock(&sc->mtx);
 }
 
+static uint32_t
+mt_pciecfg_read_4(struct syscon *syscon, bus_size_t offset)
+{
+	struct mt_pciecfg_softc *sc = device_get_softc(syscon->pdev);
+	return (bus_read_4(sc->mem_res, offset));
+}
+
+static int
+mt_pciecfg_write_4(struct syscon *syscon, bus_size_t offset, uint32_t val)
+{
+	struct mt_pciecfg_softc *sc = device_get_softc(syscon->pdev);
+	bus_write_4(sc->mem_res, offset, val);
+	return (0);
+}
+
+static int
+mt_pciecfg_modify_4(struct syscon *syscon, bus_size_t offset,
+    uint32_t clear, uint32_t set)
+{
+	struct mt_pciecfg_softc *sc = device_get_softc(syscon->pdev);
+	uint32_t v;
+	mtx_lock(&sc->mtx);
+	v = bus_read_4(sc->mem_res, offset);
+	v &= ~clear;
+	v |= set;
+	bus_write_4(sc->mem_res, offset, v);
+	mtx_unlock(&sc->mtx);
+	return (0);
+}
+
 static device_method_t mt_pcie_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, mt_pciecfg_probe),
@@ -152,6 +182,9 @@ static device_method_t mt_pcie_methods[] = {
 	DEVMETHOD(syscon_get_handle,	mt_pciecfg_syscon_get_handle),
 	DEVMETHOD(syscon_device_lock,	mt_pciecfg_syscon_lock),
 	DEVMETHOD(syscon_device_unlock,	mt_pciecfg_syscon_unlock),
+	DEVMETHOD(syscon_read_4,    mt_pciecfg_read_4),
+	DEVMETHOD(syscon_write_4,   mt_pciecfg_write_4),
+	DEVMETHOD(syscon_modify_4,  mt_pciecfg_modify_4),
 
 	DEVMETHOD_END
 };
@@ -160,4 +193,4 @@ DEFINE_CLASS_1(mt_pciecfg, mt_pciecfg_driver, mt_pcie_methods,
     sizeof(struct mt_pciecfg_softc), syscon_class);
 
 EARLY_DRIVER_MODULE(mt_pciecfg, simplebus, mt_pciecfg_driver, NULL, NULL,
-    BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 3);
+    BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 6);

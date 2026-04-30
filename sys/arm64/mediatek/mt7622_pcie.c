@@ -403,7 +403,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, 0xdeadbeef);
 	device_printf(sc->dev, "SYS sanity = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
-	
+
 	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
