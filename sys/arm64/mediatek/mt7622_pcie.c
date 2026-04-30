@@ -406,9 +406,6 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-
-	}
-
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, 0xdeadbeef);
