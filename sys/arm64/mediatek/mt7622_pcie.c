@@ -392,6 +392,14 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
+	v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
+	device_printf(sc->dev, "SYS pre-OR  = 0x%08x\n", v);
+	v |= PCIE_CSR_LTSSM_EN(port->slot) | PCIE_CSR_ASPM_L1_EN(port->slot);
+	device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
+	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
+	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
+	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
+	
 	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
@@ -519,19 +527,25 @@ static int
 mt7622_pcie_attach(device_t dev)
 {
 	struct mt7622_pcie_softc *sc;
-	phandle_t syscon_node, root;
+	phandle_t syscon_node;
 	int i, slot, error;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
 
-	root = OF_finddevice("/");
-	syscon_node = ofw_bus_find_compatible(root, "mediatek,generic-pciecfg");
-	if (syscon_node == 0) {
-		device_printf(dev, "no pciecfg syscon node\n");
+	if (OF_getencprop(sc->node, "mediatek,generic-pciecfg",
+		&syscon_node, sizeof(syscon_node)) <= 0) {
+		device_printf(dev, "no mediatek,generic-pciecfg phandle\n");
 		return (ENXIO);
 	}
+
+	syscon_node = OF_node_from_xref(syscon_node);
+	if (syscon_node == 0 || syscon_node == -1) {
+		device_printf(dev, "bad syscon_node xref\n");
+		return (ENXIO);
+	}
+
 	if ((error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon)) != 0) {
 		device_printf(dev, "syscon get: %d\n", error);
 		return (error);
