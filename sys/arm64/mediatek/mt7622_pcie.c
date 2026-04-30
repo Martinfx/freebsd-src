@@ -65,8 +65,8 @@
 #define PCIE_PERSTB             (1U << 8)
 #define	PCIE_LINKDOWN_RST_EN	(0x7U << 13)	/* bits 15:13 */
 #define	PCIE_LINK_STATUS_V2	0x804
-//#define	PCIE_PORT_LINKUP_V2	(1U << 10)
-#define	PCIE_PORT_LINKUP_V2	(1U << 0)
+#define	PCIE_PORT_LINKUP_V2	(1U << 10)
+//#define	PCIE_PORT_LINKUP_V2	(1U << 0)
 
 #define PCIE_INT_MASK		0x420
 #define INTX_MASK    		(0xF << 16)
@@ -361,10 +361,10 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
 	v |= PCIE_CSR_LTSSM_EN(port->slot) | PCIE_CSR_ASPM_L1_EN(port->slot);
 	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
-
+	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
-	DELAY(100000);
+	DELAY(100* 1000);
 
 	v = bus_read_4(port->res_mem, PCIE_RST_CTRL);
 	v |= PCIE_PHY_RSTB | PCIE_PERSTB | PCIE_PIPE_SRSTB |
@@ -378,12 +378,12 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2),
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 
-	for (i = 0; i < 10000; i++) {
+	for (i = 0; i < 100000; i++) {
 		if (bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2) &
 		    PCIE_PORT_LINKUP_V2) {
 			break;
 		}
-		DELAY(2);
+		DELAY(100);
 	}
 	device_printf(sc->dev, "port%d:  us (i=%d)\n", port->slot, i);
 	device_printf(sc->dev,
@@ -392,7 +392,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-	if (i == 10000) {
+	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
 
