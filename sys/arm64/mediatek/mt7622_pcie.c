@@ -131,6 +131,7 @@ struct mt7622_pcie_softc {
 	struct ofw_pci_range pref_mem_range;
 	struct ofw_pci_range io_range;
 	struct ofw_pci_range mem_range;
+	struct resource *cfg_res;
 	struct resource *irq_res;
 	device_t dev;
 	int irq_rid;
@@ -531,22 +532,32 @@ static int
 mt7622_pcie_attach(device_t dev)
 {
 	struct mt7622_pcie_softc *sc;
-	phandle_t syscon_node, root;
-	int i, slot, error;
+	phandle_t syscon_node;
+	bus_addr_t cfg_addr;
+	bus_size_t cfg_size;
+	int i, slot, error, cfg_rid;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
 
-	root = OF_finddevice("/");
-	syscon_node = ofw_bus_find_compatible(root, "mediatek,generic-pciecfg");
-	if (syscon_node == 0) {
-		device_printf(dev, "no pciecfg syscon node\n");
+	syscon_node = ofw_bus_find_compatible(OF_finddevice("/"),
+	    "mediatek,generic-pciecfg");
+	if (syscon_node <= 0) {
+		device_printf(dev, "no pciecfg node\n");
 		return (ENXIO);
 	}
-	if ((error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon)) != 0) {
-		device_printf(dev, "syscon get: %d\n", error);
-		return (error);
+
+	if (ofw_reg_to_paddr(syscon_node, 0, &cfg_addr, &cfg_size, NULL) != 0) {
+		device_printf(dev, "pciecfg reg parse failed\n");
+		return (ENXIO);
+	}
+
+	sc->cfg_res = bus_alloc_resource(dev, SYS_RES_MEMORY, &cfg_rid,
+	    cfg_addr, cfg_addr + cfg_size - 1, cfg_size, RF_ACTIVE);
+	if (sc->cfg_res == NULL) {
+		device_printf(dev, "cannot map pciecfg\n");
+		return (ENXIO);
 	}
 
 	/* 2. shared IRQ */
