@@ -40,11 +40,12 @@
 #include <machine/intr.h>
 #include <machine/resource.h>
 
-#include <dev/clk/clk.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
 #include <dev/ofw/ofwpci.h>
+#include <dev/syscon/syscon.h>
+#include "syscon_if.h"
 
 struct mt_pciecfg_softc {
 	device_t dev;
