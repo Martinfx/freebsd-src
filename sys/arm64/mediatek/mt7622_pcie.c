@@ -356,6 +356,13 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	uint32_t v;
 	int i;
 
+	#define REG_MPCIE_T2R_LPBK   (1U << 8)
+
+	/* místo normálního MPCIE_EN write: */
+	v = bus_read_4(port->res_mem, REG_MPCIE_EN);
+	v |= REG_MPCIE_FUNC_EN | REG_MPCIE_SW_LTSSM_EN | REG_MPCIE_T2R_LPBK;
+	bus_write_4(port->res_mem, REG_MPCIE_EN, v);
+
 	device_printf(sc->dev,
 	    "port%d ENTER: RST=0x%08x LINK=0x%08x SYS=0x%08x INT_MASK=0x%08x\n",
 	    port->slot,
@@ -372,7 +379,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 
-	DELAY(100000);
+	/*DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
 	DELAY(100* 1000);
@@ -380,7 +387,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	v = bus_read_4(port->res_mem, PCIE_RST_CTRL);
 	v |= PCIE_PHY_RSTB | PCIE_PERSTB | PCIE_PIPE_SRSTB |
 	    PCIE_MAC_SRSTB | PCIE_CRSTB;
-	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);
+	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);*/
 
 	device_printf(sc->dev,
 	    "port%d POST-RST: RST=0x%08x LINK=0x%08x SYS=0x%08x\n",
