@@ -66,7 +66,7 @@
 #define	PCIE_LINKDOWN_RST_EN	(0x7U << 13)	/* bits 15:13 */
 //#define	PCIE_LINK_STATUS_V2	0x804
 #define PCIE_LINK_STATUS_V2     0x508 // test
-#define	PCIE_PORT_LINKUP_V2	(1U << 10)
+#define	PCIE_PORT_LINKUP_V2	(1U << 29) 
 //#define	PCIE_PORT_LINKUP_V2	(1U << 0)
 
 #define PCIE_INT_MASK		0x420
@@ -377,14 +377,14 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 		SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
 	}
 	DELAY(100000);
-	/*bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
+	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
 	DELAY(100* 1000);
 
 	v = bus_read_4(port->res_mem, PCIE_RST_CTRL);
 	v |= PCIE_PHY_RSTB | PCIE_PERSTB | PCIE_PIPE_SRSTB |
 	    PCIE_MAC_SRSTB | PCIE_CRSTB;
-	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);*/
+	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);
 
 	device_printf(sc->dev,
 	    "port%d POST-RST: RST=0x%08x LINK=0x%08x SYS=0x%08x\n",
@@ -410,7 +410,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	device_printf(sc->dev, "LINK 0x508 = 0x%08x, LINK 0x804 = 0x%08x\n",
 	    bus_read_4(port->res_mem, 0x508),
 	    bus_read_4(port->res_mem, 0x804));
-	
+
 	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
