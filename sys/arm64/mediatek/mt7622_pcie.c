@@ -42,6 +42,7 @@
 
 #include <dev/clk/clk.h>
 #include <dev/ofw/ofw_bus.h>
+#include <dev/ofw/ofw_subr.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/ofw_pci.h>
 #include <dev/ofw/ofwpci.h>
