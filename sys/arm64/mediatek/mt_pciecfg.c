@@ -47,8 +47,10 @@
 #include <dev/ofw/ofwpci.h>
 
 struct mt_pciecfg_softc {
-	struct resource *mem_res;
 	device_t dev;
+	struct resource *mem_res;
+	struct syscon *syscon;
+	struct mtx mtx;
 };
 
 static struct ofw_compat_data compat_data[] = {
