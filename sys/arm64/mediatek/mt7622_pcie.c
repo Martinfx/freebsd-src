@@ -365,7 +365,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
 	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
-	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
+	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 
 	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
