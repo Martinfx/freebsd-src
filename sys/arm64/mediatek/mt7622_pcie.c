@@ -533,9 +533,7 @@ mt7622_pcie_attach(device_t dev)
 {
 	struct mt7622_pcie_softc *sc;
 	phandle_t syscon_node;
-	bus_addr_t cfg_addr;
-	bus_size_t cfg_size;
-	int i, slot, error, cfg_rid;
+	int i, slot, error;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
