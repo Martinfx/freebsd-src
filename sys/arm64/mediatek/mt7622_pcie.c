@@ -407,24 +407,13 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	device_printf(sc->dev, "MPCIE_EN after  = 0x%08x\n",
 	    bus_read_4(port->res_mem, REG_MPCIE_EN));
 
-	uint32_t last_link = 0xdeadbeef;
 	for (i = 0; i < 100000; i++) {
-		uint32_t link = bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2);
-		if (link != last_link) {
-			device_printf(sc->dev, "i=%d LINK=0x%08x\n", i, link);
-			last_link = link;
-		}
-		if (link & PCIE_PORT_LINKUP_V2) break;
-		DELAY(20);
-	}
-	
-	/*for (i = 0; i < 100000; i++) {
 		if (bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2) &
 		    PCIE_PORT_LINKUP_V2) {
 			break;
 		}
 		DELAY(20);
-	}*/
+	}
 	device_printf(sc->dev, "port%d:  us (i=%d)\n", port->slot, i);
 	device_printf(sc->dev,
 	    "port%d AFTER-POLL (i=%d): RST=0x%08x LINK=0x%08x\n",
@@ -436,8 +425,17 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, 0x508),
 	    bus_read_4(port->res_mem, 0x804));
 
-	if (i == 100000) {
+	/*if (i == 100000) {
 		return (ETIMEDOUT);
+	}*/
+
+	if (i == 100000) {
+		device_printf(sc->dev,
+		    "port%d: link did not come up (LINK=0x%08x)\n",
+		    port->slot,
+		    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
+		/* Don't fail attach — link can come up later or stay down. */
+		return (0);  /* success, even with link down */
 	}
 
 	device_printf(sc->dev, "port%d: link up after %d us (i=%d)\n",
