@@ -358,10 +358,13 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 
 	#define REG_MPCIE_T2R_LPBK   (1U << 8)
 
-	/* místo normálního MPCIE_EN write: */
 	v = bus_read_4(port->res_mem, REG_MPCIE_EN);
-	v |= REG_MPCIE_FUNC_EN | REG_MPCIE_SW_LTSSM_EN | REG_MPCIE_T2R_LPBK;
+	device_printf(sc->dev, "MPCIE_EN before clean = 0x%08x\n", v);
+	v &= ~(1U << 8);   /* clear loopback bit */
+	v |= REG_MPCIE_FUNC_EN | REG_MPCIE_SW_LTSSM_EN;
 	bus_write_4(port->res_mem, REG_MPCIE_EN, v);
+	device_printf(sc->dev, "MPCIE_EN after clean = 0x%08x\n",
+	    bus_read_4(port->res_mem, REG_MPCIE_EN));
 
 	device_printf(sc->dev,
 	    "port%d ENTER: RST=0x%08x LINK=0x%08x SYS=0x%08x INT_MASK=0x%08x\n",
@@ -379,7 +382,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
 
-	/*DELAY(100000);
+	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
 	DELAY(100* 1000);
@@ -387,7 +390,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	v = bus_read_4(port->res_mem, PCIE_RST_CTRL);
 	v |= PCIE_PHY_RSTB | PCIE_PERSTB | PCIE_PIPE_SRSTB |
 	    PCIE_MAC_SRSTB | PCIE_CRSTB;
-	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);*/
+	bus_write_4(port->res_mem, PCIE_RST_CTRL, v);
 
 	device_printf(sc->dev,
 	    "port%d POST-RST: RST=0x%08x LINK=0x%08x SYS=0x%08x\n",
@@ -571,21 +574,6 @@ mt7622_pcie_attach(device_t dev)
 		device_printf(dev, "Error: syscon get: %d\n", error);
 		return (error);
 	}
-
-	/* Kontrola, kterou v ní teď nemáš: */
-	char compat[128] = {0};
-	char path[128] = {0};
-	OF_package_to_path(syscon_node, path, sizeof(path));
-	device_printf(dev, "syscon node path=%s compat=%s\n", path, compat);
-
-	uint32_t reg[4];
-	int len = OF_getencprop(syscon_node, "reg", reg, sizeof(reg));
-	device_printf(dev, "syscon reg len=%d, [0]=0x%x [1]=0x%x [2]=0x%x [3]=0x%x\n",
-	    len, reg[0], reg[1], reg[2], reg[3]);
-
-	error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon);
-	device_printf(dev, "syscon_get_by_ofw_node returned %d, sc->syscon=%p\n",
-	    error, sc->syscon);
 
 	/* 2. shared IRQ */
 	if (ofw_bus_find_string_index(sc->node, "interrupt-names",
