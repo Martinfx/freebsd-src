@@ -110,11 +110,49 @@ mt_pciecfg_detach(device_t dev)
 	return (EBUSY);
 }
 
+static int
+mt_pciecfg_syscon_get_handle(device_t dev, struct syscon **syscon)
+{
+	struct mt_pciecfg_softc *sc;
+
+	sc = device_get_softc(dev);
+	*syscon = sc->syscon;
+	if (*syscon == NULL) {
+		return (ENODEV);
+	}
+
+	return (0);
+}
+
+static void
+mt_pciecfg_syscon_lock(device_t dev)
+{
+	struct mt_pciecfg_softc *sc;
+
+	sc = device_get_softc(dev);
+	mtx_lock(&sc->mtx);
+}
+
+static void
+mt_pciecfg_syscon_unlock(device_t dev)
+{
+	struct mt_pciecfg_softc *sc;
+
+	sc = device_get_softc(dev);
+	mtx_unlock(&sc->mtx);
+}
+
 static device_method_t mt_pcie_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe, mt_pciecfg_probe),
 	DEVMETHOD(device_attach, mt_pciecfg_attach),
 	DEVMETHOD(device_detach, mt_pciecfg_detach),
+
+	/* Syscon interface */
+	DEVMETHOD(syscon_get_handle,	mt_pciecfg_syscon_get_handle),
+	DEVMETHOD(syscon_device_lock,	mt_pciecfg_syscon_lock),
+	DEVMETHOD(syscon_device_unlock,	mt_pciecfg_syscon_unlock),
+
 	DEVMETHOD_END
 };
 
