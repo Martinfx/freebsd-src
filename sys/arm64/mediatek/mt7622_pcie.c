@@ -359,9 +359,21 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2),
 	    bus_read_4(port->res_mem, PCIE_INT_MASK));
 
-	v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-	v |= PCIE_CSR_LTSSM_EN(port->slot) | PCIE_CSR_ASPM_L1_EN(port->slot);
-	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
+	if(port->res_mem) {
+		v = bus_read_4(port->res_mem, PCIE_SYS_CFG_V2);
+		device_printf(sc->dev, "SYS pre-OR  = 0x%08x\n", v);
+		v |= PCIE_CSR_LTSSM_EN(port->slot) |
+		    PCIE_CSR_ASPM_L1_EN(port->slot);
+		device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
+		bus_write_4(port->res_mem, PCIE_SYS_CFG_V2, v);
+	}
+	else if(sc->syscon) {
+		v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
+		device_printf(sc->dev, "SYS pre-OR  = 0x%08x\n", v);
+		v |= PCIE_CSR_LTSSM_EN(port->slot) |
+		    PCIE_CSR_ASPM_L1_EN(port->slot);
+		device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
+		SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
 	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, PCIE_LINKDOWN_RST_EN);
@@ -393,14 +405,11 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-	v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
-	device_printf(sc->dev, "SYS pre-OR  = 0x%08x\n", v);
-	v |= PCIE_CSR_LTSSM_EN(port->slot) | PCIE_CSR_ASPM_L1_EN(port->slot);
-	device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
-	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
+
+	}
+
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
-
 	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, 0xdeadbeef);
 	device_printf(sc->dev, "SYS sanity = 0x%08x\n",
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
