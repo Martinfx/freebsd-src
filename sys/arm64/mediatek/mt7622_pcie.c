@@ -392,9 +392,9 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-	/*if (i == 100000) {
+	if (i == 100000) {
 		return (ETIMEDOUT);
-	}*/
+	}
 
 	device_printf(sc->dev, "port%d: link up after %d us (i=%d)\n",
 	    port->slot, i * 100, i);
