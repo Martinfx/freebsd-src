@@ -201,3 +201,5 @@ DEFINE_CLASS_1(mt_pciecfg, mt_pciecfg_driver, mt_pcie_methods,
 
 EARLY_DRIVER_MODULE(mt_pciecfg, simplebus, mt_pciecfg_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 6);
+EARLY_DRIVER_MODULE(mt_pciecfg, ofwbus, mt_pciecfg_driver, NULL, NULL,
+    BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 6);
