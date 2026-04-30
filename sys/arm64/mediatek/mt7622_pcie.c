@@ -132,7 +132,6 @@ struct mt7622_pcie_softc {
 	struct ofw_pci_range pref_mem_range;
 	struct ofw_pci_range io_range;
 	struct ofw_pci_range mem_range;
-	struct resource *cfg_res;
 	struct resource *irq_res;
 	device_t dev;
 	int irq_rid;
@@ -360,13 +359,13 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2),
 	    bus_read_4(port->res_mem, PCIE_INT_MASK));
 
-	v = SYSCON_READ_4((sc->cfg_res, PCIE_SYS_CFG_V2);
+	v = SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
 	device_printf(sc->dev, "SYS pre-OR  = 0x%08x\n", v);
 	v |= PCIE_CSR_LTSSM_EN(port->slot) | PCIE_CSR_ASPM_L1_EN(port->slot);
 	device_printf(sc->dev, "SYS to-write= 0x%08x\n", v);
-	SYSCON_WRITE_4(sc->cfg_res, PCIE_SYS_CFG_V2, v);
+	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, v);
 	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
-	    bus_read_4(sc->cfg_res, PCIE_SYS_CFG_V2));
+	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2);
 
 	DELAY(100000);
 	bus_write_4(port->res_mem, PCIE_RST_CTRL, 0);
