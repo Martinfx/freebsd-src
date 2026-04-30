@@ -539,9 +539,15 @@ mt7622_pcie_attach(device_t dev)
 	sc->dev = dev;
 	sc->node = ofw_bus_get_node(dev);
 
-	if (OF_getencprop(sc->node, "mediatek,generic-pciecfg", &syscon_node,
-		sizeof(syscon_node)) > 0) {
-		syscon_node = OF_node_from_xref(syscon_node);
+	if ((syscon_node = OF_finddevice("/")) == -1) {
+		return (EFAULT);
+	}
+
+	syscon_node = ofw_bus_find_compatible(syscon_node,
+	    "mediatek,generic-pciecfg");
+	if (syscon_node <= 0) {
+		device_printf(dev, "Error: no pciecfg node\n");
+		return (ENXIO);
 	}
 
 	if ((error = syscon_get_by_ofw_node(dev, syscon_node, &sc->syscon)) != 0) {
