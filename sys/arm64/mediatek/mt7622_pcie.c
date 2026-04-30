@@ -448,7 +448,7 @@ mt7622_pcie_setup_port(device_t dev, int slot)
 	}
 
 	port->slot = slot;
-	mtx_init(&port->mtx, "mt_pcie", NULL, MTX_DEF);
+	//mtx_init(&port->mtx, "mt_pcie", NULL, MTX_DEF);
 
 	port->res_mem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
 	    &port->rid_mem, RF_ACTIVE);
