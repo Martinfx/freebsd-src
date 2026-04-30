@@ -211,7 +211,7 @@ mt_pcie_hw_wr_cfg(struct mt_pcie_port *port, u_int bus, u_int slot, u_int func,
 	uint32_t v;
 	int i;
 
-	mtx_lock(&port->mtx);
+	//mtx_lock(&port->mtx);
 
 	bus_write_4(port->res_mem, PCIE_CFG_HEADER0,
 	    CFG_HEADER_DW0(CFG_WRRD_TYPE_0, CFG_WR_FMT));
@@ -232,7 +232,7 @@ mt_pcie_hw_wr_cfg(struct mt_pcie_port *port, u_int bus, u_int slot, u_int func,
 			break;
 		DELAY(10);
 	}
-	mtx_unlock(&port->mtx);
+	//mtx_unlock(&port->mtx);
 
 	if (i == 10000)
 		return (-1);
@@ -250,12 +250,9 @@ mt7622_pcib_read_config(device_t dev, u_int bus, u_int slot, u_int func,
 	struct mt_pcie_port *port;
 	uint32_t v;
 	int i;
-	device_printf(dev, "rd cfg b=%u s=%u f=%u r=0x%x bytes=%d\n",
-	    bus, slot, func, reg, bytes);
+
 	port = mt7622_pcie_find_port(sc, bus, slot);
 	if (port == NULL) {
-		device_printf(dev, "rd cfg b=%u s=%u f=%u r=0x%x bytes=%d\n",
-		    bus, slot, func, reg, bytes);
 		return (~0U);
 	}
 
