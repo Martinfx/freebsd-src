@@ -64,7 +64,8 @@
 #define PCIE_CRSTB              (1U << 3)
 #define PCIE_PERSTB             (1U << 8)
 #define	PCIE_LINKDOWN_RST_EN	(0x7U << 13)	/* bits 15:13 */
-#define	PCIE_LINK_STATUS_V2	0x804
+//#define	PCIE_LINK_STATUS_V2	0x804
+#define PCIE_LINK_STATUS_V2     0x508 // test
 #define	PCIE_PORT_LINKUP_V2	(1U << 10)
 //#define	PCIE_PORT_LINKUP_V2	(1U << 0)
 
@@ -397,7 +398,7 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 		    PCIE_PORT_LINKUP_V2) {
 			break;
 		}
-		DELAY(100);
+		DELAY(20);
 	}
 	device_printf(sc->dev, "port%d:  us (i=%d)\n", port->slot, i);
 	device_printf(sc->dev,
@@ -406,12 +407,10 @@ mt7622_pcie_port_start(struct mt7622_pcie_softc *sc, struct mt_pcie_port *port)
 	    bus_read_4(port->res_mem, PCIE_RST_CTRL),
 	    bus_read_4(port->res_mem, PCIE_LINK_STATUS_V2));
 
-	device_printf(sc->dev, "SYS post-WR = 0x%08x\n",
-	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
-	SYSCON_WRITE_4(sc->syscon, PCIE_SYS_CFG_V2, 0xdeadbeef);
-	device_printf(sc->dev, "SYS sanity = 0x%08x\n",
-	    SYSCON_READ_4(sc->syscon, PCIE_SYS_CFG_V2));
-
+	device_printf(sc->dev, "LINK 0x508 = 0x%08x, LINK 0x804 = 0x%08x\n",
+	    bus_read_4(port->res_mem, 0x508),
+	    bus_read_4(port->res_mem, 0x804));
+	
 	if (i == 100000) {
 		return (ETIMEDOUT);
 	}
