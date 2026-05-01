@@ -51,13 +51,162 @@
 
 #include "uart_if.h"
 
+#define	MTK_UART_HIGHS		0x09	/* HIGHSPEED mode select (0..3) */
+#define	MTK_UART_SAMPLE_COUNT	0x0a	/* sample count, jen pro highs==3 */
+#define	MTK_UART_SAMPLE_POINT	0x0b	/* sample point, jen pro highs==3 */
+#define MTK_UART_RATE_FIX	0x0d
+#define UART_DIV_MAX		0xFFFF	/* Max divisor value */
+#define MTK_UART_FRACDIV_L	0x15	/* Fractional divider LSB address */
+#define MTK_UART_FRACDIV_M	0x16	/* Fractional divider MSB address */
 /*
  * High-level UART interface.
  */
-struct mdtk_softc {
+struct mt_softc {
 	struct ns8250_softc 	ns8250_base;
-	clk_t			clk;
+	clk_t			baud, bus;
 };
+
+static uint32_t
+get_compute_baudrate2(struct uart_bas *bas, struct uart_softc *sc)
+{
+	uint32_t baudrate, mode_factor, samples_per_char, n_symbols;
+	uint32_t data_bits, stop_bits, parity_bit;
+	uint16_t divisor;
+	uint8_t lcr, highs, sample_count;
+	uint8_t fracdiv_l, fracdiv_m;
+
+	highs = uart_getreg(bas, MTK_UART_HIGHS) & 0x3;
+
+	lcr = uart_getreg(bas, REG_LCR);
+	uart_setreg(bas, REG_LCR, lcr | LCR_DLAB);
+	uart_barrier(bas);
+
+	divisor = uart_getreg(bas, REG_DLH) << 8 | uart_getreg(bas, REG_DLL);
+
+	uart_setreg(bas, REG_LCR, lcr);
+	uart_barrier(bas);
+
+	sample_count = uart_getreg(bas, MTK_UART_SAMPLE_COUNT);
+	fracdiv_l    = uart_getreg(bas, MTK_UART_FRACDIV_L);
+	fracdiv_m    = uart_getreg(bas, MTK_UART_FRACDIV_M) & 0x3;
+
+	/* Frame geometry from LCR */
+	data_bits  = (lcr & 0x3) + 5;
+	stop_bits  = (lcr & LCR_STOPB) ? 2 : 1;
+	parity_bit = (lcr & LCR_PENAB) ? 1 : 0;
+	n_symbols  = 1 + data_bits + parity_bit + stop_bits;
+
+	switch (highs) {
+	case 0: mode_factor = 16;          break;
+	case 1: mode_factor =  8;          break;
+	case 2: mode_factor =  4;          break;
+	case 3: mode_factor = sample_count; break;
+	default: return 0;
+	}
+
+	samples_per_char = mode_factor;
+
+	/* Data bits */
+	for (int i = 0; i < (int)data_bits; i++) {
+		samples_per_char += mode_factor + ((fracdiv_l >> i) & 1);
+	}
+
+	/* Parity bit */
+	if (parity_bit) {
+		samples_per_char += mode_factor + (fracdiv_m & 0x1);
+	}
+
+	/* Stop bit(s) */
+	samples_per_char += mode_factor + ((fracdiv_m >> 1) & 0x1);
+	if (stop_bits == 2) {
+		samples_per_char += mode_factor;
+	}
+
+	baudrate = bas->rclk * n_symbols / (samples_per_char * divisor);
+
+	device_printf(sc->sc_dev,
+	    "rclk=%u highs=%u sample_count=%u divisor=%u "
+	    "fracdiv_l=0x%02x fracdiv_m=0x%02x "
+	    "data=%u stop=%u parity=%u n_symbols=%u "
+	    "samples_per_char=%u baudrate=%u\n",
+	    bas->rclk, highs, sample_count, divisor,
+	    fracdiv_l, fracdiv_m,
+	    data_bits, stop_bits, parity_bit, n_symbols,
+	    samples_per_char, baudrate);
+
+	return baudrate;
+}
+
+static uint32_t get_compute_baudrate(struct uart_bas *bas, struct uart_softc *sc)
+{
+	uint32_t baudrate, fracdiv_l, fracdiv_m,
+	    extra_samples; //, clocks_per_frame, mode_factor;
+	uint16_t divisor;
+	uint8_t lcr, highs, sample_count;
+
+	highs = uart_getreg(bas, MTK_UART_HIGHS) & 0x3;
+
+	lcr = uart_getreg(bas, REG_LCR);
+	uart_setreg(bas, REG_LCR, lcr | LCR_DLAB);
+	uart_barrier(bas);
+
+	divisor = uart_getreg(bas, REG_DLH) << 8 | uart_getreg(bas, REG_DLL);
+
+	uart_setreg(bas, REG_LCR, lcr);
+	uart_barrier(bas);
+
+	sample_count = uart_getreg(bas, MTK_UART_SAMPLE_COUNT);
+	fracdiv_l = uart_getreg(bas, MTK_UART_FRACDIV_L);
+	fracdiv_m = uart_getreg(bas, MTK_UART_FRACDIV_M) & 0x3;
+
+	device_printf(sc->sc_dev,
+	    "bas->rclk: %d, highs: %d, sample_count: %d, divisor: %d\n",
+	    bas->rclk, highs, sample_count, divisor);
+
+	/* Frame symbol count from LCR */
+	uint32_t data_bits = (lcr & 0x3) + 5;
+	uint32_t stop_bits = (lcr & LCR_STOPB) ? 2 : 1;
+	uint32_t parity_bit = (lcr & LCR_PENAB) ? 1 : 0;
+	uint32_t frame_bits = 1 + data_bits + parity_bit + stop_bits;
+
+	device_printf(sc->sc_dev,
+	    "rclk=%u highs=%u sample_count=%u divisor=%u "
+	    "fracdiv_l=0x%02x fracdiv_m=0x%02x frame_bits=%u\n",
+	    bas->rclk, highs, sample_count, divisor, fracdiv_l, fracdiv_m,
+	    frame_bits);
+
+	extra_samples = __builtin_popcount(fracdiv_l) +
+	    __builtin_popcount(fracdiv_m);
+
+	device_printf(sc->sc_dev, "extra_samples=%u\n", extra_samples);
+
+	switch (highs) {
+	// based on 16*baud_pulse, baud_rate = system clock frequency/16/{DLH, DLL}
+	case 0:
+		baudrate = bas->rclk / 16 / divisor;
+		break;
+	// based on 8*baud_pulse, baud_rate = system clock frequency/8/{DLH, DLL}
+	case 1:
+		baudrate = bas->rclk / 8 / divisor;
+		break;
+	// based on 4*baud_pulse, baud_rate = system clock frequency/4/{DLH, DLL}
+	case 2:
+		baudrate = bas->rclk / 4 / divisor;
+		break;
+	// based on sample_count * baud_pulse,
+	// baud_rate = system clock frequency / sample_count When HIGHSPEED=3,
+	// the value (A * B) means ({DLM, DLL} * SAMPLE_COUNT).
+	// When the Baudrate is more than 115200, it will be more accurate if we set HIGHSPEED=3.
+	case 3:
+		baudrate = bas->rclk / ((sample_count + 1) * divisor);
+		break;
+	default:
+		baudrate = 0;
+		break;
+	}
+
+	return (baudrate);
+}
 
 /*
  * UART class interface.
@@ -73,58 +222,21 @@ mdtk_uart_attach(struct uart_softc *sc)
 	if (rv != 0)
 		return (rv);
 
-	ns8250->ier_rxbits = 0x1d;
-	ns8250->ier_mask = 0xc0;
+	uart_setreg(bas, MTK_UART_RATE_FIX, 0x0);
+
 	ns8250->ier = uart_getreg(bas, REG_IER) & ns8250->ier_mask;
 	ns8250->ier |= ns8250->ier_rxbits;
 	uart_setreg(bas, REG_IER, ns8250->ier);
 	uart_barrier(bas);
+
+	//device_printf(sc->sc_dev, "UART baudrate: %d\n", get_compute_baudrate(bas, sc));
+	device_printf(sc->sc_dev, "UART baudrate2: %d\n", get_compute_baudrate2(bas, sc));;
 	return (0);
-}
-
-static void
-mdtk_uart_grab(struct uart_softc *sc)
-{
-	struct uart_bas *bas = &sc->sc_bas;
-	struct ns8250_softc *ns8250 = (struct ns8250_softc*)sc;
-	u_char ier;
-
-	/*
-	 * turn off all interrupts to enter polling mode. Leave the
-	 * saved mask alone. We'll restore whatever it was in ungrab.
-	 * All pending interrupt signals are reset when IER is set to 0.
-	 */
-	uart_lock(sc->sc_hwmtx);
-	ier = uart_getreg(bas, REG_IER);
-	uart_setreg(bas, REG_IER, ier & ns8250->ier_mask);
-
-	while ((uart_getreg(bas, REG_LSR) & LSR_TEMT) == 0)
-		;
-
-	uart_setreg(bas, REG_FCR, 0);
-	uart_barrier(bas);
-	uart_unlock(sc->sc_hwmtx);
-}
-
-static void
-mdtk_uart_ungrab(struct uart_softc *sc)
-{
-	struct ns8250_softc *ns8250 = (struct ns8250_softc*)sc;
-	struct uart_bas *bas = &sc->sc_bas;
-
-	/*
-	 * Restore previous interrupt mask
-	 */
-	uart_lock(sc->sc_hwmtx);
-	uart_setreg(bas, REG_FCR, ns8250->fcr);
-	uart_setreg(bas, REG_IER, ns8250->ier);
-	uart_barrier(bas);
-	uart_unlock(sc->sc_hwmtx);
 }
 
 static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-    KOBJMETHOD(uart_attach,		mdtk_uart_attach),
+    	KOBJMETHOD(uart_attach,		mdtk_uart_attach),
 	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
 	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
@@ -135,26 +247,25 @@ static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
 	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
-    KOBJMETHOD(uart_grab,		ns8250_bus_grab),
-    KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
+    	KOBJMETHOD(uart_grab,		ns8250_bus_grab),
+    	KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
 	KOBJMETHOD_END
 };
 
-static struct uart_class mdtk_uart_class = {
+static struct uart_class mt_uart_class = {
     "mediatek class",
     mdtk_methods,
-    sizeof(struct mdtk_softc),
+	sizeof(struct mt_softc),
 	.uc_ops = &uart_ns8250_ops,
-	.uc_range = 8,
+	.uc_range = 0x100,
 	.uc_rclk = 0,  
-    .uc_rshift = 2,
-    .uc_riowidth = 4,
+    	.uc_rshift = 2,
+    	.uc_riowidth = 4,
 };
 
 /* Compatible devices. */
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mt7622-uart",(uintptr_t)&mdtk_uart_class},
-    {"mediatek,mt6577-uart",(uintptr_t)&mdtk_uart_class},
+    {"mediatek,mt6577-uart",(uintptr_t)&mt_uart_class},
 	{NULL,			 (uintptr_t)NULL},
 };
 
@@ -174,9 +285,9 @@ uart_fdt_get_shift1(phandle_t node)
 }
 
 static int
-mdtk_uart_probe(device_t dev)
+mt_uart_probe(device_t dev)
 {
-    struct mdtk_softc *sc;
+	struct mt_softc *sc;
 	phandle_t node;
 	uint64_t freq;
 	int shift;
@@ -193,19 +304,31 @@ mdtk_uart_probe(device_t dev)
 
 	node = ofw_bus_get_node(dev);
 	shift = uart_fdt_get_shift1(node);
-	rv = clk_get_by_ofw_index(dev, 0, 0, &sc->clk);
+	rv = clk_get_by_ofw_name(dev, 0, "baud", &sc->baud);
+	if (rv != 0) {
+		device_printf(dev, "Cannot get baud clock: %d\n", rv);
+		return (ENXIO);
+	}
+	rv = clk_enable(sc->baud);
+	if (rv != 0) {
+		device_printf(dev, "Cannot enable UART clock: %d\n", rv);
+		return (ENXIO);
+	}
+
+	rv = clk_get_by_ofw_name(dev, 0, "bus", &sc->bus);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get UART clock: %d\n", rv);
 		return (ENXIO);
 	}
-	rv = clk_enable(sc->clk);
+	rv = clk_enable(sc->bus);
 	if (rv != 0) {
-		device_printf(dev, "Cannot enable UART clock: %d\n", rv);
+		device_printf(dev, "Cannot enable bus clock: %d\n", rv);
 		return (ENXIO);
 	}
-	rv = clk_get_freq(sc->clk, &freq);
+
+	rv = clk_get_freq(sc->baud, &freq);
 	if (rv != 0) {
-		device_printf(dev, "Cannot enable UART clock: %d\n", rv);
+		device_printf(dev, "Cannot get baud clock frequency: %d\n", rv);
 		return (ENXIO);
 	}
 
@@ -213,30 +336,34 @@ mdtk_uart_probe(device_t dev)
 }
 
 static int
-mdtk_uart_detach(device_t dev)
+mt_uart_detach(device_t dev)
 {
-    struct mdtk_softc *sc;
+	struct mt_softc *sc;
 
 	sc = device_get_softc(dev);
-	if (sc->clk != NULL) {
-		clk_release(sc->clk);
+	if (sc->baud != NULL) {
+		clk_release(sc->baud);
+	}
+
+	if (sc->bus != NULL) {
+		clk_release(sc->bus);
 	}
 
 	return (uart_bus_detach(dev));
 }
 
-static device_method_t mdtk_uart_bus_methods[] = {
+static device_method_t mt_uart_bus_methods[] = {
 	/* Device interface */
-    DEVMETHOD(device_probe,		mdtk_uart_probe),
+    	DEVMETHOD(device_probe,		mt_uart_probe),
 	DEVMETHOD(device_attach,	uart_bus_attach),
-    DEVMETHOD(device_detach,	mdtk_uart_detach),
+    	DEVMETHOD(device_detach,	mt_uart_detach),
 	DEVMETHOD_END
 };
 
-static driver_t mdtk_uart_driver = {
+static driver_t mt_uart_driver = {
 	uart_driver_name,
-    mdtk_uart_bus_methods,
-    sizeof(struct mdtk_softc),
+	mt_uart_bus_methods,
+	sizeof(struct mt_softc),
 };
 
-DRIVER_MODULE(mdtk_uart, simplebus,  mdtk_uart_driver, 0, 0);
+DRIVER_MODULE(mt_uart, simplebus,  mt_uart_driver, 0, 0);
