@@ -69,8 +69,8 @@ struct mt_softc {
 static uint32_t
 get_compute_baudrate2(struct uart_bas *bas, struct uart_softc *sc)
 {
-	uint32_t baudrate, mode_factor, samples_per_char, n_symbols;
-	uint32_t data_bits, stop_bits, parity_bit;
+	uint32_t baudrate, data_bits, stop_bits, parity_bit;
+	uint32_t frame_bits, extra_clocks = 0;
 	uint16_t divisor;
 	uint8_t lcr, highs, sample_count;
 	uint8_t fracdiv_l, fracdiv_m;
@@ -90,122 +90,57 @@ get_compute_baudrate2(struct uart_bas *bas, struct uart_softc *sc)
 	fracdiv_l    = uart_getreg(bas, MTK_UART_FRACDIV_L);
 	fracdiv_m    = uart_getreg(bas, MTK_UART_FRACDIV_M) & 0x3;
 
-	/* Frame geometry from LCR */
 	data_bits  = (lcr & 0x3) + 5;
 	stop_bits  = (lcr & LCR_STOPB) ? 2 : 1;
 	parity_bit = (lcr & LCR_PENAB) ? 1 : 0;
-	n_symbols  = 1 + data_bits + parity_bit + stop_bits;
 
+	frame_bits = 1 + data_bits + parity_bit + stop_bits;
+	
 	switch (highs) {
-	case 0: mode_factor = 16;          break;
-	case 1: mode_factor =  8;          break;
-	case 2: mode_factor =  4;          break;
-	case 3: mode_factor = sample_count; break;
-	default: return 0;
-	}
-
-	samples_per_char = mode_factor;
-
-	/* Data bits */
-	for (int i = 0; i < (int)data_bits; i++) {
-		samples_per_char += mode_factor + ((fracdiv_l >> i) & 1);
-	}
-
-	/* Parity bit */
-	if (parity_bit) {
-		samples_per_char += mode_factor + (fracdiv_m & 0x1);
-	}
-
-	/* Stop bit(s) */
-	samples_per_char += mode_factor + ((fracdiv_m >> 1) & 0x1);
-	if (stop_bits == 2) {
-		samples_per_char += mode_factor;
-	}
-
-	baudrate = bas->rclk * n_symbols / (samples_per_char * divisor);
-
-	device_printf(sc->sc_dev,
-	    "rclk=%u highs=%u sample_count=%u divisor=%u "
-	    "fracdiv_l=0x%02x fracdiv_m=0x%02x "
-	    "data=%u stop=%u parity=%u n_symbols=%u "
-	    "samples_per_char=%u baudrate=%u\n",
-	    bas->rclk, highs, sample_count, divisor,
-	    fracdiv_l, fracdiv_m,
-	    data_bits, stop_bits, parity_bit, n_symbols,
-	    samples_per_char, baudrate);
-
-	return baudrate;
-}
-
-static uint32_t get_compute_baudrate(struct uart_bas *bas, struct uart_softc *sc)
-{
-	uint32_t baudrate, fracdiv_l, fracdiv_m,
-	    extra_samples; //, clocks_per_frame, mode_factor;
-	uint16_t divisor;
-	uint8_t lcr, highs, sample_count;
-
-	highs = uart_getreg(bas, MTK_UART_HIGHS) & 0x3;
-
-	lcr = uart_getreg(bas, REG_LCR);
-	uart_setreg(bas, REG_LCR, lcr | LCR_DLAB);
-	uart_barrier(bas);
-
-	divisor = uart_getreg(bas, REG_DLH) << 8 | uart_getreg(bas, REG_DLL);
-
-	uart_setreg(bas, REG_LCR, lcr);
-	uart_barrier(bas);
-
-	sample_count = uart_getreg(bas, MTK_UART_SAMPLE_COUNT);
-	fracdiv_l = uart_getreg(bas, MTK_UART_FRACDIV_L);
-	fracdiv_m = uart_getreg(bas, MTK_UART_FRACDIV_M) & 0x3;
-
-	device_printf(sc->sc_dev,
-	    "bas->rclk: %d, highs: %d, sample_count: %d, divisor: %d\n",
-	    bas->rclk, highs, sample_count, divisor);
-
-	/* Frame symbol count from LCR */
-	uint32_t data_bits = (lcr & 0x3) + 5;
-	uint32_t stop_bits = (lcr & LCR_STOPB) ? 2 : 1;
-	uint32_t parity_bit = (lcr & LCR_PENAB) ? 1 : 0;
-	uint32_t frame_bits = 1 + data_bits + parity_bit + stop_bits;
-
-	device_printf(sc->sc_dev,
-	    "rclk=%u highs=%u sample_count=%u divisor=%u "
-	    "fracdiv_l=0x%02x fracdiv_m=0x%02x frame_bits=%u\n",
-	    bas->rclk, highs, sample_count, divisor, fracdiv_l, fracdiv_m,
-	    frame_bits);
-
-	extra_samples = __builtin_popcount(fracdiv_l) +
-	    __builtin_popcount(fracdiv_m);
-
-	device_printf(sc->sc_dev, "extra_samples=%u\n", extra_samples);
-
-	switch (highs) {
-	// based on 16*baud_pulse, baud_rate = system clock frequency/16/{DLH, DLL}
 	case 0:
 		baudrate = bas->rclk / 16 / divisor;
 		break;
-	// based on 8*baud_pulse, baud_rate = system clock frequency/8/{DLH, DLL}
 	case 1:
 		baudrate = bas->rclk / 8 / divisor;
 		break;
-	// based on 4*baud_pulse, baud_rate = system clock frequency/4/{DLH, DLL}
 	case 2:
 		baudrate = bas->rclk / 4 / divisor;
 		break;
-	// based on sample_count * baud_pulse,
-	// baud_rate = system clock frequency / sample_count When HIGHSPEED=3,
-	// the value (A * B) means ({DLM, DLL} * SAMPLE_COUNT).
-	// When the Baudrate is more than 115200, it will be more accurate if we set HIGHSPEED=3.
 	case 3:
-		baudrate = bas->rclk / ((sample_count + 1) * divisor);
+
+		for (int i = 0; i < data_bits; i++) {
+			extra_clocks += (fracdiv_l >> i) & 0x1;
+		}
+
+		if (parity_bit) {
+			extra_clocks += (fracdiv_m & 0x1);
+		}
+
+		if (stop_bits > 0) {
+			extra_clocks += ((fracdiv_m >> 1) & 0x1);
+		}
+
+		uint32_t total_samples_per_char = (frame_bits * sample_count) + extra_clocks;
+
+		if (divisor == 0 || total_samples_per_char == 0) {
+			baudrate = 0;
+		} else {
+			baudrate = ((uint32_t)bas->rclk * frame_bits) / (divisor * total_samples_per_char);
+		}
 		break;
 	default:
+		device_printf(sc->sc_dev, "Bad highs=%d\n", highs);
 		baudrate = 0;
 		break;
 	}
 
-	return (baudrate);
+	device_printf(sc->sc_dev,
+	    "rclk=%u highs=%u sample_count=%u divisor=%u "
+	    "fracdiv_l=0x%02x fracdiv_m=0x%02x baudrate=%u\n",
+	    bas->rclk, highs, sample_count, divisor,
+	    fracdiv_l, fracdiv_m, baudrate);
+
+	return baudrate;
 }
 
 /*
