@@ -59,6 +59,23 @@ options 	SOC_MV_ARMADA38X
 options 	SOC_MV_ARMADAXP
 options 	SOC_MEDIATEK
 
+# debug options for mediatek
+makeoptions	DEBUG=-g  # Enable kernel debugging sybmbols
+makeoptions	WITH_KERNEL_BIN=1
+
+options KDB
+options DDB               # built-in DDB support
+options GDB               # enter GDB from DDB
+options KDB_TRACE
+options BREAK_TO_DEBUGGER # If need to enter DDB from console
+
+options EARLY_PRINTF=ns8250
+options SOCDEV_PA=0x11004000
+options SOCDEV_VA=0x11004000
+options UART_NS8250_EARLY_REG_SHIFT=2
+options UART_NS8250_EARLY_REG_IO_WIDTH=2
+options BOOTVERBOSE
+
 options 	SCHED_ULE		# ULE scheduler
 options 	SMP			# Enable multiple cores
 options 	PLATFORM
