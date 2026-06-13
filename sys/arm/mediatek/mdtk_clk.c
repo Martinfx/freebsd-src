@@ -37,14 +37,13 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
-#include <dt-bindings/clock/mt7622-clk.h>
 #include <dev/clk/clk_fixed.h>
 #include <dev/clk/clk_div.h>
 #include <dev/clk/clk_mux.h>
 #include <dev/clk/clk_gate.h>
 #include <dev/clk/clk_link.h>
 
-#include <arm64/mediatek/mdtk_clk.h>
+#include <arm/mediatek/mdtk_clk.h>
 
 static void
 init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
