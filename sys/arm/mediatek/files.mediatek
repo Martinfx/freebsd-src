@@ -2,5 +2,11 @@
 arm/mediatek/mt7623_uart.c              optional uart fdt
 arm/mediatek/mdtk_clk.c                 optional clk fdt
 arm/mediatek/mt7623_topgen.c            optional clk fdt
+arm/mediatek/mt7623_infracfg.c          optional clk fdt
+arm/mediatek/mt7623_pericfg.c           optional clk fdt
+arm/mediatek/mt7623_vdecsys.c           optional clk fdt
+arm/mediatek/mt7623_hifsys.c            optional clk fdt
+arm/mediatek/mt7623_imgsys.c            optional clk fdt
+arm/mediatek/mt7623_bdpsys.c           optional clk fdt
 arm/mediatek/mt7623_mp.c                optional smp
 arm/mediatek/mt7623_machdep.c           standard
