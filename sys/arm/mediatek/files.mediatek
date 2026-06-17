@@ -11,6 +11,7 @@ arm/mediatek/mt7623_bdpsys.c            optional clk fdt
 arm/mediatek/mt7623_audsys.c            optional clk fdt
 arm/mediatek/mt7623_apmixedsys.c        optional clk fdt
 arm/mediatek/mt7623_syscfg.c            optional fdt
+arm/mediatek/mt7623_pinctrl.c           optional fdt
 arm/mediatek/mt_clk_pll.c               optional clk fdt
 arm/mediatek/mt7623_mp.c                optional smp
 arm/mediatek/mt7623_machdep.c           standard
