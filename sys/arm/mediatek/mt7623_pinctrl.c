@@ -35,6 +35,7 @@
 #include <sys/mutex.h>
 #include <sys/rman.h>
 #include <sys/systm.h>
+#include <sys/gpio.h>
 
 #include <machine/bus.h>
 
@@ -48,6 +49,22 @@
 #include <dev/syscon/syscon.h>
 #include <dt-bindings/pinctrl/mt7623-pinfunc.h>
 #include "syscon_if.h"
+#include "gpio_if.h"
+
+/*
+ * GPIO direction/output/input registers: one bit per pin, 16 pins per
+ * 32-bit register, registers 0x10 apart.  Each has an atomic SET and CLR
+ * sub-register; the base offset reads the current value.
+ */
+#define    MT7623_GPIO_DIR_BASE    0x000
+#define    MT7623_GPIO_DOUT_BASE    0x500
+#define    MT7623_GPIO_DIN_BASE    0x630
+#define    MT7623_GPIO_PINS_PER_REG 16
+#define    MT7623_GPIO_PORT_STRIDE    0x10
+#define    MT7623_GPIO_SET        0x4
+#define    MT7623_GPIO_CLR        0x8
+#define    MT7623_GPIO_CAPS    (GPIO_PIN_INPUT | GPIO_PIN_OUTPUT)
+#define    MT7623_PIN_MODE_GPIO    0
 
 /* GPIO_MODE registers: five 3-bit fields per 32-bit register, 0x10 apart. */
 #define    MT7623_GPIO_MODE_BASE    0x760
@@ -67,6 +84,7 @@ static struct ofw_compat_data compat_data[] =
 
 struct mt7623_pinctrl_softc {
     device_t dev;
+    device_t busdev;
     struct resource *mem_res;
     struct syscon *pctl_syscon;
     struct mtx mtx;
@@ -147,6 +165,149 @@ mt7623_pinctrl_process_node(struct mt7623_pinctrl_softc *sc, phandle_t node) {
     return (0);
 }
 
+static __inline bus_size_t
+mt7623_gpio_port(uint32_t base, uint32_t pin) {
+
+    return (base + (pin / MT7623_GPIO_PINS_PER_REG) * MT7623_GPIO_PORT_STRIDE);
+}
+
+static device_t
+mt7623_gpio_get_bus(device_t dev) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+
+    return (sc->busdev);
+}
+
+static int
+mt7623_gpio_pin_max(device_t dev, int *maxpin) {
+
+    *maxpin = MT7623_MAX_PIN;
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_getname(device_t dev, uint32_t pin, char *name) {
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+    snprintf(name, GPIOMAXNAME, "GPIO%u", pin);
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_getcaps(device_t dev, uint32_t pin, uint32_t *caps) {
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+    *caps = MT7623_GPIO_CAPS;
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_getflags(device_t dev, uint32_t pin, uint32_t *flags) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+    uint32_t val;
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+
+    MT7623_PINCTRL_LOCK(sc);
+    val = SYSCON_READ_4(sc->pctl_syscon,
+                        mt7623_gpio_port(MT7623_GPIO_DIR_BASE, pin));
+    MT7623_PINCTRL_UNLOCK(sc);
+
+    if (val & (1u << (pin % MT7623_GPIO_PINS_PER_REG)))
+        *flags = GPIO_PIN_OUTPUT;
+    else
+        *flags = GPIO_PIN_INPUT;
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_setflags(device_t dev, uint32_t pin, uint32_t flags) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+    bus_size_t reg;
+    uint32_t bit;
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+
+    /* A pin used as GPIO must be in mux function 0. */
+    mt7623_pinctrl_set_mux(sc, pin, MT7623_PIN_MODE_GPIO);
+
+    reg = mt7623_gpio_port(MT7623_GPIO_DIR_BASE, pin);
+    bit = 1u << (pin % MT7623_GPIO_PINS_PER_REG);
+
+    MT7623_PINCTRL_LOCK(sc);
+    if (flags & GPIO_PIN_OUTPUT)
+        SYSCON_WRITE_4(sc->pctl_syscon, reg + MT7623_GPIO_SET, bit);
+    else if (flags & GPIO_PIN_INPUT)
+        SYSCON_WRITE_4(sc->pctl_syscon, reg + MT7623_GPIO_CLR, bit);
+    MT7623_PINCTRL_UNLOCK(sc);
+
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_get(device_t dev, uint32_t pin, unsigned int *val) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+    uint32_t reg;
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+
+    MT7623_PINCTRL_LOCK(sc);
+    reg = SYSCON_READ_4(sc->pctl_syscon,
+                        mt7623_gpio_port(MT7623_GPIO_DIN_BASE, pin));
+    MT7623_PINCTRL_UNLOCK(sc);
+
+    *val = (reg >> (pin % MT7623_GPIO_PINS_PER_REG)) & 1;
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_set(device_t dev, uint32_t pin, unsigned int value) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+    bus_size_t reg;
+    uint32_t bit;
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+
+    reg = mt7623_gpio_port(MT7623_GPIO_DOUT_BASE, pin);
+    bit = 1u << (pin % MT7623_GPIO_PINS_PER_REG);
+
+    MT7623_PINCTRL_LOCK(sc);
+    if (value)
+        SYSCON_WRITE_4(sc->pctl_syscon, reg + MT7623_GPIO_SET, bit);
+    else
+        SYSCON_WRITE_4(sc->pctl_syscon, reg + MT7623_GPIO_CLR, bit);
+    MT7623_PINCTRL_UNLOCK(sc);
+
+    return (0);
+}
+
+static int
+mt7623_gpio_pin_toggle(device_t dev, uint32_t pin) {
+    struct mt7623_pinctrl_softc *sc = device_get_softc(dev);
+    bus_size_t base;
+    uint32_t bit, cur;
+
+    if (pin > MT7623_MAX_PIN)
+        return (EINVAL);
+
+    base = mt7623_gpio_port(MT7623_GPIO_DOUT_BASE, pin);
+    bit = 1u << (pin % MT7623_GPIO_PINS_PER_REG);
+
+    MT7623_PINCTRL_LOCK(sc);
+    cur = SYSCON_READ_4(sc->pctl_syscon, base);
+    SYSCON_WRITE_4(sc->pctl_syscon,
+                   base + ((cur & bit) ? MT7623_GPIO_CLR : MT7623_GPIO_SET), bit);
+    MT7623_PINCTRL_UNLOCK(sc);
+
+    return (0);
+}
+
 static int
 mt7623_pinctrl_configure(device_t dev, phandle_t cfgxref) {
     struct mt7623_pinctrl_softc *sc;
@@ -183,7 +344,12 @@ mt7623_pinctrl_attach(device_t dev) {
     sc->dev = dev;
     node = ofw_bus_get_node(dev);
 
-    /* Map memory resource */
+    /*
+     * Pin muxing and GPIO operate entirely through the pctl-a syscon, so
+     * the device's own "reg" (the EINT register block) and its interrupts
+     * are intentionally left unallocated until EINT support is added.
+     */
+
     sc->mem_rid = 0;
     sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid, RF_ACTIVE);
     if (sc->mem_res == NULL) {
@@ -204,6 +370,14 @@ mt7623_pinctrl_attach(device_t dev) {
     fdt_pinctrl_register(dev, NULL);
     fdt_pinctrl_configure_tree(dev);
 
+    sc->busdev = gpiobus_add_bus(dev);
+    if (sc->busdev == NULL) {
+        device_printf(dev, "cannot attach gpiobus\n");
+        return (ENXIO);
+    }
+
+    bus_attach_children(dev);
+
     return (0);
 }
 
@@ -219,16 +393,46 @@ mt7623_pinctrl_detach(device_t dev) {
     return (0);
 }
 
+static phandle_t
+mt7623_gpio_get_node(device_t bus, device_t dev)
+{
+    return (ofw_bus_get_node(bus));
+}
+
 static device_method_t mt7623_pinctrl_methods[] = {
         DEVMETHOD(device_probe, mt7623_pinctrl_probe),
         DEVMETHOD(device_attach, mt7623_pinctrl_attach),
         DEVMETHOD(device_detach, mt7623_pinctrl_detach),
         DEVMETHOD(fdt_pinctrl_configure, mt7623_pinctrl_configure),
+
+        /* Bus interface (parent of gpiobus) */
+        DEVMETHOD(bus_setup_intr, bus_generic_setup_intr),
+        DEVMETHOD(bus_teardown_intr, bus_generic_teardown_intr),
+
+        /* GPIO interface */
+        DEVMETHOD(gpio_get_bus, mt7623_gpio_get_bus),
+        DEVMETHOD(gpio_pin_max, mt7623_gpio_pin_max),
+        DEVMETHOD(gpio_pin_getname, mt7623_gpio_pin_getname),
+        DEVMETHOD(gpio_pin_getcaps, mt7623_gpio_pin_getcaps),
+        DEVMETHOD(gpio_pin_getflags, mt7623_gpio_pin_getflags),
+        DEVMETHOD(gpio_pin_setflags, mt7623_gpio_pin_setflags),
+        DEVMETHOD(gpio_pin_get, mt7623_gpio_pin_get),
+        DEVMETHOD(gpio_pin_set, mt7623_gpio_pin_set),
+        DEVMETHOD(gpio_pin_toggle, mt7623_gpio_pin_toggle),
+
+        /* ofw_bus interface */
+        DEVMETHOD(ofw_bus_get_node,	mt7623_gpio_get_node),
+
         DEVMETHOD_END
 };
 
-static DEFINE_CLASS_0(mt7623_pinctrl, mt7623_pinctrl_driver, mt7623_pinctrl_methods,
-sizeof(struct mt7623_pinctrl_softc));
-EARLY_DRIVER_MODULE(mt7623_pinctrl, simplebus, mt7623_pinctrl_driver,
-        NULL, NULL,
-71);
+extern driver_t ofw_gpiobus_driver;
+static DEFINE_CLASS_0(mt7623_pinctrl, mt7623_pinctrl_driver,
+        mt7623_pinctrl_methods, sizeof(struct mt7623_pinctrl_softc));
+EARLY_DRIVER_MODULE(mt7623_pinctrl, simplebus, mt7623_pinctrl_driver, NULL, NULL,
+        BUS_PASS_INTERRUPT + 71);
+EARLY_DRIVER_MODULE(ofw_gpiobus, mt7623_pinctrl, ofw_gpiobus_driver, NULL, NULL,
+        BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE);
+MODULE_DEPEND(mt7623_pinctrl, syscon, 1, 1, 1);
+MODULE_DEPEND(mt7623_pinctrl, gpiobus, 1, 1, 1);
+MODULE_VERSION(mt7623_pinctrl, 1);

@@ -26,36 +26,30 @@
 * SUCH DAMAGE.
 */
 
-#include <dev/ofw/openfirm.h>
-#include <dev/ofw/ofw_cpu.h>
-#include <dev/ofw/ofw_bus_subr.h>
-#include <dev/psci/psci.h>
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
-#include <sys/kernel.h>
-#include <sys/lock.h>
-#include <sys/mutex.h>
 #include <sys/smp.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
 
+#include <machine/bus.h>
 #include <machine/cpu.h>
-#include <machine/intr.h>
 #include <machine/fdt.h>
-#include <machine/smp.h>
 #include <machine/platformvar.h>
-#include <machine/pmap.h>
+#include <machine/smp.h>
 
 #include <arm/mediatek/mt7623_mp.h>
 
-#define MT_MAX_CPU         8
-#define MT_SMP_REG_SIZE    0x1000
-#define GICD_BASE          0x10211000
-#define GICD_SGIR	   0xF00
-#define GICD_CTLR	   0x000
+#define	MT_CPUCFG_BASE		0x10202000
+#define	MT_CPUCFG_SIZE		0x1000
+#define	MT_JUMP_REG		0x34			/* entry for a released core */
+#define	MT_KEY_REG(cpu)		(0x34 + (cpu) * 4)	/* 0x38, 0x3c, 0x40 */
+#define	MT_KEY_CPU1		0x534c4131		/* "SLA1" */
+#define	MT_KEY_CPU2		0x4c415332		/* "LAS2" */
+#define	MT_KEY_CPU3		0x41534c33		/* "ASL3" */
+#define	MT_NKEYS		3
 
 /*
  * GIC distributor, first "reg" entry of interrupt-controller@10211000.  It
@@ -73,13 +67,15 @@
 
 static const uint32_t mt7623_keys[MT_NKEYS] = {
     MT_KEY_CPU1, MT_KEY_CPU2, MT_KEY_CPU3
-};
+
+/* How long to wait for one core to check in. */
+#define	MT_AP_TIMEOUT_MS	1000
 
 void
 mt7623_mp_setmaxid(platform_t plat)
 {
-        uint32_t reg;
-        int ncpu;
+	uint32_t reg;
+	int ncpu;
 
         if (mp_ncpus != 0)
                 return;
@@ -94,37 +90,37 @@ mt7623_mp_setmaxid(platform_t plat)
 void
 mt7623_mp_start_ap(platform_t plat)
 {
-        bus_space_handle_t cpucfg, gicd;
-        int cpu;
+	bus_space_handle_t cpucfg, gicd;
+	int cpu;
 
-        if (bus_space_map(fdtbus_bs_tag, MT_CPUCFG_BASE, MT_CPUCFG_SIZE,
-            0, &cpucfg) != 0)
-                panic("Couldn't map the MT CPU configuration block");
-        if (bus_space_map(fdtbus_bs_tag, GICD_BASE, GICD_SIZE, 0, &gicd) != 0)
-                panic("Couldn't map GIC distributor");
+	if (bus_space_map(fdtbus_bs_tag, MT_CPUCFG_BASE, MT_CPUCFG_SIZE,
+	    0, &cpucfg) != 0)
+		panic("Couldn't map the MT CPU configuration block");
+	if (bus_space_map(fdtbus_bs_tag, GICD_BASE, GICD_SIZE, 0, &gicd) != 0)
+		panic("Couldn't map GIC distributor");
 
-        /* Where a released core continues.  It starts with the MMU off. */
-        bus_space_write_4(fdtbus_bs_tag, cpucfg, MT_JUMP_REG,
-            pmap_kextract((vm_offset_t)mpentry));
+	/* Where a released core continues.  It starts with the MMU off. */
+	bus_space_write_4(fdtbus_bs_tag, cpucfg, MT_JUMP_REG,
+	    pmap_kextract((vm_offset_t)mpentry));
 
-        bus_space_write_4(fdtbus_bs_tag, gicd, GICD_CTLR,
-            GICD_CTLR_ENABLE_GRP0 | GICD_CTLR_ENABLE_GRP1);
+	bus_space_write_4(fdtbus_bs_tag, gicd, GICD_CTLR,
+	    GICD_CTLR_ENABLE_GRP0 | GICD_CTLR_ENABLE_GRP1);
 
-        for (cpu = 1; cpu < mp_ncpus && cpu <= MT_NKEYS; cpu++) {
-                bus_space_write_4(fdtbus_bs_tag, cpucfg, MT_KEY_REG(cpu),
-                    mt7623_keys[cpu - 1]);
+	for (cpu = 1; cpu < mp_ncpus && cpu <= MT_NKEYS; cpu++) {
+		bus_space_write_4(fdtbus_bs_tag, cpucfg, MT_KEY_REG(cpu),
+		    mt7623_keys[cpu - 1]);
 
-                dsb();
+		dsb();
 
-                bus_space_write_4(fdtbus_bs_tag, gicd, GICD_SGIR,
-                    GICD_SGIR_TO_OTHERS);
-                dsb();
-                sev();
+		bus_space_write_4(fdtbus_bs_tag, gicd, GICD_SGIR,
+		    GICD_SGIR_TO_OTHERS);
+		dsb();
+		sev();
 
-                if (bootverbose)
-                        printf("MT7623 SMP: CPU%d up\n", cpu);
-        }
+		if (bootverbose)
+			printf("MT7623 SMP: CPU%d up\n", cpu);
+	}
 
-        bus_space_unmap(fdtbus_bs_tag, gicd, GICD_SIZE);
-        bus_space_unmap(fdtbus_bs_tag, cpucfg, MT_CPUCFG_SIZE);
+	bus_space_unmap(fdtbus_bs_tag, gicd, GICD_SIZE);
+	bus_space_unmap(fdtbus_bs_tag, cpucfg, MT_CPUCFG_SIZE);
 }

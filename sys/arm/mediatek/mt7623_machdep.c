@@ -146,4 +146,4 @@ static platform_method_t mt7623_methods[] = {
 	PLATFORMMETHOD_END,
 };
 
-FDT_PLATFORM_DEF2(mt7623, mt7623, "MediaTek MT7623", 0, "mediatek,mt7623", 250);
+FDT_PLATFORM_DEF(mt7623, "MediaTek MT7623", 0, "mediatek,mt7623", 250);
