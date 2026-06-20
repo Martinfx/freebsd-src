@@ -3,7 +3,12 @@ options 	SOC_MEDIATEK
 device		uart_ns8250
 
 # GPIO / PINCTRL
-device		mt7622_pinctrl
+device		gpio
+device		gpiobacklight
+device		gpioled
+device		gpioregulator
+device		gpiokeys
+
 
 # eth switch
 device 		etherswitch
