@@ -77,6 +77,15 @@ static struct ofw_compat_data compat_data[] =
 #define    MT7622_GPIO_BIT(pin)        (1u << ((pin) % 32))
 #define    MT7622_GPIO_DEFAULT_CAPS    (GPIO_PIN_INPUT | GPIO_PIN_OUTPUT)
 
+#define MT7622_GPIO_BASE_CAPS \
+    (GPIO_PIN_INPUT | GPIO_PIN_OUTPUT | \
+     GPIO_PIN_PRESET_LOW | GPIO_PIN_PRESET_HIGH)
+
+#define MT7622_GPIO_INTR_CAPS \
+    (GPIO_INTR_EDGE_RISING | GPIO_INTR_EDGE_FALLING | \
+     GPIO_INTR_EDGE_BOTH | \
+     GPIO_INTR_LEVEL_HIGH | GPIO_INTR_LEVEL_LOW)
+
 #define MT7622_LOCK(sc)        mtx_lock_spin(&(sc)->mtx)
 #define MT7622_UNLOCK(sc)    mtx_unlock_spin(&(sc)->mtx)
 
@@ -560,11 +569,18 @@ mt7622_gpio_pin_getname(device_t dev, uint32_t pin, char *name) {
 
 static int
 mt7622_gpio_pin_getcaps(device_t dev, uint32_t pin, uint32_t *caps) {
+    struct mt7622_pinctrl_softc *sc;
 
     if (pin >= MT7622_GPIO_NPINS)
         return (EINVAL);
 
-    *caps = MT7622_GPIO_DEFAULT_CAPS;
+    sc = device_get_softc(dev);
+
+    *caps = MT7622_GPIO_BASE_CAPS;
+
+    if (sc->intr_avail)
+        *caps |= MT7622_GPIO_INTR_CAPS;
+
     return (0);
 }
 
@@ -658,12 +674,15 @@ static int
 mt7622_gpio_map_gpios(device_t bus, phandle_t dev, phandle_t gparent,
                       int gcells, pcell_t *gpios, uint32_t *pin, uint32_t *flags) {
 
-    /* The gpio-specifier is <pin flags> (#gpio-cells = <2>). */
     if (gcells != 2)
         return (ERANGE);
 
+    if (gpios[0] >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
     *pin = gpios[0];
     *flags = gpios[1];
+
     return (0);
 }
 
@@ -986,6 +1005,11 @@ mt7622_pinctrl_attach(device_t dev) {
 
     sc->intr_avail = true;
 
+    if (!OF_hasprop(node, "gpio-controller")) {
+        /* Node is not a GPIO controller. */
+        goto fail;
+    }
+
     sc->pinmux = pinmux;
     sc->functions = functions;
 
@@ -1003,21 +1027,24 @@ mt7622_pinctrl_attach(device_t dev) {
     return (0);
 
     fail:
-    if (sc->irq_res) {
-        bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
-    }
-
-    if (sc->eint_res) {
-        bus_release_resource(dev, SYS_RES_MEMORY, sc->eint_rid, sc->eint_res);
-    }
-
-    if (sc->mem_res) {
-        bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-    }
-
-    if (sc->busdev != NULL) {
+    if (sc->busdev != NULL)
         gpiobus_detach_bus(dev);
+
+    if (sc->intr_cookie != NULL)
+        bus_teardown_intr(dev, sc->irq_res, sc->intr_cookie);
+
+    if (sc->intr_avail) {
+        intr_pic_deregister(dev, OF_xref_from_node(ofw_bus_get_node(dev)));
+        for (int i = 0; i < MT7622_GPIO_NPINS; i++)
+            intr_isrc_deregister(MT7622_ISRC(sc, i));
     }
+
+    if (sc->irq_res != NULL)
+        bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+    if (sc->eint_res != NULL)
+        bus_release_resource(dev, SYS_RES_MEMORY, sc->eint_rid, sc->eint_res);
+    if (sc->mem_res != NULL)
+        bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
 
     mtx_destroy(&sc->mtx);
 
@@ -1029,24 +1056,26 @@ static int mt7622_pinctrl_detach(device_t dev) {
 
     sc = device_get_softc(dev);
 
-    if (sc->irq_res) {
-        bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
-    }
-
-    if (sc->eint_res) {
-        bus_release_resource(dev, SYS_RES_MEMORY, sc->eint_rid, sc->eint_res);
-    }
-
-    if (sc->mem_res) {
-        bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
-    }
-
-    if (sc->busdev != NULL) {
+    if (sc->busdev != NULL)
         gpiobus_detach_bus(dev);
+
+    if (sc->intr_cookie != NULL)
+        bus_teardown_intr(dev, sc->irq_res, sc->intr_cookie);
+
+    if (sc->intr_avail) {
+        intr_pic_deregister(dev, OF_xref_from_node(ofw_bus_get_node(dev)));
+        for (int i = 0; i < MT7622_GPIO_NPINS; i++)
+            intr_isrc_deregister(MT7622_ISRC(sc, i));
     }
+
+    if (sc->irq_res != NULL)
+        bus_release_resource(dev, SYS_RES_IRQ, sc->irq_rid, sc->irq_res);
+    if (sc->eint_res != NULL)
+        bus_release_resource(dev, SYS_RES_MEMORY, sc->eint_rid, sc->eint_res);
+    if (sc->mem_res != NULL)
+        bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
 
     mtx_destroy(&sc->mtx);
-
     return (0);
 }
 
@@ -1083,6 +1112,10 @@ static device_method_t mt7622_pinctrl_methods[] = {
         /* ofw_bus interface */
         DEVMETHOD(ofw_bus_get_node, mt7622_gpio_get_node),
 
+        /* Bus interface */
+        DEVMETHOD(bus_setup_intr,    bus_generic_setup_intr),
+        DEVMETHOD(bus_teardown_intr, bus_generic_teardown_intr),
+
         DEVMETHOD_END
 };
 
@@ -1094,5 +1127,4 @@ EARLY_DRIVER_MODULE(mt7622_pinctrl, simplebus, mt7622_pinctrl_driver, NULL, NULL
         BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
 EARLY_DRIVER_MODULE(ofw_gpiobus, mt7622_pinctrl, ofw_gpiobus_driver,
 0, 0, BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
-DRIVER_MODULE(gpioc, mt7622_pinctrl, ofw_gpiobus_driver, 0, 0);
 MODULE_VERSION(mt7622_pinctrl, 1);
