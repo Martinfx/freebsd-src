@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Copyright (c) 2025 Martin Filla
  * All rights reserved.
  *
@@ -33,6 +35,7 @@
 #include <sys/mutex.h>
 #include <sys/rman.h>
 #include <sys/systm.h>
+#include <sys/gpio.h>
 
 #include <machine/bus.h>
 
@@ -43,10 +46,36 @@
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/ofw/openfirm.h>
+#include "gpio_if.h"
 
 static struct ofw_compat_data compat_data[] =
         {{"mediatek,mt7622-pinctrl", 1},
          {NULL,                      0}};
+
+/*
+ * GPIO register layout inside the "base" window (resource rid 0).
+ *
+ * Each register holds one bit per pin; consecutive 32-pin banks are spaced
+ * MT7622_GPIO_STRIDE bytes apart.  DIR selects direction (1 = output, 0 =
+ * input), DOUT drives the output level and DIN reflects the live pad level.
+ * The pin multiplexer (MODE) lives at 0x300 and is handled through the
+ * per-pin pinmux descriptor table below.
+ */
+#define	MT7622_GPIO_NPINS	103
+#define	MT7622_GPIO_MODE	1	/* mux value selecting the GPIO function */
+
+#define	MT7622_GPIO_DIR		0x000
+#define	MT7622_GPIO_DOUT	0x100
+#define	MT7622_GPIO_DIN		0x200
+#define	MT7622_GPIO_STRIDE	0x010
+
+#define	MT7622_GPIO_REG(base, pin)	\
+	((bus_size_t)(base) + ((pin) / 32) * MT7622_GPIO_STRIDE)
+#define	MT7622_GPIO_BIT(pin)		(1u << ((pin) % 32))
+#define	MT7622_GPIO_DEFAULT_CAPS	(GPIO_PIN_INPUT | GPIO_PIN_OUTPUT)
+
+#define MT7622_LOCK(sc)        mtx_lock_spin(&(sc)->mtx)
+#define MT7622_UNLOCK(sc)    mtx_unlock_spin(&(sc)->mtx)
 
 struct mt7622_pinmux_desc {
     const char *modes[8];
@@ -63,10 +92,12 @@ struct mt7622_functions_desc {
 
 struct mt7622_pinctrl_softc {
     device_t dev;
+    device_t busdev;
     struct resource *mem_res;
-    int mem_rid;
+    struct mtx mtx;
     const struct mt7622_pinmux_desc *pinmux;
     const struct mt7622_functions_desc *functions;
+    int mem_rid;
 };
 
 /* for mt7622 from pinctrl-mt7622.txt */
@@ -422,6 +453,206 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
 }
 
 static int
+mt7622_gpio_read_bit(struct mt7622_pinctrl_softc *sc, bus_size_t base,
+                     uint32_t pin)
+{
+    uint32_t val;
+
+    val = bus_read_4(sc->mem_res, MT7622_GPIO_REG(base, pin));
+    return ((val & MT7622_GPIO_BIT(pin)) != 0);
+}
+
+static void
+mt7622_gpio_write_bit(struct mt7622_pinctrl_softc *sc, bus_size_t base,
+                      uint32_t pin, int set)
+{
+    bus_size_t reg;
+    uint32_t val;
+
+    reg = MT7622_GPIO_REG(base, pin);
+    val = bus_read_4(sc->mem_res, reg);
+    if (set)
+        val |= MT7622_GPIO_BIT(pin);
+    else
+        val &= ~MT7622_GPIO_BIT(pin);
+    bus_write_4(sc->mem_res, reg, val);
+}
+
+/*
+ * Switch a pad to the GPIO function (mux value MT7622_GPIO_MODE).  Pins that
+ * have no pinmux descriptor keep their current/reset mux setting: their
+ * descriptor is the all-zero designated-initializer default whose reg_offset
+ * aliases the GPIO direction register, so it must never be written here.  The
+ * presence of the GPIO function string marks a valid descriptor.
+ */
+static void
+mt7622_gpio_set_mode(struct mt7622_pinctrl_softc *sc, uint32_t pin)
+{
+    const struct mt7622_pinmux_desc *pd;
+    uint32_t val;
+
+    pd = &sc->pinmux[pin];
+    if (pd->modes[MT7622_GPIO_MODE] == NULL)
+        return;
+
+    val = bus_read_4(sc->mem_res, pd->reg_offset);
+    val &= ~(0xFu << pd->shift);
+    val |= (MT7622_GPIO_MODE << pd->shift);
+    bus_write_4(sc->mem_res, pd->reg_offset, val);
+}
+
+static device_t
+mt7622_gpio_get_bus(device_t dev)
+{
+    struct mt7622_pinctrl_softc *sc;
+
+    sc = device_get_softc(dev);
+    return (sc->busdev);
+}
+
+static int
+mt7622_gpio_pin_max(device_t dev, int *maxpin)
+{
+
+    *maxpin = MT7622_GPIO_NPINS - 1;
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_getname(device_t dev, uint32_t pin, char *name)
+{
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    snprintf(name, GPIOMAXNAME, "gpio%u", pin);
+    name[GPIOMAXNAME - 1] = '\0';
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_getcaps(device_t dev, uint32_t pin, uint32_t *caps)
+{
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    *caps = MT7622_GPIO_DEFAULT_CAPS;
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_getflags(device_t dev, uint32_t pin, uint32_t *flags)
+{
+    struct mt7622_pinctrl_softc *sc;
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    MT7622_LOCK(sc);
+    if (mt7622_gpio_read_bit(sc, MT7622_GPIO_DIR, pin))
+        *flags = GPIO_PIN_OUTPUT;
+    else
+        *flags = GPIO_PIN_INPUT;
+    MT7622_UNLOCK(sc);
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_setflags(device_t dev, uint32_t pin, uint32_t flags)
+{
+    struct mt7622_pinctrl_softc *sc;
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    MT7622_LOCK(sc);
+    /* Make sure the pad is actually muxed to its GPIO function. */
+    mt7622_gpio_set_mode(sc, pin);
+
+    if (flags & GPIO_PIN_OUTPUT) {
+        if (flags & GPIO_PIN_PRESET_HIGH)
+            mt7622_gpio_write_bit(sc, MT7622_GPIO_DOUT, pin, 1);
+        else if (flags & GPIO_PIN_PRESET_LOW)
+            mt7622_gpio_write_bit(sc, MT7622_GPIO_DOUT, pin, 0);
+        mt7622_gpio_write_bit(sc, MT7622_GPIO_DIR, pin, 1);
+    } else if (flags & GPIO_PIN_INPUT) {
+        mt7622_gpio_write_bit(sc, MT7622_GPIO_DIR, pin, 0);
+    }
+    MT7622_UNLOCK(sc);
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_get(device_t dev, uint32_t pin, uint32_t *val)
+{
+    struct mt7622_pinctrl_softc *sc;
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    MT7622_LOCK(sc);
+    *val = mt7622_gpio_read_bit(sc, MT7622_GPIO_DIN, pin);
+    MT7622_UNLOCK(sc);
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_set(device_t dev, uint32_t pin, uint32_t value)
+{
+    struct mt7622_pinctrl_softc *sc;
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    MT7622_LOCK(sc);
+    mt7622_gpio_write_bit(sc, MT7622_GPIO_DOUT, pin, value != 0);
+    MT7622_UNLOCK(sc);
+    return (0);
+}
+
+static int
+mt7622_gpio_pin_toggle(device_t dev, uint32_t pin)
+{
+    struct mt7622_pinctrl_softc *sc;
+    int val;
+
+    if (pin >= MT7622_GPIO_NPINS)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    MT7622_LOCK(sc);
+    val = mt7622_gpio_read_bit(sc, MT7622_GPIO_DOUT, pin);
+    mt7622_gpio_write_bit(sc, MT7622_GPIO_DOUT, pin, !val);
+    MT7622_UNLOCK(sc);
+    return (0);
+}
+
+static int
+mt7622_gpio_map_gpios(device_t bus, phandle_t dev, phandle_t gparent,
+                      int gcells, pcell_t *gpios, uint32_t *pin, uint32_t *flags)
+{
+
+    /* The gpio-specifier is <pin flags> (#gpio-cells = <2>). */
+    if (gcells != 2)
+        return (ERANGE);
+
+    *pin = gpios[0];
+    *flags = gpios[1];
+    return (0);
+}
+
+static phandle_t
+mt7622_gpio_get_node(device_t bus, device_t dev)
+{
+    return (ofw_bus_get_node(bus));
+}
+
+static int
 mt7622_pinctrl_probe(device_t dev) {
     if (!ofw_bus_status_okay(dev))
         return (ENXIO);
@@ -429,20 +660,25 @@ mt7622_pinctrl_probe(device_t dev) {
     if (!ofw_bus_search_compatible(dev, compat_data)->ocd_data)
         return (ENXIO);
 
-    device_set_desc(dev, "Mediatek 7622 pinctrl configuration");
+    device_set_desc(dev, "Mediatek 7622 pinctrl/gpio controller");
     return (BUS_PROBE_DEFAULT);
 }
 
 static int
 mt7622_pinctrl_attach(device_t dev) {
-    struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+    struct mt7622_pinctrl_softc *sc;
 
+    sc = device_get_softc(dev);
     sc->dev = dev;
+
+    mtx_init(&sc->mtx, device_get_nameunit(dev), "mt7622 gpio", MTX_SPIN);
+
     /* Map memory resource */
     sc->mem_rid = 0;
     sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid, RF_ACTIVE);
     if (sc->mem_res == NULL) {
         device_printf(dev, "Could not map memory resource\n");
+        mtx_destroy(&sc->mtx);
         return (ENXIO);
     }
 
@@ -452,28 +688,72 @@ mt7622_pinctrl_attach(device_t dev) {
     fdt_pinctrl_register(dev, NULL);
     fdt_pinctrl_configure_tree(dev);
 
+    ofw_gpiobus_register_provider(dev);
+    
+    sc->busdev = gpiobus_add_bus(dev);
+    if (sc->busdev == NULL) {
+        device_printf(dev, "cannot attach gpiobus\n");
+        bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
+        mtx_destroy(&sc->mtx);
+        return (ENXIO);
+    }
+
+    bus_attach_children(dev);
+
     return (0);
 }
 
 static int mt7622_pinctrl_detach(device_t dev) {
-    struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+    struct mt7622_pinctrl_softc *sc;
+
+    sc = device_get_softc(dev);
+
+    if (sc->busdev != NULL)
+        gpiobus_detach_bus(dev);
+
     if (sc->mem_res) {
         bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
         sc->mem_res = NULL;
     }
 
+    mtx_destroy(&sc->mtx);
+
     return (0);
 }
 
 static device_method_t mt7622_pinctrl_methods[] = {
+        /* Device interface */
         DEVMETHOD(device_probe, mt7622_pinctrl_probe),
         DEVMETHOD(device_attach, mt7622_pinctrl_attach),
         DEVMETHOD(device_detach, mt7622_pinctrl_detach),
+
+        /* GPIO interface */
+        DEVMETHOD(gpio_get_bus, mt7622_gpio_get_bus),
+        DEVMETHOD(gpio_pin_max, mt7622_gpio_pin_max),
+        DEVMETHOD(gpio_pin_getname, mt7622_gpio_pin_getname),
+        DEVMETHOD(gpio_pin_getcaps, mt7622_gpio_pin_getcaps),
+        DEVMETHOD(gpio_pin_getflags, mt7622_gpio_pin_getflags),
+        DEVMETHOD(gpio_pin_setflags, mt7622_gpio_pin_setflags),
+        DEVMETHOD(gpio_pin_get, mt7622_gpio_pin_get),
+        DEVMETHOD(gpio_pin_set, mt7622_gpio_pin_set),
+        DEVMETHOD(gpio_pin_toggle, mt7622_gpio_pin_toggle),
+        DEVMETHOD(gpio_map_gpios, mt7622_gpio_map_gpios),
+
+        /* fdt_pinctrl interface */
         DEVMETHOD(fdt_pinctrl_configure, mt7622_pinctrl_configure),
+
+        /* ofw_bus interface */
+        DEVMETHOD(ofw_bus_get_node, mt7622_gpio_get_node),
+
         DEVMETHOD_END
 };
 
-static DEFINE_CLASS_0(mt7622_pinctrl, mt7622_pinctrl_driver, mt7622_pinctrl_methods,
-sizeof(struct mt7622_pinctrl_softc));
+extern driver_t ofw_gpiobus_driver;
+static DEFINE_CLASS_0(mt7622_pinctrl, mt7622_pinctrl_driver,
+        mt7622_pinctrl_methods, sizeof(struct mt7622_pinctrl_softc));
 EARLY_DRIVER_MODULE(mt7622_pinctrl, simplebus, mt7622_pinctrl_driver, NULL, NULL,
-71);
+        BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
+EARLY_DRIVER_MODULE(ofw_gpiobus, mt7622_pinctrl, ofw_gpiobus_driver, 0, 0,
+BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LATE);
+DRIVER_MODULE(gpioc, mt7622_pinctrl, ofw_gpiobus_driver, 0, 0);
+MODULE_VERSION(mt7622_pinctrl, 1);
