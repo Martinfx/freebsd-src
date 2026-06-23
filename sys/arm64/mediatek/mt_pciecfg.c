@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla, Michal Meloun <mmel@FreeBSD.org>
+ * Copyright (c) 2026 Martin Filla
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
