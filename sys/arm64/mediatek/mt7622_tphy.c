@@ -362,7 +362,7 @@ mt_phy_usb3_init(struct mt_phynode_softc *sc)
 
     /* Power on: enable SuperSpeed RX detection */
     tmp = RD4(sc, U3P_U3_PHYD_RXDET1);
-    tmp &= ~P3D_RG_RXDET_STB2_SET_MASK;  
+    tmp &= ~P3D_RG_RXDET_STB2_SET_MASK;
     WR4(sc, U3P_U3_PHYD_RXDET1, tmp);
 
     tmp = RD4(sc, U3P_U3_PHYD_RXDET2);
