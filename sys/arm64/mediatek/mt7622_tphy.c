@@ -80,6 +80,12 @@
 				 P2C_RG_DPPULLDOWN | P2C_RG_TERMSEL)
 #define	U3P_U2PHYDTM1		0x06c
 #define	  P2C_RG_UART_EN		(1U << 16)
+#define	  PA6_RG_U2_OTG_VBUSCMP_EN	(1U << 20)   /* v U3P_USBPHYACR6 */
+#define	  P2C_FORCE_IDDIG		(1U << 9)    /* v U3P_U2PHYDTM1 */
+#define	  P2C_RG_VBUSVALID		(1U << 5)
+#define	  P2C_RG_SESSEND		(1U << 4)
+#define	  P2C_RG_AVALID			(1U << 2)
+#define	  P2C_RG_IDDIG			(1U << 1)
 
 /* ---- USB3 / PCIe --------------------------------------------------------- */
 #define	U3P_U3_CHIP_GPIO_CTLD	0x0c
@@ -289,6 +295,17 @@ mt_phy_usb2_init(struct mt_phynode_softc *sc)
 	tmp = RD4(sc, U3P_USBPHYACR6);
 	tmp = field_set(tmp, 0x2, PA6_RG_U2_SQTH_SHIFT, PA6_RG_U2_SQTH_MASK);
 	WR4(sc, U3P_USBPHYACR6, tmp);
+
+    /* OTG VBUS comparator on */
+    tmp = RD4(sc, U3P_USBPHYACR6);
+    tmp |= PA6_RG_U2_OTG_VBUSCMP_EN;
+    WR4(sc, U3P_USBPHYACR6, tmp);
+
+    /* VBUS/session valid, session NOT ended -> host sees a device */
+    tmp = RD4(sc, U3P_U2PHYDTM1);
+    tmp |= (P2C_RG_VBUSVALID | P2C_RG_AVALID);
+    tmp &= ~P2C_RG_SESSEND;
+    WR4(sc, U3P_U2PHYDTM1, tmp);
 }
 
 static void
@@ -342,6 +359,15 @@ mt_phy_usb3_init(struct mt_phynode_softc *sc)
 	tmp = field_set(tmp, 0x10, P3D_RG_RXDET_STB2_SET_P3_SHIFT,
 	                P3D_RG_RXDET_STB2_SET_P3_MASK);
 	WR4(sc, U3P_U3_PHYD_RXDET2, tmp);
+
+    /* Power on: enable SuperSpeed RX detection */
+    tmp = RD4(sc, U3P_U3_PHYD_RXDET1);
+    tmp &= ~P3D_RG_RXDET_STB2_SET_MASK;  
+    WR4(sc, U3P_U3_PHYD_RXDET1, tmp);
+
+    tmp = RD4(sc, U3P_U3_PHYD_RXDET2);
+    tmp &= ~P3D_RG_RXDET_STB2_SET_P3_MASK;
+    WR4(sc, U3P_U3_PHYD_RXDET2, tmp);
 }
 
 static int
