@@ -1,12 +1,47 @@
-/*
- * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
- * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
- *
+/*-
  * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2025 Martin Filla, Michal Meloun <mmel@FreeBSD.org>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 #include <sys/cdefs.h>
-
+/*
+ * UART driver for MediaTek SoCs (MT7622 and compatibles).
+ *
+ * The hardware is a 16550A clone with a few vendor extensions.  The only
+ * extension that matters for correct operation is the baud rate generator:
+ * besides the standard 16x oversampling divisor it provides a "high speed"
+ * register that selects the oversampling factor (16x, 8x, 4x or a programmable
+ * sample count) so that baud rates well above the classic uartclk/16 limit can
+ * be reached.  Because of that the stock ns8250 divisor math cannot be reused
+ * directly; everything else (FIFO, interrupts, modem control) is plain 16550
+ * and is delegated to the ns8250 bus methods.
+ *
+ * Register and formula references are from the MT7622 Reference Manual,
+ * section 1.11 (UART), and match Linux' drivers/tty/serial/8250/8250_mtk.c.
+ */
 #include "opt_platform.h"
 
 #include <sys/param.h>
@@ -78,19 +113,49 @@ mt_uart_lcr(int databits, int stopbits, int parity)
 }
 
 /*
+ * Compute the baud rate that the given register values produce, per the
+ * MT7622 RM 1.11 high speed formulas.  Used for read-back/diagnostics.
+ */
+static uint32_t
+mt_uart_calc_baud(u_int rclk, uint8_t highs, uint32_t divisor,
+                  uint8_t sample_count)
+{
+
+        if (divisor == 0)
+                return (0);
+        switch (highs & 0x3) {
+                case MTK_UART_HIGHS_16X:
+                        return (rclk / 16 / divisor);
+                case MTK_UART_HIGHS_8X:
+                        return (rclk / 8 / divisor);
+                case MTK_UART_HIGHS_4X:
+                        return (rclk / 4 / divisor);
+                default: /* MTK_UART_HIGHS_SAMPLE */
+                        return (rclk / ((sample_count + 1) * divisor));
+        }
+}
+
+/*
  * Program the baud rate generator.  The caller is responsible for serializing
  * access (holding sc_hwmtx or running single threaded during console init) and
  * must have already written the line control register, which is preserved here
  * across the divisor-latch access.
  *
- * baud = rclk / (oversampling * divisor), where the oversampling factor is
- * selected through the high speed register.  See MT7622 RM 1.11.
+ * We always use high speed mode 3 (programmable sample count):
+ *
+ *	baud = rclk / ((sample_count + 1) * divisor)
+ *
+ * With a fixed reference clock that is not a multiple of 16*baud (e.g. the
+ * 25 MHz crystal on the MT7622) the classic 16x divisor has poor accuracy --
+ * 115200 off a 25 MHz clock is ~3% out.  The sample-count mode lets us choose
+ * the oversampling factor and hit the requested rate within a fraction of a
+ * percent, which is also what the boot loader does.  This mirrors U-Boot's
+ * MediaTek serial driver.
  */
 static void
 mt_uart_set_baud(struct uart_bas *bas, int baudrate)
 {
         uint32_t divisor, samples;
-        int highspeed;
         uint8_t lcr;
 
         if (baudrate <= 0 || bas->rclk == 0)
@@ -100,25 +165,24 @@ mt_uart_set_baud(struct uart_bas *bas, int baudrate)
         uart_setreg(bas, MTK_UART_RATE_FIX, 0);
         uart_barrier(bas);
 
-        if (baudrate <= 115200) {
-                highspeed = MTK_UART_HIGHS_16X;
-                divisor = MTK_DIV_ROUND_CLOSEST(bas->rclk, 16 * baudrate);
-        } else if (baudrate <= 576000) {
-                highspeed = MTK_UART_HIGHS_4X;
-                /* These two rates are not exactly representable; round down. */
-                if (baudrate == 500000 || baudrate == 576000)
-                        baudrate = 460800;
-                divisor = howmany(bas->rclk, 4 * baudrate);
-        } else {
-                highspeed = MTK_UART_HIGHS_SAMPLE;
-                divisor = howmany(bas->rclk, 256 * baudrate);
-        }
+        /*
+         * Pick the divisor so the oversampling factor (sample_count + 1) fits
+         * the 8-bit sample count register (max 256), then choose the closest
+         * sample count for the requested rate.
+         */
+        divisor = howmany(bas->rclk, (uint32_t)baudrate * 256);
         if (divisor == 0)
                 divisor = 1;
         if (divisor > UART_DIV_MAX)
                 divisor = UART_DIV_MAX;
 
-        uart_setreg(bas, MTK_UART_HIGHS, highspeed);
+        samples = MTK_DIV_ROUND_CLOSEST(bas->rclk, divisor * (uint32_t)baudrate);
+        if (samples < 2)
+                samples = 2;
+        if (samples > 256)
+                samples = 256;
+
+        uart_setreg(bas, MTK_UART_HIGHS, MTK_UART_HIGHS_SAMPLE);
         uart_barrier(bas);
 
         /* Program the divisor latch. */
@@ -132,24 +196,11 @@ mt_uart_set_baud(struct uart_bas *bas, int baudrate)
         uart_barrier(bas);
 
         /*
-         * Sample count/point only take effect in high speed mode 3, where
-         * baud = rclk / ((sample_count + 1) * divisor).  Per the RM the sample
-         * point sits in the middle of the bit: (sample_count - 1) / 2.  Leave
-         * the registers at their reset values otherwise.
+         * baud = rclk / ((sample_count + 1) * divisor); per the RM the sample
+         * point sits in the middle of the bit: (sample_count - 1) / 2.
          */
-        if (highspeed == MTK_UART_HIGHS_SAMPLE) {
-                uint32_t denom = divisor * (uint32_t)baudrate;
-
-                samples = denom != 0 ?
-                          MTK_DIV_ROUND_CLOSEST((uint32_t)bas->rclk, denom) : 1;
-                if (samples < 2)
-                        samples = 2;
-                uart_setreg(bas, MTK_UART_SAMPLE_COUNT, samples - 1);
-                uart_setreg(bas, MTK_UART_SAMPLE_POINT, (samples - 2) >> 1);
-        } else {
-                uart_setreg(bas, MTK_UART_SAMPLE_COUNT, 0);
-                uart_setreg(bas, MTK_UART_SAMPLE_POINT, 0xff);
-        }
+        uart_setreg(bas, MTK_UART_SAMPLE_COUNT, samples - 1);
+        uart_setreg(bas, MTK_UART_SAMPLE_POINT, (samples - 2) >> 1);
         uart_barrier(bas);
 }
 
@@ -316,7 +367,7 @@ static void
 mt_uart_dump_baud(struct uart_softc *sc)
 {
         struct uart_bas *bas = &sc->sc_bas;
-        uint32_t divisor, baud;
+        uint32_t divisor;
         uint8_t lcr, highs, sample_count;
 
         highs = uart_getreg(bas, MTK_UART_HIGHS) & 0x3;
@@ -329,25 +380,10 @@ mt_uart_dump_baud(struct uart_softc *sc)
         uart_setreg(bas, REG_LCR, lcr);
         uart_barrier(bas);
 
-        switch (highs) {
-                case MTK_UART_HIGHS_16X:
-                        baud = divisor != 0 ? bas->rclk / 16 / divisor : 0;
-                        break;
-                case MTK_UART_HIGHS_8X:
-                        baud = divisor != 0 ? bas->rclk / 8 / divisor : 0;
-                        break;
-                case MTK_UART_HIGHS_4X:
-                        baud = divisor != 0 ? bas->rclk / 4 / divisor : 0;
-                        break;
-                default: /* MTK_UART_HIGHS_SAMPLE */
-                        baud = divisor != 0 ?
-                               bas->rclk / ((sample_count + 1) * divisor) : 0;
-                        break;
-        }
-
         device_printf(sc->sc_dev,
             "rclk=%u highspeed=%u divisor=%u sample_count=%u baud=%u\n",
-            bas->rclk, highs, divisor, sample_count, baud);
+            bas->rclk, highs, divisor, sample_count,
+            mt_uart_calc_baud(bas->rclk, highs, divisor, sample_count));
 }
 
 static int
@@ -370,13 +406,73 @@ mt_uart_attach(struct uart_softc *sc)
         return (0);
 }
 
+/*
+ * Snap a back-computed rate to the nearest standard baud rate when it is
+ * within ~2%.  The MT7622's fixed reference clock cannot hit most rates
+ * exactly (e.g. 115200 comes out as 115207), so report the intended nominal
+ * rate for the console line and stty rather than the rounded-off value.
+ */
+static int
+mt_uart_snap_baud(int baud)
+{
+        static const int std[] = {
+            1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
+            230400, 460800, 921600, 1500000, 2000000, 3000000,
+        };
+        int d, i;
+
+        for (i = 0; i < nitems(std); i++) {
+                d = baud - std[i];
+                if (d < 0)
+                        d = -d;
+                if ((int64_t)d * 50 <= std[i])
+                        return (std[i]);
+        }
+        return (baud);
+}
+
+/*
+ * Like ns8250_bus_ioctl(), but UART_IOCTL_BAUD must account for the high speed
+ * register; the generic code assumes plain 16x sampling and would report a
+ * bogus rate (e.g. 1562500 instead of 115200).
+ */
+static int
+mt_uart_ioctl(struct uart_softc *sc, int request, intptr_t data)
+{
+        struct uart_bas *bas = &sc->sc_bas;
+        uint32_t divisor;
+        uint8_t lcr, highs, sample_count;
+        int baud;
+
+        if (request != UART_IOCTL_BAUD)
+                return (ns8250_bus_ioctl(sc, request, data));
+
+        uart_lock(sc->sc_hwmtx);
+        highs = uart_getreg(bas, MTK_UART_HIGHS) & 0x3;
+        sample_count = uart_getreg(bas, MTK_UART_SAMPLE_COUNT);
+        lcr = uart_getreg(bas, REG_LCR);
+        uart_setreg(bas, REG_LCR, lcr | LCR_DLAB);
+        uart_barrier(bas);
+        divisor = (uart_getreg(bas, REG_DLH) << 8) | uart_getreg(bas, REG_DLL);
+        uart_setreg(bas, REG_LCR, lcr);
+        uart_barrier(bas);
+        uart_unlock(sc->sc_hwmtx);
+
+        baud = mt_uart_calc_baud(bas->rclk, highs, divisor, sample_count);
+        if (baud <= 0)
+                return (ENXIO);
+        *(int *)data = mt_uart_snap_baud(baud);
+
+        return (0);
+}
+
 static kobj_method_t mt_methods[] = {
     KOBJMETHOD(uart_probe,		ns8250_bus_probe),
     KOBJMETHOD(uart_attach,		mt_uart_attach),
     KOBJMETHOD(uart_detach,		ns8250_bus_detach),
     KOBJMETHOD(uart_flush,		ns8250_bus_flush),
     KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
-    KOBJMETHOD(uart_ioctl,		ns8250_bus_ioctl),
+    KOBJMETHOD(uart_ioctl,		mt_uart_ioctl),
     KOBJMETHOD(uart_ipend,		ns8250_bus_ipend),
     KOBJMETHOD(uart_param,		mt_uart_param),
     KOBJMETHOD(uart_receive,	ns8250_bus_receive),
