@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -312,7 +312,8 @@ static const struct mt7622_pinmux_desc pinmux[] = {
 };
 
 static void
-mt7622_pinctrl_process_entry(struct mt7622_pinctrl_softc *sc, const char *group, char *function) {
+mt7622_pinctrl_process_entry(struct mt7622_pinctrl_softc *sc, const char *group, char *function)
+{
         for (int i = 0; i < nitems(functions); i++) {
                 if ((strcmp(functions[i].group, group) == 0) &&
                     (strcmp(functions[i].function, function) == 0)) {
@@ -361,7 +362,8 @@ mt7622_pinctrl_process_entry(struct mt7622_pinctrl_softc *sc, const char *group,
 }
 
 static int
-mt7622_pinctrl_process_node(struct mt7622_pinctrl_softc *sc, phandle_t child) {
+mt7622_pinctrl_process_node(struct mt7622_pinctrl_softc *sc, phandle_t child)
+{
         char mux[64];
         const char **groups = NULL;
         char *function = NULL;
@@ -390,7 +392,8 @@ mt7622_pinctrl_process_node(struct mt7622_pinctrl_softc *sc, phandle_t child) {
 }
 
 static int
-mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
+mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref)
+{
         struct mt7622_pinctrl_softc *sc;
         phandle_t child, node;
         sc = device_get_softc(dev);
@@ -404,7 +407,8 @@ mt7622_pinctrl_configure(device_t dev, phandle_t cfgxref) {
 }
 
 static int
-mt7622_pinctrl_probe(device_t dev) {
+mt7622_pinctrl_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -416,11 +420,13 @@ mt7622_pinctrl_probe(device_t dev) {
 }
 
 static int
-mt7622_pinctrl_attach(device_t dev) {
-        struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+mt7622_pinctrl_attach(device_t dev)
+{
+        struct mt7622_pinctrl_softc *sc;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
-        /* Map memory resource */
+
         sc->mem_rid = 0;
         sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid, RF_ACTIVE);
         if (sc->mem_res == NULL) {
@@ -437,8 +443,11 @@ mt7622_pinctrl_attach(device_t dev) {
         return (0);
 }
 
-static int mt7622_pinctrl_detach(device_t dev) {
-        struct mt7622_pinctrl_softc *sc = device_get_softc(dev);
+static int mt7622_pinctrl_detach(device_t dev)
+{
+        struct mt7622_pinctrl_softc *sc;
+        sc = device_get_softc(dev);
+
         if (sc->mem_res) {
                 bus_release_resource(dev, SYS_RES_MEMORY, sc->mem_rid, sc->mem_res);
                 sc->mem_res = NULL;
@@ -448,14 +457,13 @@ static int mt7622_pinctrl_detach(device_t dev) {
 }
 
 static device_method_t mt7622_pinctrl_methods[] = {
-    DEVMETHOD(device_probe, mt7622_pinctrl_probe),
-    DEVMETHOD(device_attach, mt7622_pinctrl_attach),
-    DEVMETHOD(device_detach, mt7622_pinctrl_detach),
-    DEVMETHOD(fdt_pinctrl_configure, mt7622_pinctrl_configure),
-    DEVMETHOD_END
+        DEVMETHOD(device_probe, mt7622_pinctrl_probe),
+        DEVMETHOD(device_attach, mt7622_pinctrl_attach),
+        DEVMETHOD(device_detach, mt7622_pinctrl_detach),
+        DEVMETHOD(fdt_pinctrl_configure, mt7622_pinctrl_configure),
+        DEVMETHOD_END
 };
 
 static DEFINE_CLASS_0(mt7622_pinctrl, mt7622_pinctrl_driver, mt7622_pinctrl_methods,
 sizeof(struct mt7622_pinctrl_softc));
-EARLY_DRIVER_MODULE(mt7622_pinctrl, simplebus, mt7622_pinctrl_driver, NULL, NULL,
-71);
+EARLY_DRIVER_MODULE(mt7622_pinctrl, simplebus, mt7622_pinctrl_driver, NULL, NULL, 71);
