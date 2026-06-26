@@ -126,6 +126,7 @@ struct mdtk_clk_def {
 };
 
 struct mdtk_clk_softc {
+    struct simplebus_softc simplebus;
     device_t dev;
     struct resource *mem_res;
     struct mtx mtx;

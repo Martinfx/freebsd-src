@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
- * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
+ * Copyright (c) 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,16 +13,18 @@
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <machine/bus.h>
+
 #include <dev/fdt/simplebus.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/syscon/syscon.h>
-#include <dt-bindings/clock/mt7622-clk.h>
+#include <dev/fdt/simplebus.h>
 #include <dev/clk/clk_gate.h>
-#include <dev/hwreset/hwreset.h>
+
+#include <dt-bindings/clock/mt7622-clk.h>
+
 #include "syscon_if.h"
 #include "clkdev_if.h"
-#include "hwreset_if.h"
 #include "mdtk_clk.h"
 
 
@@ -87,8 +88,8 @@ static struct clk_gate_def gates_clk[] = {
 };
 
 static struct mdtk_clk_def clk_def = {
-    .gates_def = gates_clk,
-    .num_gates = nitems(gates_clk),
+        .gates_def = gates_clk,
+        .num_gates = nitems(gates_clk),
 };
 
 static int
@@ -112,10 +113,13 @@ audio_clk_probe(device_t dev) {
 
 static int
 audio_clk_attach(device_t dev) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
+        struct mdtk_clk_softc *sc;
+        phandle_t child, node;
         int rid = 0;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
+        node = ofw_bus_get_node(dev);
 
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
@@ -129,7 +133,7 @@ audio_clk_attach(device_t dev) {
                 }
 
                 sc->syscon = syscon_create_ofw_node(dev,
-                                                    &syscon_class, ofw_bus_get_node(dev));
+                                                    &syscon_class, node);
                 if (sc->syscon == NULL) {
                         device_printf(dev,
                                       "Failed to create/register syscon\n");
@@ -138,23 +142,13 @@ audio_clk_attach(device_t dev) {
         }
 
         mdtk_register_clocks(dev, &clk_def);
-        return (0);
-}
 
-static int
-audio_clk_hwreset_assert(device_t dev, intptr_t idx, bool value) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
-        uint32_t mask, reset_reg;
+        simplebus_init(dev, node);
+        for (child = OF_child(node); child > 0; child = OF_peer(child)) {
+                simplebus_add_device(dev, child, 0, NULL, -1, NULL);
+        }
 
-        CLKDEV_DEVICE_LOCK(sc->dev);
-        KASSERT((idx > 0 && idx < 32), ("%s: idx out of range", __func__));
-
-
-        mask = 1 << (idx % 32);
-        reset_reg = (idx / 32) * 4;
-
-        CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(sc->dev);
+        bus_attach_children(dev);
 
         return (0);
 }
@@ -189,30 +183,28 @@ audio_clk_syscon_unlock(device_t dev) {
 }
 
 static device_method_t mt7622_audio_methods[] = {
-    /* Device interface */
-    DEVMETHOD(device_probe, audio_clk_probe),
-    DEVMETHOD(device_attach, audio_clk_attach),
-    DEVMETHOD(device_detach, audio_clk_detach),
+        /* Device interface */
+        DEVMETHOD(device_probe, audio_clk_probe),
+        DEVMETHOD(device_attach, audio_clk_attach),
+        DEVMETHOD(device_detach, audio_clk_detach),
 
-    /* Clkdev interface*/
-    DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-    DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-    DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-    DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-    DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
+        /* Clkdev interface*/
+        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
+        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
+        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
+        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
+        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-    DEVMETHOD(hwreset_assert, audio_clk_hwreset_assert),
+        /* Syscon interface */
+        DEVMETHOD(syscon_get_handle, audio_clk_syscon_get_handle),
+        DEVMETHOD(syscon_device_lock, audio_clk_syscon_lock),
+        DEVMETHOD(syscon_device_unlock, audio_clk_syscon_unlock),
 
-    /* Syscon interface */
-    DEVMETHOD(syscon_get_handle, audio_clk_syscon_get_handle),
-    DEVMETHOD(syscon_device_lock, audio_clk_syscon_lock),
-    DEVMETHOD(syscon_device_unlock, audio_clk_syscon_unlock),
-
-    DEVMETHOD_END
+        DEVMETHOD_END
 };
 
 DEFINE_CLASS_1(mt7622_audio, mt7622_audio_driver, mt7622_audio_methods,
-sizeof(struct mdtk_clk_softc), syscon_class);
+sizeof(struct mdtk_clk_softc), simplebus_driver);
 
 EARLY_DRIVER_MODULE(mt7622_audio, simplebus, mt7622_audio_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);
