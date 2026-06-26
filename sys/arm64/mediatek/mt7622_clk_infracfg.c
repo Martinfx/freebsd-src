@@ -37,7 +37,7 @@ static struct ofw_compat_data compat_data[] = {
 PLIST(infra_mux1_parents) = {
     "clkxtal",
     "armpll",
-    //"main_core_en",
+    "main_core_en", // xxxx
     "armpll"
 };
 
@@ -45,7 +45,7 @@ static struct clk_gate_def gates_clk[] = {
     GATE(CLK_INFRA_DBGCLK_PD, "infra_dbgclk_pd", "axi_sel", 0x44, 0),
     GATE(CLK_INFRA_TRNG, "trng_ck", "axi_sel", 0x44, 2),
     GATE(CLK_INFRA_AUDIO_PD, "infra_audio_pd", "aud_intbus_sel", 0x44, 5),
-    //GATE(CLK_INFRA_IRRX_PD, "infra_irrx_pd", "irrx_sel", 0x44, 16),
+    GATE(CLK_INFRA_IRRX_PD, "infra_irrx_pd", "irrx_sel", 0x44, 16), //xxxx
     GATE(CLK_INFRA_APXGPT_PD, "infra_apxgpt_pd", "f10m_ref_sel", 0x44, 18),
     GATE(CLK_INFRA_PMIC_PD, "infra_pmic_pd", "pmicspi_sel", 0x44, 22),
 };
