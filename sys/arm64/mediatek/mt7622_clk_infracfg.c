@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,14 +13,17 @@
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <machine/bus.h>
+
 #include <dev/fdt/simplebus.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/syscon/syscon.h>
-#include <dt-bindings/clock/mt7622-clk.h>
 #include <dev/clk/clk_mux.h>
 #include <dev/clk/clk_gate.h>
 #include <dev/hwreset/hwreset.h>
+
+#include <dt-bindings/clock/mt7622-clk.h>
+
 #include "syscon_if.h"
 #include "clkdev_if.h"
 #include "hwreset_if.h"
@@ -59,13 +62,15 @@ static struct mdtk_clk_def clk_def = {
 };
 
 static int
-infracfg_clk_detach(device_t dev) {
+infracfg_clk_detach(device_t dev)
+{
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
 }
 
 static int
-infracfg_clk_probe(device_t dev) {
+infracfg_clk_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -78,10 +83,12 @@ infracfg_clk_probe(device_t dev) {
 }
 
 static int
-infracfg_clk_attach(device_t dev) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
+infracfg_clk_attach(device_t dev)
+{
+        struct mdtk_clk_softc *sc;
         int rid = 0;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
 
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
@@ -109,25 +116,26 @@ infracfg_clk_attach(device_t dev) {
 }
 
 static int
-infracfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
+infracfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
+{
         uint32_t mask, reset_reg;
 
-        CLKDEV_DEVICE_LOCK(sc->dev);
+        CLKDEV_DEVICE_LOCK(dev);
         KASSERT((idx > 0 && idx < 32), ("%s: idx out of range", __func__));
 
 
         mask = 1 << (idx % 32);
         reset_reg = (idx / 32) * 4;
 
-        CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(sc->dev);
+        CLKDEV_MODIFY_4(dev, reset_reg, mask, value ? mask : 0);
+        CLKDEV_DEVICE_UNLOCK(dev);
 
         return (0);
 }
 
 static int
-infracfg_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
+infracfg_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -140,7 +148,8 @@ infracfg_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
 }
 
 static void
-infracfg_clk_syscon_lock(device_t dev) {
+infracfg_clk_syscon_lock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -148,7 +157,8 @@ infracfg_clk_syscon_lock(device_t dev) {
 }
 
 static void
-infracfg_clk_syscon_unlock(device_t dev) {
+infracfg_clk_syscon_unlock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -156,26 +166,26 @@ infracfg_clk_syscon_unlock(device_t dev) {
 }
 
 static device_method_t mt7622_infracfg_methods[] = {
-    /* Device interface */
-    DEVMETHOD(device_probe, infracfg_clk_probe),
-    DEVMETHOD(device_attach, infracfg_clk_attach),
-    DEVMETHOD(device_detach, infracfg_clk_detach),
+        /* Device interface */
+        DEVMETHOD(device_probe, infracfg_clk_probe),
+        DEVMETHOD(device_attach, infracfg_clk_attach),
+        DEVMETHOD(device_detach, infracfg_clk_detach),
 
-    /* Clkdev interface*/
-    DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-    DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-    DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-    DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-    DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
+        /* Clkdev interface*/
+        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
+        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
+        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
+        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
+        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-    DEVMETHOD(hwreset_assert, infracfg_clk_hwreset_assert),
+        DEVMETHOD(hwreset_assert, infracfg_clk_hwreset_assert),
 
-    /* Syscon interface */
-    DEVMETHOD(syscon_get_handle, infracfg_clk_syscon_get_handle),
-    DEVMETHOD(syscon_device_lock, infracfg_clk_syscon_lock),
-    DEVMETHOD(syscon_device_unlock, infracfg_clk_syscon_unlock),
+        /* Syscon interface */
+        DEVMETHOD(syscon_get_handle, infracfg_clk_syscon_get_handle),
+        DEVMETHOD(syscon_device_lock, infracfg_clk_syscon_lock),
+        DEVMETHOD(syscon_device_unlock, infracfg_clk_syscon_unlock),
 
-    DEVMETHOD_END
+        DEVMETHOD_END
 };
 
 DEFINE_CLASS_1(mt7622_infracfg, mt7622_infracfg_driver, mt7622_infracfg_methods,
