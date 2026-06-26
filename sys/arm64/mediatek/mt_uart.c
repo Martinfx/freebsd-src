@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -64,21 +64,21 @@ mt_uart_attach(struct uart_softc *sc)
 }
 
 static kobj_method_t mt_methods[] = {
-	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-    KOBJMETHOD(uart_attach,		mt_uart_attach),
-	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
-	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
-	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
-	KOBJMETHOD(uart_ioctl,		ns8250_bus_ioctl),
-	KOBJMETHOD(uart_ipend,		ns8250_bus_ipend),
-	KOBJMETHOD(uart_param,		ns8250_bus_param),
-	KOBJMETHOD(uart_receive,	ns8250_bus_receive),
-	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
-	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
-	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
-    KOBJMETHOD(uart_grab,		ns8250_bus_grab),
-    KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
-	KOBJMETHOD_END
+        KOBJMETHOD(uart_probe,		ns8250_bus_probe),
+        KOBJMETHOD(uart_attach,		mt_uart_attach),
+        KOBJMETHOD(uart_detach,		ns8250_bus_detach),
+        KOBJMETHOD(uart_flush,		ns8250_bus_flush),
+        KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
+        KOBJMETHOD(uart_ioctl,		ns8250_bus_ioctl),
+        KOBJMETHOD(uart_ipend,		ns8250_bus_ipend),
+        KOBJMETHOD(uart_param,		ns8250_bus_param),
+        KOBJMETHOD(uart_receive,	ns8250_bus_receive),
+        KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
+        KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
+        KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
+        KOBJMETHOD(uart_grab,		ns8250_bus_grab),
+        KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
+        KOBJMETHOD_END
 };
 
 static struct uart_class mt_uart_class = {
@@ -94,8 +94,8 @@ static struct uart_class mt_uart_class = {
 
 /* Compatible devices. */
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mt6577-uart", (uintptr_t)&mt_uart_class},
-	{NULL,			 (uintptr_t)NULL},
+        {"mediatek,mt6577-uart", (uintptr_t) &mt_uart_class},
+        {NULL,  (uintptr_t) NULL},
 };
 
 UART_FDT_CLASS(compat_data);
@@ -103,20 +103,22 @@ UART_FDT_CLASS(compat_data);
 /*
  * UART Driver interface.
  */
-static int
-uart_fdt_get_shift1(phandle_t node)
+static int mt_uart_get_shift(phandle_t node)
 {
-	pcell_t shift;
+        pcell_t shift;
 
-	if ((OF_getencprop(node, "reg-shift", &shift, sizeof(shift))) <= 0)
-		shift = 2;
-	return ((int)shift);
+        if ((OF_getencprop(node, "reg-shift", &shift, sizeof(shift))) <= 0)
+        {
+                shift = 2;
+        }
+
+        return ((int) shift);
 }
 
 static int
 mt_uart_probe(device_t dev)
 {
-    struct mt_softc *sc;
+        struct mt_softc *sc;
 	phandle_t node;
 	uint64_t freq;
 	int shift;
@@ -132,7 +134,7 @@ mt_uart_probe(device_t dev)
 	sc->ns8250_base.base.sc_class = (struct uart_class *)cd->ocd_data;
 
 	node = ofw_bus_get_node(dev);
-	shift = uart_fdt_get_shift1(node);
+	shift = mt_uart_get_shift(node);
 	rv = clk_get_by_ofw_name(dev, 0, "baud", &sc->baud_clk);
 	if (rv != 0) {
 		device_printf(dev, "Cannot get UART baud clock: %d\n", rv);
@@ -167,7 +169,7 @@ mt_uart_probe(device_t dev)
 static int
 mt_uart_detach(device_t dev)
 {
-    struct mt_softc *sc;
+        struct mt_softc *sc;
 
 	sc = device_get_softc(dev);
 	if (sc->baud_clk != NULL) {
@@ -178,22 +180,21 @@ mt_uart_detach(device_t dev)
 		clk_release(sc->bus_clk);
 	}
 
-
 	return (uart_bus_detach(dev));
 }
 
 static device_method_t mt_uart_bus_methods[] = {
-	/* Device interface */
-    DEVMETHOD(device_probe,		mt_uart_probe),
-	DEVMETHOD(device_attach,	uart_bus_attach),
-    DEVMETHOD(device_detach,	mt_uart_detach),
-	DEVMETHOD_END
+        /* Device interface */
+        DEVMETHOD(device_probe,		mt_uart_probe),
+        DEVMETHOD(device_attach,	uart_bus_attach),
+        DEVMETHOD(device_detach,	mt_uart_detach),
+        DEVMETHOD_END
 };
 
 static driver_t mt_uart_driver = {
-	uart_driver_name,
-    mt_uart_bus_methods,
-    sizeof(struct mt_softc),
+        uart_driver_name,
+        mt_uart_bus_methods,
+        sizeof(struct mt_softc),
 };
 
 DRIVER_MODULE(mdtk_uart, simplebus,  mt_uart_driver, 0, 0);
