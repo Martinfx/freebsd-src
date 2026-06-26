@@ -152,7 +152,7 @@ pericfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
         mask = 1 << (idx % 32);
         reset_reg = (idx / 32) * 4;
 
-        CLKDEV_MODIFY_4(dev reset_reg, mask, value ? mask : 0);
+        CLKDEV_MODIFY_4(dev, reset_reg, mask, value ? mask : 0);
         CLKDEV_DEVICE_UNLOCK(dev);
 
         return (0);
