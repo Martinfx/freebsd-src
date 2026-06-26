@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -150,10 +150,4 @@ mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef) {
         clkdom_finit(sc->clkdom);
         if (bootverbose)
                 clkdom_dump(sc->clkdom);
-}
-
-int
-mdtk_hwreset_by_idx(struct mdtk_clk_softc *sc, intptr_t idx, bool reset) {
-        device_printf(sc->dev, "idx %ld, reset %d\n", idx, reset);
-        return (0);
 }
