@@ -33,7 +33,6 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-    /* sgmii */
     GATE(CLK_SGMII_TX250M_EN, "sgmii_tx250m_en", "ssusb_tx250m", 0xE4, 2),
     GATE(CLK_SGMII_RX250M_EN, "sgmii_rx250m_en", "ssusb_eq_rx250m", 0xE4, 3),
     GATE(CLK_SGMII_CDR_REF, "sgmii_cdr_ref", "ssusb_cdr_ref", 0xE4, 4),
