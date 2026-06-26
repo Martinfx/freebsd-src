@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,7 +24,7 @@
 #include "mdtk_clk.h"
 
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mt7622-ssusbsys", 2},
+    {"mediatek,mt7622-ssusbsys", 1},
     {NULL,                       0},
 };
 
@@ -38,8 +38,8 @@ static struct clk_gate_def gates_ssusb_clk[] = {
 };
 
 static struct mdtk_clk_def clk_ssusb_def = {
-    .gates_def = gates_ssusb_clk,
-    .num_gates = nitems(gates_ssusb_clk),
+        .gates_def = gates_ssusb_clk,
+        .num_gates = nitems(gates_ssusb_clk),
 };
 
 static int
@@ -84,28 +84,49 @@ mt7622_ssusbsys_clk_attach(device_t dev) {
 }
 
 static int
-mt7622_ssusbsys_clk_hwreset_assert(device_t dev, intptr_t id, bool value) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
+mt7622_ssusbsys_clk_hwreset_assert(device_t dev, intptr_t id, bool reset) {
+        uint32_t bitmask, reg, val;
+        uint16_t offset;
 
-        return (mdtk_hwreset_by_idx(sc, id, value));
+        KASSERT(id >= 0 && id < 32, ("%s: reset id out of range", __func__));
+        uint16_t off[] = {0x0,};
+        offset = off[id / 32];
+        bitmask = 1U << (id % 32);
+        val = reset ? ~0U : 0U;    /* assert=set bit, deassert=clear bit */
+
+        CLKDEV_DEVICE_LOCK(dev);
+        CLKDEV_READ_4(dev, offset, &reg);
+        if (bootverbose) {
+                device_printf(dev,
+                              "ssusbsys rst[0x00] before=0x%08x %s id=%ld mask=0x%08x\n",
+                              reg, reset ? "assert" : "deassert", (long) id, bitmask);
+        }
+
+        reg = (reg & ~bitmask) | (val & bitmask);
+        CLKDEV_WRITE_4(dev, offset, reg);
+        CLKDEV_READ_4(dev, offset, &reg);
+        if (bootverbose) {
+                device_printf(dev, "ssusbsys rst[0x00] after =0x%08x\n", reg);
+        }
+
+        CLKDEV_DEVICE_UNLOCK(dev);
 }
 
 static device_method_t mt7622_ssusbsys_methods[] = {
-    /* Device interface */
-    DEVMETHOD(device_probe, mt7622_ssusbsys_clk_probe),
-    DEVMETHOD(device_attach, mt7622_ssusbsys_clk_attach),
-    DEVMETHOD(device_detach, mt7622_ssusbsys_clk_detach),
+        /* Device interface */
+        DEVMETHOD(device_probe, mt7622_ssusbsys_clk_probe),
+        DEVMETHOD(device_attach, mt7622_ssusbsys_clk_attach),
+        DEVMETHOD(device_detach, mt7622_ssusbsys_clk_detach),
 
-    /* Clkdev interface*/
-    DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-    DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-    DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-    DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-    DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
+        /* Clkdev interface*/
+        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
+        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
+        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
+        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
+        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-    DEVMETHOD(hwreset_assert, mt7622_ssusbsys_clk_hwreset_assert),
-
-    DEVMETHOD_END
+        DEVMETHOD(hwreset_assert, mt7622_ssusbsys_clk_hwreset_assert),
+        DEVMETHOD_END
 };
 
 DEFINE_CLASS_0(mt7622_ssusbsys, mt7622_ssusbsys_driver, mt7622_ssusbsys_methods,
