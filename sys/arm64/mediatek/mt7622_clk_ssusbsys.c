@@ -44,7 +44,7 @@
 #include "mdtk_clk.h"
 
 static struct ofw_compat_data compat_data[] = {
-        {"mediatek,mt7622-ssusbsys", 2},
+        {"mediatek,mt7622-ssusbsys", 1},
         {NULL, 0},
 };
 
