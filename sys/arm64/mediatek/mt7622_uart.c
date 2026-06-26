@@ -352,6 +352,10 @@ mt_uart_param(struct uart_softc *sc, int baudrate, int databits, int stopbits,
         mt_uart_set_baud(bas, baudrate);
         uart_unlock(sc->sc_hwmtx);
 
+        if (bootverbose) {
+                device_printf(sc->sc_dev, "set baud %d %d%c%d\n", baudrate, databits, "noems"[parity], stopbits);
+        }
+
         return (0);
 }
 
