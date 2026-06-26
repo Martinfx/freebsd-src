@@ -413,7 +413,7 @@ static struct clk_gate_def gates_clk[] = {
 
     I_GATE(CLK_TOP_AUD1_SEL, "aud1_sel", "aud1_sel_mux", CLK_CFG_6, 7),
     I_GATE(CLK_TOP_AUD2_SEL, "aud2_sel", "aud2_sel_mux", CLK_CFG_6, 15),
-    I_GATE(CLK_TOP_IRRX_SEL, "irrx_sel_sel", "irrx_sel_mux", CLK_CFG_6, 23),
+    I_GATE(CLK_TOP_IRRX_SEL, "irrx_sel", "irrx_sel_mux", CLK_CFG_6, 23),
     I_GATE(CLK_TOP_IRTX_SEL, "irtx_sel", "irtx_sel_mux", CLK_CFG_6, 31),
 
     I_GATE(CLK_TOP_ASM_L_SEL, "asm_l_sel", "asm_l_sel_mux", CLK_CFG_6, 7),
