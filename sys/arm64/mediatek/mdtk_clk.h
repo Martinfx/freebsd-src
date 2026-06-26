@@ -2,9 +2,9 @@
 #define __MDTK_CLK_H__
 
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
- * 
+ *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
@@ -145,5 +145,4 @@ void mdtk_clkdev_device_lock(device_t dev);
 void mdtk_clkdev_device_unlock(device_t dev);
 
 void mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef);
-int mdtk_hwreset_by_idx(struct mdtk_clk_softc *sc, intptr_t idx, bool reset);
 #endif
