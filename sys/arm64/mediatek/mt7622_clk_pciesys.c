@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -55,24 +55,20 @@ static struct clk_gate_def gates_pcie_clk[] = {
 };
 
 static struct mdtk_clk_def clk_pcie_def = {
-    .linked_def = NULL,
-    .num_linked = 0,
-    .fixed_def = NULL,
-    .num_fixed = 0,
-    .gates_def = gates_pcie_clk,
-    .num_gates = nitems(gates_pcie_clk),
-    .muxes_def = NULL,
-    .num_muxes = 0,
+        .gates_def = gates_pcie_clk,
+        .num_gates = nitems(gates_pcie_clk),
 };
 
 static int
-mt7622_pciesys_clk_detach(device_t dev) {
+mt7622_pciesys_clk_detach(device_t dev)
+{
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
 }
 
 static int
-mt7622_pciesys_clk_probe(device_t dev) {
+mt7622_pciesys_clk_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -85,11 +81,12 @@ mt7622_pciesys_clk_probe(device_t dev) {
 }
 
 static int
-mt7622_pciesys_clk_attach(device_t dev) {
+mt7622_pciesys_clk_attach(device_t dev)
+{
         struct mdtk_clk_softc *sc;
-        sc = device_get_softc(dev);
         int rid;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
 
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
@@ -108,40 +105,39 @@ mt7622_pciesys_clk_attach(device_t dev) {
 }
 
 static int
-mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value) {
-        struct mdtk_clk_softc *sc;
-        sc = device_get_softc(dev);
+mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
+{
         uint32_t mask, reset_reg;
 
-        CLKDEV_DEVICE_LOCK(sc->dev);
+        CLKDEV_DEVICE_LOCK(dev;
         KASSERT((idx > 0 && idx < 32), ("%s: idx out of range", __func__));
 
 
         mask = 1 << (idx % 32);
         reset_reg = (idx / 32) * 4;
 
-        CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(sc->dev);
+        CLKDEV_MODIFY_4(dev, reset_reg, mask, value ? mask : 0);
+        CLKDEV_DEVICE_UNLOCK(dev);
 
         return (0);
 }
 
 static device_method_t mt7622_pciesys_clk_methods[] = {
-    /* Device interface */
-    DEVMETHOD(device_probe, mt7622_pciesys_clk_probe),
-    DEVMETHOD(device_attach, mt7622_pciesys_clk_attach),
-    DEVMETHOD(device_detach, mt7622_pciesys_clk_detach),
+        /* Device interface */
+        DEVMETHOD(device_probe, mt7622_pciesys_clk_probe),
+        DEVMETHOD(device_attach, mt7622_pciesys_clk_attach),
+        DEVMETHOD(device_detach, mt7622_pciesys_clk_detach),
 
-    /* Clkdev interface*/
-    DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-    DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-    DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-    DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-    DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
+        /* Clkdev interface*/
+        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
+        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
+        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
+        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
+        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-    DEVMETHOD(hwreset_assert, mt7622_pciesys_clk_hwreset_assert),
+        DEVMETHOD(hwreset_assert, mt7622_pciesys_clk_hwreset_assert),
 
-    DEVMETHOD_END
+        DEVMETHOD_END
 };
 
 DEFINE_CLASS_0(mt7622_pciesys, mt7622_pciesys_driver, mt7622_pciesys_clk_methods,
