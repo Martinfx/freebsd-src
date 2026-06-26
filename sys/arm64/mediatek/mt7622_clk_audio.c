@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Martin Filla <freebsd@sysctl.cz>
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
