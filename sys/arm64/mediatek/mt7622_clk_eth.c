@@ -47,13 +47,15 @@ static struct mdtk_clk_def clk_def = {
 };
 
 static int
-eth_clk_detach(device_t dev) {
+eth_clk_detach(device_t dev)
+{
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
 }
 
 static int
-eth_clk_probe(device_t dev) {
+eth_clk_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -66,7 +68,8 @@ eth_clk_probe(device_t dev) {
 }
 
 static int
-eth_clk_attach(device_t dev) {
+eth_clk_attach(device_t dev)
+{
         struct mdtk_clk_softc *sc;
         int rid = 0;
 
@@ -114,7 +117,8 @@ eth_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 }
 
 static int
-eth_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
+eth_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -127,7 +131,8 @@ eth_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
 }
 
 static void
-eth_clk_syscon_lock(device_t dev) {
+eth_clk_syscon_lock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -135,7 +140,8 @@ eth_clk_syscon_lock(device_t dev) {
 }
 
 static void
-eth_clk_syscon_unlock(device_t dev) {
+eth_clk_syscon_unlock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
