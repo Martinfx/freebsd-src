@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, 2026 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
  * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -509,13 +509,15 @@ static struct mdtk_clk_def clk_def = {
 };
 
 static int
-topckgen_clk_detach(device_t dev) {
+topckgen_clk_detach(device_t dev)
+{
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
 }
 
 static int
-topckgen_clk_probe(device_t dev) {
+topckgen_clk_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -528,7 +530,8 @@ topckgen_clk_probe(device_t dev) {
 }
 
 static int
-topckgen_clk_attach(device_t dev) {
+topckgen_clk_attach(device_t dev)
+{
         struct mdtk_clk_softc *sc;
         int rid, rv;
 
