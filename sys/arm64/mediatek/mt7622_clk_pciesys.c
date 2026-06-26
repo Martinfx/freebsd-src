@@ -109,7 +109,7 @@ mt7622_pciesys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
         uint32_t mask, reset_reg;
 
-        CLKDEV_DEVICE_LOCK(dev;
+        CLKDEV_DEVICE_LOCK(dev);
         KASSERT((idx > 0 && idx < 32), ("%s: idx out of range", __func__));
 
 
