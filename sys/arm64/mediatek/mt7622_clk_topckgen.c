@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Martin Filla
+ * Copyright (c) 2025, 2026 Martin Filla
  * Copyright (c) 2025 Michal Meloun <mmel@FreeBSD.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -529,9 +529,10 @@ topckgen_clk_probe(device_t dev) {
 
 static int
 topckgen_clk_attach(device_t dev) {
-        struct mdtk_clk_softc *sc = device_get_softc(dev);
+        struct mdtk_clk_softc *sc;
         int rid, rv;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
 
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
@@ -557,19 +558,19 @@ topckgen_clk_attach(device_t dev) {
 }
 
 static device_method_t mdtk_mt7622_topckgen_methods[] = {
-    /* Device interface */
-    DEVMETHOD(device_probe, topckgen_clk_probe),
-    DEVMETHOD(device_attach, topckgen_clk_attach),
-    DEVMETHOD(device_detach, topckgen_clk_detach),
+        /* Device interface */
+        DEVMETHOD(device_probe, topckgen_clk_probe),
+        DEVMETHOD(device_attach, topckgen_clk_attach),
+        DEVMETHOD(device_detach, topckgen_clk_detach),
 
-    /* Clkdev interface*/
-    DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-    DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-    DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-    DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-    DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
+        /* Clkdev interface*/
+        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
+        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
+        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
+        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
+        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-    DEVMETHOD_END
+        DEVMETHOD_END
 };
 
 DEFINE_CLASS_0(mdtk_mt7622_topckgen, mdtk_mt7622_topckgen_driver, mdtk_mt7622_topckgen_methods,
