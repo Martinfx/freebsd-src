@@ -93,13 +93,15 @@ static struct mdtk_clk_def clk_def = {
 };
 
 static int
-audio_clk_detach(device_t dev) {
+audio_clk_detach(device_t dev)
+{
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
 }
 
 static int
-audio_clk_probe(device_t dev) {
+audio_clk_probe(device_t dev)
+{
         if (!ofw_bus_status_okay(dev))
                 return (ENXIO);
 
@@ -112,7 +114,8 @@ audio_clk_probe(device_t dev) {
 }
 
 static int
-audio_clk_attach(device_t dev) {
+audio_clk_attach(device_t dev)
+{
         struct mdtk_clk_softc *sc;
         phandle_t child, node;
         int rid = 0;
@@ -154,7 +157,8 @@ audio_clk_attach(device_t dev) {
 }
 
 static int
-audio_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
+audio_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -167,7 +171,8 @@ audio_clk_syscon_get_handle(device_t dev, struct syscon **syscon) {
 }
 
 static void
-audio_clk_syscon_lock(device_t dev) {
+audio_clk_syscon_lock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
@@ -175,7 +180,8 @@ audio_clk_syscon_lock(device_t dev) {
 }
 
 static void
-audio_clk_syscon_unlock(device_t dev) {
+audio_clk_syscon_unlock(device_t dev)
+{
         struct mdtk_clk_softc *sc;
 
         sc = device_get_softc(dev);
