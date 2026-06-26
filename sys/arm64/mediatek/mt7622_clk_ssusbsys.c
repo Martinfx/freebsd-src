@@ -110,6 +110,8 @@ mt7622_ssusbsys_clk_hwreset_assert(device_t dev, intptr_t id, bool reset) {
         }
 
         CLKDEV_DEVICE_UNLOCK(dev);
+
+        return (0);
 }
 
 static device_method_t mt7622_ssusbsys_methods[] = {
