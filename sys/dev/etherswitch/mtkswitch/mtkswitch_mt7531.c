@@ -64,46 +64,18 @@
 #define MDIO_WRITE(dev, addr, reg, val)                                 \
    MDIO_WRITEREG(device_get_parent(dev), (addr), (reg), (val))
 
-/* ~20 ms at 10 us per iteration. */
-#define	MTKSWITCH_BUSY_RETRIES	2000
-
-/*
- * Poll a switch register until the given busy bit(s) clear, with a bounded
- * timeout.  The switch is reached over MDIO, so a missing or wedged chip reads
- * back as all-ones; without a timeout the BUSY/ACS poll loops (e.g. ATC_BUSY,
- * which is also set in a 0xffff read) would spin forever and hang the kernel.
- * Returns the last register value read.
- */
-static uint32_t
-mtkswitch_busy_wait(struct mtkswitch_softc *sc, int reg, uint32_t mask)
-{
-       uint32_t val = mask;
-       int retry;
-
-       for (retry = MTKSWITCH_BUSY_RETRIES; retry > 0; retry--) {
-	       val = sc->hal.mtkswitch_read(sc, reg);
-	       if ((val & mask) == 0)
-		       return (val);
-	       DELAY(10);
-       }
-
-       device_printf(sc->sc_dev, "timeout waiting for reg 0x%x mask 0x%x\n",
-	   reg, mask);
-       return (val);
-}
-
 static int
 mtkswitch_phy_read_locked(struct mtkswitch_softc *sc, int phy, int reg)
 {
        uint32_t data;
 
-       mtkswitch_busy_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_PIAC) & PIAC_PHY_ACS_ST);
 
        sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC,
 	   PIAC_PHY_ACS_ST | PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
 	       (phy << PIAC_MDIO_PHY_ADDR_OFF) | PIAC_MDIO_CMD_READ);
 
-       data = mtkswitch_busy_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST);
+       while ((data = sc->hal.mtkswitch_read(sc,MTKSWITCH_PIAC)) & PIAC_PHY_ACS_ST);
 
        return ((int)(data & PIAC_MDIO_RW_DATA_MASK));
 
@@ -116,7 +88,7 @@ mtkswitch_phy_read(device_t dev, int phy, int reg)
        int data;
 
        if ((phy < 0 || phy >= 32) || (reg < 0 || reg >= 32))
-	       return (0xffff);
+	       return (ENXIO);
 
        MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
        MTKSWITCH_LOCK(sc);
@@ -134,7 +106,7 @@ mtkswitch_phy_write_locked(struct mtkswitch_softc *sc, int phy, int reg,
 	   PIAC_PHY_ACS_ST | PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
 	       (phy << PIAC_MDIO_PHY_ADDR_OFF) | PIAC_MDIO_CMD_WRITE |
 	       (val & PIAC_MDIO_RW_DATA_MASK));
-       mtkswitch_busy_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_PIAC) & PIAC_PHY_ACS_ST);
 
        return (0);
 }
@@ -348,14 +320,8 @@ mtkswitch_port_init(struct mtkswitch_softc *sc, int port)
 
        val = PMCR_CFG_DEFAULT;
        if (port == sc->cpuport){
-	       /*
-		* Force the trunk link up.  The CPU port speed field is kept
-		* at 1000 here to match the upstream Linux default; the actual
-		* MAC<->switch line rate (2500base-x on the BananaPi R64) is
-		* established by the SGMII PCS rather than this field.
-		*/
 	       val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
-		   MT7531_PMCR_FORCE_MODE | PMCR_MAC_MODE;
+		   MT7631_PMCR_FORCE_MODE | PMCR_MAC_MODE;
        }
        /* Set port's MAC to default settings */
        sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port), val);
@@ -396,10 +362,10 @@ mtkswitch_atu_flush(struct mtkswitch_softc *sc)
        MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
        /* Flush all non-static MAC addresses */
-       mtkswitch_busy_wait(sc, MTKSWITCH_ATC, ATC_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_ATC) & ATC_BUSY);
        sc->hal.mtkswitch_write(sc, MTKSWITCH_ATC, ATC_BUSY |
 	       ATC_AC_MAT_NON_STATIC_MACS | ATC_AC_CMD_CLEAN);
-       mtkswitch_busy_wait(sc, MTKSWITCH_ATC, ATC_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_ATC) & ATC_BUSY);
 
        return (0);
 }
@@ -460,10 +426,10 @@ static void
 mtkswitch_invalidate_vlan(struct mtkswitch_softc *sc, uint32_t vid)
 {
 
-       mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
        sc->hal.mtkswitch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
 	       VTCR_FUNC_VID_INVALID | (vid & VTCR_VID_MASK));
-       mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
 }
 
 static int
@@ -472,7 +438,7 @@ mtkswitch_update_vlan_entry(struct mtkswitch_softc *sc, uint16_t vid,
 {
        uint32_t val;
 
-       mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
 
        /* We use FID 0 */
        val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID |
@@ -485,7 +451,7 @@ mtkswitch_update_vlan_entry(struct mtkswitch_softc *sc, uint16_t vid,
        /* Write the VLAN entry */
        sc->hal.mtkswitch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
 	       VTCR_FUNC_VID_WRITE | (vid & VTCR_VID_MASK));
-       val = mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while ((val = sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR)) & VTCR_BUSY);
        return (val);
 }
 
@@ -543,10 +509,10 @@ mtkswitch_vlan_getvgroup(struct mtkswitch_softc *sc, etherswitch_vlangroup_t *v)
 	       MTKSWITCH_UNLOCK(sc);
 	       return (0);
        }
-       mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while (sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
        sc->hal.mtkswitch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
 	       VTCR_FUNC_VID_READ | (v->es_vid & VTCR_VID_MASK));
-       val = mtkswitch_busy_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY);
+       while ((val = sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR)) & VTCR_BUSY);
        if (val & VTCR_IDX_INVALID) {
 	       MTKSWITCH_UNLOCK(sc);
 	       return (0);
@@ -640,7 +606,7 @@ mtkswitch_vlan_set_pvid(struct mtkswitch_softc *sc, int port, int pvid)
 }
 
 extern void
-mtk_attach_switch_mt7531(struct mtkswitch_softc *sc)
+mtk_attach_switch_mt7631(struct mtkswitch_softc *sc)
 {
 
        sc->portmap = 0x7f;
@@ -793,12 +759,13 @@ mt7531_sysctl_port_mib_read_count(SYSCTL_HANDLER_ARGS)
        if (sc == NULL)
 	       return (EINVAL);
 
-       if (index >= nitems(mt7530_mib))
+       if (index < 0 || index > nitems(mt7530_mib))
 	       return (EINVAL);
 
-       if (port >= MTKSWITCH_MAX_PORTS)
+       if (port < 0 || port > MTKSWITCH_MAX_PORTS)
 	       return (EINVAL);
 
+       //MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
        MTKSWITCH_LOCK(sc);
        val = mt7531_hw_port_mib_read_count(sc, port, index);
        MTKSWITCH_UNLOCK(sc);
@@ -820,7 +787,10 @@ mt7531_sysctl_port_mib_clear_count(SYSCTL_HANDLER_ARGS)
        if (sc == NULL)
 	       return (EINVAL);
 
-       if (port >= MTKSWITCH_MAX_PORTS)
+       //if (index < 0 || index > nitems(mt7530_mib))
+       //	return (EINVAL);
+
+       if (port < 0 || port > MTKSWITCH_MAX_PORTS)
 	       return (EINVAL);
 
        error = sysctl_handle_32(oidp, &val, 0, req);
@@ -913,48 +883,46 @@ mt7531_arl_fetch_entry(struct mtkswitch_softc *sc, etherswitch_atu_entry_t *e)
 
 static void mt7531_is_atc_busy(struct mtkswitch_softc *sc)
 {
-
-       mtkswitch_busy_wait(sc, MT7531_ATC, MT7531_ATC_BUSY);
+       uint32_t val;
+       do {
+	       val = sc->hal.mtkswitch_read(sc,MT7531_ATC);
+       } while(val & MT7531_ATC_BUSY);
 }
 
 int
 mt7531_atu_fetch_table(device_t dev, etherswitch_atu_table_t *table)
 {
        struct mtkswitch_softc *sc;
-       int cnt;
+       int nitems;
        uint32_t val;
 
        sc = device_get_softc(dev);
 
-       /*
-	* The etherswitch ioctl layer calls this without holding our lock,
-	* so acquire it here.  (The previous code asserted MA_OWNED and then
-	* re-locked, which paniced under INVARIANTS / on the non-recursive
-	* mutex.)
-	*/
-       MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
-       MTKSWITCH_LOCK(sc);
+       MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
        memset(&sc->atu.entries, 0, sizeof(sc->atu.entries));
+
+       table->es_nitems = 0;
+       nitems = 0;
+
+       MTKSWITCH_LOCK(sc);
        sc->atu.count = 0;
-       cnt = 0;
 
        sc->hal.mtkswitch_write(sc, MT7531_ATC,
 	   (MT7531_ATC_BUSY | MT7531_AC_CMD_SSC));
        mt7531_is_atc_busy(sc);
        val = sc->hal.mtkswitch_read(sc, MT7531_ATC);
-       while (!(val & MT7531_ATC_SRCH_END) &&
-	   cnt < MTKSWITCH_NUM_ARL_ENTRIES) {
-	       mt7531_arl_fetch_entry(sc, &sc->atu.entries[cnt]);
-	       sc->atu.entries[cnt].id = cnt;
-	       cnt++;
+       while(!((val) & MT7531_ATC_SRCH_END)) {
+	       mt7531_arl_fetch_entry(sc, &sc->atu.entries[nitems]);
+	       sc->atu.entries[nitems].id = nitems;
+	       nitems++;
 	       sc->hal.mtkswitch_write(sc, MT7531_ATC,
 		   (MT7531_ATC_BUSY | MT7531_AC_CMD_NSC));
 	       mt7531_is_atc_busy(sc);
 	       val = sc->hal.mtkswitch_read(sc, MT7531_ATC);
        }
-       sc->atu.count = cnt;
-       table->es_nitems = cnt;
+       sc->atu.count = nitems;
+       table->es_nitems = nitems;
        MTKSWITCH_UNLOCK(sc);
 
        return (0);
@@ -965,14 +933,13 @@ mt7531_atu_fetch_table_entry(device_t dev, etherswitch_atu_entry_t *e)
 {
        struct mtkswitch_softc *sc;
        int id, err = 0;
-
        sc = device_get_softc(dev);
-       MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
+       MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
        id = e->id;
 
        MTKSWITCH_LOCK(sc);
-       if (id < 0 || id >= sc->atu.count) {
+       if (id > sc->atu.count) {
 	       err = ENOENT;
 	       goto done;
        }

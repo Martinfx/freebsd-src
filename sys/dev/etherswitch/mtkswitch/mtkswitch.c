@@ -71,56 +71,66 @@ static int mtkswitch_ifmedia_upd(if_t ifp);
 static void mtkswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr);
 static void mtkswitch_tick(void *arg);
 
+#ifndef MT7531
 static const struct ofw_compat_data compat_data[] = {
-	{ "mediatek,mt7531",		MTK_SWITCH_MT7531 },
+	{ "ralink,rt3050-esw",		MTK_SWITCH_RT3050 },
+	{ "ralink,rt3352-esw",		MTK_SWITCH_RT3352 },
+	{ "ralink,rt5350-esw",		MTK_SWITCH_RT5350 },
+	{ "mediatek,mt7620-gsw",	MTK_SWITCH_MT7620 },
+	{ "mediatek,mt7621-gsw",	MTK_SWITCH_MT7621 },
+	{ "mediatek,mt7628-esw",	MTK_SWITCH_MT7628 },
 
 	/* Sentinel */
 	{ NULL,				MTK_SWITCH_NONE }
 };
+#else
 
-/*
- * The SoC MDIO controller exposes a generic, hint-based mdio bus that does
- * not enumerate its FDT children, so the switch hanging off the bus is not
- * probed automatically.  Attach ourselves as a child of the mdio device and
- * let probe() decide whether a supported switch is actually present.
- */
 static void
 mtkswitch_identify(driver_t *driver, device_t parent)
 {
 	if (device_find_child(parent, "mtkswitch", -1) == NULL)
 		BUS_ADD_CHILD(parent, 0, "mtkswitch", -1);
 }
+#endif
 
 static int
 mtkswitch_probe(device_t dev)
 {
+#ifndef MT7531
 	struct mtkswitch_softc *sc;
-	phandle_t node;
-	const struct ofw_compat_data *ocd;
+	mtk_switch_type switch_type;
 
-	/*
-	 * Find the switch node in the device tree and look its compatible
-	 * string up in our table to determine the switch type at runtime.
-	 */
-	for (ocd = compat_data; ocd->ocd_str != NULL; ocd++) {
-		node = ofw_bus_find_compatible(OF_finddevice("/"), ocd->ocd_str);
-		if (node != 0)
-			break;
-	}
-	if (ocd->ocd_str == NULL || ocd->ocd_data == MTK_SWITCH_NONE)
+	if (!ofw_bus_status_okay(dev))
+		return (ENXIO);
+
+	switch_type = ofw_bus_search_compatible(dev, compat_data)->ocd_data;
+	if (switch_type == MTK_SWITCH_NONE)
 		return (ENXIO);
 
 	sc = device_get_softc(dev);
 	bzero(sc, sizeof(*sc));
-	sc->node = node;
-	sc->sc_switchtype = ocd->ocd_data;
+	sc->sc_switchtype = switch_type;
+
+	device_set_desc(dev, "MTK Switch Driver");
+
+	return (0);
+#else
+	phandle_t switch_node;
+
+	switch_node = ofw_bus_find_compatible(OF_finddevice("/"),
+	    "mediatek,mt7531");
+
+	if (switch_node == MTK_SWITCH_NONE) {
+		return (ENXIO);
+	}
 
 	if (bootverbose)
-		device_printf(dev, "found switch node 0x%x\n", node);
+		device_printf(dev, "Found switch_node: 0x%x\n", switch_node);
 
-	device_set_desc(dev, "MediaTek MT7531 Switch");
+	device_set_desc(dev, "MTK Switch Driver");
 
 	return (BUS_PROBE_DEFAULT);
+#endif
 }
 
 static int
@@ -178,125 +188,16 @@ mtkswitch_set_vlan_mode(struct mtkswitch_softc *sc, uint32_t mode)
 	return (0);
 }
 
-/*
- * Parse the switch's "ports" device-tree node to learn the port geometry
- * instead of hard-coding it (modelled on felix(4)):
- *   - which ports exist                -> portmap / numports
- *   - which ports carry an "ethernet"  -> CPU (trunk) ports
- *     phandle
- *   - which ports have a "fixed-link"  -> no autonegotiating PHY; the forced
- *     subnode                             media (speed/duplex/pause) is taken
- *                                         from there
- *   - the remaining user ports         -> phymap (internal PHYs)
- * Returns 0 on success; on any problem the caller keeps the HAL defaults so
- * behaviour can never regress below the hard-coded geometry.
- */
-static int
-mtkswitch_parse_ports_fdt(struct mtkswitch_softc *sc)
-{
-	phandle_t ports, child, fl;
-	uint32_t reg, speed, media, portmap, phymap;
-	int cpuport, nports;
-
-	if (sc->node == 0 || sc->node == (phandle_t)-1)
-		return (ENXIO);
-
-	ports = ofw_bus_find_child(sc->node, "ports");
-	if (ports == 0)
-		ports = ofw_bus_find_child(sc->node, "ethernet-ports");
-	if (ports == 0)
-		return (ENXIO);
-
-	portmap = 0;
-	phymap = 0;
-	cpuport = -1;
-	nports = 0;
-
-	for (child = OF_child(ports); child != 0; child = OF_peer(child)) {
-		if (ofw_bus_node_status_okay(child) == 0)
-			continue;
-		if (OF_getencprop(child, "reg", &reg, sizeof(reg)) <= 0)
-			continue;
-		if (reg >= MTKSWITCH_MAX_PORTS)
-			continue;
-
-		portmap |= (1u << reg);
-		if ((int)reg + 1 > nports)
-			nports = reg + 1;
-
-		/*
-		 * A port with an "ethernet" phandle is a CPU (trunk) port.
-		 * A board may have more than one (port 5 and 6 on the
-		 * BananaPi R64); pick the highest-numbered one as the primary
-		 * CPU port, which matches the MT7531 default and is independent
-		 * of DT child ordering.
-		 */
-		if (OF_getproplen(child, "ethernet") > 0) {
-			sc->cpu_port[reg] = true;
-			if ((int)reg > cpuport)
-				cpuport = reg;
-		}
-
-		/* A "fixed-link" subnode means there is no PHY to poll. */
-		fl = ofw_bus_find_child(child, "fixed-link");
-		if (fl != 0) {
-			sc->fixed_port[reg] = true;
-
-			if (OF_getencprop(fl, "speed", &speed,
-			    sizeof(speed)) <= 0)
-				speed = 1000;
-			media = IFM_ETHER;
-			switch (speed) {
-			case 10:
-				media |= IFM_10_T;
-				break;
-			case 100:
-				media |= IFM_100_TX;
-				break;
-			case 2500:
-				media |= IFM_2500_T;
-				break;
-			case 1000:
-			default:
-				media |= IFM_1000_T;
-				break;
-			}
-			media |= OF_hasprop(fl, "full-duplex") ?
-			    IFM_FDX : IFM_HDX;
-			if (OF_hasprop(fl, "pause"))
-				media |= IFM_ETH_RXPAUSE | IFM_ETH_TXPAUSE;
-			sc->fixed_link_status[reg] = media;
-		} else if (!sc->cpu_port[reg]) {
-			/* User port reached through an internal PHY. */
-			phymap |= (1u << reg);
-		}
-	}
-
-	if (portmap == 0)
-		return (ENXIO);
-
-	sc->portmap = portmap;
-	sc->phymap = phymap;
-	sc->numports = nports;
-	sc->numphys = nports;
-	if (cpuport >= 0)
-		sc->cpuport = cpuport;
-	sc->info.es_nports = nports;
-
-	if (bootverbose)
-		device_printf(sc->sc_dev,
-		    "DT ports: portmap=0x%x phymap=0x%x cpuport=%d nports=%d\n",
-		    sc->portmap, sc->phymap, sc->cpuport, sc->numports);
-
-	return (0);
-}
-
 static int
 mtkswitch_attach(device_t dev)
 {
 	struct mtkswitch_softc *sc;
 	int err = 0;
+#ifndef MT7531
+	int port, rid;
+#else
 	int port;
+#endif
 
 	sc = device_get_softc(dev);
 
@@ -306,28 +207,32 @@ mtkswitch_attach(device_t dev)
 	sc->cpuport = MTKSWITCH_CPU_PORT;
 	sc->sc_dev = dev;
 
-	/* Attach the chip-specific HAL (sets the hard-coded default geometry). */
-	switch (sc->sc_switchtype) {
-	case MTK_SWITCH_MT7531:
-		mtk_attach_switch_mt7531(sc);
-		break;
-	default:
-		device_printf(dev, "unsupported switch type\n");
+	/* Attach switch related functions */
+#ifndef MT7531
+	if (sc->sc_switchtype == MTK_SWITCH_NONE) {
+		device_printf(dev, "Unknown switch type\n");
 		return (ENXIO);
 	}
 
-	/*
-	 * Override the geometry from the device tree where described.  This is
-	 * how the switch is "hung off" the MDIO bus properly: the CPU port,
-	 * port map and per-port fixed-link media all come from the DT instead
-	 * of being hard-coded.  On failure the HAL defaults above are kept.
-	 */
-	mtkswitch_parse_ports_fdt(sc);
+	if (sc->sc_switchtype == MTK_SWITCH_MT7620 ||
+	    sc->sc_switchtype == MTK_SWITCH_MT7621)
+		mtk_attach_switch_mt7620(sc);
+	else
+		mtk_attach_switch_rt3050(sc);
+#else
+	mtk_attach_switch_mt7631(sc);
+#endif
 
-	/*
-	 * The MT7531 registers are reached indirectly over MDIO (see
-	 * mtkswitch_mt7531.c), so there is no memory window to map here.
-	 */
+#ifndef MT7531
+	/* Allocate resources */
+	rid = 0;
+	sc->sc_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->sc_res == NULL) {
+		device_printf(dev, "could not map memory\n");
+		return (ENXIO);
+	}
+#endif
 
 	mtx_init(&sc->sc_mtx, "mtkswitch", NULL, MTX_DEF);
 
@@ -365,6 +270,9 @@ mtkswitch_attach(device_t dev)
 		return (err);
 
 	bus_identify_children(dev);
+#ifndef MT7531
+	bus_enumerate_hinted_children(dev);
+#endif
 	bus_attach_children(dev);
 
 	callout_init_mtx(&sc->callout_tick, &sc->sc_mtx, 0);
@@ -373,8 +281,9 @@ mtkswitch_attach(device_t dev)
 	mtkswitch_tick(sc);
 	MTKSWITCH_UNLOCK(sc);
 
+#ifdef MT7531
 	mt7531_sysctl_attach(sc);
-
+#endif
 	return (0);
 }
 
@@ -568,7 +477,7 @@ mtkswitch_getport(device_t dev, etherswitch_port_t *p)
 	int err;
 
 	sc = device_get_softc(dev);
-	if (p->es_port < 0 || p->es_port >= sc->info.es_nports)
+	if (p->es_port < 0 || p->es_port > sc->info.es_nports)
 		return (ENXIO);
 
 	err = sc->hal.mtkswitch_port_vlan_get(sc, p);
@@ -576,23 +485,9 @@ mtkswitch_getport(device_t dev, etherswitch_port_t *p)
 		return (err);
 
 	mii = mtkswitch_miiforport(sc, p->es_port);
-	if (sc->fixed_port[p->es_port]) {
-		/*
-		 * Fixed-link port (CPU/trunk or a board fixed link): there is
-		 * no PHY to poll, so report the forced media parsed from the
-		 * DT "fixed-link" node (e.g. 2500base-T on the BananaPi R64
-		 * CPU port) rather than a hard-coded value.
-		 */
-		if (sc->cpu_port[p->es_port])
-			p->es_flags |= ETHERSWITCH_PORT_CPU;
-		ifmr = &p->es_ifmr;
-		ifmr->ifm_count = 0;
-		ifmr->ifm_current = ifmr->ifm_active =
-		    sc->fixed_link_status[p->es_port];
-		ifmr->ifm_mask = 0;
-		ifmr->ifm_status = IFM_ACTIVE | IFM_AVALID;
-	} else if (mtkswitch_is_cpuport(sc, p->es_port)) {
-		/* Fallback for a CPU port the DT did not describe. */
+	if (mtkswitch_is_cpuport(sc, p->es_port)) {
+		/* fill in fixed values for CPU port */
+		/* XXX is this valid in all cases? */
 		p->es_flags |= ETHERSWITCH_PORT_CPU;
 		ifmr = &p->es_ifmr;
 		ifmr->ifm_count = 0;
@@ -625,7 +520,7 @@ mtkswitch_setport(device_t dev, etherswitch_port_t *p)
 	if_t ifp;
 
 	sc = device_get_softc(dev);
-	if (p->es_port < 0 || p->es_port >= sc->info.es_nports)
+	if (p->es_port < 0 || p->es_port > sc->info.es_nports)
 		return (ENXIO);
 
 	/* Port flags. */ 
@@ -635,8 +530,8 @@ mtkswitch_setport(device_t dev, etherswitch_port_t *p)
 			return (err);
 	}
 
-	/* No media changes on CPU/trunk or other fixed-link ports. */
-	if (sc->fixed_port[p->es_port] || mtkswitch_is_cpuport(sc, p->es_port))
+	/* Do not allow media changes on CPU port. */
+	if (mtkswitch_is_cpuport(sc, p->es_port))
 		return (0);
 
 	mii = mtkswitch_miiforport(sc, p->es_port);
@@ -739,6 +634,26 @@ mtkswitch_readphy(device_t dev, int phy, int reg)
 	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
 }
 
+#ifdef MT7531
+static int
+mtkswitch_readphy_mii(device_t dev, int phy, int reg)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
+}
+
+#if 0
+static int
+mtkswitch_readphy_mdio(device_t dev, int phy, int reg)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
+}
+#endif
+#endif
+
 static int
 mtkswitch_writephy(device_t dev, int phy, int reg, int val)
 {
@@ -746,6 +661,26 @@ mtkswitch_writephy(device_t dev, int phy, int reg, int val)
 
 	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
 }
+
+#ifdef MT7531
+static int
+mtkswitch_writephy_mii(device_t dev, int phy, int reg, int val)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
+}
+
+#if 0
+static int
+mtkswitch_writephy_mdio(device_t dev, int phy, int reg, int val)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
+}
+#endif
+#endif
 
 static int
 mtkswitch_readreg(device_t dev, int addr)
@@ -765,7 +700,9 @@ mtkswitch_writereg(device_t dev, int addr, int value)
 
 static device_method_t mtkswitch_methods[] = {
 	/* Device interface */
+#ifdef MT7531
 	DEVMETHOD(device_identify,	mtkswitch_identify),
+#endif
 	DEVMETHOD(device_probe,		mtkswitch_probe),
 	DEVMETHOD(device_attach,	mtkswitch_attach),
 	DEVMETHOD(device_detach,	mtkswitch_detach),
@@ -774,11 +711,27 @@ static device_method_t mtkswitch_methods[] = {
 	DEVMETHOD(bus_add_child,	device_add_child_ordered),
 
 	/* MII interface */
+#ifndef MT7531
 	DEVMETHOD(miibus_readreg,	mtkswitch_readphy),
 	DEVMETHOD(miibus_writereg,	mtkswitch_writephy),
+#else
+	DEVMETHOD(miibus_readreg,	mtkswitch_readphy_mii),
+	DEVMETHOD(miibus_writereg,	mtkswitch_writephy_mii),
+#endif
 	DEVMETHOD(miibus_statchg,	mtkswitch_statchg),
 
-	/* etherswitch interface */
+	/* MDIO interface */
+#ifndef MT7531
+	DEVMETHOD(mdio_readreg,		mtkswitch_readphy),
+	DEVMETHOD(mdio_writereg,	mtkswitch_writephy),
+#else
+#if 0
+	DEVMETHOD(mdio_readreg,		mtkswitch_readphy_mdio),
+	DEVMETHOD(mdio_writereg,	mtkswitch_writephy_mdio),
+#endif
+#endif
+
+	/* ehterswitch interface */
 	DEVMETHOD(etherswitch_lock,	mtkswitch_lock),
 	DEVMETHOD(etherswitch_unlock,	mtkswitch_unlock),
 	DEVMETHOD(etherswitch_getinfo,	mtkswitch_getinfo),
@@ -792,20 +745,30 @@ static device_method_t mtkswitch_methods[] = {
 	DEVMETHOD(etherswitch_setvgroup,	mtkswitch_setvgroup),
 	DEVMETHOD(etherswitch_getconf,	mtkswitch_getconf),
 	DEVMETHOD(etherswitch_setconf,	mtkswitch_setconf),
-	DEVMETHOD(etherswitch_fetch_table,		mt7531_atu_fetch_table),
-	DEVMETHOD(etherswitch_fetch_table_entry,	mt7531_atu_fetch_table_entry),
 
+#ifdef MT7531
+	DEVMETHOD(etherswitch_fetch_table,      mt7531_atu_fetch_table),
+	DEVMETHOD(etherswitch_fetch_table_entry,	mt7531_atu_fetch_table_entry),
+#endif
+	
 	DEVMETHOD_END
 };
 
 DEFINE_CLASS_0(mtkswitch, mtkswitch_driver, mtkswitch_methods,
     sizeof(struct mtkswitch_softc));
 
-/* The MT7531 sits on the SoC MDIO bus created by the ethernet MAC. */
+#ifndef MT7531
+DRIVER_MODULE(mtkswitch, simplebus, mtkswitch_driver, 0, 0);
+DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
+DRIVER_MODULE(mdio, mtkswitch, mdio_driver, 0, 0);
+DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
+MODULE_VERSION(mtkswitch, 1);
+MODULE_DEPEND(mtkswitch, miibus, 1, 1, 1);
+MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+#else
 DRIVER_MODULE(mtkswitch, mdio, mtkswitch_driver, 0, 0);
 DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mtkswitch, 1);
 MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
-MODULE_DEPEND(mtkswitch, miibus, 1, 1, 1);
-MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+#endif
