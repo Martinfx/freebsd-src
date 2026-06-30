@@ -1053,6 +1053,15 @@ rt_start(if_t ifp)
 		       break;
 	       }
 
+	       /*
+		* Tap the outgoing frame BEFORE handing it to the hardware.
+		* rt_tx_data() transfers ownership of the mbuf to the Tx ring,
+		* and the Tx-completion path (rt_tx_eof) runs from the Tx-done
+		* task/interrupt and may m_freem() it before we return here --
+		* tapping afterwards dereferences freed memory (use-after-free).
+		*/
+	       ETHER_BPF_MTAP(ifp, m);
+
 	       if (rt_tx_data(sc, m, qid) != 0) {
 		       RT_SOFTC_TX_RING_UNLOCK(&sc->tx_ring[qid]);
 
@@ -1064,8 +1073,6 @@ rt_start(if_t ifp)
 	       RT_SOFTC_TX_RING_UNLOCK(&sc->tx_ring[qid]);
 	       sc->tx_timer = RT_TX_WATCHDOG_TIMEOUT;
 	       callout_reset(&sc->tx_watchdog_ch, hz, rt_tx_watchdog, sc);
-
-	       ETHER_BPF_MTAP(ifp, m);
        }
 }
 
