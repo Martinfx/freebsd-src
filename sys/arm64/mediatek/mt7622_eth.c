@@ -265,6 +265,78 @@ reset_freng(struct rt_softc *sc)
        return;
 }
 
+/*
+ * Derive the forced media word from the gmac0 "fixed-link" device-tree node.
+ *
+ * The MAC<->switch trunk has no auto-negotiating PHY, so the link parameters
+ * (speed/duplex/pause) come from the "fixed-link" subnode of the MAC in the
+ * device tree (e.g. 2500base-x / full-duplex on the BananaPi R64) instead of
+ * being hard-coded.  Falls back to 1000baseT-FDX when no node is present.
+ */
+#ifdef FDT
+static uint32_t
+rt_fixed_link_media(device_t dev)
+{
+       phandle_t node, child, fl;
+       uint32_t reg, speed;
+       uint32_t media = IFM_ETHER;
+
+       node = ofw_bus_get_node(dev);
+       if (node == -1)
+	       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+
+       /* Locate the gmac0 MAC subnode (reg == 0) and its fixed-link child. */
+       fl = 0;
+       for (child = OF_child(node); child != 0; child = OF_peer(child)) {
+	       if (!ofw_bus_node_is_compatible(child, "mediatek,eth-mac"))
+		       continue;
+	       if (OF_getencprop(child, "reg", &reg, sizeof(reg)) <= 0)
+		       continue;
+	       if (reg != 0)
+		       continue;
+	       fl = ofw_bus_find_child(child, "fixed-link");
+	       break;
+       }
+       if (fl == 0)
+	       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+
+       if (OF_getencprop(fl, "speed", &speed, sizeof(speed)) <= 0)
+	       speed = 1000;
+
+       switch (speed) {
+       case 10:
+	       media |= IFM_10_T;
+	       break;
+       case 100:
+	       media |= IFM_100_TX;
+	       break;
+       case 2500:
+	       media |= IFM_2500_T;
+	       break;
+       case 1000:
+       default:
+	       media |= IFM_1000_T;
+	       break;
+       }
+
+       if (OF_hasprop(fl, "full-duplex"))
+	       media |= IFM_FDX;
+       else
+	       media |= IFM_HDX;
+
+       if (OF_hasprop(fl, "pause"))
+	       media |= IFM_ETH_RXPAUSE | IFM_ETH_TXPAUSE;
+
+       return (media);
+}
+#else
+static uint32_t
+rt_fixed_link_media(device_t dev)
+{
+       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+}
+#endif
+
 static int
 rt_attach(device_t dev)
 {
@@ -272,20 +344,13 @@ rt_attach(device_t dev)
        if_t ifp;
        int error, i;
        int gmac = 0;
+       uint32_t media;
 
-#if 0
-#ifdef FDT
-       phandle_t node;
-#endif
-#endif
        sc = device_get_softc(dev);
        sc->dev = dev;
 
-#if 0
-#ifdef FDT
-       node = ofw_bus_get_node(sc->dev);
-#endif
-#endif
+       /* Forced trunk-link parameters from the gmac0 "fixed-link" node. */
+       media = rt_fixed_link_media(dev);
 
        mtx_init(&sc->lock, device_get_nameunit(dev), MTX_NETWORK_LOCK,
 	   MTX_DEF | MTX_RECURSE);
@@ -370,7 +435,7 @@ rt_attach(device_t dev)
 		       GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
 		       ));
 
-       rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX, gmac);
+       rt_mac_change(sc, media, gmac);
 
        /* Create parent DMA tag. */
        error = bus_dma_tag_create(
@@ -385,6 +450,10 @@ rt_attach(device_t dev)
 	   0,				/* flags */
 	   NULL, NULL,			/* lockfunc, lockarg */
 	   &sc->rt_parent_tag);
+       if (error != 0) {
+	       device_printf(dev, "could not create parent DMA tag\n");
+	       goto fail;
+       }
 
        /* allocate Tx and Rx rings */
        for (i = 0; i < RT_SOFTC_TX_RING_COUNT; i++) {
@@ -426,9 +495,8 @@ rt_attach(device_t dev)
 
        // device_printf(sc->dev, "IF_RT_ONLY_MAC\n");
        ifmedia_init(&sc->rt_ifmedia, 0, rt_ifmedia_upd, rt_ifmedia_sts);
-       ifmedia_add(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX, 0,
-	   NULL);
-       ifmedia_set(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX);
+       ifmedia_add(&sc->rt_ifmedia, media, 0, NULL);
+       ifmedia_set(&sc->rt_ifmedia, media);
 
        // if (rt_has_switch(dev)) {
        device_t child;
@@ -542,9 +610,14 @@ rt_ifmedia_upd(if_t ifp)
 static void
 rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-       /* TODO Uuri MAC_MSR */
+       struct rt_softc *sc = if_getsoftc(ifp);
+
+       /*
+	* The trunk link to the switch is forced (fixed-link), so report the
+	* configured media as active.  TODO: read MAC_MSR for real link state.
+	*/
        ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-       ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
+       ifmr->ifm_active = sc->rt_ifmedia.ifm_media;
 }
 
 static int
@@ -2351,9 +2424,10 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
        /* Wait prev command done if any */
        retry = rt_miibus_wait_idle(sc);
        if (!retry) {
-	       device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
+	       device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		   phy, reg);
-	       return (ETIMEDOUT);
+	       /* MDIO convention: a failed read floats to all-ones. */
+	       return (0xffff);
        }
 
        dat = (st << MDIO_ST_SHIFT) |
@@ -2366,9 +2440,9 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
 
        retry = rt_miibus_wait_idle(sc);
        if (!retry) {
-	       device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
+	       device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		   phy, reg);
-	       return (ETIMEDOUT);
+	       return (0xffff);
        }
 
        return (RT_READ(sc, MDIO_ACCESS) & MDIO_PHY_DATA_MASK);
