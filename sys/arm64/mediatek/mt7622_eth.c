@@ -1043,10 +1043,16 @@ rt_start(if_t ifp)
 		       RT_DPRINTF(sc, RT_DEBUG_TX,
 			   "if_start: Tx ring with qid=%d is full\n", qid);
 
-		       m_freem(m);
-
+		       /*
+			* Ring is full: push the frame back onto the send queue
+			* and mark the interface active rather than dropping it.
+			* rt_tx_done_task() clears OACTIVE and resumes once Tx
+			* descriptors are reclaimed.  Dropping here turned normal
+			* backpressure into packet loss, forcing the peer to
+			* retransmit under load.
+			*/
+		       if_sendq_prepend(ifp, m);
 		       if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
-		       if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 
 		       sc->tx_data_queue_full[qid]++;
 
