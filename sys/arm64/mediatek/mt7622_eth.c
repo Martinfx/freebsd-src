@@ -76,6 +76,18 @@
 #include <dev/mdio/mdio.h>
 #include <dev/etherswitch/miiproxy.h>
 #include "mdio_if.h"
+#include "ofw_bus_if.h"
+
+#include <sys/malloc.h>
+
+/*
+ * Per-child instance data for the OF devices we enumerate on our MDIO bus
+ * (the MT7531 switch described under the "mdio-bus" device-tree subnode).
+ */
+struct rt_ofw_devinfo {
+       struct ofw_bus_devinfo	di_dinfo;
+       struct resource_list	di_rl;
+};
 
 /*
 * Defines and macros
@@ -142,6 +154,7 @@ static void	rt_dma_map_addr(void *arg, bus_dma_segment_t *segs,
 static void	rt_sysctl_attach(struct rt_softc *sc);
 static int	rt_ifmedia_upd(if_t );
 static void	rt_ifmedia_sts(if_t , struct ifmediareq *);
+static int	rt_attach_mdio_bus(struct rt_softc *sc);
 
 static SYSCTL_NODE(_hw, OID_AUTO, rt, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
    "RT driver parameters");
@@ -265,6 +278,78 @@ reset_freng(struct rt_softc *sc)
        return;
 }
 
+/*
+ * Derive the forced media word from the gmac0 "fixed-link" device-tree node.
+ *
+ * The MAC<->switch trunk has no auto-negotiating PHY, so the link parameters
+ * (speed/duplex/pause) come from the "fixed-link" subnode of the MAC in the
+ * device tree (e.g. 2500base-x / full-duplex on the BananaPi R64) instead of
+ * being hard-coded.  Falls back to 1000baseT-FDX when no node is present.
+ */
+#ifdef FDT
+static uint32_t
+rt_fixed_link_media(device_t dev)
+{
+       phandle_t node, child, fl;
+       uint32_t reg, speed;
+       uint32_t media = IFM_ETHER;
+
+       node = ofw_bus_get_node(dev);
+       if (node == -1)
+	       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+
+       /* Locate the gmac0 MAC subnode (reg == 0) and its fixed-link child. */
+       fl = 0;
+       for (child = OF_child(node); child != 0; child = OF_peer(child)) {
+	       if (!ofw_bus_node_is_compatible(child, "mediatek,eth-mac"))
+		       continue;
+	       if (OF_getencprop(child, "reg", &reg, sizeof(reg)) <= 0)
+		       continue;
+	       if (reg != 0)
+		       continue;
+	       fl = ofw_bus_find_child(child, "fixed-link");
+	       break;
+       }
+       if (fl == 0)
+	       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+
+       if (OF_getencprop(fl, "speed", &speed, sizeof(speed)) <= 0)
+	       speed = 1000;
+
+       switch (speed) {
+       case 10:
+	       media |= IFM_10_T;
+	       break;
+       case 100:
+	       media |= IFM_100_TX;
+	       break;
+       case 2500:
+	       media |= IFM_2500_T;
+	       break;
+       case 1000:
+       default:
+	       media |= IFM_1000_T;
+	       break;
+       }
+
+       if (OF_hasprop(fl, "full-duplex"))
+	       media |= IFM_FDX;
+       else
+	       media |= IFM_HDX;
+
+       if (OF_hasprop(fl, "pause"))
+	       media |= IFM_ETH_RXPAUSE | IFM_ETH_TXPAUSE;
+
+       return (media);
+}
+#else
+static uint32_t
+rt_fixed_link_media(device_t dev)
+{
+       return (IFM_ETHER | IFM_1000_T | IFM_FDX);
+}
+#endif
+
 static int
 rt_attach(device_t dev)
 {
@@ -272,20 +357,13 @@ rt_attach(device_t dev)
        if_t ifp;
        int error, i;
        int gmac = 0;
+       uint32_t media;
 
-#if 0
-#ifdef FDT
-       phandle_t node;
-#endif
-#endif
        sc = device_get_softc(dev);
        sc->dev = dev;
 
-#if 0
-#ifdef FDT
-       node = ofw_bus_get_node(sc->dev);
-#endif
-#endif
+       /* Forced trunk-link parameters from the gmac0 "fixed-link" node. */
+       media = rt_fixed_link_media(dev);
 
        mtx_init(&sc->lock, device_get_nameunit(dev), MTX_NETWORK_LOCK,
 	   MTX_DEF | MTX_RECURSE);
@@ -370,7 +448,7 @@ rt_attach(device_t dev)
 		       GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
 		       ));
 
-       rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX, gmac);
+       rt_mac_change(sc, media, gmac);
 
        /* Create parent DMA tag. */
        error = bus_dma_tag_create(
@@ -385,6 +463,10 @@ rt_attach(device_t dev)
 	   0,				/* flags */
 	   NULL, NULL,			/* lockfunc, lockarg */
 	   &sc->rt_parent_tag);
+       if (error != 0) {
+	       device_printf(dev, "could not create parent DMA tag\n");
+	       goto fail;
+       }
 
        /* allocate Tx and Rx rings */
        for (i = 0; i < RT_SOFTC_TX_RING_COUNT; i++) {
@@ -426,18 +508,24 @@ rt_attach(device_t dev)
 
        // device_printf(sc->dev, "IF_RT_ONLY_MAC\n");
        ifmedia_init(&sc->rt_ifmedia, 0, rt_ifmedia_upd, rt_ifmedia_sts);
-       ifmedia_add(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX, 0,
-	   NULL);
-       ifmedia_set(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX);
+       ifmedia_add(&sc->rt_ifmedia, media, 0, NULL);
+       ifmedia_set(&sc->rt_ifmedia, media);
 
-       // if (rt_has_switch(dev)) {
-       device_t child;
-       child = device_add_child(dev, "mdio", DEVICE_UNIT_ANY);
-       bus_attach_children(sc->dev);
-       bus_attach_children(child);
-       // device_printf(dev, "Switch attached.\n");
-       //	sc->switch_attached = 1;
-       //}
+       /*
+	* Prefer creating the dedicated OFW MDIO bus (mtkmdio) from the
+	* "mdio-bus" device-tree subnode; its children (e.g. the MT7531
+	* switch at switch@1f) attach there as proper OF devices.  If the
+	* DT has no such node, fall back to the legacy hinted "mdio" bus,
+	* so boards and device trees without one keep working as before.
+	*/
+       if (rt_attach_mdio_bus(sc) == 0) {
+	       device_t child;
+
+	       child = device_add_child(dev, "mdio", DEVICE_UNIT_ANY);
+	       bus_attach_children(sc->dev);
+	       if (child != NULL)
+		       bus_attach_children(child);
+       }
 
        ether_request_mac(dev, sc->mac_addr);
        if (bootverbose)
@@ -456,6 +544,15 @@ rt_attach(device_t dev)
        if_setcapenablebit(ifp, IFCAP_VLAN_MTU, 0);
        if_setcapabilitiesbit(ifp, IFCAP_RXCSUM|IFCAP_TXCSUM, 0);
        if_setcapenablebit(ifp, IFCAP_RXCSUM|IFCAP_TXCSUM, 0);
+
+       /*
+	* The Tx descriptor already asks the GDMA to generate the IP, TCP
+	* and UDP checksums (see rt_tx_data()), so advertise those offloads
+	* to the stack through if_hwassist.  Without this the stack still
+	* computes every checksum in software and the hardware then
+	* overwrites it, wasting CPU on the Tx hot path.
+	*/
+       if_sethwassistbits(ifp, CSUM_IP | CSUM_TCP | CSUM_UDP, 0);
 
        /* init task queue */
        NET_TASK_INIT(&sc->rx_done_task, 0, rt_rx_done_task, sc);
@@ -542,9 +639,14 @@ rt_ifmedia_upd(if_t ifp)
 static void
 rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-       /* TODO Uuri MAC_MSR */
+       struct rt_softc *sc = if_getsoftc(ifp);
+
+       /*
+	* The trunk link to the switch is forced (fixed-link), so report the
+	* configured media as active.  TODO: read MAC_MSR for real link state.
+	*/
        ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-       ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
+       ifmr->ifm_active = sc->rt_ifmedia.ifm_media;
 }
 
 static int
@@ -970,15 +1072,30 @@ rt_start(if_t ifp)
 		       RT_DPRINTF(sc, RT_DEBUG_TX,
 			   "if_start: Tx ring with qid=%d is full\n", qid);
 
-		       m_freem(m);
-
+		       /*
+			* Ring is full: push the frame back onto the send queue
+			* and mark the interface active rather than dropping it.
+			* rt_tx_done_task() clears OACTIVE and resumes once Tx
+			* descriptors are reclaimed.  Dropping here turned normal
+			* backpressure into packet loss, forcing the peer to
+			* retransmit under load.
+			*/
+		       if_sendq_prepend(ifp, m);
 		       if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
-		       if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 
 		       sc->tx_data_queue_full[qid]++;
 
 		       break;
 	       }
+
+	       /*
+		* Tap the outgoing frame BEFORE handing it to the hardware.
+		* rt_tx_data() transfers ownership of the mbuf to the Tx ring,
+		* and the Tx-completion path (rt_tx_eof) runs from the Tx-done
+		* task/interrupt and may m_freem() it before we return here --
+		* tapping afterwards dereferences freed memory (use-after-free).
+		*/
+	       ETHER_BPF_MTAP(ifp, m);
 
 	       if (rt_tx_data(sc, m, qid) != 0) {
 		       RT_SOFTC_TX_RING_UNLOCK(&sc->tx_ring[qid]);
@@ -991,8 +1108,6 @@ rt_start(if_t ifp)
 	       RT_SOFTC_TX_RING_UNLOCK(&sc->tx_ring[qid]);
 	       sc->tx_timer = RT_TX_WATCHDOG_TIMEOUT;
 	       callout_reset(&sc->tx_watchdog_ch, hz, rt_tx_watchdog, sc);
-
-	       ETHER_BPF_MTAP(ifp, m);
        }
 }
 
@@ -1572,6 +1687,8 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
        ndescs = 0;
        //nframes = 0;
 
+       RT_SOFTC_TX_RING_LOCK(ring);
+
        bus_dmamap_sync(ring->desc_dma_tag, ring->desc_dma_map,
 	   BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
@@ -1594,27 +1711,21 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
 			   BUS_DMASYNC_POSTWRITE);
 		       bus_dmamap_unload(ring->data_dma_tag, data->dma_map);
 
-		       m_freem(data->m);
-
-		       data->m = NULL;
+		       if (data->m != NULL) {
+			       m_freem(data->m);
+			       data->m = NULL;
+		       }
 
 		       if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
 
-		       RT_SOFTC_TX_RING_LOCK(ring);
 		       ring->data_queued--;
 		       ring->data_next = (ring->data_next + 1) %
 			   RT_SOFTC_TX_RING_DATA_COUNT;
-		       ring->desc_queued--;
-		       ring->desc_next = (ring->desc_next + 1) %
-			   RT_SOFTC_TX_RING_DESC_COUNT;
-		       RT_SOFTC_TX_RING_UNLOCK(ring);
-	       } else {
-		       RT_SOFTC_TX_RING_LOCK(ring);
-		       ring->desc_queued--;
-		       ring->desc_next = (ring->desc_next + 1) %
-			   RT_SOFTC_TX_RING_DESC_COUNT;
-		       RT_SOFTC_TX_RING_UNLOCK(ring);
 	       }
+
+	       ring->desc_queued--;
+	       ring->desc_next = (ring->desc_next + 1) %
+		   RT_SOFTC_TX_RING_DESC_COUNT;
 
 	       desc->sdl0 &= ~htole16(RT_TXDESC_SDL0_DDONE);
 
@@ -1623,6 +1734,8 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
        if(ndescs)
 	       bus_dmamap_sync(ring->desc_dma_tag, ring->desc_dma_map,
 		   BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+       RT_SOFTC_TX_RING_UNLOCK(ring);
 
        RT_DPRINTF(sc, RT_DEBUG_TX,
 	   "Tx eof: qid=%d, ndescs=%d, nframes=%d\n", ring->qid, ndescs,
@@ -2351,9 +2464,10 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
        /* Wait prev command done if any */
        retry = rt_miibus_wait_idle(sc);
        if (!retry) {
-	       device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
+	       device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		   phy, reg);
-	       return (ETIMEDOUT);
+	       /* MDIO convention: a failed read floats to all-ones. */
+	       return (0xffff);
        }
 
        dat = (st << MDIO_ST_SHIFT) |
@@ -2366,9 +2480,9 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
 
        retry = rt_miibus_wait_idle(sc);
        if (!retry) {
-	       device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
+	       device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		   phy, reg);
-	       return (ETIMEDOUT);
+	       return (0xffff);
        }
 
        return (RT_READ(sc, MDIO_ACCESS) & MDIO_PHY_DATA_MASK);
@@ -2387,11 +2501,97 @@ rt_has_switch(device_t dev)
 }
 #endif
 
+/*
+ * If the device tree describes an "mdio-bus" subnode, create one child
+ * device for it, handled by the dedicated OFW MDIO bus driver (mtkmdio,
+ * see mt7622_mdio.c).  That bus enumerates whatever the DT hangs off the
+ * MDIO lines (PHYs, the MT7531 switch, ...) as plain OF devices probing
+ * on their own compatibles - this MAC carries no knowledge of them.  The
+ * child is added under the "mtkmdio" name so the generic mdio/miibus
+ * drivers registered on this bus for the legacy path cannot claim it.
+ * Returns 1 when the bus was created, 0 to let the caller fall back to
+ * the legacy hinted mdio bus.
+ */
+static int
+rt_attach_mdio_bus(struct rt_softc *sc)
+{
+       struct rt_ofw_devinfo *di;
+       device_t cdev;
+       phandle_t node, mdio;
+
+       node = ofw_bus_get_node(sc->dev);
+       if (node == -1)
+	       return (0);
+
+       mdio = ofw_bus_find_child(node, "mdio-bus");
+       if (mdio == 0)
+	       mdio = ofw_bus_find_child(node, "mdio");
+       if (mdio == 0)
+	       return (0);
+
+       di = malloc(sizeof(*di), M_DEVBUF, M_WAITOK | M_ZERO);
+       if (ofw_bus_gen_setup_devinfo(&di->di_dinfo, mdio) != 0) {
+	       free(di, M_DEVBUF);
+	       return (0);
+       }
+       resource_list_init(&di->di_rl);
+       cdev = device_add_child(sc->dev, "mtkmdio", DEVICE_UNIT_ANY);
+       if (cdev == NULL) {
+	       device_printf(sc->dev, "could not add mtkmdio bus\n");
+	       resource_list_free(&di->di_rl);
+	       ofw_bus_gen_destroy_devinfo(&di->di_dinfo);
+	       free(di, M_DEVBUF);
+	       return (0);
+       }
+       device_set_ivars(cdev, di);
+       bus_attach_children(sc->dev);
+
+       return (1);
+}
+
+static const struct ofw_bus_devinfo *
+rt_ofw_get_devinfo(device_t bus, device_t child)
+{
+       struct rt_ofw_devinfo *di = device_get_ivars(child);
+
+       /* Legacy (hinted) children have no OF devinfo. */
+       if (di == NULL)
+	       return (NULL);
+       return (&di->di_dinfo);
+}
+
+static struct resource_list *
+rt_ofw_get_resource_list(device_t bus, device_t child)
+{
+       struct rt_ofw_devinfo *di = device_get_ivars(child);
+
+       if (di == NULL)
+	       return (NULL);
+       return (&di->di_rl);
+}
+
 static device_method_t rt_dev_methods[] =
    {
 	   DEVMETHOD(device_probe, rt_probe),
 	   DEVMETHOD(device_attach, rt_attach),
 	   DEVMETHOD(device_detach, rt_detach),
+
+	   /* Bus interface for the OF children on our MDIO bus. */
+	   DEVMETHOD(bus_add_child,		bus_generic_add_child),
+	   DEVMETHOD(bus_print_child,		bus_generic_print_child),
+	   DEVMETHOD(bus_alloc_resource,	bus_generic_rl_alloc_resource),
+	   DEVMETHOD(bus_release_resource,	bus_generic_rl_release_resource),
+	   DEVMETHOD(bus_activate_resource,	bus_generic_activate_resource),
+	   DEVMETHOD(bus_deactivate_resource,	bus_generic_deactivate_resource),
+	   DEVMETHOD(bus_get_resource_list,	rt_ofw_get_resource_list),
+
+	   /* OFW bus interface (lets children read their own node/compat). */
+	   DEVMETHOD(ofw_bus_get_devinfo,	rt_ofw_get_devinfo),
+	   DEVMETHOD(ofw_bus_get_compat,	ofw_bus_gen_get_compat),
+	   DEVMETHOD(ofw_bus_get_model,		ofw_bus_gen_get_model),
+	   DEVMETHOD(ofw_bus_get_name,		ofw_bus_gen_get_name),
+	   DEVMETHOD(ofw_bus_get_node,		ofw_bus_gen_get_node),
+	   DEVMETHOD(ofw_bus_get_type,		ofw_bus_gen_get_type),
 
 	   /* MDIO interface */
 	   DEVMETHOD(mdio_readreg,		rt_mdio_readreg),
@@ -2407,6 +2607,14 @@ static driver_t rt_driver =
 	   sizeof(struct rt_softc)
    };
 
+/*
+ * miibus/mdio stay registered for the legacy path: when the device tree has
+ * no usable "mdio-bus" node, rt_attach() creates the hinted "mdio" child as
+ * before and the switch self-attaches to it via its identify method.  The
+ * OF children enumerated from "mdio-bus" are added under their driver's own
+ * name (e.g. "mtkswitch"), so the generic mdio/miibus drivers - which probe
+ * with BUS_PROBE_SPECIFIC and grab anything anonymous - never claim them.
+ */
 //DRIVER_MODULE(rt, nexus, rt_driver, 0, 0);
 DRIVER_MODULE(miibus, rt, miibus_driver, 0, 0);
 DRIVER_MODULE(mdio, rt, mdio_driver, 0, 0);
