@@ -8,12 +8,8 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
-#include <sys/lock.h>
-#include <sys/mutex.h>
-#include <sys/rman.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
-#include <machine/bus.h>
 #include <dev/fdt/simplebus.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -23,12 +19,10 @@
 #include <dev/clk/clk_div.h>
 #include <dev/clk/clk_mux.h>
 #include <dev/clk/clk_gate.h>
-#include <dev/clk/clk_link.h>
-#include <arm64/mediatek/mdtk_clk.h>
-#include <dev/hwreset/hwreset.h>
-#include "clkdev_if.h"
 
-#define CLK_CFG_0    0x040
+#include "mdtk_clk.h"
+
+#define CLK_CFG_0	0x040
 #define CLK_CFG_1   0x050
 #define CLK_CFG_2   0x060
 #define CLK_CFG_3   0x070
@@ -39,8 +33,8 @@
 #define CLK_AUDDIV_0 0x120
 
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mt7622-topckgen", 1},
-    {NULL,                       0},
+    {"mediatek,mt7622-topckgen",	1},
+    {NULL,		 	0},
 };
 
 /* Parent lists */
@@ -313,18 +307,18 @@ static struct clk_fixed_def fixed_clk[] = {
     FRATE(CLK_TOP_SSUSB_TX250M, "ssusb_tx250m", 250000000),
     FRATE(CLK_TOP_SSUSB_EQ_RX250M, "ssusb_eq_rx250m", 250000000),
     FRATE(CLK_TOP_SSUSB_CDR_REF, "ssusb_cdr_ref", 33333333),
-    FRATE(CLK_TOP_SSUSB_CDR_FB, "ssusb_cdr_fb", 50000000),
+    FRATE(CLK_TOP_SSUSB_CDR_FB,	"ssusb_cdr_fb", 50000000),
     FRATE(CLK_TOP_SATA_ASIC, "sata_asic", 50000000),
     FRATE(CLK_TOP_SATA_RBC, "sata_rbc", 50000000),
-    FRATE(CLK_APMIXED_ARMPLL, "armpll", 120000000ULL),
-    FRATE(CLK_APMIXED_MAINPLL, "mainpll", 1120000000ULL),
+    FRATE(CLK_APMIXED_ARMPLL,   "armpll",    120000000ULL),
+    FRATE(CLK_APMIXED_MAINPLL,  "mainpll",  1120000000ULL),
     FRATE(CLK_APMIXED_UNIV2PLL, "univ2pll", 2400000000ULL),
-    FRATE(CLK_APMIXED_ETH1PLL, "eth1pll", 500000000ULL),
-    FRATE(CLK_APMIXED_ETH2PLL, "eth2pll", 650000000ULL),
-    FRATE(CLK_APMIXED_AUD1PLL, "aud1pll", 147456000ULL),
-    FRATE(CLK_APMIXED_AUD2PLL, "aud2pll", 135475000ULL),
-    FRATE(CLK_APMIXED_TRGPLL, "trgpll", 725000000ULL),
-    FRATE(CLK_APMIXED_SGMIPLL, "sgmipll", 650000000ULL),
+    FRATE(CLK_APMIXED_ETH1PLL,  "eth1pll",   500000000ULL),
+    FRATE(CLK_APMIXED_ETH2PLL,  "eth2pll",   650000000ULL),
+    FRATE(CLK_APMIXED_AUD1PLL,  "aud1pll",   147456000ULL),
+    FRATE(CLK_APMIXED_AUD2PLL,  "aud2pll",   135475000ULL),
+    FRATE(CLK_APMIXED_TRGPLL,   "trgpll",    725000000ULL),
+    FRATE(CLK_APMIXED_SGMIPLL,  "sgmipll",   650000000ULL),
 
     FFACT(CLK_TOP_TO_USB3_SYS, "to_usb3_sys", "eth1pll", 1, 4),
     FFACT(CLK_TOP_P1_1MHZ, "p1_1mhz", "eth1pll", 1, 500),
@@ -409,16 +403,16 @@ static struct clk_gate_def gates_clk[] = {
     I_GATE(CLK_TOP_ATB_SEL, "atb_sel", "atb_sel_mux", CLK_CFG_5, 7),
     I_GATE(CLK_TOP_HIF_SEL, "hif_sel", "hif_sel_mux", CLK_CFG_5, 15),
     I_GATE(CLK_TOP_AUDIO_SEL, "audio_sel", "audio_sel_mux", CLK_CFG_5, 23),
-    I_GATE(CLK_TOP_AUDIO_SEL, "usb20_sel", "usb20_sel_mux", CLK_CFG_5, 31),
+    I_GATE(CLK_TOP_U2_SEL, "usb20_sel", "usb20_sel_mux", CLK_CFG_5, 31),
 
     I_GATE(CLK_TOP_AUD1_SEL, "aud1_sel", "aud1_sel_mux", CLK_CFG_6, 7),
     I_GATE(CLK_TOP_AUD2_SEL, "aud2_sel", "aud2_sel_mux", CLK_CFG_6, 15),
     I_GATE(CLK_TOP_IRRX_SEL, "irrx_sel", "irrx_sel_mux", CLK_CFG_6, 23),
     I_GATE(CLK_TOP_IRTX_SEL, "irtx_sel", "irtx_sel_mux", CLK_CFG_6, 31),
 
-    I_GATE(CLK_TOP_ASM_L_SEL, "asm_l_sel", "asm_l_sel_mux", CLK_CFG_6, 7),
-    I_GATE(CLK_TOP_ASM_M_SEL, "asm_m_sel", "asm_m_sel_mux", CLK_CFG_6, 15),
-    I_GATE(CLK_TOP_ASM_H_SEL, "asm_h_sel", "asm_h_sel_mux", CLK_CFG_6, 23),
+    I_GATE(CLK_TOP_ASM_L_SEL, "asm_l_sel", "asm_l_sel_mux", CLK_CFG_7, 7),
+    I_GATE(CLK_TOP_ASM_M_SEL, "asm_m_sel", "asm_m_sel_mux", CLK_CFG_7, 15),
+    I_GATE(CLK_TOP_ASM_H_SEL, "asm_h_sel", "asm_h_sel_mux", CLK_CFG_7, 23),
 
     I_GATE(CLK_TOP_APLL1_SEL, "apll1_ck_sel", "apll1_ck_div", CLK_AUDDIV_0, 0),
     I_GATE(CLK_TOP_APLL2_SEL, "apll2_ck_sel", "apll2_ck_div", CLK_AUDDIV_0, 0),
@@ -496,88 +490,42 @@ static struct clk_div_def dived_clk[] = {
 };
 
 static struct mdtk_clk_def clk_def = {
-    .linked_def = NULL,
-    .num_linked = 0,
-    .fixed_def = fixed_clk,
-    .num_fixed = nitems(fixed_clk),
-    .gates_def = gates_clk,
-    .num_gates = nitems(gates_clk),
-    .dived_def = dived_clk,
-    .num_dived = nitems(dived_clk),
-    .muxes_def = muxes_clk,
-    .num_muxes = nitems(muxes_clk),
+        .fixed_def = fixed_clk,
+        .num_fixed = nitems(fixed_clk),
+        .gates_def = gates_clk,
+        .num_gates = nitems(gates_clk),
+        .dived_def = dived_clk,
+        .num_dived = nitems(dived_clk),
+        .muxes_def = muxes_clk,
+        .num_muxes = nitems(muxes_clk),
 };
-
-static int
-topckgen_clk_detach(device_t dev)
-{
-        device_printf(dev, "Error: Clock driver cannot be detached\n");
-        return (EBUSY);
-}
 
 static int
 topckgen_clk_probe(device_t dev)
 {
-        if (!ofw_bus_status_okay(dev))
-                return (ENXIO);
-
-        if (ofw_bus_search_compatible(dev, compat_data)->ocd_data != 0) {
-                device_set_desc(dev, "Mediatek Topckgen clocks");
-                return (BUS_PROBE_DEFAULT);
-        }
-
-        return (ENXIO);
+        return (mdtk_clk_probe(dev, compat_data, "Mediatek Topckgen clocks"));
 }
 
 static int
 topckgen_clk_attach(device_t dev)
 {
         struct mdtk_clk_softc *sc;
-        int rid, rv;
-
         sc = device_get_softc(dev);
-        sc->dev = dev;
 
-        mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
-
-        /* Resource setup. */
-        rid = 0;
-        sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-                                             RF_ACTIVE);
-        if (!sc->mem_res) {
-                device_printf(dev, "cannot allocate memory resource\n");
-                rv = ENXIO;
-                goto fail;
-        }
-
-        mdtk_register_clocks(dev, &clk_def);
-        return (0);
-
-        fail:
-        if (sc->mem_res)
-                bus_release_resource(dev, SYS_RES_MEMORY, 0, sc->mem_res);
-
-        return (rv);
+        sc->clk_def = &clk_def;
+        return (mdtk_clk_attach(dev));
 }
 
 static device_method_t mdtk_mt7622_topckgen_methods[] = {
-        /* Device interface */
-        DEVMETHOD(device_probe, topckgen_clk_probe),
+        DEVMETHOD(device_probe,  topckgen_clk_probe),
         DEVMETHOD(device_attach, topckgen_clk_attach),
-        DEVMETHOD(device_detach, topckgen_clk_detach),
-
-        /* Clkdev interface*/
-        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
-
         DEVMETHOD_END
+
 };
 
-DEFINE_CLASS_0(mdtk_mt7622_topckgen, mdtk_mt7622_topckgen_driver, mdtk_mt7622_topckgen_methods,
-sizeof(struct mdtk_clk_softc));
+DEFINE_CLASS_1(mdtk_mt7622_topckgen, mdtk_mt7622_topckgen_driver,
+    mdtk_mt7622_topckgen_methods, sizeof(struct mdtk_clk_softc),
+mdtk_clk_driver);
 
-EARLY_DRIVER_MODULE(mdtk_mt7622_topckgen, simplebus, mdtk_mt7622_topckgen_driver, NULL, NULL,
-    BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 2);
+EARLY_DRIVER_MODULE(mdtk_mt7622_topckgen, simplebus, mdtk_mt7622_topckgen_driver,
+    NULL, NULL, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 2);

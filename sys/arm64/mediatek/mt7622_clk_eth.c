@@ -8,28 +8,20 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
-#include <sys/lock.h>
-#include <sys/mutex.h>
-#include <sys/rman.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
-#include <machine/bus.h>
-
 #include <dev/fdt/simplebus.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
-#include <dev/syscon/syscon.h>
+
 #include <dt-bindings/clock/mt7622-clk.h>
 #include <dev/clk/clk_gate.h>
 
-#include "clkdev_if.h"
-#include "hwreset_if.h"
-#include "syscon_if.h"
 #include "mdtk_clk.h"
 
 static struct ofw_compat_data compat_data[] = {
     {"mediatek,mt7622-ethsys", 1},
-    {NULL,                     0},
+    {NULL, 0},
 };
 
 static struct clk_gate_def gates_clk[] = {
@@ -47,133 +39,33 @@ static struct mdtk_clk_def clk_def = {
 };
 
 static int
-eth_clk_detach(device_t dev)
-{
-        device_printf(dev, "Error: Clock driver cannot be detached\n");
-        return (EBUSY);
-}
-
-static int
 eth_clk_probe(device_t dev)
 {
-        if (!ofw_bus_status_okay(dev))
-                return (ENXIO);
-
-        if (ofw_bus_search_compatible(dev, compat_data)->ocd_data != 0) {
-                device_set_desc(dev, "Mediatek mt7622 ethernet clocks");
-                return (BUS_PROBE_DEFAULT);
-        }
-
-        return (ENXIO);
+        return (mdtk_clk_probe(dev, compat_data,
+            "Mediatek mt7622 ethernet clocks"));
 }
 
 static int
 eth_clk_attach(device_t dev)
 {
         struct mdtk_clk_softc *sc;
-        int rid = 0;
-
+        static const uint16_t reset_offset[] = { 0x34 };
         sc = device_get_softc(dev);
-        sc->dev = dev;
 
-        mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
-
-        if (ofw_bus_is_compatible(dev, "syscon")) {
-                sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-                                                     RF_ACTIVE);
-                if (sc->mem_res == NULL) {
-                        device_printf(dev,
-                                      "Cannot allocate memory resource\n");
-                        return (ENXIO);
-                }
-
-                sc->syscon = syscon_create_ofw_node(dev,
-                                                    &syscon_class, ofw_bus_get_node(dev));
-                if (sc->syscon == NULL) {
-                        device_printf(dev,
-                                      "Failed to create/register syscon\n");
-                        return (ENXIO);
-                }
-        }
-
-        mdtk_register_clocks(dev, &clk_def);
-        return (0);
-}
-
-static int
-eth_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
-{
-        uint32_t mask;
-
-        KASSERT((idx >= 0 && idx < 32), ("%s: idx out of range", __func__));
-
-        mask = 1U << (idx % 32);
-
-        CLKDEV_DEVICE_LOCK(dev);
-        CLKDEV_MODIFY_4(dev, 0x34, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(dev);
-
-        return (0);
-}
-
-static int
-eth_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
-{
-        struct mdtk_clk_softc *sc;
-
-        sc = device_get_softc(dev);
-        *syscon = sc->syscon;
-        if (*syscon == NULL) {
-                return (ENODEV);
-        }
-
-        return (0);
-}
-
-static void
-eth_clk_syscon_lock(device_t dev)
-{
-        struct mdtk_clk_softc *sc;
-
-        sc = device_get_softc(dev);
-        mtx_lock(&sc->mtx);
-}
-
-static void
-eth_clk_syscon_unlock(device_t dev)
-{
-        struct mdtk_clk_softc *sc;
-
-        sc = device_get_softc(dev);
-        mtx_unlock(&sc->mtx);
+        sc->clk_def = &clk_def;
+        sc->reset_offset = reset_offset;
+        sc->reset_num = nitems(reset_offset);
+        return (mdtk_clk_attach(dev));
 }
 
 static device_method_t mt7622_eth_methods[] = {
-        /* Device interface */
-        DEVMETHOD(device_probe, eth_clk_probe),
+        DEVMETHOD(device_probe,  eth_clk_probe),
         DEVMETHOD(device_attach, eth_clk_attach),
-        DEVMETHOD(device_detach, eth_clk_detach),
-
-        /* Clkdev interface*/
-        DEVMETHOD(clkdev_read_4, mdtk_clkdev_read_4),
-        DEVMETHOD(clkdev_write_4, mdtk_clkdev_write_4),
-        DEVMETHOD(clkdev_modify_4, mdtk_clkdev_modify_4),
-        DEVMETHOD(clkdev_device_lock, mdtk_clkdev_device_lock),
-        DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
-
-        /* Hwreset interface */
-        DEVMETHOD(hwreset_assert,	eth_clk_hwreset_assert),
-
-        /* Syscon interface */
-        DEVMETHOD(syscon_get_handle, eth_clk_syscon_get_handle),
-        DEVMETHOD(syscon_device_lock, eth_clk_syscon_lock),
-        DEVMETHOD(syscon_device_unlock, eth_clk_syscon_unlock),
-
         DEVMETHOD_END
 };
 
 DEFINE_CLASS_1(mt7622_eth, mt7622_eth_driver, mt7622_eth_methods,
-sizeof(struct mdtk_clk_softc), syscon_class);
+sizeof(struct mdtk_clk_softc), mdtk_clk_driver);
 
 EARLY_DRIVER_MODULE(mt7622_eth, simplebus, mt7622_eth_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 5);
