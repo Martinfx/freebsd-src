@@ -92,7 +92,7 @@ pericfg_clk_attach(device_t dev)
         sc->clk_sc->clk_def = &clk_def;
         sc->reset_offset = reset_offset;
         sc->reset_num = nitems(reset_offset);
-        return (mdtk_clk_attach_sc(dev, sc);
+        return (mdtk_clk_attach_sc(dev, sc));
 }
 
 static device_method_t mdtk_mt7622_pericfg_methods[] = {
