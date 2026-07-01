@@ -135,7 +135,7 @@ struct mdtk_clk_softc {
 };
 
 struct mdtk_clk_reset_softc {
-    struct mdtk_clk_softc *clk_sc;
+    struct mdtk_clk_softc clk_sc;
     const uint16_t *reset_offset;         /* reset register offsets or NULL */
     uint16_t reset_num;                   /* number of reset registers     */
 };
