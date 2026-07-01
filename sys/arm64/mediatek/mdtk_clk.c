@@ -231,8 +231,6 @@ static device_method_t mdtk_clk_methods[] = {
         DEVMETHOD(clkdev_device_lock,   mdtk_clkdev_device_lock),
         DEVMETHOD(clkdev_device_unlock, mdtk_clkdev_device_unlock),
 
-        DEVMETHOD(hwreset_assert,       mdtk_clk_hwreset_assert),
-
         DEVMETHOD_END
 };
 
