@@ -101,9 +101,9 @@ static device_method_t mdtk_mt7622_pericfg_methods[] = {
         DEVMETHOD_END
 };
 
-DEFINE_CLASS_2(mdtk_mt7622_pericfg, mdtk_mt7622_pericfg_driver,
+DEFINE_CLASS_1(mdtk_mt7622_pericfg, mdtk_mt7622_pericfg_driver,
     mdtk_mt7622_pericfg_methods, sizeof(struct mdtk_clk_reset_softc),
-mdtk_clk_driver, mdtk_clk_reset_driver);
+        mdtk_clk_reset_driver);
 
 EARLY_DRIVER_MODULE(mdtk_mt7622_pericfg, simplebus, mdtk_mt7622_pericfg_driver,
     NULL, NULL, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 3);
