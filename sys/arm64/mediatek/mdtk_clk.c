@@ -222,28 +222,6 @@ mdtk_clk_detach(device_t dev)
         return (EBUSY);
 }
 
-static int
-mdtk_clk_hwreset_assert(device_t dev, intptr_t id, bool value)
-{
-        struct mdtk_clk_softc *sc;
-        uint32_t mask;
-        uint32_t reg;
-
-        sc = device_get_softc(dev);
-
-        if (id < 0 || id / 32 >= sc->reset_num) {
-                return (ENXIO);
-        }
-
-        reg = sc->reset_offset[id / 32];
-        mask = 1u << (id % 32);
-
-        CLKDEV_DEVICE_LOCK(dev);
-        CLKDEV_MODIFY_4(dev, reg, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(dev);
-        return (0);
-}
-
 static device_method_t mdtk_clk_methods[] = {
         DEVMETHOD(device_detach,        mdtk_clk_detach),
 
