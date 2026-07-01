@@ -89,6 +89,8 @@ pericfg_clk_attach(device_t dev)
         static const uint16_t reset_offset[] = { 0x0, 0x4 };
         sc = device_get_softc(dev);
 
+        device_printf(dev, "sc=%p driver=%p\n", sc, dev->driver);
+
         sc->clk_sc->clk_def = &clk_def;
         sc->reset_offset = reset_offset;
         sc->reset_num = nitems(reset_offset);
