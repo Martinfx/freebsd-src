@@ -132,11 +132,16 @@ struct mdtk_clk_softc {
     struct clkdom *clkdom;
     struct syscon *syscon;
     const struct mdtk_clk_def *clk_def;   /* clock tables for this block   */
+};
+
+struct mdtk_clk_reset_softc {
+    struct mdtk_clk_softc *clk_sc;
     const uint16_t *reset_offset;         /* reset register offsets or NULL */
     uint16_t reset_num;                   /* number of reset registers     */
 };
 
 DECLARE_CLASS(mdtk_clk_driver);
+DECLARE_CLASS(mdtk_clk_reset_driver);
 
 int mdtk_clk_probe(device_t dev, struct ofw_compat_data *compat,
     const char *desc);
