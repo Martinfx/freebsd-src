@@ -527,12 +527,25 @@ mt7615_mac_add_txs(struct mt7615_softc *sc, const uint32_t *raw)
         st->nretries += count - 1;
 
         /*
-         * Which rate the frame ended on.  A frame the descriptor pinned to
-         * one rate says nothing about where the ladder has got to - that
-         * is management and group traffic, which is deliberately sent slow
-         * - so it is counted but not allowed to move the reported rate.
+         * Which rate the frame ended on.
+         *
+         * A frame the descriptor pinned to one rate says nothing about
+         * where the ladder has got to - that is management and group
+         * traffic, deliberately sent slow - so it is counted but not
+         * allowed to move the reported rate.
+         *
+         * Nor is a frame that needed more than one attempt.  The rate a
+         * report names is the one the last attempt used, so a frame that
+         * was retried names a rung the hardware walked down to and then
+         * left again, not the one it rests on.  Taking those would let a
+         * single retried frame on an otherwise idle link set the rate and
+         * leave it there, which is exactly what makes an idle peer look
+         * like it is transmitting at the bottom of its ladder.  What the
+         * ladder actually sits at is the rate that got through first try.
          */
         if ((txs0 & MT_TXS0_FIXED_RATE) != 0)
+                return;
+        if (!acked || count != 1)
                 return;
 
         rate = txs0 & MT_TXS0_TX_RATE;

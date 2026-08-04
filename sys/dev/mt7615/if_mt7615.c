@@ -1392,6 +1392,12 @@ mt7615_txs_task(void *arg, int npending __unused)
                 if (ni == NULL)
                         continue;
 
+                MT7615_DPRINTF(sc, MT7615_DEBUG_TX,
+                    "slot %d: rate %#x, %u frame%s, %u acked, %u retries\n",
+                    wcid, snap.rate, snap.nframes,
+                    snap.nframes == 1 ? "" : "s", snap.nsuccess,
+                    snap.nretries);
+
                 if (snap.rate != 0)
                         mt7615_txs_node_rate(ni, snap.rate);
 
