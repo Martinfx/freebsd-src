@@ -95,6 +95,9 @@ static void	mt7615_update_mcast(struct ieee80211com *);
 static void	mt7615_update_promisc(struct ieee80211com *);
 static void	mt7615_getradiocaps(struct ieee80211com *, int, int *,
                                        struct ieee80211_channel[]);
+static int	mt7615_setregdomain(struct ieee80211com *,
+                                      struct ieee80211_regdomain *, int,
+                                      struct ieee80211_channel[]);
 static void	mt7615_newassoc(struct ieee80211_node *, int);
 static int	mt7615_key_alloc(struct ieee80211vap *, struct ieee80211_key *,
                                    ieee80211_keyix *, ieee80211_keyix *);
@@ -1791,6 +1794,22 @@ mt7615_set_channel(struct ieee80211com *ic)
 
         sc = ic->ic_softc;
 
+        /*
+         * Never key up on a channel shared with radar.  Nothing should be
+         * able to get one this far - they are not offered and a list
+         * containing one is refused - but this is the last place the
+         * transmitter can still be held back, and the cost of being wrong
+         * here is transmitting over somebody's radar.
+         */
+        if (ic->ic_curchan != NULL && IEEE80211_IS_CHAN_DFS(ic->ic_curchan) &&
+            (ic->ic_caps & IEEE80211_C_DFS) == 0) {
+                device_printf(sc->sc_dev,
+                    "refusing to transmit on channel %u: radar channel, and "
+                    "this driver cannot listen for radar\n",
+                    ieee80211_chan2ieee(ic, ic->ic_curchan));
+                return;
+        }
+
         MT7615_LOCK(sc);
         if ((sc->sc_flags & MT7615_FLAG_HW_INITED) != 0) {
                 int error;
@@ -1879,9 +1898,29 @@ mt7615_getradiocaps(struct ieee80211com *ic, int maxchans, int *nchans,
         static const uint8_t chan_2ghz[] = {
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13
         };
+        /*
+         * Five gigahertz, less everything that needs radar detection.
+         *
+         * Channels 52 to 64 and 100 to 140 are shared with radar - weather,
+         * air traffic and military - and every regulator that allows them
+         * at all allows them only to a device that listens for radar and
+         * vacates the channel when it hears one.  This driver does not
+         * listen: there is no radar detection anywhere in it, and
+         * IEEE80211_C_DFS is not among its capabilities.
+         *
+         * A device that cannot do that has no business offering those
+         * channels, and offering them is not harmless.  Nothing downstream
+         * will catch it - the regulatory database hands them back marked
+         * IEEE80211_CHAN_DFS, and net80211 only ever reads that flag to
+         * decide what to put in a channel-switch announcement; no part of
+         * it refuses a DFS channel to a driver without the capability.  So
+         * the list is the only gate there is, and an access point left on
+         * one of these transmits over radar for as long as it is up.
+         *
+         * They come back when radar detection does, and not before.
+         */
         static const uint8_t chan_5ghz[] = {
-            36, 40, 44, 48, 52, 56, 60, 64,
-            100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,
+            36, 40, 44, 48,
             149, 153, 157, 161, 165
         };
         struct mt7615_softc *sc;
@@ -1936,6 +1975,47 @@ mt7615_getradiocaps(struct ieee80211com *ic, int maxchans, int *nchans,
                 chans[i].ic_maxpower = 2 * MT7615_MAX_REG_POWER;
                 chans[i].ic_minpower = 0;
         }
+}
+
+/*
+ * A regulatory domain being set.
+ *
+ * The channel list arrives from userland, where it was worked out from
+ * the regulatory database, and net80211 hands it down having checked
+ * only that the frequencies and power limits make sense.  It does not
+ * check it against what this driver said it could do, and it has no
+ * opinion about radar: a list naming channels 52 to 140 is accepted and
+ * committed whether or not anything is able to listen for radar on them.
+ * The database will name them, too - they are legal in this country, to
+ * a device that does radar detection.
+ *
+ * This driver does not, so this is where that list is refused.  Setting
+ * a country whose rules allow more than the hardware can honour should
+ * fail loudly rather than quietly widen what the radio will transmit on.
+ */
+static int
+mt7615_setregdomain(struct ieee80211com *ic, struct ieee80211_regdomain *rd,
+                    int nchans, struct ieee80211_channel chans[])
+{
+        struct mt7615_softc *sc;
+        int i;
+
+        sc = ic->ic_softc;
+
+        if ((ic->ic_caps & IEEE80211_C_DFS) != 0)
+                return (0);
+
+        for (i = 0; i < nchans; i++) {
+                if (!IEEE80211_IS_CHAN_DFS(&chans[i]))
+                        continue;
+                device_printf(sc->sc_dev,
+                    "refusing channel %u: it is shared with radar and this "
+                    "driver cannot listen for it\n",
+                    ieee80211_mhz2ieee(chans[i].ic_freq, chans[i].ic_flags));
+                return (EINVAL);
+        }
+
+        return (0);
 }
 
 static void
@@ -2043,6 +2123,7 @@ mt7615_attach_hook(void *arg)
         ic->ic_update_mcast = mt7615_update_mcast;
         ic->ic_update_promisc = mt7615_update_promisc;
         ic->ic_getradiocaps = mt7615_getradiocaps;
+        ic->ic_setregdomain = mt7615_setregdomain;
         ic->ic_newassoc = mt7615_newassoc;
         ic->ic_wme.wme_update = mt7615_wme_update;
 
