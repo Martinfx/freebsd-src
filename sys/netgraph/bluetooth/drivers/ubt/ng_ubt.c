@@ -527,6 +527,18 @@ static const STRUCT_USB_HOST_ID ubt_devs[] =
 };
 
 /*
+ * Devices that stall their bulk endpoints once interface 1 has been moved
+ * off alternate setting 0, which breaks the ACL data path for good.  Leave
+ * interface 1 alone on these and do not configure the isochronous endpoints:
+ * SCO is lost, but ACL data keeps working.
+ */
+static const STRUCT_USB_HOST_ID ubt_broken_isoc_devs[] =
+{
+        /* UGREEN CM748/CM749 (Barrot BR8554) */
+        { USB_VPI(0x33fa, 0x0010, 0) },
+};
+
+/*
  * Does a synchronous (waits for completion event) execution of HCI command.
  * Size of both command and response buffers are passed in length field of
  * corresponding structures in "Parameter Total Length" format i.e.
@@ -660,8 +672,17 @@ ubt_attach(device_t dev)
 	uint32_t			wMaxPacketSize;
 	uint8_t				alt_index, i, j;
 	uint8_t				iface_index[2];
+        int				isoc;
 
 	device_set_usb_desc(dev);
+
+        isoc = ng_usb_isoc_enable;
+        if (isoc && usbd_lookup_id_by_uaa(ubt_broken_isoc_devs,
+            sizeof(ubt_broken_isoc_devs), uaa) == 0) {
+                device_printf(dev, "SCO is not supported by this device, "
+                                   "disabling isochronous transfers\n");
+                isoc = 0;
+        }
 
 	iface_index[0] = uaa->info.bIfaceIndex;
 	iface_index[1] = uaa->info.bIfaceIndex + 1;
@@ -774,7 +795,7 @@ ubt_attach(device_t dev)
 	}
 
 	/* Set alt configuration on interface #1 only if we found it */
-	if (wMaxPacketSize > 0 &&
+	if (ng_usb_isoc_enable && wMaxPacketSize > 0 &&
 	    usbd_set_alt_interface_index(uaa->device, iface_index[1], alt_index)) {
 		UBT_ALERT(sc, "could not set alternate setting %d " \
 			"for interface 1!\n", alt_index);

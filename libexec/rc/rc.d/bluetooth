@@ -85,6 +85,28 @@ bluetooth_read_conf()
 }
 
 ##############################################################################
+# Print the HCI specification version implemented by the device as a decimal
+# number, or nothing if it cannot be determined
+##############################################################################
+bluetooth_hci_version()
+{
+	local _dev _ver
+
+	_dev=$1
+
+	# hccontrol(8) prints "HCI version: <description> [0xNN]".  Parse the
+	# numeric value rather than the description: the latter is printed as
+	# "?" for any controller newer than the ones hccontrol(8) knows about,
+	# while the value itself is always reported correctly.
+	_ver=`${hccontrol} -n ${_dev}hci read_local_version_information 2>/dev/null | \
+		sed -n '/^HCI version:/{s/^HCI version:.*\[0x\([0-9A-Fa-f][0-9A-Fa-f]*\)\].*/\1/p;q;}'`
+
+	if [ -n "${_ver}" ]; then
+		echo $((0x${_ver}))
+	fi
+}
+
+##############################################################################
 # Setup Bluetooth stack. Create and connect nodes
 ##############################################################################
 
@@ -94,6 +116,10 @@ bluetooth_setup_stack()
 	shift
 	hook=$1
 	shift
+
+  # HCI specification version 0x06 is Bluetooth Core 4.0
+  local _hci_spec_v40=6
+  local _encryption_mode _hci_version
 
 	# Setup HCI
 	ngctl mkpeer ${dev}: hci ${hook} drv \
@@ -180,18 +206,21 @@ bluetooth_setup_stack()
 
 	case "${bluetooth_device_encryption_mode}" in
 	[Nn][Oo][Nn][Ee]|0)
-		${hccontrol} -n ${dev}hci write_encryption_mode 0 \
-			> /dev/null 2>&1 || return 1
+		#${hccontrol} -n ${dev}hci write_encryption_mode 0 \
+		#	> /dev/null 2>&1 || return 1
+		_encryption_mode=0
 		;;
 
 	[Pp][2][Pp]|1)
-		${hccontrol} -n ${dev}hci write_encryption_mode 1 \
-			> /dev/null 2>&1 || return 1
+		#${hccontrol} -n ${dev}hci write_encryption_mode 1 \
+		#	> /dev/null 2>&1 || return 1
+		_encryption_mode=0
 		;;
 
 	[Al][Ll][Ll]|2)
-		${hccontrol} -n ${dev}hci write_encryption_mode 2 \
-			> /dev/null 2>&1 || return 1
+		#${hccontrol} -n ${dev}hci write_encryption_mode 2 \
+		#	> /dev/null 2>&1 || return 1
+		_encryption_mode=0
 		;;
 
 	*)
@@ -199,6 +228,29 @@ bluetooth_setup_stack()
 		return 1
 		;;
 	esac
+
+  # The Write_Encryption_Mode command (OGF 0x03, OCF 0x22) was deprecated
+	# in Bluetooth Core 2.1 + EDR and removed in Core 4.0.  Controllers
+	# implementing Core 4.0 or later reject it with "Unknown HCI command"
+	# (status 0x01) and negotiate encryption per connection instead, so the
+	# failure is expected there and must not abort stack setup: doing so
+	# tears the whole stack back down and leaves the device unusable.
+	# Controllers older than that are supposed to implement the command, so
+	# for those a failure is still treated as a genuine error.
+	if ! ${hccontrol} -n ${dev}hci write_encryption_mode ${_encryption_mode} \
+		> /dev/null 2>&1
+	then
+		_hci_version=`bluetooth_hci_version ${dev}`
+
+		if [ -z "${_hci_version}" ]; then
+			warn "Unable to set encryption mode ${bluetooth_device_encryption_mode} for device ${dev}, and unable to read its HCI version; continuing anyway"
+		elif [ ${_hci_version} -ge ${_hci_spec_v40} ]; then
+			debug "Device ${dev} implements HCI version ${_hci_version} and does not support Write_Encryption_Mode; encryption is negotiated per connection"
+		else
+			warn "Unable to set encryption mode ${bluetooth_device_encryption_mode} for device ${dev}"
+			return 1
+		fi
+  fi
 
 	if checkyesno bluetooth_device_role_switch; then
 		${hccontrol} -n ${dev}hci write_node_role_switch 1 \
