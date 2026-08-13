@@ -1,5 +1,5 @@
-#ifndef __MDTK_CLK_H__
-#define __MDTK_CLK_H__
+#ifndef __MT_CLK_H__
+#define __MT_CLK_H__
 
 /*
  * Copyright (c) 2025, 2026 Martin Filla <freebsd@sysctl.cz>
@@ -24,21 +24,6 @@
 	.mask = 1,                                              \
 	.on_value = 1,                                          \
 	.off_value = 0,                                         \
-}
-
-/* Inverter gate. */
-#define	I_GATE(_id, cname, plist, o, s)                         \
-{                                                               \
-	.clkdef.id = _id,                                       \
-	.clkdef.name = cname,                                   \
-	.clkdef.parent_names = (const char *[]){plist},         \
-	.clkdef.parent_cnt = 1,                                 \
-	.clkdef.flags = CLK_NODE_STATIC_STRINGS,                \
-	.offset = o,                                            \
-	.shift = s,                                             \
-	.mask = 1,                                              \
-	.on_value = 0,                                          \
-	.off_value = 1,                                         \
 }
 
 /* Fixed rate clock. */
@@ -112,7 +97,7 @@
 	.off_value = 1,					\
 }
 
-struct mdtk_clk_def {
+struct mt_clk_def {
     struct clk_link_def *linked_def;
     struct clk_fixed_def *fixed_def;
     struct clk_mux_def *muxes_def;
@@ -125,25 +110,34 @@ struct mdtk_clk_def {
     int num_dived;
 };
 
-struct mdtk_clk_softc {
-    struct simplebus_softc simplebus;
+struct mt_clk_softc {
     device_t dev;
     struct resource *mem_res;
     struct mtx mtx;
     struct clkdom *clkdom;
     struct syscon *syscon;
+    const struct mt_clk_def *clk_def;   /* clock tables for this block   */
 };
 
-int mdtk_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val);
+struct mt_clk_reset_softc {
+    struct mt_clk_softc clk_sc;
+    const uint16_t *reset_offset;         /* reset register offsets or NULL */
+    uint16_t reset_num;                   /* number of reset registers     */
+};
 
-int mdtk_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val);
+DECLARE_CLASS(mt_clk_driver);
+DECLARE_CLASS(mt_clk_reset_driver);
 
-int mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
+int mt_clk_probe(device_t dev, struct ofw_compat_data *compat,
+    const char *desc);
+int mt_clk_attach(device_t dev);
+int mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc);
+int mt_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val);
+int mt_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val);
+int mt_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
                          uint32_t set_mask);
-
-void mdtk_clkdev_device_lock(device_t dev);
-
-void mdtk_clkdev_device_unlock(device_t dev);
-
-void mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef);
+void mt_clkdev_device_lock(device_t dev);
+void mt_clkdev_device_unlock(device_t dev);
+void mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
+const struct mt_clk_def *cldef);
 #endif

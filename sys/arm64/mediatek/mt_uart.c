@@ -5,10 +5,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <sys/cdefs.h>
-/*
- * UART driver for mediatek SoCs.
- */
 #include "opt_platform.h"
 
 #include <sys/param.h>
@@ -32,18 +28,12 @@
 
 #include "uart_if.h"
 
-/*
- * High-level UART interface.
- */
 struct mt_softc {
 	struct ns8250_softc 	ns8250_base;
 	clk_t			baud_clk;
 	clk_t			bus_clk;
 };
 
-/*
- * UART class interface.
- */
 static int
 mt_uart_attach(struct uart_softc *sc)
 {
@@ -55,7 +45,6 @@ mt_uart_attach(struct uart_softc *sc)
 	if (rv != 0)
 		return (rv);
 
-	ns8250->ier_mask = 0xc0;
 	ns8250->ier = uart_getreg(bas, REG_IER) & ns8250->ier_mask;
 	ns8250->ier |= ns8250->ier_rxbits;
 	uart_setreg(bas, REG_IER, ns8250->ier);
