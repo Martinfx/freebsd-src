@@ -245,7 +245,7 @@ static const struct mt7622_pinmux_desc pinmux[] = {
 
     [77] = {{"GPIO_D/GPIO77", "GPIO77", NULL, NULL, "PWM_CH5", "ANTSEL", NULL, "DBG_UTIF"}, 0x320, 28},
     [17] = {{"I2S3_IN", "GPIO17", "SD_D2", NULL, "IR_R", "ANTSEL", "BT_ELNA_EN", "DBG_UTIF"}, 0x320, 24},
-    [16] = {{"I2S2_IN", "GPIO17", "SD_D2", NULL, "IR_R", "ANTSEL", "BT_ELNA_EN", "DBG_UTIF"}, 0x320, 20},
+    [16] = {{"I2S2_IN", "GPIO16", "SD_D3", NULL, "IR_T", "ANTSEL", "BT_EPA_EN", "DBG_UTIF"}, 0x320, 20},
     [0] = {{"GPIO_A/GPIO0", "GPIO0", NULL, NULL, NULL, NULL, NULL, NULL}, 0x320, 16},
     [78] = {{"WATCHDOG", "GPIO78", NULL, NULL, "PWM_CH6", NULL, NULL, "DBG_UTIF"}, 0x320, 12},
     [35] = {{"GPIO_A/GPIO0", "GPIO35", "PCIE0_PAD_CLKREQ", "PCIE1_PAD_CLKREQ", NULL, "ANTSEL", NULL, NULL}, 0x320, 8},
@@ -287,9 +287,9 @@ static const struct mt7622_pinmux_desc pinmux[] = {
     [85] = {{"WLED_N", "GPIO85", NULL, NULL, NULL, NULL, NULL, NULL}, 0x360, 4},
     [102] = {{"GPIO_E/GPIO102", "GPIO102", NULL, NULL, NULL, NULL, "ANTSEL", "FPC_DATA"}, 0x360, 0},
 
-    [97] = {{"PWM_CH3", "GPIO97", "UART_TXD4", NULL, "AICE_TCKC", "ANTSEL", "FPC_DATA[", "W_JTCLK"}, 0x380, 28},
+    [97] = {{"PWM_CH3", "GPIO97", "UART_TXD4", NULL, "AICE_TCKC", "ANTSEL", "FPC_DATA", "W_JTCLK"}, 0x380, 28},
     [96] = {{"PWM_CH2", "GPIO96", "UART_CTS4", "UART_RXD2", "CPUM_CK_XI", "ANTSEL", "FPC_DATA", "W_DBGACK"}, 0x380, 24},
-    [95] = {{"I2C1_SDA", "GPIO88", NULL, NULL, NULL, NULL, NULL, NULL}, 0x380, 20},
+    [95] = {{"PWM_CH1", "GPIO95", "UART_RTS4", "UART_TXD2", "CPUM", "ANTSEL", "FPC_DATA", "W_DBGIN"}, 0x380, 20},
     [22] = {{"GPIO_B/GPIO22", "GPIO22", NULL, "TSF_INTR", NULL, NULL, "ANTSEL", "DBG_UTIF"}, 0x380, 16},
 
     [94] = {{"UART_CTS4", "GPIO94", "EPHY_LED4_N", "DFD_TMS", "CPUM", "ANTSEL", "FPC_CTL", "JTMS"}, 0x390, 28},
