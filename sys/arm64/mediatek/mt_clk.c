@@ -207,6 +207,8 @@ mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
         else if (bootverbose) {
                 clkdom_dump(sc->clkdom);
         }
+
+        return (0);
 }
 
 int
