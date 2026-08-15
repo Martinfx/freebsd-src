@@ -254,10 +254,7 @@ mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
         rv = mt_register_clocks(dev, sc, sc->clk_def);
         if (rv != 0) {
                 device_printf(dev, "failed to register clocks\n");
-                if (sc->syscon != NULL) {
-                        syscon_generic_detach(dev);
-                }
-
+                
                 if(sc->mem_res != NULL) {
                         bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
                 }
