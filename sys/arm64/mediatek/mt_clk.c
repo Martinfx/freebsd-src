@@ -33,61 +33,71 @@
 #include "syscon_if.h"
 #include "hwreset_if.h"
 
-static void
+static int
 init_fixeds(struct mt_clk_softc *sc, struct clk_fixed_def *clks, int nclks)
 {
         int i, rv;
 
         for (i = 0; i < nclks; i++) {
                 rv = clknode_fixed_register(sc->clkdom, clks + i);
-                if (rv != 0)
-                        panic("clknode_fixed_register failed");
+                if (rv != 0) {
+                        device_printf(sc->dev, "clknode_fixed_register failed");
+                        return (ENXIO);
+                }
         }
 }
 
-static void
+static int
 init_linked(struct mt_clk_softc *sc, struct clk_link_def *clks, int nclks)
 {
         for (int i = 0; i < nclks; i++) {
                 int rv = clknode_link_register(sc->clkdom, clks + i);
-                if (rv != 0)
-                        panic("clknode_link_register failed");
+                if (rv != 0) {
+                        device_printf(sc->dev, "clknode_link_register failed");
+                        return (ENXIO);
+                }
         }
 }
 
-static void
+static int
 init_muxes(struct mt_clk_softc *sc, struct clk_mux_def *clks, int nclks)
 {
         int i, rv;
 
         for (i = 0; i < nclks; i++) {
                 rv = clknode_mux_register(sc->clkdom, clks + i);
-                if (rv != 0)
-                        panic("clknode_mux_register failed");
+                if (rv != 0) {
+                        device_printf(sc->dev, "clknode_mux_register failed");
+                        return (ENXIO);
+                }
         }
 }
 
-static void
+static int
 init_gates(struct mt_clk_softc *sc, struct clk_gate_def *clks, int nclks)
 {
         int i, rv;
 
         for (i = 0; i < nclks; i++) {
                 rv = clknode_gate_register(sc->clkdom, clks + i);
-                if (rv != 0)
-                        panic("clknode_gate_register failed");
+                if (rv != 0) {
+                        device_printf(sc->dev, "clknode_gate_register failed");
+                        return (ENXIO);
+                }
         }
 }
 
-static void
+static int
 init_div(struct mt_clk_softc *sc, struct clk_div_def *clks, int nclks)
 {
         int i, rv;
 
         for (i = 0; i < nclks; i++) {
                 rv = clknode_div_register(sc->clkdom, clks + i);
-                if (rv != 0)
-                        panic("clknode_div_register failed");
+                if (rv != 0) {
+                        device_printf(sc->dev, "clknode_div_register failed");
+                        return (ENXIO);
+                }
         }
 }
 
@@ -143,7 +153,7 @@ mt_clkdev_device_unlock(device_t dev)
         mtx_unlock(&sc->mtx);
 }
 
-void
+int
 mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
                      const struct mt_clk_def *cldef)
 {
@@ -153,17 +163,40 @@ mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
         if (sc->clkdom == NULL)
                 panic("clkdom == NULL");
 
-        init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
-        init_linked(sc, cldef->linked_def, cldef->num_linked);
-        init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
-        init_gates(sc, cldef->gates_def, cldef->num_gates);
-        init_div(sc, cldef->dived_def, cldef->num_dived);
+        rv = init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
+        if(rv != 0) {
+                return (ENXIO);
+        }
+
+        rv = init_linked(sc, cldef->linked_def, cldef->num_linked);
+        if(rv != 0) {
+                return (ENXIO);
+        }
+
+        rv = init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
+        if(rv != 0) {
+                return (ENXIO);
+        }
+
+        rv = init_gates(sc, cldef->gates_def, cldef->num_gates);
+        if(rv != 0) {
+                return (ENXIO);
+        }
+
+        rv = init_div(sc, cldef->dived_def, cldef->num_dived);
+        if(rv != 0) {
+                return (ENXIO);
+        }
+
 
         rv = clkdom_finit(sc->clkdom);
-        if (rv != 0)
+        if (rv != 0) {
                 device_printf(dev, "clkdom_finit failed: %d\n", rv);
-        else if (bootverbose)
+                return (ENXIO);
+        }
+        else if (bootverbose) {
                 clkdom_dump(sc->clkdom);
+        }
 }
 
 int
@@ -180,7 +213,7 @@ mt_clk_probe(device_t dev, struct ofw_compat_data *compat, const char *desc)
 int
 mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
 {
-        int rid = 0;
+        int rv, rid = 0;
 
         sc->dev = dev;
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
@@ -198,13 +231,29 @@ mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
                     ofw_bus_get_node(dev));
                 if (sc->syscon == NULL) {
                         device_printf(dev, "failed to create/register syscon\n");
-                        bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+                        if(sc->mem_res != NULL) {
+                                bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+                        }
                         mtx_destroy(&sc->mtx);
                         return (ENXIO);
                 }
         }
 
-        mt_register_clocks(dev, sc, sc->clk_def);
+        rv = mt_register_clocks(dev, sc, sc->clk_def);
+        if (rv != 0) {
+                device_printf(dev, "failed to register clocks\n");
+                if (sc->syscon != NULL) {
+                        syscon_destroy(sc->syscon);
+                }
+
+                if(sc->mem_res != NULL) {
+                        bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+                }
+
+                mtx_destroy(&sc->mtx);
+                return (ENXIO);
+        }
+
         return (0);
 }
 
