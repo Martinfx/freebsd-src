@@ -45,6 +45,8 @@ init_fixeds(struct mt_clk_softc *sc, struct clk_fixed_def *clks, int nclks)
                         return (ENXIO);
                 }
         }
+
+        return (0);
 }
 
 static int
@@ -57,6 +59,8 @@ init_linked(struct mt_clk_softc *sc, struct clk_link_def *clks, int nclks)
                         return (ENXIO);
                 }
         }
+
+        return (0);
 }
 
 static int
@@ -71,6 +75,8 @@ init_muxes(struct mt_clk_softc *sc, struct clk_mux_def *clks, int nclks)
                         return (ENXIO);
                 }
         }
+
+        return (0);
 }
 
 static int
@@ -85,6 +91,8 @@ init_gates(struct mt_clk_softc *sc, struct clk_gate_def *clks, int nclks)
                         return (ENXIO);
                 }
         }
+
+        return (0);
 }
 
 static int
@@ -99,6 +107,8 @@ init_div(struct mt_clk_softc *sc, struct clk_div_def *clks, int nclks)
                         return (ENXIO);
                 }
         }
+
+        return (0);
 }
 
 int
@@ -262,7 +272,6 @@ mt_clk_attach(device_t dev)
 {
         return (mt_clk_attach_sc(dev, device_get_softc(dev)));
 }
-
 
 static int
 mt_clk_detach(device_t dev)
