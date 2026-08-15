@@ -138,6 +138,6 @@ int mt_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
                          uint32_t set_mask);
 void mt_clkdev_device_lock(device_t dev);
 void mt_clkdev_device_unlock(device_t dev);
-void mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
+int mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
 const struct mt_clk_def *cldef);
 #endif
