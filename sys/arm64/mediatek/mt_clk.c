@@ -255,7 +255,7 @@ mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
         if (rv != 0) {
                 device_printf(dev, "failed to register clocks\n");
                 if (sc->syscon != NULL) {
-                        syscon_destroy(sc->syscon);
+                        syscon_generic_detach(dev);
                 }
 
                 if(sc->mem_res != NULL) {
