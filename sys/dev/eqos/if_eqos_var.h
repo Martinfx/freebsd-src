@@ -97,12 +97,11 @@ struct eqos_softc {
 	struct mtx		lock;
 	struct callout		callout;
 
+	/* Phandle of the MDIO bus subnode, 0 if the MAC has none. */
+	uint32_t		mdio_node;
+
 	struct eqos_ring	tx;
 	struct eqos_ring	rx;
-
-	struct ifmedia eqos_ifmedia;
-	int switch_attached;
-	int	phy_attached;
 };
 
 DECLARE_CLASS(eqos_driver);

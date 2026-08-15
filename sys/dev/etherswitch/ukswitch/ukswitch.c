@@ -107,7 +107,13 @@ ukswitch_probe(device_t dev)
 	bzero(sc, sizeof(*sc));
 
 	device_set_desc(dev, "Generic MDIO switch driver");
-	return (BUS_PROBE_DEFAULT);
+
+	/*
+	 * Configured by hint or identify only, i.e. always by name, so the
+	 * device carries DF_FIXEDCLASS.  Never bid for the nameless
+	 * children that mdio(4) enumerates from the device tree.
+	 */
+	return (BUS_PROBE_NOWILDCARD);
 }
 
 static int

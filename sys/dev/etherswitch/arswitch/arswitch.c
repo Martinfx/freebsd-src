@@ -27,6 +27,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_platform.h"
+
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/errno.h>
@@ -52,6 +54,11 @@
 #include <dev/iicbus/iicbus.h>
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
+#ifdef FDT
+#include <dev/ofw/ofw_bus.h>
+#include <dev/ofw/openfirm.h>
+#endif
+
 #include <dev/mdio/mdio.h>
 
 #include <dev/etherswitch/etherswitch.h>
@@ -99,6 +106,15 @@ arswitch_probe(device_t dev)
 
 	sc = device_get_softc(dev);
 	bzero(sc, sizeof(*sc));
+
+	/*
+	 * Devices enumerated from the device tree belong to the driver whose
+	 * "compatible" matches; do not poke MDIO registers on their behalf.
+	 */
+#ifdef FDT
+	if (ofw_bus_get_node(dev) != (phandle_t)-1)
+		return (ENXIO);
+#endif
 	sc->page = -1;
 
 	/* AR8xxx probe */

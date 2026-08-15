@@ -1,6 +1,9 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2016 Stanislav Galabov.
  * Copyright (c) 2023 Priit Trees.
- * All rights reserved.
+ * Copyright (c) 2025 Martin Filla <freebsd@sysctl.cz>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -22,12 +25,10 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#ifndef	__MTKSWITCH_MT7631_H__
-#define	__MTKSWITCH_MT7631_H__
+#ifndef	__MTKSWITCH_MT7531_H__
+#define	__MTKSWITCH_MT7531_H__
 
 #define	MTKSWITCH_ATC	0x0080
 #define		ATC_BUSY		(1u<<15)
@@ -46,6 +47,7 @@
 #define	MTKSWITCH_VAWD1	0x0094
 #define		VAWD1_IVL_MAC		(1u<<30)
 #define		VAWD1_VTAG_EN		(1u<<28)
+#define		VAWD1_PORT_MEMBER(p)	((1u<<16)<<(p))
 #define		VAWD1_MEMBER_OFF	16
 #define		VAWD1_MEMBER_MASK	0xff
 #define		VAWD1_FID_OFFSET	1
@@ -56,7 +58,11 @@
 #define		VAWD2_PORT_TAGGED(p)	(2u<<((p)*2))
 #define		VAWD2_PORT_MASK(p)	(3u<<((p)*2))
 
-#define MTKSWITCH_PIAC	0x701C
+/*
+ * Unlike MT7620/MT7621, the PHY indirect access control register lives
+ * in the switch's own register space.
+ */
+#define	MTKSWITCH_PIAC	0x701c
 #define		PIAC_PHY_ACS_ST		(1u<<31)
 #define		PIAC_MDIO_REG_ADDR_OFF	25
 #define		PIAC_MDIO_PHY_ADDR_OFF	20
@@ -74,7 +80,6 @@
 #define		PVC_VLAN_ATTR_MASK	(3u<<6)
 
 #define	MTKSWITCH_PPBV1(x)	MTKSWITCH_PORTREG(0x2014, (x))
-#define	MTKSWITCH_PPBV2(x)	MTKSWITCH_PORTREG(0x2018, (x))
 #define		PPBV_VID(v)		(((v)<<16) | (v))
 #define		PPBV_VID_FROM_REG(x)	((x) & 0xfff)
 #define		PPBV_VID_MASK		0xfff
@@ -89,19 +94,28 @@
 #define		PMCR_BKOFF_EN		(1u<<9)
 #define		PMCR_MAC_RX_EN		(1u<<13)
 #define		PMCR_MAC_TX_EN		(1u<<14)
-#define		PMCR_MAC_MODE		(1u<<16)
 #define		PMCR_IPG_CFG_RND	(1u<<18)
-#define         MT7531_PMCR_FORCE_TX_FC	(1u<<27)
-#define         MT7531_PMCR_FORCE_RX_FC	(1u<<28)
-#define         MT7531_PMCR_FORCE_DPX	(1u<<29)
-#define         MT7531_PMCR_FORCE_SPX	(1u<<30)
-#define         MT7531_PMCR_FORCE_LINK	(1u<<31)
-#define		MT7631_PMCR_FORCE_MODE	(MT7531_PMCR_FORCE_TX_FC | \
+/* MT7531 moved the per-parameter force enables to the top of PMCR. */
+#define		MT7531_PMCR_FORCE_TX_FC	(1u<<27)
+#define		MT7531_PMCR_FORCE_RX_FC	(1u<<28)
+#define		MT7531_PMCR_FORCE_DPX	(1u<<29)
+#define		MT7531_PMCR_FORCE_SPD	(1u<<30)
+#define		MT7531_PMCR_FORCE_LINK	(1u<<31)
+#define		MT7531_PMCR_FORCE_MODE	(MT7531_PMCR_FORCE_TX_FC | \
 		    MT7531_PMCR_FORCE_RX_FC | MT7531_PMCR_FORCE_DPX | \
-		    MT7531_PMCR_FORCE_SPX | MT7531_PMCR_FORCE_LINK)
+		    MT7531_PMCR_FORCE_SPD | MT7531_PMCR_FORCE_LINK)
 #define		PMCR_CFG_DEFAULT	(PMCR_BACKPR_EN | PMCR_BKOFF_EN | \
 		    PMCR_MAC_RX_EN | PMCR_MAC_TX_EN | PMCR_IPG_CFG_RND |  \
 		    PMCR_FORCE_RX_FC | PMCR_FORCE_TX_FC)
+
+/*
+ * Chip revision register; the upper half holds the chip ID.  MT7531
+ * puts it next to the hardware trap registers, not at 0x7ffc where
+ * MT7530 keeps it -- that address is in an unmapped page here and reads
+ * back as zero.
+ */
+#define	MTKSWITCH_CREV		0x781c
+#define		CREV_CHIP_ID(x)		(((x) >> 16) & 0xffff)
 
 #define	MTKSWITCH_PMSR(x)	MTKSWITCH_PORTREG(0x3008, (x))
 #define		PMSR_MAC_LINK_STS	(1u<<0)
@@ -113,12 +127,13 @@
 #define		PMSR_MAC_SPD_1000	2
 #define		PMSR_TX_FC_STS		(1u<<4)
 #define		PMSR_RX_FC_STS		(1u<<5)
+
+/* Indirect register access through the switch's MDIO slave interface. */
 #define	MTKSWITCH_REG_ADDR(r)	(((r) >> 6) & 0x3ff)
 #define	MTKSWITCH_REG_LO(r)	(((r) >> 2) & 0xf)
 #define	MTKSWITCH_REG_HI(r)	(1 << 4)
-#define MTKSWITCH_VAL_LO(v)	((v) & 0xffff)
-#define MTKSWITCH_VAL_HI(v)	(((v) >> 16) & 0xffff)
-#define MTKSWITCH_GLOBAL_PHY	31
+#define	MTKSWITCH_VAL_LO(v)	((v) & 0xffff)
+#define	MTKSWITCH_VAL_HI(v)	(((v) >> 16) & 0xffff)
 #define	MTKSWITCH_GLOBAL_REG	31
 
 #endif	/* __MTKSWITCH_MT7531_H__ */

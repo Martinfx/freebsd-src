@@ -27,15 +27,17 @@
 #ifndef	__MTKSWITCHVAR_H__
 #define	__MTKSWITCHVAR_H__
 
+#include <dev/ofw/openfirm.h>
+
 typedef enum {
-	MTK_SWITCH_NONE = 0,
+	MTK_SWITCH_NONE,
 	MTK_SWITCH_RT3050,
 	MTK_SWITCH_RT3352,
 	MTK_SWITCH_RT5350,
 	MTK_SWITCH_MT7620,
 	MTK_SWITCH_MT7621,
 	MTK_SWITCH_MT7628,
-	MTK_SWITCH_MT7531
+	MTK_SWITCH_MT7531,
 } mtk_switch_type;
 
 #define	MTK_IS_SWITCH(_sc, _type)		\
@@ -45,7 +47,9 @@ typedef enum {
 #define MTKSWITCH_MAX_PHYS	7
 #define	MTKSWITCH_CPU_PORT	6
 #define	MTKSWITCH_MT7531_CPU_PORT	5
-#define	MTKSWITCH_NUM_VLANS	4096
+
+/* Chip ID as read from the chip revision register. */
+#define	MTKSWITCH_MT7531_ID	0x7531
 
 #define	MTKSWITCH_LINK_UP	(1<<0)
 #define	MTKSWITCH_SPEED_MASK	(3<<1)
@@ -59,6 +63,8 @@ typedef enum {
 struct mtkswitch_softc {
 	struct mtx	sc_mtx;
 	device_t	sc_dev;
+	phandle_t	sc_node;
+	int		sc_mdio_addr;	/* MDIO address, MT7531 only. */
 	struct resource *sc_res;
 	int		numphys;
 	uint32_t	phymap;
@@ -72,8 +78,6 @@ struct mtkswitch_softc {
 	if_t ifp[MTKSWITCH_MAX_PHYS];
 	struct callout	callout_tick;
 	etherswitch_info_t info;
-	phandle_t	node;
-	int		vlans[MTKSWITCH_NUM_VLANS];
 
 	uint32_t	vlan_mode;
 
