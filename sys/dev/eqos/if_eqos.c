@@ -965,19 +965,63 @@ eqos_ioctl(if_t ifp, u_long cmd, caddr_t data)
 	return (error);
 }
 
+#ifdef FDT
+/*
+ * The device tree is the most authoritative source there is: the
+ * bootloader puts the board's real address there.  Both the current and
+ * the deprecated spelling are in use.
+ */
+static bool
+eqos_get_eaddr_fdt(struct eqos_softc *sc, uint8_t *eaddr)
+{
+	static const char *props[] = { "local-mac-address", "mac-address" };
+	phandle_t node;
+	u_int i;
+
+	node = ofw_bus_get_node(sc->dev);
+	if (node == 0 || node == (phandle_t)-1)
+		return (false);
+
+	for (i = 0; i < nitems(props); i++) {
+		if (OF_getprop(node, props[i], eaddr, ETHER_ADDR_LEN) !=
+		    ETHER_ADDR_LEN)
+			continue;
+		if (ETHER_IS_MULTICAST(eaddr) || ETHER_IS_ZERO(eaddr))
+			continue;
+		return (true);
+	}
+
+	return (false);
+}
+#endif
+
 static void
 eqos_get_eaddr(struct eqos_softc *sc, uint8_t *eaddr)
 {
+	struct ether_addr addr;
 	uint32_t maclo, machi;
+
+#ifdef FDT
+	if (eqos_get_eaddr_fdt(sc, eaddr))
+		return;
+#endif
 
 	maclo = htobe32(RD4(sc, GMAC_MAC_ADDRESS0_LOW));
 	machi = htobe16(RD4(sc, GMAC_MAC_ADDRESS0_HIGH) & 0xFFFF);
 
-	/* if no valid MAC address generate random */
+	/*
+	 * With nothing in the device tree and nothing left in the MAC by
+	 * the bootloader, derive an address from the machine's identity.
+	 * A random one would be different on every boot, which breaks
+	 * DHCP reservations, ARP caches and anything else that expects a
+	 * machine to keep its address.
+	 */
 	if (maclo == 0xffffffff && machi == 0xffff) {
-		maclo = 0xf2 | (arc4random() & 0xffff0000);
-		machi = arc4random() & 0x0000ffff;
+		ether_gen_addr_byname(device_get_nameunit(sc->dev), &addr);
+		memcpy(eaddr, addr.octet, ETHER_ADDR_LEN);
+		return;
 	}
+
 	eaddr[0] = maclo & 0xff;
 	eaddr[1] = (maclo >> 8) & 0xff;
 	eaddr[2] = (maclo >> 16) & 0xff;
