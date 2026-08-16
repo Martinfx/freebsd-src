@@ -73,12 +73,22 @@
 	MDIO_WRITEREG(device_get_parent((sc)->sc_dev),			\
 	    (sc)->sc_mdio_addr, (reg), (val))
 
-#define	MTKSWITCH_BUSY_RETRIES	5000
+/*
+ * Every register access is three MDIO frames on the parent bus, each of
+ * which busy-waits for hundreds of microseconds, so the retry budget has
+ * to be far smaller than it would be for a memory mapped part.  The
+ * operations we wait on - PIAC, ATC and VTCR - complete within a couple
+ * of MDC periods of the switch's internal SMI master, so this is
+ * generous for working hardware and bounded at roughly 65 ms for a part
+ * that has stopped answering.
+ */
+#define	MTKSWITCH_BUSY_RETRIES	200
+#define	MTKSWITCH_BUSY_DELAY	25
 
 /*
  * Wait for the bits in mask to clear in the given register.  Returns 0
  * with the last register contents in *valp on success, ETIMEDOUT if the
- * bits never cleared.
+ * bits never cleared or the bus stopped answering.
  */
 static int
 mtkswitch_reg_wait(struct mtkswitch_softc *sc, int reg, uint32_t mask,
@@ -88,63 +98,142 @@ mtkswitch_reg_wait(struct mtkswitch_softc *sc, int reg, uint32_t mask,
 	int retries;
 
 	for (retries = MTKSWITCH_BUSY_RETRIES; retries > 0; retries--) {
+		sc->sc_mdio_error = false;
 		val = sc->hal.mtkswitch_read(sc, reg);
+		if (sc->sc_mdio_error)
+			return (ENXIO);
 		if ((val & mask) == 0) {
 			if (valp != NULL)
 				*valp = val;
 			return (0);
 		}
-		DELAY(10);
+		DELAY(MTKSWITCH_BUSY_DELAY);
 	}
 	device_printf(sc->sc_dev, "timeout waiting on register 0x%08x\n", reg);
 	return (ETIMEDOUT);
 }
 
+/*
+ * The MDIO interface reports a failed transfer as a negative value.  That
+ * has to be caught here: the switch register is assembled from two reads,
+ * so an error would otherwise turn into a plausible looking register
+ * value - and, worse, one whose busy bit reads as clear.
+ */
 static uint32_t
 mtkswitch_reg_read32(struct mtkswitch_softc *sc, int reg)
 {
-	uint32_t low, hi;
+	int low, hi;
 
 	MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_GLOBAL_REG,
 	    MTKSWITCH_REG_ADDR(reg));
 	low = MTKSWITCH_MDIO_READ(sc, MTKSWITCH_REG_LO(reg));
-	hi = MTKSWITCH_MDIO_READ(sc, MTKSWITCH_REG_HI(reg));
-	return (low | (hi << 16));
+	hi = MTKSWITCH_MDIO_READ(sc, MTKSWITCH_REG_HI);
+	if (low < 0 || hi < 0) {
+		sc->sc_mdio_error = true;
+		return (0xffffffff);
+	}
+	return ((low & 0xffff) | ((hi & 0xffff) << 16));
 }
 
 static uint32_t
 mtkswitch_reg_write32(struct mtkswitch_softc *sc, int reg, uint32_t val)
 {
+	int err;
 
-	MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_GLOBAL_REG,
+	err = MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_GLOBAL_REG,
 	    MTKSWITCH_REG_ADDR(reg));
-	MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_REG_LO(reg),
-	    MTKSWITCH_VAL_LO(val));
-	MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_REG_HI(reg),
-	    MTKSWITCH_VAL_HI(val));
+	if (err == 0)
+		err = MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_REG_LO(reg),
+		    MTKSWITCH_VAL_LO(val));
+	if (err == 0)
+		err = MTKSWITCH_MDIO_WRITE(sc, MTKSWITCH_REG_HI,
+		    MTKSWITCH_VAL_HI(val));
+	if (err != 0)
+		sc->sc_mdio_error = true;
+
 	return (0);
 }
 
 /*
  * The PHYs integrated in MT7531 are accessed through the switch's own
- * PHY indirect access control register.
+ * PHY indirect access control register.  Failures are reported as
+ * 0xffff, the value an idle MDIO bus reads back as: mii_attach() takes
+ * that as "no PHY at this address" and moves on, whereas -1 would have
+ * it attach ukphy(4) to an address that never answered.
  */
+#define	MTKSWITCH_PHY_ERR	0xffff
+
 static int
-mtkswitch_phy_read_locked(struct mtkswitch_softc *sc, int phy, int reg)
+mtkswitch_piac(struct mtkswitch_softc *sc, uint32_t cmd, uint32_t *datap)
 {
 	uint32_t data;
 
 	if (mtkswitch_reg_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST,
 	    NULL) != 0)
-		return (-1);
-	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST |
-	    PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
-	    (phy << PIAC_MDIO_PHY_ADDR_OFF) | PIAC_MDIO_CMD_READ);
+		return (ETIMEDOUT);
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST | cmd);
 	if (mtkswitch_reg_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST,
 	    &data) != 0)
-		return (-1);
+		return (ETIMEDOUT);
+	if (datap != NULL)
+		*datap = data & PIAC_MDIO_RW_DATA_MASK;
 
-	return ((int)(data & PIAC_MDIO_RW_DATA_MASK));
+	return (0);
+}
+
+static int
+mtkswitch_phy_read_locked(struct mtkswitch_softc *sc, int phy, int reg)
+{
+	uint32_t data;
+
+	if (mtkswitch_piac(sc, PIAC_MDIO_ST | PIAC_MDIO_CMD_READ |
+	    (reg << PIAC_MDIO_REG_ADDR_OFF) |
+	    (phy << PIAC_MDIO_PHY_ADDR_OFF), &data) != 0)
+		return (MTKSWITCH_PHY_ERR);
+
+	return ((int)data);
+}
+
+/*
+ * Clause 45 access, needed for the vendor MMDs of the embedded PHYs.
+ * The address phase and the data phase are two separate PIAC commands,
+ * both carrying the device address in the field clause 22 uses for the
+ * register number.
+ *
+ * Unused for now: the GPHY core PLL power-up that needs them lives in a
+ * part of the register map we do not have documentation for yet.
+ */
+static int __unused
+mtkswitch_phy_read_c45_locked(struct mtkswitch_softc *sc, int phy, int devad,
+    int reg)
+{
+	uint32_t sel, data;
+
+	sel = PIAC_MDIO_ST_C45 | (devad << PIAC_MDIO_REG_ADDR_OFF) |
+	    (phy << PIAC_MDIO_PHY_ADDR_OFF);
+	if (mtkswitch_piac(sc, sel | PIAC_MDIO_CMD_ADDR |
+	    (reg & PIAC_MDIO_RW_DATA_MASK), NULL) != 0)
+		return (MTKSWITCH_PHY_ERR);
+	if (mtkswitch_piac(sc, sel | PIAC_MDIO_CMD_READ_C45, &data) != 0)
+		return (MTKSWITCH_PHY_ERR);
+
+	return ((int)data);
+}
+
+static int __unused
+mtkswitch_phy_write_c45_locked(struct mtkswitch_softc *sc, int phy, int devad,
+    int reg, int val)
+{
+	uint32_t sel;
+
+	sel = PIAC_MDIO_ST_C45 | (devad << PIAC_MDIO_REG_ADDR_OFF) |
+	    (phy << PIAC_MDIO_PHY_ADDR_OFF);
+	if (mtkswitch_piac(sc, sel | PIAC_MDIO_CMD_ADDR |
+	    (reg & PIAC_MDIO_RW_DATA_MASK), NULL) != 0)
+		return (ETIMEDOUT);
+
+	return (mtkswitch_piac(sc, sel | PIAC_MDIO_CMD_WRITE |
+	    (val & PIAC_MDIO_RW_DATA_MASK), NULL));
 }
 
 static int
@@ -154,7 +243,7 @@ mtkswitch_phy_read(device_t dev, int phy, int reg)
 	int data;
 
 	if ((phy < 0 || phy >= 32) || (reg < 0 || reg >= 32))
-		return (ENXIO);
+		return (MTKSWITCH_PHY_ERR);
 
 	MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
 	MTKSWITCH_LOCK(sc);
@@ -169,15 +258,10 @@ mtkswitch_phy_write_locked(struct mtkswitch_softc *sc, int phy, int reg,
     int val)
 {
 
-	if (mtkswitch_reg_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST,
-	    NULL) != 0)
-		return (ETIMEDOUT);
-	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST |
-	    PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
-	    (phy << PIAC_MDIO_PHY_ADDR_OFF) | (val & PIAC_MDIO_RW_DATA_MASK) |
-	    PIAC_MDIO_CMD_WRITE);
-	return (mtkswitch_reg_wait(sc, MTKSWITCH_PIAC, PIAC_PHY_ACS_ST,
-	    NULL));
+	return (mtkswitch_piac(sc, PIAC_MDIO_ST | PIAC_MDIO_CMD_WRITE |
+	    (reg << PIAC_MDIO_REG_ADDR_OFF) |
+	    (phy << PIAC_MDIO_PHY_ADDR_OFF) |
+	    (val & PIAC_MDIO_RW_DATA_MASK), NULL));
 }
 
 static int
@@ -228,16 +312,112 @@ mtkswitch_reg_write(device_t dev, int reg, int val)
 	return (0);
 }
 
+/*
+ * Read the strap status.  The bootloader may have overridden the pin
+ * strapping through SWSTRAP, in which case that is what the hardware is
+ * actually running on, so prefer it.  [DS 9.2, p.756-757]
+ */
+static void
+mtkswitch_read_strap(struct mtkswitch_softc *sc)
+{
+	uint32_t strap, swstrap;
+
+	strap = sc->hal.mtkswitch_read(sc, MTKSWITCH_STRAP);
+	swstrap = sc->hal.mtkswitch_read(sc, MTKSWITCH_SWSTRAP);
+	if ((swstrap & STRAP_CHG_STRAP) != 0)
+		strap = swstrap;
+	sc->sc_strap = strap;
+
+	if (bootverbose)
+		device_printf(sc->sc_dev,
+		    "strap 0x%04x: %s MHz XTAL, embedded PHYs %s, EEE %s%s\n",
+		    strap & 0xffff,
+		    (strap & STRAP_XTAL25) != 0 ? "25" : "40",
+		    (strap & STRAP_PHY_EN) != 0 ? "enabled" : "disabled",
+		    (strap & STRAP_EEE_DIS) != 0 ? "disabled" : "enabled",
+		    (swstrap & STRAP_CHG_STRAP) != 0 ? " (software strap)" : "");
+}
+
+/*
+ * Bring the switch to a known state.
+ *
+ * The comment this replaced claimed the bootloader had already done the
+ * bring-up.  That is not true on the boards we care about: the reset
+ * line of the switch is described as the MAC's "snps,reset-gpio", so the
+ * ethernet driver pulses it during its own attach, moments before this
+ * driver ever sees the part.  Whatever the bootloader configured is gone
+ * by then.
+ *
+ * The datasheet requires all MACs to be forced link-down before either
+ * reset bit is set, and exposes the completion of the internal table
+ * initialisation in the same register, so there is no need to guess at a
+ * settling time.  [DS 8.4, p.734]
+ */
 static int
 mtkswitch_reset(struct mtkswitch_softc *sc)
 {
+	uint32_t val;
+	int err, port, retries;
+
+	val = 0;
+	/* Assume the VLAN table needs clearing until the hardware says so. */
+	sc->sc_vlans_dirty = true;
+	mtkswitch_read_strap(sc);
+
+	/* Force every MAC link-down, as the reset bits require. */
+	for (port = 0; port < sc->numports; port++)
+		sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port),
+		    MT7531_PMCR_FORCE_MODE);
+
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_SYS_CTRL,
+	    SYS_CTRL_SW_SYS_RST | SYS_CTRL_SW_REG_RST);
 
 	/*
-	 * The switch requires a full bring-up (PLLs, port interface
-	 * modes) after a reset, which the bootloader has already done
-	 * for us.  Do not reset it.
+	 * Both reset bits are self clearing, and the MDIO registers are
+	 * part of what SW_REG_RST puts back to defaults, so give the bus
+	 * a moment before talking to it again.
 	 */
-	return (0);
+	DELAY(1000);
+
+	for (retries = 100; retries > 0; retries--) {
+		sc->sc_mdio_error = false;
+		val = sc->hal.mtkswitch_read(sc, MTKSWITCH_SYS_CTRL);
+		if (!sc->sc_mdio_error &&
+		    (val & SYS_CTRL_TAB_INIT_DONE) == SYS_CTRL_TAB_INIT_DONE)
+			break;
+		DELAY(1000);
+	}
+	/*
+	 * Not fatal: the read of the chip revision below is the authoritative
+	 * test of whether the part survived the reset, and treating a status
+	 * bit that never came up as fatal would keep the switch from
+	 * attaching at all on a part whose table initialisation we have
+	 * misread.  Say so and carry on.
+	 */
+	if (retries == 0)
+		device_printf(sc->sc_dev,
+		    "table initialisation did not complete (SYS_CTRL 0x%08x)\n",
+		    val);
+	else
+		/*
+		 * The hardware has just initialised the VLAN table for us,
+		 * so the software pass over it can be skipped until
+		 * something changes it.
+		 */
+		sc->sc_vlans_dirty = false;
+
+	/* Make sure the part still answers after the reset. */
+	sc->sc_mdio_error = false;
+	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_CREV);
+	err = sc->sc_mdio_error ? ENXIO : 0;
+	if (err == 0 && CREV_CHIP_ID(val) != MTKSWITCH_MT7531_ID) {
+		device_printf(sc->sc_dev,
+		    "switch stopped responding after reset (CREV 0x%08x)\n",
+		    val);
+		err = ENXIO;
+	}
+
+	return (err);
 }
 
 static int
@@ -394,9 +574,16 @@ mtkswitch_vlan_init_hw(struct mtkswitch_softc *sc)
 	MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
 	MTKSWITCH_LOCK(sc);
 
-	/* Reset all VLANs to defaults first */
-	for (i = 0; i < sc->info.es_nvlangroups; i++)
-		mtkswitch_invalidate_vlan(sc, i);
+	/*
+	 * Reset all VLANs to defaults first.  Each entry costs two waits
+	 * on VTCR and a handful of MDIO frames, so walking the whole 4096
+	 * entry VID space takes seconds; skip it entirely when the switch
+	 * reset has just done the same thing in hardware.
+	 */
+	if (sc->sc_vlans_dirty) {
+		for (i = 0; i < sc->info.es_nvlangroups; i++)
+			mtkswitch_invalidate_vlan(sc, i);
+	}
 
 	/* Now, add all ports as untagged members of VLAN 1 */
 	val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID;
@@ -411,6 +598,8 @@ mtkswitch_vlan_init_hw(struct mtkswitch_softc *sc)
 	/* Set all port PVIDs to 1 */
 	for (i = 0; i < sc->info.es_nports; i++)
 		sc->hal.mtkswitch_vlan_set_pvid(sc, i, 1);
+
+	sc->sc_vlans_dirty = true;
 
 	MTKSWITCH_UNLOCK(sc);
 }
@@ -507,6 +696,7 @@ mtkswitch_vlan_setvgroup(struct mtkswitch_softc *sc, etherswitch_vlangroup_t *v)
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_VAWD2, val);
 
 	/* Write the VLAN entry */
+	sc->sc_vlans_dirty = true;
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_VTCR, VTCR_BUSY |
 	    VTCR_FUNC_VID_WRITE | (v->es_vid & VTCR_VID_MASK));
 	if (mtkswitch_reg_wait(sc, MTKSWITCH_VTCR, VTCR_BUSY, &val) != 0) {

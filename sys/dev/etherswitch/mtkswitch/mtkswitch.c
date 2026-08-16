@@ -341,15 +341,21 @@ mtkswitch_attach(device_t dev)
 	if (sc->sc_switchtype == MTK_SWITCH_MT7531) {
 		uint32_t crev;
 
+		sc->sc_mdio_error = false;
 		crev = sc->hal.mtkswitch_read(sc, MTKSWITCH_CREV);
-		if (CREV_CHIP_ID(crev) != MTKSWITCH_MT7531_ID) {
+		if (sc->sc_mdio_error ||
+		    CREV_CHIP_ID(crev) != MTKSWITCH_MT7531_ID) {
 			device_printf(dev,
 			    "switch does not respond (CREV 0x%08x, chip id "
-			    "0x%04x)\n", crev, CREV_CHIP_ID(crev));
+			    "0x%04x)%s\n", crev, CREV_CHIP_ID(crev),
+			    sc->sc_mdio_error ? ", MDIO error" : "");
 			mtkswitch_mdio_diag(dev);
 			err = ENXIO;
 			goto fail;
 		}
+		if (bootverbose)
+			device_printf(dev, "MT7531 revision %u\n",
+			    CREV_CHIP_REV(crev));
 	}
 
 	/* Reset the switch */
@@ -401,8 +407,12 @@ mtkswitch_attach(device_t dev)
 fail:
 	/*
 	 * A driver whose DEVICE_ATTACH fails does not get DEVICE_DETACH, and
-	 * newbus frees the softc afterwards, so unwind by hand.
+	 * newbus neither detaches nor deletes the children it created before
+	 * freeing the softc, so unwind by hand.  The miibus children have to
+	 * go first: they hold the pseudo interfaces mtkswitch_free_phys() is
+	 * about to free.
 	 */
+	(void)bus_generic_detach(dev);
 	mtkswitch_free_phys(sc);
 	if (sc->sc_res != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY, 0, sc->sc_res);

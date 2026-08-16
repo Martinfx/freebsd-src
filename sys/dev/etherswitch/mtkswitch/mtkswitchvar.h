@@ -65,6 +65,9 @@ struct mtkswitch_softc {
 	device_t	sc_dev;
 	phandle_t	sc_node;
 	int		sc_mdio_addr;	/* MDIO address, MT7531 only. */
+	uint32_t	sc_strap;	/* Strap status, MT7531 only. */
+	bool		sc_mdio_error;	/* Parent bus failed a transfer. */
+	bool		sc_vlans_dirty;	/* VLAN table touched since reset. */
 	struct resource *sc_res;
 	int		numphys;
 	uint32_t	phymap;

@@ -59,17 +59,67 @@
 #define		VAWD2_PORT_MASK(p)	(3u<<((p)*2))
 
 /*
+ * Switch system control, module SYS at base 0x7000.  [DS 8.4, p.732]
+ */
+#define	MTKSWITCH_SYS_CTRL	0x7000
+#define		SYS_CTRL_ACL_TAB_INIT	(1u<<22)
+#define		SYS_CTRL_MAC_TAB_INIT	(1u<<21)
+#define		SYS_CTRL_VLAN_TAB_INIT	(1u<<20)
+#define		SYS_CTRL_BMU_MEM_INIT	(1u<<16)
+#define		SYS_CTRL_TAB_INIT_DONE	(SYS_CTRL_ACL_TAB_INIT |	\
+			    SYS_CTRL_MAC_TAB_INIT | SYS_CTRL_VLAN_TAB_INIT | \
+			    SYS_CTRL_BMU_MEM_INIT)
+#define		SYS_CTRL_SW_SYS_RST	(1u<<1)
+#define		SYS_CTRL_SW_REG_RST	(1u<<0)
+
+/*
+ * Interrupt enable and status.  Only the per-PHY link change bits are of
+ * interest here: the switch has no interrupt line wired up on the boards
+ * we support, but polling the single status register is a great deal
+ * cheaper than reading the status of every port.  [DS 8.4, p.736-739]
+ */
+#define	MTKSWITCH_SYS_INT_EN	0x7008
+#define	MTKSWITCH_SYS_INT_STS	0x700c
+#define		SYS_INT_PHY_LC(p)	(1u<<(p))
+#define		SYS_INT_PHY_LC_ALL	0x7f
+
+/*
  * Unlike MT7620/MT7621, the PHY indirect access control register lives
- * in the switch's own register space.
+ * in the switch's own register space.  [DS 8.4, p.743-744]
  */
 #define	MTKSWITCH_PIAC	0x701c
 #define		PIAC_PHY_ACS_ST		(1u<<31)
 #define		PIAC_MDIO_REG_ADDR_OFF	25
 #define		PIAC_MDIO_PHY_ADDR_OFF	20
+#define		PIAC_MDIO_CMD_MASK	(3u<<18)
+#define		PIAC_MDIO_CMD_ADDR	(0u<<18)	/* Clause 45 only. */
 #define		PIAC_MDIO_CMD_WRITE	(1u<<18)
 #define		PIAC_MDIO_CMD_READ	(2u<<18)
-#define		PIAC_MDIO_ST		(1u<<16)
+#define		PIAC_MDIO_CMD_READ_C45	(3u<<18)
+#define		PIAC_MDIO_ST_MASK	(3u<<16)
+#define		PIAC_MDIO_ST_C45	(0u<<16)
+#define		PIAC_MDIO_ST		(1u<<16)	/* Clause 22. */
 #define		PIAC_MDIO_RW_DATA_MASK	0xffff
+
+/*
+ * Per-port PHY status, as maintained by the switch's own SMI master or by
+ * the side band signals of the embedded PHYs.  One register covers four
+ * ports, so the state of the whole switch is two reads rather than seven.
+ * [DS 8.4, p.744-748]
+ */
+#define	MTKSWITCH_PSR_P3_P0	0x7020
+#define	MTKSWITCH_PSR_P6_P4	0x7024
+#define		PSR_REG(p)		(((p) < 4) ? MTKSWITCH_PSR_P3_P0 : \
+			    MTKSWITCH_PSR_P6_P4)
+#define		PSR_SHIFT(p)		(((p) & 3) * 8)
+#define		PSR_PORT(x, p)		(((x) >> PSR_SHIFT(p)) & 0xff)
+#define		PSR_LINKUP		(1u<<0)
+#define		PSR_SPEED(x)		(((x) >> 1) & 0x3)
+#define		PSR_SPEED_10		0
+#define		PSR_SPEED_100		1
+#define		PSR_SPEED_1000		2
+#define		PSR_DUPLEX		(1u<<3)
+#define		PSR_XFC			(1u<<4)
 
 #define	MTKSWITCH_PORTREG(r, p)	((r) + ((p) * 0x100))
 
@@ -109,13 +159,25 @@
 		    PMCR_FORCE_RX_FC | PMCR_FORCE_TX_FC)
 
 /*
- * Chip revision register; the upper half holds the chip ID.  MT7531
- * puts it next to the hardware trap registers, not at 0x7ffc where
- * MT7530 keeps it -- that address is in an unmapped page here and reads
- * back as zero.
+ * Module TOP at base 0x7800, holding the strap status and the chip
+ * revision.  Note that MT7531 keeps the revision here rather than at
+ * 0x7ffc, where MT7530 has it.  [DS 9.2, p.756-759]
  */
+#define	MTKSWITCH_STRAP		0x7800
+#define	MTKSWITCH_SWSTRAP	0x7804
+#define		STRAP_CHG_STRAP		(1u<<8)	/* SWSTRAP only. */
+#define		STRAP_XTAL25		(1u<<7)	/* 0: 40MHz, 1: 25MHz */
+#define		STRAP_PHY_EN		(1u<<6)
+#define		STRAP_EEP_DIS		(1u<<5)
+#define		STRAP_EEE_DIS		(1u<<4)
+#define		STRAP_PLL_SW		(1u<<3)
+#define		STRAP_PON_LT		(1u<<2)
+#define		STRAP_EEP_MODE		(1u<<1)
+#define		STRAP_TM_DIS		(1u<<0)
+
 #define	MTKSWITCH_CREV		0x781c
 #define		CREV_CHIP_ID(x)		(((x) >> 16) & 0xffff)
+#define		CREV_CHIP_REV(x)	((x) & 0xf)
 
 #define	MTKSWITCH_PMSR(x)	MTKSWITCH_PORTREG(0x3008, (x))
 #define		PMSR_MAC_LINK_STS	(1u<<0)
@@ -131,7 +193,7 @@
 /* Indirect register access through the switch's MDIO slave interface. */
 #define	MTKSWITCH_REG_ADDR(r)	(((r) >> 6) & 0x3ff)
 #define	MTKSWITCH_REG_LO(r)	(((r) >> 2) & 0xf)
-#define	MTKSWITCH_REG_HI(r)	(1 << 4)
+#define	MTKSWITCH_REG_HI	(1 << 4)
 #define	MTKSWITCH_VAL_LO(v)	((v) & 0xffff)
 #define	MTKSWITCH_VAL_HI(v)	(((v) >> 16) & 0xffff)
 #define	MTKSWITCH_GLOBAL_REG	31

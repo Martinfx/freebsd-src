@@ -136,7 +136,13 @@ eqos_miibus_readreg(device_t dev, int phy, int reg)
 	if (!retry) {
 		device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		    phy, reg);
-		return (ETIMEDOUT);
+		/*
+		 * MIIBUS_READREG() and MDIO_READREG() return the register
+		 * contents, so a failure has to be reported out of band.
+		 * An errno here would be indistinguishable from data - and
+		 * mdio(4) and the ethernet switch drivers do act on it.
+		 */
+		return (-1);
 	}
 	return (val);
 }
