@@ -84,6 +84,17 @@
 #define		SYS_INT_PHY_LC_ALL	0x7f
 
 /*
+ * PHY polling and SMI master control.  PHY_AP_EN decides, per port,
+ * whether the status registers below are fed by the switch's own MDIO
+ * master polling the PHY or by side band signals; it is clear out of
+ * reset, and the status registers stay empty until it is set.
+ * [DS 8.4, p.741-743]
+ */
+#define	MTKSWITCH_PHY_POLL	0x7018
+#define		PHY_POLL_AP_EN(p)	(1u<<(24 + (p)))
+#define		PHY_POLL_AP_EN_MASK	(0x7fu<<24)
+
+/*
  * Unlike MT7620/MT7621, the PHY indirect access control register lives
  * in the switch's own register space.  [DS 8.4, p.743-744]
  */
@@ -137,6 +148,8 @@
 #define	MTKSWITCH_PMCR(x)	MTKSWITCH_PORTREG(0x3000, (x))
 #define		PMCR_FORCE_LINK		(1u<<0)
 #define		PMCR_FORCE_DPX		(1u<<1)
+#define		PMCR_FORCE_SPD_10	(0u<<2)
+#define		PMCR_FORCE_SPD_100	(1u<<2)
 #define		PMCR_FORCE_SPD_1000	(2u<<2)
 #define		PMCR_FORCE_TX_FC	(1u<<4)
 #define		PMCR_FORCE_RX_FC	(1u<<5)

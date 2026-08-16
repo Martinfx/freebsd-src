@@ -68,6 +68,7 @@ struct mtkswitch_softc {
 	uint32_t	sc_strap;	/* Strap status, MT7531 only. */
 	bool		sc_mdio_error;	/* Parent bus failed a transfer. */
 	bool		sc_vlans_dirty;	/* VLAN table touched since reset. */
+	bool		sc_use_psr;	/* PHY status registers are fed. */
 	struct resource *sc_res;
 	int		numphys;
 	uint32_t	phymap;
@@ -94,6 +95,13 @@ struct mtkswitch_softc {
 		void (* mtkswitch_port_init) (struct mtkswitch_softc *, int);
 		uint32_t (* mtkswitch_get_port_status)
 		    (struct mtkswitch_softc *, int);
+		/*
+		 * Optional.  Called when a port's link state changed, for
+		 * parts whose MAC does not follow its PHY on its own and
+		 * has to be told the negotiated parameters.
+		 */
+		void (* mtkswitch_port_link_update)
+		    (struct mtkswitch_softc *, int, uint32_t);
 
 		/* ATU functions */
 		int (* mtkswitch_atu_flush) (struct mtkswitch_softc *);

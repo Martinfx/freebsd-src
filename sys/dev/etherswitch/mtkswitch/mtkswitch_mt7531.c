@@ -428,11 +428,43 @@ mtkswitch_hw_setup(struct mtkswitch_softc *sc)
 	return (0);
 }
 
+/*
+ * Have the switch's own MDIO master poll the embedded PHYs, which is what
+ * fills in the per-port status registers.  Without this they read back as
+ * zero and the only view of a port's state is its MAC, which on this part
+ * does not follow the PHY by itself.
+ *
+ * Not every configuration can do this, so check that the enables stick and
+ * remember the answer; mtkswitch_get_port_status() falls back to the MAC
+ * status registers when they do not.  [DS 8.4, p.741]
+ */
 static int
 mtkswitch_hw_global_setup(struct mtkswitch_softc *sc)
 {
+	uint32_t val, want;
+	int phy;
 
 	/* Called early and hence unlocked */
+
+	want = 0;
+	for (phy = 0; phy < sc->numphys; phy++)
+		if ((sc->phymap & (1u << phy)) != 0)
+			want |= PHY_POLL_AP_EN(phy);
+
+	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_PHY_POLL);
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_PHY_POLL, val | want);
+
+	sc->sc_mdio_error = false;
+	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_PHY_POLL);
+	sc->sc_use_psr = !sc->sc_mdio_error && (val & want) == want;
+	if (!sc->sc_use_psr)
+		device_printf(sc->sc_dev, "PHY auto-polling did not enable "
+		    "(PHY_POLL 0x%08x), port link state may be unreliable\n",
+		    val);
+	else if (bootverbose)
+		device_printf(sc->sc_dev, "PHY auto-polling enabled for %#x\n",
+		    sc->phymap);
+
 	return (0);
 }
 
@@ -453,14 +485,62 @@ mtkswitch_port_init(struct mtkswitch_softc *sc, int port)
 	val &= ~PVC_VLAN_ATTR_MASK;
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_PVC(port), val);
 
-	val = PMCR_CFG_DEFAULT;
+	/*
+	 * The MAC of this part does not pick up the negotiated parameters
+	 * from its PHY, so every port runs in forced mode and gets told
+	 * what they are: the CPU port once, from the fixed link in the
+	 * device tree, and the user ports on each link change.  Bring them
+	 * up forced-down; mtkswitch_port_link_update() takes it from there.
+	 */
+	val = PMCR_CFG_DEFAULT | MT7531_PMCR_FORCE_MODE;
 	if (port == sc->cpuport)
-		val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
-		    MT7531_PMCR_FORCE_MODE;
+		val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000;
 	/* Set port's MAC to default settings */
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port), val);
 }
 
+/*
+ * Tell a port's MAC what its PHY negotiated.  Called from the link state
+ * poll with the softc lock held.
+ */
+static void
+mtkswitch_port_link_update(struct mtkswitch_softc *sc, int port,
+    uint32_t portstatus)
+{
+	uint32_t val;
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+
+	val = PMCR_CFG_DEFAULT | MT7531_PMCR_FORCE_MODE;
+	if ((portstatus & MTKSWITCH_LINK_UP) != 0) {
+		val |= PMCR_FORCE_LINK;
+		switch (portstatus & MTKSWITCH_SPEED_MASK) {
+		case MTKSWITCH_SPEED_1000:
+			val |= PMCR_FORCE_SPD_1000;
+			break;
+		case MTKSWITCH_SPEED_100:
+			val |= PMCR_FORCE_SPD_100;
+			break;
+		default:
+			val |= PMCR_FORCE_SPD_10;
+			break;
+		}
+		if ((portstatus & MTKSWITCH_DUPLEX) != 0)
+			val |= PMCR_FORCE_DPX;
+	}
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port), val);
+}
+
+/*
+ * Report the state of a port.
+ *
+ * For a port with a PHY this has to come from the PHY, not from the MAC:
+ * the MAC is in forced mode and only knows what we last told it, so using
+ * it here would be circular - and it is also what the ukphy(4) attached to
+ * the same port reports, so the two would take turns overwriting each
+ * other's answer.  The CPU port has no PHY and its MAC status is the only
+ * thing there is.
+ */
 static uint32_t
 mtkswitch_get_port_status(struct mtkswitch_softc *sc, int port)
 {
@@ -468,6 +548,28 @@ mtkswitch_get_port_status(struct mtkswitch_softc *sc, int port)
 
 	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 	res = 0;
+
+	if (sc->sc_use_psr && (sc->phymap & (1u << port)) != 0) {
+		val = sc->hal.mtkswitch_read(sc, PSR_REG(port));
+		val = PSR_PORT(val, port);
+
+		if (val & PSR_LINKUP)
+			res |= MTKSWITCH_LINK_UP;
+		if (val & PSR_DUPLEX)
+			res |= MTKSWITCH_DUPLEX;
+		tmp = PSR_SPEED(val);
+		if (tmp == PSR_SPEED_100)
+			res |= MTKSWITCH_SPEED_100;
+		else if (tmp == PSR_SPEED_1000)
+			res |= MTKSWITCH_SPEED_1000;
+		else
+			res |= MTKSWITCH_SPEED_10;
+		if (val & PSR_XFC)
+			res |= MTKSWITCH_TXFLOW | MTKSWITCH_RXFLOW;
+
+		return (res);
+	}
+
 	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_PMSR(port));
 
 	if (val & PMSR_MAC_LINK_STS)
@@ -755,6 +857,7 @@ mtk_attach_switch_mt7531(struct mtkswitch_softc *sc)
 	sc->hal.mtkswitch_hw_global_setup = mtkswitch_hw_global_setup;
 	sc->hal.mtkswitch_port_init = mtkswitch_port_init;
 	sc->hal.mtkswitch_get_port_status = mtkswitch_get_port_status;
+	sc->hal.mtkswitch_port_link_update = mtkswitch_port_link_update;
 	sc->hal.mtkswitch_atu_flush = mtkswitch_atu_flush;
 	sc->hal.mtkswitch_port_vlan_setup = mtkswitch_port_vlan_setup;
 	sc->hal.mtkswitch_port_vlan_get = mtkswitch_port_vlan_get;

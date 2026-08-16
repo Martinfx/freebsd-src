@@ -525,7 +525,7 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 	struct mii_data *mii;
 	struct mii_softc *miisc;
 	uint32_t portstatus;
-	int i, port_flap = 0;
+	int i, port, port_flap = 0;
 
 	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
@@ -533,8 +533,8 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 		if (sc->miibus[i] == NULL)
 			continue;
 		mii = device_get_softc(sc->miibus[i]);
-		portstatus = sc->hal.mtkswitch_get_port_status(sc,
-		    mtkswitch_portforphy(i));
+		port = mtkswitch_portforphy(i);
+		portstatus = sc->hal.mtkswitch_get_port_status(sc, port);
 
 		/* If a port has flapped - mark it so we can flush the ATU */
 		if (((mii->mii_media_status & IFM_ACTIVE) == 0 &&
@@ -542,6 +542,13 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 		    ((mii->mii_media_status & IFM_ACTIVE) != 0 &&
 		    (portstatus & MTKSWITCH_LINK_UP) == 0)) {
 			port_flap = 1;
+			/*
+			 * Some parts keep their MACs in forced mode and
+			 * have to be told what the PHY negotiated.
+			 */
+			if (sc->hal.mtkswitch_port_link_update != NULL)
+				sc->hal.mtkswitch_port_link_update(sc, port,
+				    portstatus);
 		}
 
 		mtkswitch_update_ifmedia(portstatus, &mii->mii_media_status,
