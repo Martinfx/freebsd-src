@@ -18,11 +18,6 @@
 
 #include "mt_clk.h"
 
-struct audsys_softc {
-    struct simplebus_softc simplebus_sc;
-    struct mt_clk_softc clk_sc;
-};
-
 static struct ofw_compat_data compat_data[] = {
     {"mediatek,mt7622-audsys", 1},
     {NULL, 0},
@@ -96,26 +91,12 @@ audio_clk_probe(device_t dev)
 static int
 audio_clk_attach(device_t dev)
 {
-        struct audsys_softc *sc;
-        phandle_t node;
+        struct mt_clk_softc *sc;
 
         sc = device_get_softc(dev);
-        sc->clk_sc.clk_def = &clk_def;
-        node = ofw_bus_get_node(dev);
-        if (node == -1) {
-                return (ENXIO);
-        }
+        sc->clk_def = &clk_def;
 
-        bus_identify_children(dev);
-
-        simplebus_init(dev, node);
-        for (node = OF_child(node); node > 0; node = OF_peer(node)) {
-                simplebus_add_device(dev, node, 0, NULL, -1, NULL);
-        }
-
-        bus_attach_children(dev);
-
-        return (mt_clk_attach_sc(dev, &sc->clk_sc));
+        return (mt_clk_attach(dev));
 }
 
 static device_method_t mt7622_audio_methods[] = {
@@ -124,8 +105,8 @@ static device_method_t mt7622_audio_methods[] = {
         DEVMETHOD_END
 };
 
-DEFINE_CLASS_1(mt7622_audio, mt7622_audio_driver, mt7622_audio_methods,
-sizeof(struct audsys_softc), simplebus_driver);
+DEFINE_CLASS_2(mt7622_audio, mt7622_audio_driver, mt7622_audio_methods,
+sizeof(struct mt_clk_softc), simplebus_driver, mt_clk_driver);
 
 EARLY_DRIVER_MODULE(mt7622_audio, simplebus, mt7622_audio_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);

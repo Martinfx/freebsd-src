@@ -523,9 +523,8 @@ static device_method_t mt7622_topckgen_methods[] = {
 
 };
 
-DEFINE_CLASS_1(mt7622_topckgen, mt7622_topckgen_driver,
-    mt7622_topckgen_methods, sizeof(struct mt_clk_softc),
-mt_clk_driver);
+DEFINE_CLASS_1(mt7622_topckgen, mt7622_topckgen_driver, mt7622_topckgen_methods,
+sizeof(struct mt_clk_softc), mt_clk_driver);
 
 EARLY_DRIVER_MODULE(mt7622_topckgen, simplebus, mt7622_topckgen_driver,
     NULL, NULL, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 2);
