@@ -200,7 +200,6 @@ mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
                 return (ENXIO);
         }
 
-
         rv = clkdom_finit(sc->clkdom);
         if (rv != 0) {
                 device_printf(dev, "clkdom_finit failed: %d\n", rv);
@@ -225,11 +224,16 @@ mt_clk_probe(device_t dev, struct ofw_compat_data *compat, const char *desc)
 }
 
 int
-mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
+mt_clk_attach(device_t dev)
 {
+        struct mt_clk_softc *sc;
         int rv, rid = 0;
+        phandle_t node;
 
+        sc = device_get_softc(dev);
         sc->dev = dev;
+        node = ofw_bus_get_node(dev);
+
         mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
         sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
@@ -237,6 +241,16 @@ mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
                 device_printf(dev, "cannot allocate memory resource\n");
                 mtx_destroy(&sc->mtx);
                 return (ENXIO);
+        }
+
+        bus_identify_children(dev);
+        simplebus_init(dev, node);
+
+        for (node = OF_child(node); node > 0; node = OF_peer(node)) {
+                if(simplebus_add_device(dev, node, 0, NULL, -1, NULL) == NULL) {
+                        device_printf(dev, "cannot add child node %#x, skipped\n", node);
+                        continue;
+                }
         }
 
         /* Register as a syscon provider only when the node asks for it. */
@@ -265,13 +279,9 @@ mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc)
                 return (ENXIO);
         }
 
-        return (0);
-}
+        bus_attach_children(dev);
 
-int
-mt_clk_attach(device_t dev)
-{
-        return (mt_clk_attach_sc(dev, device_get_softc(dev)));
+        return (0);
 }
 
 static int
@@ -279,6 +289,34 @@ mt_clk_detach(device_t dev)
 {
         device_printf(dev, "Error: Clock driver cannot be detached\n");
         return (EBUSY);
+}
+
+static int
+mt_clk_hwreset_assert(device_t dev, intptr_t id, bool assert)
+{
+        struct mt_clk_softc *sc;
+        uint32_t mask, reg, val;
+
+        sc = device_get_softc(dev);
+
+        if (sc->reset_def == NULL)
+                return (ENXIO);
+        if (id < 0 || id / 32 >= sc->reset_def->reset_num)
+                return (ENXIO);
+
+        reg = sc->reset_def->reset_offset[id / 32];
+        mask = 1u << (id % 32);
+
+        mtx_lock(&sc->mtx);
+        val = bus_read_4(sc->mem_res, reg);
+        val &= ~mask;
+        if (assert) {
+                val |= mask;
+        }
+        bus_write_4(sc->mem_res, reg, val);
+        mtx_unlock(&sc->mtx);
+
+        return (0);
 }
 
 static device_method_t mt_clk_methods[] = {
@@ -290,40 +328,11 @@ static device_method_t mt_clk_methods[] = {
         DEVMETHOD(clkdev_device_lock,   mt_clkdev_device_lock),
         DEVMETHOD(clkdev_device_unlock, mt_clkdev_device_unlock),
 
+        /* Reset interface */
+        DEVMETHOD(hwreset_assert,	mt_clk_hwreset_assert),
+
         DEVMETHOD_END
 };
 
 DEFINE_CLASS_0(mt_clk, mt_clk_driver, mt_clk_methods,
 sizeof(struct mt_clk_softc));
-
-
-static int
-mt_clk_hwreset_assert(device_t dev, intptr_t id, bool value)
-{
-        struct mt_clk_reset_softc *sc;
-        uint32_t mask;
-        uint32_t reg;
-
-        sc = device_get_softc(dev);
-
-        if (id < 0 || id / 32 >= sc->reset_num) {
-                return (ENXIO);
-        }
-
-        reg = sc->reset_offset[id / 32];
-        mask = 1u << (id % 32);
-
-        CLKDEV_DEVICE_LOCK(dev);
-        CLKDEV_MODIFY_4(dev, reg, mask, value ? mask : 0);
-        CLKDEV_DEVICE_UNLOCK(dev);
-        return (0);
-}
-
-static device_method_t mt_clk_reset_methods[] = {
-    DEVMETHOD(hwreset_assert,       mt_clk_hwreset_assert),
-
-    DEVMETHOD_END
-};
-
-DEFINE_CLASS_1(mt_reset_clk, mt_clk_reset_driver, mt_clk_reset_methods,
-sizeof(struct mt_clk_reset_softc), mt_clk_driver);

@@ -110,28 +110,27 @@ struct mt_clk_def {
     int num_dived;
 };
 
+struct mt_clk_reset_def {
+    const uint16_t *reset_offset;
+    uint16_t reset_num;
+};
+
 struct mt_clk_softc {
+    struct simplebus_softc simplebus_sc;
     device_t dev;
     struct resource *mem_res;
     struct mtx mtx;
     struct clkdom *clkdom;
     struct syscon *syscon;
-    const struct mt_clk_def *clk_def;   /* clock tables for this block   */
-};
-
-struct mt_clk_reset_softc {
-    struct mt_clk_softc clk_sc;
-    const uint16_t *reset_offset;         /* reset register offsets or NULL */
-    uint16_t reset_num;                   /* number of reset registers     */
+    const struct mt_clk_def *clk_def;
+    const struct mt_clk_reset_def *reset_def;
 };
 
 DECLARE_CLASS(mt_clk_driver);
-DECLARE_CLASS(mt_clk_reset_driver);
 
 int mt_clk_probe(device_t dev, struct ofw_compat_data *compat,
     const char *desc);
 int mt_clk_attach(device_t dev);
-int mt_clk_attach_sc(device_t dev, struct mt_clk_softc *sc);
 int mt_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val);
 int mt_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val);
 int mt_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,

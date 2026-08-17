@@ -76,6 +76,12 @@ static struct mt_clk_def clk_def = {
     .num_muxes = nitems(muxes_clk),
 };
 
+static const uint16_t reset_offset[] = { 0x0, 0x4 };
+static const struct mt_clk_reset_def reset_def = {
+    .reset_offset = reset_offset,
+    .reset_num = nitems(reset_offset),
+};
+
 static int
 pericfg_clk_probe(device_t dev)
 {
@@ -85,14 +91,13 @@ pericfg_clk_probe(device_t dev)
 static int
 pericfg_clk_attach(device_t dev)
 {
-        struct mt_clk_reset_softc *sc;
-        static const uint16_t reset_offset[] = { 0x0, 0x4 };
+        struct mt_clk_softc *sc;
         sc = device_get_softc(dev);
 
-        sc->clk_sc.clk_def = &clk_def;
-        sc->reset_offset = reset_offset;
-        sc->reset_num = nitems(reset_offset);
-        return (mt_clk_attach_sc(dev, &sc->clk_sc));
+        sc->clk_def = &clk_def;
+        sc->reset_def = &reset_def;
+
+        return (mt_clk_attach(dev));
 }
 
 static device_method_t mt7622_pericfg_methods[] = {
@@ -102,8 +107,7 @@ static device_method_t mt7622_pericfg_methods[] = {
 };
 
 DEFINE_CLASS_1(mt7622_pericfg, mt7622_pericfg_driver,
-    mt7622_pericfg_methods, sizeof(struct mt_clk_reset_softc),
-        mt_clk_reset_driver);
+mt7622_pericfg_methods, sizeof(struct mt_clk_softc), mt_clk_driver);
 
 EARLY_DRIVER_MODULE(mt7622_pericfg, simplebus, mt7622_pericfg_driver,
     NULL, NULL, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 3);

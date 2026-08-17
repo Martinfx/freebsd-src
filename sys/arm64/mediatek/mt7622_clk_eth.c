@@ -38,6 +38,12 @@ static struct mt_clk_def clk_def = {
         .num_gates = nitems(gates_clk),
 };
 
+static const uint16_t reset_offset[] = { 0x34 };
+static const struct mt_clk_reset_def reset_def = {
+    .reset_offset = reset_offset,
+    .reset_num = nitems(reset_offset),
+};
+
 static int
 eth_clk_probe(device_t dev)
 {
@@ -48,13 +54,12 @@ eth_clk_probe(device_t dev)
 static int
 eth_clk_attach(device_t dev)
 {
-        struct mt_clk_reset_softc *sc;
-        static const uint16_t reset_offset[] = { 0x34 };
+        struct mt_clk_softc *sc;
         sc = device_get_softc(dev);
 
-        sc->clk_sc.clk_def = &clk_def;
-        sc->reset_offset = reset_offset;
-        sc->reset_num = nitems(reset_offset);
+        sc->clk_def = &clk_def;
+        sc->reset_def = &reset_def;
+
         return (mt_clk_attach(dev));
 }
 
