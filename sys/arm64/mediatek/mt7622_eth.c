@@ -642,11 +642,17 @@ rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
        struct rt_softc *sc = if_getsoftc(ifp);
 
        /*
-	* The trunk link to the switch is forced (fixed-link), so report the
-	* configured media as active.  TODO: read MAC_MSR for real link state.
+	* ifmedia_ioctl() has already filled in ifm_active/ifm_current from
+	* the configured (fixed-link) media, so do not overwrite them here:
+	* ifmedia.ifm_media is only ever set by SIOCSIFMEDIA and is zero
+	* otherwise, which would report an invalid media word.
+	*
+	* The trunk link to the switch is forced, so it is up as soon as the
+	* MAC is running.  TODO: read MAC_MSR for the real link state.
 	*/
-       ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-       ifmr->ifm_active = sc->rt_ifmedia.ifm_media;
+       ifmr->ifm_status = IFM_AVALID;
+       if (sc->link_up)
+	       ifmr->ifm_status |= IFM_ACTIVE;
 }
 
 static int
@@ -819,6 +825,15 @@ rt_init_locked(void *priv)
        if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
        if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
 
+       /*
+	* Announce the link.  Without this the interface stays in
+	* LINK_STATE_UNKNOWN, ifconfig(8) shows an empty "status:" line and
+	* devd(8) never gets the IFNET/LINK_UP event that starts dhclient on
+	* a DHCP-configured interface at boot.
+	*/
+       sc->link_up = 1;
+       if_link_state_change(ifp, LINK_STATE_UP);
+
        sc->periodic_round = 0;
 
        callout_reset(&sc->periodic_ch, hz / 10, rt_periodic, sc);
@@ -861,6 +876,8 @@ rt_stop_locked(void *priv)
        RT_SOFTC_ASSERT_LOCKED(sc);
        sc->tx_timer = 0;
        if_setdrvflagbits(ifp, 0, (IFF_DRV_RUNNING | IFF_DRV_OACTIVE));
+       sc->link_up = 0;
+       if_link_state_change(ifp, LINK_STATE_DOWN);
        callout_stop(&sc->periodic_ch);
        callout_stop(&sc->tx_watchdog_ch);
        RT_SOFTC_UNLOCK(sc);

@@ -212,6 +212,7 @@ struct rt_softc
        struct ifnet	*ifp;
        int 		 if_flags;
        struct ifmedia	 rt_ifmedia;
+       int		 link_up;
 
        uint32_t	 mac_rev;
        uint8_t		 mac_addr[ETHER_ADDR_LEN];
