@@ -2589,7 +2589,7 @@ rt_ofw_get_resource_list(device_t bus, device_t child)
 
 static device_method_t rt_dev_methods[] =
    {
-	   DEVMETHOD(device_probe, rt_probe),
+	   DEVMETHOD(device_probe, mt_probe),
 	   DEVMETHOD(device_attach, rt_attach),
 	   DEVMETHOD(device_detach, rt_detach),
 
