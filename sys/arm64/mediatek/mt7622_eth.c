@@ -61,8 +61,8 @@
 #include <net/if_var.h>
 #include <net/if_vlan_var.h>
 
-#include "mt7622_rtreg_eth.h"
-#include "mt7622_rtvar.h"
+#include "mt7622_reg_eth.h"
+#include "mt7622_var_eth.h"
 
 #ifdef FDT
 #include <dev/ofw/openfirm.h>
@@ -107,7 +107,7 @@ static const struct ofw_compat_data rt_compat_data[] = {
 /*
 * Static function prototypes
 */
-static int	rt_probe(device_t dev);
+static int	mt_probe(device_t dev);
 static int	rt_attach(device_t dev);
 static int	rt_detach(device_t dev);
 static void	rt_init_locked(void *priv);
@@ -165,7 +165,7 @@ SYSCTL_INT(_hw_rt, OID_AUTO, debug, CTLFLAG_RWTUN, &rt_debug, 0,
 #endif
 
 static int
-rt_probe(device_t dev)
+mt_probe(device_t dev)
 {
        char buf[80];
 #ifdef FDT

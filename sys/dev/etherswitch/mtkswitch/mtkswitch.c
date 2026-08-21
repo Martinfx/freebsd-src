@@ -736,6 +736,22 @@ mtkswitch_setconf(device_t dev, etherswitch_conf_t *conf)
 }
 
 static int
+mtkswitch_flush_all(device_t dev)
+{
+	struct mtkswitch_softc *sc;
+	int err;
+
+	sc = device_get_softc(dev);
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_NOTOWNED);
+	MTKSWITCH_LOCK(sc);
+	err = sc->hal.mtkswitch_atu_flush(sc);
+	MTKSWITCH_UNLOCK(sc);
+
+	return (err);
+}
+
+static int
 mtkswitch_getvgroup(device_t dev, etherswitch_vlangroup_t *e)
 {
         struct mtkswitch_softc *sc = device_get_softc(dev);
@@ -812,6 +828,7 @@ static device_method_t mtkswitch_methods[] = {
 	DEVMETHOD(etherswitch_setvgroup,	mtkswitch_setvgroup),
 	DEVMETHOD(etherswitch_getconf,	mtkswitch_getconf),
 	DEVMETHOD(etherswitch_setconf,	mtkswitch_setconf),
+	DEVMETHOD(etherswitch_flush_all,	mtkswitch_flush_all),
 	DEVMETHOD(etherswitch_fetch_table,		mt7531_atu_fetch_table),
 	DEVMETHOD(etherswitch_fetch_table_entry,	mt7531_atu_fetch_table_entry),
 
