@@ -9,9 +9,10 @@ device		gpioled
 device		gpioregulator
 device		gpiokeys
 
-
-# eth switch
-device 		etherswitch
+# Ethernet switch
+device		etherswitch     # Enable etherswitch support
+device		mtkswitch       # Enable mediatek switch
+device 		mtkswitch_7531	# Enable mediatek mt7531 switch
 device 		miibus
 device 		mdio
 
