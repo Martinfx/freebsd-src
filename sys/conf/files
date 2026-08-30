@@ -1704,7 +1704,7 @@ dev/etherswitch/arswitch/arswitch_8316.c	optional arswitch
 dev/etherswitch/arswitch/arswitch_8327.c	optional arswitch
 dev/etherswitch/arswitch/arswitch_vlans.c	optional arswitch
 dev/etherswitch/etherswitch.c		optional etherswitch
-dev/etherswitch/etherswitch_if.m	optional etherswitch
+dev/etherswitch/etherswitch_if.m	optional etherswitch | mtge
 dev/etherswitch/ip17x/ip17x.c		optional ip17x
 dev/etherswitch/ip17x/ip175c.c		optional ip17x
 dev/etherswitch/ip17x/ip175d.c		optional ip17x

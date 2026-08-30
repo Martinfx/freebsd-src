@@ -9,6 +9,11 @@ device		gpioled
 device		gpioregulator
 device		gpiokeys
 
+# Ethernet, BPF and bridge support
+device          mtge		# Enable support mt7622 eth
+device          bpf
+device          if_bridge
+
 # Ethernet switch
 device		etherswitch     # Enable etherswitch support
 device		mtkswitch       # Enable mediatek switch
@@ -40,6 +45,25 @@ device		usbhid			# USB HID Transport
 device		hkbd			# Keyboard
 device		ukbd			# Keyboard
 device		umass			# Disks/Mass storage - Requires scbus and da
+
+# Profiling.  std.arm64 already carries HWPMC_HOOKS; compiling the driver in
+# statically (rather than as a module) matters on this board because the
+# kernel netboots from TFTP while /boot/kernel on the SD card can be stale --
+# a kldload from there would be refused for version mismatch.  With this,
+# pmcstat(8) can say where the forwarding path actually spends its cycles
+# instead of everyone guessing.
+device		hwpmc
+
+# netisr(9) worker threads.  CTLFLAG_RDTUN, so netisr reads them once when it
+# creates its workstreams and sysctl(8) cannot touch them afterwards.  They
+# normally come from /boot/loader.conf, which a board that TFTPs its kernel
+# straight from U-Boot never reads -- there is no loader(8) in that path.
+#
+# One worker per CPU.  Costs nothing while net.isr.dispatch is "direct", which
+# is the default and stays settable at runtime (that one is RWTUN): the extra
+# workers idle.  What it buys is that "deferred" can spread forwarded traffic
+# over both cores at all.
+envvar		net.isr.maxthreads="2"
 
 options         FDT
 # DTBs
