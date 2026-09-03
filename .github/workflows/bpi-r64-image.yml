@@ -1,0 +1,163 @@
+name: BPI-R64 SD image
+
+# Builds a bootable FreeBSD/arm64 SD card image for the Banana Pi BPI-R64
+# (MediaTek MT7622) with the MEDIATEK kernel:
+#
+#   1. firmware: ATF BL2 + FIP (BL31 + U-Boot) cross-compiled on Linux
+#      (tools/bpi-r64/build-firmware.sh).
+#   2. image: world + MEDIATEK kernel cross-built on Linux with
+#      tools/build/make.py, installed NO_ROOT, then assembled with
+#      makefs(8) + sgdisk(8) (tools/bpi-r64/mkimage.sh).
+#
+# The image is published as a workflow artifact (bpi-r64-freebsd-<sha>).
+
+on:
+  push:
+    branches: [ max-support-mediatek-7622-bananapir64 ]
+    paths-ignore:
+      - '**.md'
+      - 'share/man/**'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (empty = the branch this workflow runs from; it must contain tools/bpi-r64)'
+        default: ''
+        required: false
+      kernconf:
+        description: 'Kernel configuration'
+        default: 'MEDIATEK'
+        required: true
+      root_size:
+        description: 'UFS root size for makefs (grown on first boot)'
+        default: '2g'
+        required: true
+      modules:
+        description: 'MODULES_OVERRIDE (empty = all modules)'
+        default: ''
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpi-r64-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KERNCONF: ${{ inputs.kernconf || 'MEDIATEK' }}
+  ROOT_SIZE: ${{ inputs.root_size || '2g' }}
+  MODULES_OVERRIDE: ${{ inputs.modules || '' }}
+
+jobs:
+  firmware:
+    name: ATF + U-Boot (mt7622 sdmmc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          sparse-checkout: tools/bpi-r64
+      - name: install packages
+        run: |
+          sudo apt-get update --quiet || true
+          sudo apt-get -yq --no-install-suggests --no-install-recommends install \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu bison flex swig \
+            python3-dev python3-setuptools python3-pyelftools libssl-dev \
+            device-tree-compiler uuid-dev libgnutls28-dev bc xxd
+      - name: build BL2 + FIP
+        run: ./tools/bpi-r64/build-firmware.sh -o "$GITHUB_WORKSPACE/firmware" -w "$RUNNER_TEMP/firmware-src"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpi-r64-firmware
+          path: firmware/
+          if-no-files-found: error
+
+  image:
+    name: FreeBSD arm64 ${{ inputs.kernconf || 'MEDIATEK' }} image
+    needs: firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: install packages
+        run: |
+          sudo apt-get update --quiet || true
+          sudo apt-get -yq --no-install-suggests --no-install-recommends install \
+            bmake libarchive-dev flex bison time gdisk xz-utils
+      - name: install LLVM matching the tree
+        # libc++ and the rest of the tree need a clang at least as new as the
+        # in-tree LLVM (21.x); Ubuntu's clang-18 cannot compile it.  Fetch the
+        # official release binaries for the exact in-tree version.
+        run: |
+          V=$(awk '$2 == "LLVM_VERSION_STRING" {gsub(/"/, "", $3); print $3}' lib/clang/include/llvm/Config/llvm-config.h)
+          echo "in-tree LLVM ${V}"
+          sudo mkdir -p /opt/llvm
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${V}/LLVM-${V}-Linux-X64.tar.xz" \
+            | sudo tar xJ -C /opt/llvm --strip-components=1
+          /opt/llvm/bin/clang --version
+      - name: create environment
+        run: |
+          mkdir -p ../build
+          echo "MAKEOBJDIRPREFIX=${PWD%/*}/build" >> $GITHUB_ENV
+          echo "NPROC=$(getconf _NPROCESSORS_ONLN)" >> $GITHUB_ENV
+          echo "DESTDIR=${PWD%/*}/rootfs" >> $GITHUB_ENV
+          # World knobs: a router image does not need a toolchain, tests,
+          # debug files or 32-bit compat.  Drop lines here to build them.
+          cat > ../src.conf <<'CONF'
+          WITHOUT_TOOLCHAIN=yes
+          WITHOUT_LLVM_TARGET_ALL=yes
+          WITHOUT_LLDB=yes
+          WITHOUT_TESTS=yes
+          WITHOUT_DEBUG_FILES=yes
+          WITHOUT_PROFILE=yes
+          WITHOUT_LIB32=yes
+          WITHOUT_GOOGLETEST=yes
+          CONF
+          echo "SRCCONF=${PWD%/*}/src.conf" >> $GITHUB_ENV
+          # Point every X* binutil at the host LLVM so that Makefile.inc1
+          # does not bootstrap lib/clang + llvm binutils (hours of build time).
+          LLVM=/opt/llvm/bin
+          XBIN="XAR=$LLVM/llvm-ar XNM=$LLVM/llvm-nm XOBJCOPY=$LLVM/llvm-objcopy XSIZE=$LLVM/llvm-size XSTRINGS=$LLVM/llvm-strings XSTRIPBIN=$LLVM/llvm-strip"
+          echo "BUILD_ARGS=--cross-bindir=$LLVM TARGET=arm64 TARGET_ARCH=aarch64 -DWITHOUT_CLEAN -DWITH_DISK_IMAGE_TOOLS_BOOTSTRAP SRCCONF=${PWD%/*}/src.conf $XBIN" >> $GITHUB_ENV
+      - name: make buildworld
+        run: ./tools/build/make.py $BUILD_ARGS buildworld -s -j$NPROC
+      - name: make buildkernel
+        run: |
+          ./tools/build/make.py $BUILD_ARGS KERNCONF=$KERNCONF \
+            ${MODULES_OVERRIDE:+MODULES_OVERRIDE="$MODULES_OVERRIDE"} \
+            buildkernel -s -j$NPROC
+      - name: make installworld installkernel distribution (NO_ROOT)
+        run: |
+          mkdir -p "$DESTDIR"
+          ./tools/build/make.py $BUILD_ARGS KERNCONF=$KERNCONF \
+            ${MODULES_OVERRIDE:+MODULES_OVERRIDE="$MODULES_OVERRIDE"} \
+            DESTDIR="$DESTDIR" NO_ROOT=1 -DDB_FROM_SRC \
+            installworld installkernel distribution -s -j$NPROC
+      - uses: actions/download-artifact@v4
+        with:
+          name: bpi-r64-firmware
+          path: firmware
+      - name: assemble SD image
+        run: |
+          OBJ="$MAKEOBJDIRPREFIX$GITHUB_WORKSPACE/arm64.aarch64"
+          MAKEFS=$(find "$OBJ/tmp" -type f -perm -u+x -name makefs | head -n1)
+          LOADER="$OBJ/stand/efi/loader_lua/loader_lua.efi"
+          test -x "$MAKEFS" && test -f "$LOADER"
+          SHA=$(git rev-parse --short HEAD)
+          OUT="$GITHUB_WORKSPACE/out"; mkdir -p "$OUT"
+          ./tools/bpi-r64/mkimage.sh -d "$DESTDIR" -l "$LOADER" \
+            -b firmware/bl2.img -f firmware/fip.bin -m "$MAKEFS" \
+            -s "$ROOT_SIZE" -o "$OUT/bpi-r64-freebsd-$KERNCONF-$SHA.img"
+          xz -T0 -6 "$OUT"/*.img
+          cp firmware/VERSIONS "$OUT/FIRMWARE_VERSIONS"
+          ( cd "$OUT" && sha256sum * > SHA256 )
+          echo "SHA=$SHA" >> $GITHUB_ENV
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpi-r64-freebsd-${{ env.SHA }}
+          path: out/
+          if-no-files-found: error
+          compression-level: 0
