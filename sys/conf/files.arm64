@@ -895,6 +895,6 @@ dev/mt7615/if_mt7615.c                      	optional pci soc_mediatek
 dev/mt7615/if_mt7615dma.c                      	optional pci soc_mediatek
 dev/mt7615/if_mt7615mac.c                      	optional pci soc_mediatek
 dev/mt7615/if_mt7615mcu.c                      	optional pci soc_mediatek
-arm64/mediatek/if_mtge.c                	optional fdt mtge soc_mediatek
+arm64/mediatek/if_mtge.c                	optional fdt if_mtge soc_mediatek
 arm64/mediatek/mt7622_mdio.c                    optional fdt soc_mediatek
 

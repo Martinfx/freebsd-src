@@ -10,9 +10,9 @@ device		gpioregulator
 device		gpiokeys
 
 # Ethernet, BPF and bridge support
-device          mtge		# Enable support mt7622 eth
-device          bpf
-device          if_bridge
+device      if_mtge		# Enable support mt7622 eth
+device      bpf
+device      if_bridge
 
 # Ethernet switch
 device		etherswitch     # Enable etherswitch support
@@ -45,14 +45,6 @@ device		usbhid			# USB HID Transport
 device		hkbd			# Keyboard
 device		ukbd			# Keyboard
 device		umass			# Disks/Mass storage - Requires scbus and da
-
-# Profiling.  std.arm64 already carries HWPMC_HOOKS; compiling the driver in
-# statically (rather than as a module) matters on this board because the
-# kernel netboots from TFTP while /boot/kernel on the SD card can be stale --
-# a kldload from there would be refused for version mismatch.  With this,
-# pmcstat(8) can say where the forwarding path actually spends its cycles
-# instead of everyone guessing.
-device		hwpmc
 
 # netisr(9) worker threads.  CTLFLAG_RDTUN, so netisr reads them once when it
 # creates its workstreams and sysctl(8) cannot touch them afterwards.  They
