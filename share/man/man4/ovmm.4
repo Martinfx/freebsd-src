@@ -1,0 +1,104 @@
+.\"
+.\" Copyright (c) 2015 Mike Larkin <mlarkin@openbsd.org>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd September 9, 2026
+.Dt OVMM 4
+.Os
+.Sh NAME
+.Nm ovmm
+.Nd port of the OpenBSD virtual machine monitor to FreeBSD
+.Sh SYNOPSIS
+.Cd kldload ovmm
+.Sh DESCRIPTION
+The
+.Nm
+driver is a port of the OpenBSD
+.Xr vmm 4
+hypervisor.
+It provides the
+.Pa /dev/ovmm
+device and the same
+.Xr ioctl 2
+interface as the original, so that the OpenBSD
+.Xr vmd 8
+virtual machine daemon can be ported on top of it.
+.Pp
+Only AMD processors with SVM and nested paging (RVI) are supported.
+The Intel VMX, AMD SEV/SEV-ES and suspend/resume code paths of the original
+were not ported.
+.Pp
+.Nm
+cannot be loaded while the
+.Xr vmm 4
+.Pq bhyve
+driver has SVM enabled, and vice versa.
+.Sh IOCTLS
+The following ioctls are provided, see
+.In dev/ovmm/ovmm.h
+for the parameter structures:
+.Bl -tag -width VMM_IOC_WRITEVMPARAMS -compact
+.It Dv VMM_IOC_CREATE
+Create a virtual machine.
+Guest RAM ranges are backed by anonymous memory objects that are mapped
+into the calling process; the addresses are returned in the memory range
+descriptors.
+.It Dv VMM_IOC_RUN
+Run a virtual CPU until it needs help from userland
+.Pq I/O, MMIO, HLT, ...
+or the thread has to yield.
+.It Dv VMM_IOC_INFO
+Return information about all virtual machines.
+.It Dv VMM_IOC_TERM
+Terminate a virtual machine.
+.It Dv VMM_IOC_RESETCPU
+Reset a virtual CPU to the supplied register state.
+.It Dv VMM_IOC_INTR
+Signal that an interrupt is pending for a virtual CPU.
+.It Dv VMM_IOC_READREGS , Dv VMM_IOC_WRITEREGS
+Read or write the registers of a stopped virtual CPU.
+.It Dv VMM_IOC_READVMPARAMS , Dv VMM_IOC_WRITEVMPARAMS
+Read or write per virtual CPU parameters such as the pvclock location.
+.It Dv VMM_IOC_SHAREMEM
+Map the guest memory of an existing virtual machine into the calling
+process.
+.El
+.Pp
+A virtual machine can only be manipulated by the process that created it,
+or by a process with the
+.Dv PRIV_DRIVER
+privilege.
+.Sh FILES
+.Bl -tag -width /dev/ovmm -compact
+.It Pa /dev/ovmm
+.El
+.Sh SEE ALSO
+.Xr vmm 4
+.Sh HISTORY
+The OpenBSD
+.Xr vmm 4
+driver first appeared in
+.Ox 5.9 .
+The
+.Nm
+port to
+.Fx
+was started in 2026.
+.Sh AUTHORS
+.An Mike Larkin Aq Mt mlarkin@openbsd.org
+wrote the original driver.
+.Sh BUGS
+Only one virtual CPU per virtual machine is supported.
+.Pp
+Suspending the host while virtual machines exist is not supported.
