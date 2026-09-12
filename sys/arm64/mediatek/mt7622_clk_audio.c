@@ -106,7 +106,7 @@ static device_method_t mt7622_audio_methods[] = {
 };
 
 DEFINE_CLASS_2(mt7622_audio, mt7622_audio_driver, mt7622_audio_methods,
-sizeof(struct mt_clk_softc), simplebus_driver, mt_clk_driver);
+sizeof(struct mt_clk_softc), mt_clk_driver, simplebus_driver);
 
 EARLY_DRIVER_MODULE(mt7622_audio, simplebus, mt7622_audio_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);
