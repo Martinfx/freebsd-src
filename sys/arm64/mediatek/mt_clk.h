@@ -116,7 +116,6 @@ struct mt_clk_reset_def {
 };
 
 struct mt_clk_softc {
-    struct simplebus_softc simplebus_sc;
     device_t dev;
     struct resource *mem_res;
     struct mtx mtx;
@@ -131,6 +130,7 @@ DECLARE_CLASS(mt_clk_driver);
 int mt_clk_probe(device_t dev, struct ofw_compat_data *compat,
     const char *desc);
 int mt_clk_attach(device_t dev);
+int mt_clk_detach(device_t dev);
 int mt_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val);
 int mt_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val);
 int mt_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,

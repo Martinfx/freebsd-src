@@ -243,16 +243,6 @@ mt_clk_attach(device_t dev)
                 return (ENXIO);
         }
 
-        bus_identify_children(dev);
-        simplebus_init(dev, node);
-
-        for (node = OF_child(node); node > 0; node = OF_peer(node)) {
-                if(simplebus_add_device(dev, node, 0, NULL, -1, NULL) == NULL) {
-                        device_printf(dev, "cannot add child node %#x, skipped\n", node);
-                        continue;
-                }
-        }
-
         /* Register as a syscon provider only when the node asks for it. */
         if (ofw_bus_is_compatible(dev, "syscon")) {
                 sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
@@ -279,12 +269,18 @@ mt_clk_attach(device_t dev)
                 return (ENXIO);
         }
 
+        if (OF_child(node) > 0) {
+                rv = simplebus_attach_impl(dev, SB_FLAG_NO_RANGES, node);
+                if (rv != 0)
+                        return (rv);
+        }
+
         bus_attach_children(dev);
 
         return (0);
 }
 
-static int
+int
 mt_clk_detach(device_t dev)
 {
         device_printf(dev, "Error: Clock driver cannot be detached\n");
@@ -321,14 +317,11 @@ mt_clk_hwreset_assert(device_t dev, intptr_t id, bool assert)
 
 static device_method_t mt_clk_methods[] = {
         DEVMETHOD(device_detach,        mt_clk_detach),
-
         DEVMETHOD(clkdev_read_4,        mt_clkdev_read_4),
         DEVMETHOD(clkdev_write_4,       mt_clkdev_write_4),
         DEVMETHOD(clkdev_modify_4,      mt_clkdev_modify_4),
         DEVMETHOD(clkdev_device_lock,   mt_clkdev_device_lock),
         DEVMETHOD(clkdev_device_unlock, mt_clkdev_device_unlock),
-
-        /* Reset interface */
         DEVMETHOD(hwreset_assert,	mt_clk_hwreset_assert),
 
         DEVMETHOD_END
