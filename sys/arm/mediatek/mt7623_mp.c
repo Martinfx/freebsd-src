@@ -67,6 +67,7 @@
 
 static const uint32_t mt7623_keys[MT_NKEYS] = {
     MT_KEY_CPU1, MT_KEY_CPU2, MT_KEY_CPU3
+};
 
 /* How long to wait for one core to check in. */
 #define	MT_AP_TIMEOUT_MS	1000
