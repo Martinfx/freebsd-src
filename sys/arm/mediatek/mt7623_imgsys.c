@@ -56,12 +56,12 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_IMG_SMI_COMM, "img_smi_comm", "mm_sel", 0x0000, 0),
-	GATE(CLK_IMG_RESZ, "img_resz", "mm_sel", 0x0000, 1),
-	GATE(CLK_IMG_JPGDEC_SMI, "img_jpgdec_smi", "mm_sel", 0x0000, 5),
-	GATE(CLK_IMG_JPGDEC, "img_jpgdec", "mm_sel", 0x0000, 6),
-	GATE(CLK_IMG_VENC_LT, "img_venc_lt", "mm_sel", 0x0000, 8),
-	GATE(CLK_IMG_VENC, "img_venc", "mm_sel", 0x0000, 9),
+	PDN_GATE(CLK_IMG_SMI_COMM, "img_smi_comm", "mm_sel", 0x0000, 0),
+	PDN_GATE(CLK_IMG_RESZ, "img_resz", "mm_sel", 0x0000, 1),
+	PDN_GATE(CLK_IMG_JPGDEC_SMI, "img_jpgdec_smi", "mm_sel", 0x0000, 5),
+	PDN_GATE(CLK_IMG_JPGDEC, "img_jpgdec", "mm_sel", 0x0000, 6),
+	PDN_GATE(CLK_IMG_VENC_LT, "img_venc_lt", "mm_sel", 0x0000, 8),
+	PDN_GATE(CLK_IMG_VENC, "img_venc", "mm_sel", 0x0000, 9),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -91,7 +91,8 @@ imgsys_clk_probe(device_t dev)
 }
 
 static int
-imgsys_clk_attach(device_t dev) {
+imgsys_clk_attach(device_t dev)
+{
 	struct mdtk_clk_softc *sc = device_get_softc(dev);
 	int rid = 0;
 
@@ -131,7 +132,7 @@ imgsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
 	CLKDEV_DEVICE_UNLOCK(sc->dev);
 
-	return(0);
+	return (0);
 }
 
 static int

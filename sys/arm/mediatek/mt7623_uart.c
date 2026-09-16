@@ -124,7 +124,7 @@ mdtk_uart_ungrab(struct uart_softc *sc)
 
 static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_probe,		ns8250_bus_probe),
-    KOBJMETHOD(uart_attach,		mdtk_uart_attach),
+	KOBJMETHOD(uart_attach,		mdtk_uart_attach),
 	KOBJMETHOD(uart_detach,		ns8250_bus_detach),
 	KOBJMETHOD(uart_flush,		ns8250_bus_flush),
 	KOBJMETHOD(uart_getsig,		ns8250_bus_getsig),
@@ -135,26 +135,26 @@ static kobj_method_t mdtk_methods[] = {
 	KOBJMETHOD(uart_setsig,		ns8250_bus_setsig),
 	KOBJMETHOD(uart_transmit,	ns8250_bus_transmit),
 	KOBJMETHOD(uart_txbusy,		ns8250_bus_txbusy),
-    KOBJMETHOD(uart_grab,		ns8250_bus_grab),
-    KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
+	KOBJMETHOD(uart_grab,		ns8250_bus_grab),
+	KOBJMETHOD(uart_ungrab,		ns8250_bus_ungrab),
 	KOBJMETHOD_END
 };
 
 static struct uart_class mdtk_uart_class = {
-    "mediatek class",
-    mdtk_methods,
-    sizeof(struct mdtk_softc),
+	"mediatek class",
+	mdtk_methods,
+	sizeof(struct mdtk_softc),
 	.uc_ops = &uart_ns8250_ops,
 	.uc_range = 8,
-	.uc_rclk = 0,  
-    .uc_rshift = 2,
-    .uc_riowidth = 4,
+	.uc_rclk = 0,
+	.uc_rshift = 2,
+	.uc_riowidth = 4,
 };
 
 /* Compatible devices. */
 static struct ofw_compat_data compat_data[] = {
-    {"mediatek,mt7622-uart",(uintptr_t)&mdtk_uart_class},
-    {"mediatek,mt6577-uart",(uintptr_t)&mdtk_uart_class},
+	{"mediatek,mt7622-uart",(uintptr_t)&mdtk_uart_class},
+	{"mediatek,mt6577-uart",(uintptr_t)&mdtk_uart_class},
 	{NULL,			 (uintptr_t)NULL},
 };
 
@@ -176,7 +176,7 @@ uart_fdt_get_shift1(phandle_t node)
 static int
 mdtk_uart_probe(device_t dev)
 {
-    struct mdtk_softc *sc;
+	struct mdtk_softc *sc;
 	phandle_t node;
 	uint64_t freq;
 	int shift;
@@ -215,7 +215,7 @@ mdtk_uart_probe(device_t dev)
 static int
 mdtk_uart_detach(device_t dev)
 {
-    struct mdtk_softc *sc;
+	struct mdtk_softc *sc;
 
 	sc = device_get_softc(dev);
 	if (sc->clk != NULL) {
@@ -227,16 +227,16 @@ mdtk_uart_detach(device_t dev)
 
 static device_method_t mdtk_uart_bus_methods[] = {
 	/* Device interface */
-    DEVMETHOD(device_probe,		mdtk_uart_probe),
+	DEVMETHOD(device_probe,		mdtk_uart_probe),
 	DEVMETHOD(device_attach,	uart_bus_attach),
-    DEVMETHOD(device_detach,	mdtk_uart_detach),
+	DEVMETHOD(device_detach,	mdtk_uart_detach),
 	DEVMETHOD_END
 };
 
 static driver_t mdtk_uart_driver = {
 	uart_driver_name,
-    mdtk_uart_bus_methods,
-    sizeof(struct mdtk_softc),
+	mdtk_uart_bus_methods,
+	sizeof(struct mdtk_softc),
 };
 
 DRIVER_MODULE(mdtk_uart, simplebus,  mdtk_uart_driver, 0, 0);

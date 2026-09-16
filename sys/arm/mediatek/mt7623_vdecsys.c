@@ -57,8 +57,8 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_VDEC_CKGEN, "vdec_cken", "vdec_sel", 0x0000, 0),
-	GATE(CLK_VDEC_LARB, "vdec_larb_cken", "mm_sel", 0x0000, 0),
+	PDN_GATE(CLK_VDEC_CKGEN, "vdec_cken", "vdec_sel", 0x0000, 0),
+	PDN_GATE(CLK_VDEC_LARB, "vdec_larb_cken", "mm_sel", 0x0000, 0),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -88,7 +88,8 @@ vdecsy_clk_probe(device_t dev)
 }
 
 static int
-vdecsy_clk_attach(device_t dev) {
+vdecsy_clk_attach(device_t dev)
+{
 	struct mdtk_clk_softc *sc = device_get_softc(dev);
 	int rid, rv;
 
@@ -135,5 +136,6 @@ static device_method_t mt7622_vdecsys_methods[] = {
 DEFINE_CLASS_0(mt7622_vdecsys, mt7622_vdecsys_driver, mt7622_vdecsys_methods,
     sizeof(struct mdtk_clk_softc));
 
-EARLY_DRIVER_MODULE(mt7622_vdecsys, simplebus, mt7622_vdecsys_driver, NULL, NULL,
+EARLY_DRIVER_MODULE(mt7622_vdecsys, simplebus, mt7622_vdecsys_driver, NULL,
+    NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 2);

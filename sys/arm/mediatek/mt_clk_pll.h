@@ -30,32 +30,32 @@
 #define __MT_CLK_PLL_H__
 
 struct div_table {
-    uint32_t div;
-    uint64_t freq;
+	uint32_t div;
+	uint64_t freq;
 };
 
 struct clk_pll_def {
-    struct clknode_init_def clkdef;
-    bus_size_t pll_base_reg;
-    bus_size_t pll_pwr_reg;
-    uint32_t pll_flags;
-    uint64_t pll_fmin;
-    uint64_t pll_fmax;
-    uint32_t pll_en_mask;
-    bus_size_t pll_pd_reg;
-    bus_size_t pll_tuner_reg;
-    uint32_t pll_tuner_en_bit;
-    int pll_pd_shift;
-    int pll_pcwbits;
-    int pll_pcwibits;
-    bus_size_t pll_pcw_reg;
-    uint32_t pll_pcw_chg_reg;
-    int pll_pcw_shift;
-    struct div_table *pll_div_table;
-    uint32_t pll_rst_bar_mask;
+	struct clknode_init_def clkdef;
+	bus_size_t pll_base_reg;
+	bus_size_t pll_pwr_reg;
+	uint32_t pll_flags;
+	uint64_t pll_fmin;
+	uint64_t pll_fmax;
+	uint32_t pll_en_mask;
+	bus_size_t pll_pd_reg;
+	bus_size_t pll_tuner_reg;
+	uint32_t pll_tuner_en_bit;
+	int pll_pd_shift;
+	int pll_pcwbits;
+	int pll_pcwibits;
+	bus_size_t pll_pcw_reg;
+	uint32_t pll_pcw_chg_reg;
+	int pll_pcw_shift;
+	struct div_table *pll_div_table;
+	uint32_t pll_rst_bar_mask;
 };
 
 int mt_clk_pll_register(struct clkdom *clkdom,
-                        struct clk_pll_def *clkdef);
+						struct clk_pll_def *clkdef);
 
 #endif // __MT_CLK_PLL_H__

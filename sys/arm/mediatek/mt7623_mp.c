@@ -66,7 +66,7 @@
 #define	 GICD_SGIR_TO_OTHERS	(1 << 24)	/* SGI 0 to all other CPUs */
 
 static const uint32_t mt7623_keys[MT_NKEYS] = {
-    MT_KEY_CPU1, MT_KEY_CPU2, MT_KEY_CPU3
+	MT_KEY_CPU1, MT_KEY_CPU2, MT_KEY_CPU3
 };
 
 /* How long to wait for one core to check in. */
@@ -78,14 +78,14 @@ mt7623_mp_setmaxid(platform_t plat)
 	uint32_t reg;
 	int ncpu;
 
-        if (mp_ncpus != 0)
-                return;
+		if (mp_ncpus != 0)
+				return;
 
-        reg = cp15_l2ctlr_get();
-        ncpu = CPUV7_L2CTLR_NPROC(reg);
+		reg = cp15_l2ctlr_get();
+		ncpu = CPUV7_L2CTLR_NPROC(reg);
 
-        mp_ncpus = ncpu;
-        mp_maxid = ncpu - 1;
+		mp_ncpus = ncpu;
+		mp_maxid = ncpu - 1;
 }
 
 void

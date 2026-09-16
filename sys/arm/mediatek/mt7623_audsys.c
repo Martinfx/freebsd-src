@@ -58,78 +58,68 @@ static struct ofw_compat_data compat_data[] = {
 
 static struct clk_gate_def gates_clk[] = {
 	/* AUDIO0 */
-	GATE(CLK_AUD_AFE, "audio_afe", "aud_intbus_sel", 0x0, 2),
-	//GATE_DUMMY(CLK_AUD_LRCK_DETECT, "audio_lrck_detect_dummy"),
-	//GATE_DUMMY(CLK_AUD_I2S, "audio_i2c_dummy"),
-	//GATE_DUMMY(CLK_AUD_APLL_TUNER, "audio_apll_tuner_dummy"),
-	GATE(CLK_AUD_HDMI, "audio_hdmi", "audpll_sel", 0x0, 20),
-	GATE(CLK_AUD_SPDF, "audio_spdf", "audpll_sel", 0x0, 21),
-	GATE(CLK_AUD_SPDF2, "audio_spdf2", "audpll_sel", 0x0, 22),
-	GATE(CLK_AUD_APLL, "audio_apll", "audpll_sel", 0x0, 23),
-	/*GATE_DUMMY(CLK_AUD_TML, "audio_tml_dummy"),
-	GATE_DUMMY(CLK_AUD_AHB_IDLE_EXT, "audio_ahb_idle_ext_dummy"),
-	GATE_DUMMY(CLK_AUD_AHB_IDLE_INT, "audio_ahb_idle_int_dummy"),*/
+	PDN_GATE(CLK_AUD_AFE, "audio_afe", "aud_intbus_sel", 0x0, 2),
+	PDN_GATE(CLK_AUD_HDMI, "audio_hdmi", "audpll_sel", 0x0, 20),
+	PDN_GATE(CLK_AUD_SPDF, "audio_spdf", "audpll_sel", 0x0, 21),
+	PDN_GATE(CLK_AUD_SPDF2, "audio_spdf2", "audpll_sel", 0x0, 22),
+	PDN_GATE(CLK_AUD_APLL, "audio_apll", "audpll_sel", 0x0, 23),
 
 	/* AUDIO1 */
-	GATE(CLK_AUD_I2SIN1, "audio_i2sin1", "aud_mux1_sel", 0x10, 0),
-	GATE(CLK_AUD_I2SIN2, "audio_i2sin2", "aud_mux1_sel", 0x10, 1),
-	GATE(CLK_AUD_I2SIN3, "audio_i2sin3", "aud_mux1_sel", 0x10, 2),
-	GATE(CLK_AUD_I2SIN4, "audio_i2sin4", "aud_mux1_sel", 0x10, 3),
-	GATE(CLK_AUD_I2SIN5, "audio_i2sin5", "aud_mux1_sel", 0x10, 4),
-	GATE(CLK_AUD_I2SIN6, "audio_i2sin6", "aud_mux1_sel", 0x10, 5),
-	GATE(CLK_AUD_I2SO1, "audio_i2so1", "aud_mux1_sel", 0x10, 6),
-	GATE(CLK_AUD_I2SO2, "audio_i2so2", "aud_mux1_sel", 0x10, 7),
-	GATE(CLK_AUD_I2SO3, "audio_i2so3", "aud_mux1_sel", 0x10, 8),
-	GATE(CLK_AUD_I2SO4, "audio_i2so4", "aud_mux1_sel", 0x10, 9),
-	GATE(CLK_AUD_I2SO5, "audio_i2so5", "aud_mux1_sel", 0x10, 10),
-	GATE(CLK_AUD_I2SO6, "audio_i2so6", "aud_mux1_sel", 0x10, 11),
-	GATE(CLK_AUD_ASRCI1, "audio_asrci1", "asm_h_sel", 0x10, 12),
-	GATE(CLK_AUD_ASRCI2, "audio_asrci2", "asm_h_sel", 0x10, 13),
-	GATE(CLK_AUD_ASRCO1, "audio_asrco1", "asm_h_sel", 0x10, 14),
-	GATE(CLK_AUD_ASRCO2, "audio_asrco2", "asm_h_sel", 0x10, 15),
-	//GATE_DUMMY(CLK_AUD_HDMIRX, "audio_hdmirx_dummy"),
-	GATE(CLK_AUD_INTDIR, "audio_intdir", "intdir_sel", 0x10, 20),
-	GATE(CLK_AUD_A1SYS, "audio_a1sys", "aud_mux1_sel", 0x10, 21),
-	GATE(CLK_AUD_A2SYS, "audio_a2sys", "aud_mux2_sel", 0x10, 22),
-	GATE(CLK_AUD_AFE_CONN, "audio_afe_conn", "aud_mux1_sel", 0x10, 23),
-	//GATE_DUMMY(CLK_AUD_AFE_PCMIF, "audio_afe_pcmif_dummy"),
-	GATE(CLK_AUD_AFE_MRGIF, "audio_afe_mrgif", "aud_mux1_sel", 0x10, 25),
+	PDN_GATE(CLK_AUD_I2SIN1, "audio_i2sin1", "aud_mux1_sel", 0x10, 0),
+	PDN_GATE(CLK_AUD_I2SIN2, "audio_i2sin2", "aud_mux1_sel", 0x10, 1),
+	PDN_GATE(CLK_AUD_I2SIN3, "audio_i2sin3", "aud_mux1_sel", 0x10, 2),
+	PDN_GATE(CLK_AUD_I2SIN4, "audio_i2sin4", "aud_mux1_sel", 0x10, 3),
+	PDN_GATE(CLK_AUD_I2SIN5, "audio_i2sin5", "aud_mux1_sel", 0x10, 4),
+	PDN_GATE(CLK_AUD_I2SIN6, "audio_i2sin6", "aud_mux1_sel", 0x10, 5),
+	PDN_GATE(CLK_AUD_I2SO1, "audio_i2so1", "aud_mux1_sel", 0x10, 6),
+	PDN_GATE(CLK_AUD_I2SO2, "audio_i2so2", "aud_mux1_sel", 0x10, 7),
+	PDN_GATE(CLK_AUD_I2SO3, "audio_i2so3", "aud_mux1_sel", 0x10, 8),
+	PDN_GATE(CLK_AUD_I2SO4, "audio_i2so4", "aud_mux1_sel", 0x10, 9),
+	PDN_GATE(CLK_AUD_I2SO5, "audio_i2so5", "aud_mux1_sel", 0x10, 10),
+	PDN_GATE(CLK_AUD_I2SO6, "audio_i2so6", "aud_mux1_sel", 0x10, 11),
+	PDN_GATE(CLK_AUD_ASRCI1, "audio_asrci1", "asm_h_sel", 0x10, 12),
+	PDN_GATE(CLK_AUD_ASRCI2, "audio_asrci2", "asm_h_sel", 0x10, 13),
+	PDN_GATE(CLK_AUD_ASRCO1, "audio_asrco1", "asm_h_sel", 0x10, 14),
+	PDN_GATE(CLK_AUD_ASRCO2, "audio_asrco2", "asm_h_sel", 0x10, 15),
+	PDN_GATE(CLK_AUD_INTDIR, "audio_intdir", "intdir_sel", 0x10, 20),
+	PDN_GATE(CLK_AUD_A1SYS, "audio_a1sys", "aud_mux1_sel", 0x10, 21),
+	PDN_GATE(CLK_AUD_A2SYS, "audio_a2sys", "aud_mux2_sel", 0x10, 22),
+	PDN_GATE(CLK_AUD_AFE_CONN, "audio_afe_conn", "aud_mux1_sel", 0x10, 23),
+PDN_GATE(CLK_AUD_AFE_MRGIF, "audio_afe_mrgif", "aud_mux1_sel", 0x10, 25),
 
 	/* AUDIO2 */
-	GATE(CLK_AUD_MMIF_UL1, "audio_ul1", "aud_mux1_sel", 0x14, 0),
-	GATE(CLK_AUD_MMIF_UL2, "audio_ul2", "aud_mux1_sel", 0x14, 1),
-	GATE(CLK_AUD_MMIF_UL3, "audio_ul3", "aud_mux1_sel", 0x14, 2),
-	GATE(CLK_AUD_MMIF_UL4, "audio_ul4", "aud_mux1_sel", 0x14, 3),
-	GATE(CLK_AUD_MMIF_UL5, "audio_ul5", "aud_mux1_sel", 0x14, 4),
-	GATE(CLK_AUD_MMIF_UL6, "audio_ul6", "aud_mux1_sel", 0x14, 5),
-	GATE(CLK_AUD_MMIF_DL1, "audio_dl1", "aud_mux1_sel", 0x14, 6),
-	GATE(CLK_AUD_MMIF_DL2, "audio_dl2", "aud_mux1_sel", 0x14, 7),
-	GATE(CLK_AUD_MMIF_DL3, "audio_dl3", "aud_mux1_sel", 0x14, 8),
-	GATE(CLK_AUD_MMIF_DL4, "audio_dl4", "aud_mux1_sel", 0x14, 9),
-	GATE(CLK_AUD_MMIF_DL5, "audio_dl5", "aud_mux1_sel", 0x14, 10),
-	GATE(CLK_AUD_MMIF_DL6, "audio_dl6", "aud_mux1_sel", 0x14, 11),
-	GATE(CLK_AUD_MMIF_DLMCH, "audio_dlmch", "aud_mux1_sel", 0x14, 12),
-	GATE(CLK_AUD_MMIF_ARB1, "audio_arb1", "aud_mux1_sel", 0x14, 13),
-	GATE(CLK_AUD_MMIF_AWB1, "audio_awb", "aud_mux1_sel", 0x14, 14),
-	GATE(CLK_AUD_MMIF_AWB2, "audio_awb2", "aud_mux1_sel", 0x14, 15),
-	GATE(CLK_AUD_MMIF_DAI, "audio_dai", "aud_mux1_sel", 0x14, 16),
+	PDN_GATE(CLK_AUD_MMIF_UL1, "audio_ul1", "aud_mux1_sel", 0x14, 0),
+	PDN_GATE(CLK_AUD_MMIF_UL2, "audio_ul2", "aud_mux1_sel", 0x14, 1),
+	PDN_GATE(CLK_AUD_MMIF_UL3, "audio_ul3", "aud_mux1_sel", 0x14, 2),
+	PDN_GATE(CLK_AUD_MMIF_UL4, "audio_ul4", "aud_mux1_sel", 0x14, 3),
+	PDN_GATE(CLK_AUD_MMIF_UL5, "audio_ul5", "aud_mux1_sel", 0x14, 4),
+	PDN_GATE(CLK_AUD_MMIF_UL6, "audio_ul6", "aud_mux1_sel", 0x14, 5),
+	PDN_GATE(CLK_AUD_MMIF_DL1, "audio_dl1", "aud_mux1_sel", 0x14, 6),
+	PDN_GATE(CLK_AUD_MMIF_DL2, "audio_dl2", "aud_mux1_sel", 0x14, 7),
+	PDN_GATE(CLK_AUD_MMIF_DL3, "audio_dl3", "aud_mux1_sel", 0x14, 8),
+	PDN_GATE(CLK_AUD_MMIF_DL4, "audio_dl4", "aud_mux1_sel", 0x14, 9),
+	PDN_GATE(CLK_AUD_MMIF_DL5, "audio_dl5", "aud_mux1_sel", 0x14, 10),
+	PDN_GATE(CLK_AUD_MMIF_DL6, "audio_dl6", "aud_mux1_sel", 0x14, 11),
+	PDN_GATE(CLK_AUD_MMIF_DLMCH, "audio_dlmch", "aud_mux1_sel", 0x14, 12),
+	PDN_GATE(CLK_AUD_MMIF_ARB1, "audio_arb1", "aud_mux1_sel", 0x14, 13),
+	PDN_GATE(CLK_AUD_MMIF_AWB1, "audio_awb", "aud_mux1_sel", 0x14, 14),
+	PDN_GATE(CLK_AUD_MMIF_AWB2, "audio_awb2", "aud_mux1_sel", 0x14, 15),
+	PDN_GATE(CLK_AUD_MMIF_DAI, "audio_dai", "aud_mux1_sel", 0x14, 16),
 
 	/* AUDIO3 */
-	/*GATE_DUMMY(CLK_AUD_DMIC1, "audio_dmic1_dummy"),
-	GATE_DUMMY(CLK_AUD_DMIC2, "audio_dmic2_dummy"), */
-	GATE(CLK_AUD_ASRCI3, "audio_asrci3", "asm_h_sel", 0x634, 2),
-	GATE(CLK_AUD_ASRCI4, "audio_asrci4", "asm_h_sel", 0x634, 3),
-	GATE(CLK_AUD_ASRCI5, "audio_asrci5", "asm_h_sel", 0x634, 4),
-	GATE(CLK_AUD_ASRCI6, "audio_asrci6", "asm_h_sel", 0x634, 5),
-	GATE(CLK_AUD_ASRCO3, "audio_asrco3", "asm_h_sel", 0x634, 6),
-	GATE(CLK_AUD_ASRCO4, "audio_asrco4", "asm_h_sel", 0x634, 7),
-	GATE(CLK_AUD_ASRCO5, "audio_asrco5", "asm_h_sel", 0x634, 8),
-	GATE(CLK_AUD_ASRCO6, "audio_asrco6", "asm_h_sel", 0x634, 9),
-	GATE(CLK_AUD_MEM_ASRC1, "audio_mem_asrc1", "asm_h_sel", 0x634, 10),
-	GATE(CLK_AUD_MEM_ASRC2, "audio_mem_asrc2", "asm_h_sel", 0x634, 11),
-	GATE(CLK_AUD_MEM_ASRC3, "audio_mem_asrc3", "asm_h_sel", 0x634, 12),
-	GATE(CLK_AUD_MEM_ASRC4, "audio_mem_asrc4", "asm_h_sel", 0x634, 13),
-	GATE(CLK_AUD_MEM_ASRC5, "audio_mem_asrc5", "asm_h_sel", 0x634, 14),
+	PDN_GATE(CLK_AUD_ASRCI3, "audio_asrci3", "asm_h_sel", 0x634, 2),
+	PDN_GATE(CLK_AUD_ASRCI4, "audio_asrci4", "asm_h_sel", 0x634, 3),
+	PDN_GATE(CLK_AUD_ASRCI5, "audio_asrci5", "asm_h_sel", 0x634, 4),
+	PDN_GATE(CLK_AUD_ASRCI6, "audio_asrci6", "asm_h_sel", 0x634, 5),
+	PDN_GATE(CLK_AUD_ASRCO3, "audio_asrco3", "asm_h_sel", 0x634, 6),
+	PDN_GATE(CLK_AUD_ASRCO4, "audio_asrco4", "asm_h_sel", 0x634, 7),
+	PDN_GATE(CLK_AUD_ASRCO5, "audio_asrco5", "asm_h_sel", 0x634, 8),
+	PDN_GATE(CLK_AUD_ASRCO6, "audio_asrco6", "asm_h_sel", 0x634, 9),
+	PDN_GATE(CLK_AUD_MEM_ASRC1, "audio_mem_asrc1", "asm_h_sel", 0x634, 10),
+	PDN_GATE(CLK_AUD_MEM_ASRC2, "audio_mem_asrc2", "asm_h_sel", 0x634, 11),
+	PDN_GATE(CLK_AUD_MEM_ASRC3, "audio_mem_asrc3", "asm_h_sel", 0x634, 12),
+	PDN_GATE(CLK_AUD_MEM_ASRC4, "audio_mem_asrc4", "asm_h_sel", 0x634, 13),
+	PDN_GATE(CLK_AUD_MEM_ASRC5, "audio_mem_asrc5", "asm_h_sel", 0x634, 14),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -159,7 +149,8 @@ audsys_clk_probe(device_t dev)
 }
 
 static int
-audsys_clk_attach(device_t dev) {
+audsys_clk_attach(device_t dev)
+{
 	struct mdtk_clk_softc *sc = device_get_softc(dev);
 	int rid = 0;
 
@@ -199,7 +190,7 @@ audsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
 	CLKDEV_DEVICE_UNLOCK(sc->dev);
 
-	return(0);
+	return (0);
 }
 
 static int

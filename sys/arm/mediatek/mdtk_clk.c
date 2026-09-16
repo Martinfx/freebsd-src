@@ -46,107 +46,115 @@
 #include "clkdev_if.h"
 #include "mt_clk_pll.h"
 
-    static void
+	static void
 init_pll(struct mdtk_clk_softc *sc, struct clk_pll_def *clks,
-            int nclks)
+			int nclks)
 {
-    int i, rv;
+	int i, rv;
 
-    for (i = 0; i < nclks; i++) {
-        rv = mt_clk_pll_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_pll_register failed");
-    }
+	for (i = 0; i < nclks; i++) {
+		rv = mt_clk_pll_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_pll_register failed");
+	}
 
 }
 
 static void
 init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
-            int nclks) {
-    int i, rv;
+			int nclks)
+{
+	int i, rv;
 
-    for (i = 0; i < nclks; i++) {
-        rv = clknode_fixed_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_fixed_register failed");
-    }
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_fixed_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_fixed_register failed");
+	}
 
 }
 
 static void
 init_linked(struct mdtk_clk_softc *sc, struct clk_link_def *clks,
-            int nclks) {
-    for (int i = 0; i < nclks; i++) {
-        int rv = clknode_link_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_link_register failed");
-    }
+			int nclks)
+{
+	for (int i = 0; i < nclks; i++) {
+		int rv = clknode_link_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_link_register failed");
+	}
 
 }
 
 static void
-init_muxes(struct mdtk_clk_softc *sc, struct clk_mux_def *clks, int nclks) {
-    int i, rv;
+init_muxes(struct mdtk_clk_softc *sc, struct clk_mux_def *clks, int nclks)
+{
+	int i, rv;
 
-    for (i = 0; i < nclks; i++) {
-        rv = clknode_mux_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_mux_register failed");
-    }
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_mux_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_mux_register failed");
+	}
 }
 
 static void
-init_gates(struct mdtk_clk_softc *sc, struct clk_gate_def *clks, int nclks) {
-    int i, rv;
+init_gates(struct mdtk_clk_softc *sc, struct clk_gate_def *clks, int nclks)
+{
+	int i, rv;
 
-    for (i = 0; i < nclks; i++) {
-        rv = clknode_gate_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_gate_register failed");
-    }
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_gate_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_gate_register failed");
+	}
 }
 
 static void
-init_div(struct mdtk_clk_softc *sc, struct clk_div_def *clks, int nclks) {
-    int i, rv;
+init_div(struct mdtk_clk_softc *sc, struct clk_div_def *clks, int nclks)
+{
+	int i, rv;
 
-    for (i = 0; i < nclks; i++) {
-        rv = clknode_div_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("clknode_div_register failed");
-    }
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_div_register(sc->clkdom, clks + i);
+		if (rv != 0)
+			panic("clknode_div_register failed");
+	}
 }
 
 int
-mdtk_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val) {
-    struct mdtk_clk_softc *sc;
+mdtk_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
+{
+	struct mdtk_clk_softc *sc;
 
-    sc = device_get_softc(dev);
-    *val = bus_read_4(sc->mem_res, addr);
-    return (0);
+	sc = device_get_softc(dev);
+	*val = bus_read_4(sc->mem_res, addr);
+	return (0);
 }
 
 int
-mdtk_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val) {
-    struct mdtk_clk_softc *sc;
+mdtk_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val)
+{
+	struct mdtk_clk_softc *sc;
 
-    sc = device_get_softc(dev);
-    bus_write_4(sc->mem_res, addr, val);
-    return (0);
+	sc = device_get_softc(dev);
+	bus_write_4(sc->mem_res, addr, val);
+	return (0);
 }
 
 int
 mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
-                     uint32_t set_mask) {
-    struct mdtk_clk_softc *sc;
-    uint32_t reg;
+					 uint32_t set_mask)
+{
+	struct mdtk_clk_softc *sc;
+	uint32_t reg;
 
-    sc = device_get_softc(dev);
-    reg = bus_read_4(sc->mem_res, addr);
-    reg &= ~clear_mask;
-    reg |= set_mask;
-    bus_write_4(sc->mem_res, addr, reg);
-    return (0);
+	sc = device_get_softc(dev);
+	reg = bus_read_4(sc->mem_res, addr);
+	reg &= ~clear_mask;
+	reg |= set_mask;
+	bus_write_4(sc->mem_res, addr, reg);
+	return (0);
 }
 
 /*
@@ -157,58 +165,62 @@ mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
  */
 int
 mdtk_clk_hwreset_assert(device_t dev, bus_size_t base, int nbanks,
-                        intptr_t idx, bool value) {
-    struct mdtk_clk_softc *sc;
-    bus_size_t reg;
-    uint32_t mask;
+						intptr_t idx, bool value)
+{
+	struct mdtk_clk_softc *sc;
+	bus_size_t reg;
+	uint32_t mask;
 
-    if (idx < 0 || idx >= (intptr_t)nbanks * 32)
-        return (EINVAL);
+	if (idx < 0 || idx >= (intptr_t)nbanks * 32)
+		return (EINVAL);
 
-    sc = device_get_softc(dev);
-    mask = 1u << (idx % 32);
-    reg = base + (idx / 32) * 4;
+	sc = device_get_softc(dev);
+	mask = 1u << (idx % 32);
+	reg = base + (idx / 32) * 4;
 
-    CLKDEV_DEVICE_LOCK(sc->dev);
-    CLKDEV_MODIFY_4(sc->dev, reg, mask, value ? mask : 0);
-    CLKDEV_DEVICE_UNLOCK(sc->dev);
+	CLKDEV_DEVICE_LOCK(sc->dev);
+	CLKDEV_MODIFY_4(sc->dev, reg, mask, value ? mask : 0);
+	CLKDEV_DEVICE_UNLOCK(sc->dev);
 
-    return (0);
+	return (0);
 }
 
 void
-mdtk_clkdev_device_lock(device_t dev) {
-    struct mdtk_clk_softc *sc;
+mdtk_clkdev_device_lock(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
 
-    sc = device_get_softc(dev);
-    mtx_lock(&sc->mtx);
+	sc = device_get_softc(dev);
+	mtx_lock(&sc->mtx);
 }
 
 void
-mdtk_clkdev_device_unlock(device_t dev) {
-    struct mdtk_clk_softc *sc;
+mdtk_clkdev_device_unlock(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
 
-    sc = device_get_softc(dev);
-    mtx_unlock(&sc->mtx);
+	sc = device_get_softc(dev);
+	mtx_unlock(&sc->mtx);
 }
 
 void
-mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef) {
-    struct mdtk_clk_softc *sc;
+mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef)
+{
+	struct mdtk_clk_softc *sc;
 
-    sc = device_get_softc(dev);
-    sc->clkdom = clkdom_create(dev);
-    if (sc->clkdom == NULL)
-        panic("clkdom == NULL");
+	sc = device_get_softc(dev);
+	sc->clkdom = clkdom_create(dev);
+	if (sc->clkdom == NULL)
+		panic("clkdom == NULL");
 
-    init_pll(sc, cldef->pll_def, cldef->num_pll);
-    init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
-    init_linked(sc, cldef->linked_def, cldef->num_linked);
-    init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
-    init_gates(sc, cldef->gates_def, cldef->num_gates);
-    init_div(sc, cldef->dived_def, cldef->num_dived);
+	init_pll(sc, cldef->pll_def, cldef->num_pll);
+	init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
+	init_linked(sc, cldef->linked_def, cldef->num_linked);
+	init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
+	init_gates(sc, cldef->gates_def, cldef->num_gates);
+	init_div(sc, cldef->dived_def, cldef->num_dived);
 
-    clkdom_finit(sc->clkdom);
-    if (bootverbose)
-        clkdom_dump(sc->clkdom);
+	clkdom_finit(sc->clkdom);
+	if (bootverbose)
+		clkdom_dump(sc->clkdom);
 }
