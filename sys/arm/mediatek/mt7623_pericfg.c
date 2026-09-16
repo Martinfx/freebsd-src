@@ -68,6 +68,12 @@ PLIST(uart_ck_sel_parents) = {
 		"uart_sel",
 };
 
+/*
+ * Peripheral config gates.  0x0018 is the register the power-down bits read
+ * back from; the datasheet chapter describing this block, and with it the
+ * offsets of its write-only set and clear registers, is not available here,
+ * so a gate is driven by a read-modify-write cycle on the status register.
+ */
 static struct clk_gate_def gates_clk[] = {
 PDN_GATE(CLK_PERI_USB0_MCU, "usb0_mcu_ck", "axi_sel", 0x0018, 31),
 		PDN_GATE(CLK_PERI_ETH, "eth_ck", "clk26m", 0x0018, 30),

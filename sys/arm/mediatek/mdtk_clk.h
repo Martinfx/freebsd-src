@@ -66,8 +66,13 @@
 }
 
 /*
- * Clock gate whose bit reads back as one while the clock is powered down,
- * which is how the "pdn_" bits of the clock selection registers behave.
+ * Clock gate whose bit powers the clock down while it is set, which is what
+ * the "pdn_" bits of the clock selection registers do:
+ *
+ *	31	pdn_msdc30_0	Turns off hf_fmsdc30_0_ck
+ *				1: Enable clock-off
+ *
+ * Starting such a clock therefore means clearing its bit.
  */
 #define	PDN_GATE(_id, _name, _pname, _reg, _bit)			\
 {									\
@@ -79,8 +84,8 @@
 	.offset = (_reg),						\
 	.shift = (_bit),						\
 	.mask = 1,							\
-	.on_value = 1,							\
-	.off_value = 0,							\
+	.on_value = 0,							\
+	.off_value = 1,							\
 }
 
 /* Clock gate whose bit reads back as one while the clock is running. */
@@ -94,8 +99,8 @@
 	.offset = (_reg),						\
 	.shift = (_bit),						\
 	.mask = 1,							\
-	.on_value = 0,							\
-	.off_value = 1,							\
+	.on_value = 1,							\
+	.off_value = 0,							\
 }
 
 /* Fixed rate clock. */

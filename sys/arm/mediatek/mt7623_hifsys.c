@@ -60,6 +60,12 @@ static struct ofw_compat_data compat_data[] = {
 	{NULL, 0},
 };
 
+/*
+ * HIF gates.  The polarity of this block is not covered by the datasheet
+ * chapter we have; the bits are treated like the power-down bits of every
+ * other block until that can be confirmed.  Nothing consumes these clocks
+ * yet, the usb phy and pcie drivers are what will.
+ */
 static struct clk_gate_def gates_clk[] = {
 PDN_GATE(CLK_HIFSYS_USB0PHY, "usb0_phy_clk", "ethpll_500m_ck", 0x0030, 21),
 PDN_GATE(CLK_HIFSYS_USB1PHY, "usb1_phy_clk", "ethpll_500m_ck", 0x0030, 22),
