@@ -53,6 +53,10 @@
 #define PERICFG_CG0  0x10
 #define PERICFG_CG1  0x14
 
+/* PERI_GLOBALCON_RST0/1. */
+#define	PERICFG_RST_BASE	0x0000
+#define	PERICFG_RST_BANKS	2
+
 static struct ofw_compat_data compat_data[] = {
         {"mediatek,mt7623-pericfg", 1},
         {"mediatek,mt2701-pericfg", 1},
@@ -188,21 +192,11 @@ pericfg_clk_attach(device_t dev) {
 }
 
 static int
-pericfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value) {
-    struct mdtk_clk_softc *sc = device_get_softc(dev);
-    uint32_t mask, reset_reg;
+pericfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
+{
 
-    CLKDEV_DEVICE_LOCK(sc->dev);
-    KASSERT((idx > 0 && idx < 32), ("%s: idx out of range", __func__));
-
-
-    mask = 1 << (idx % 32);
-    reset_reg = (idx / 32) * 4;
-
-    CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-    CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-    return (0);
+	return (mdtk_clk_hwreset_assert(dev, PERICFG_RST_BASE,
+	    PERICFG_RST_BANKS, idx, value));
 }
 
 static int

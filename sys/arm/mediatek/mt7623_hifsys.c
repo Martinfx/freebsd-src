@@ -50,6 +50,10 @@
 #include "hwreset_if.h"
 #include "mdtk_clk.h"
 
+/* HIF_SYS_RST; this block has a single bank. */
+#define	HIFSYS_RST_BASE	0x0034
+#define	HIFSYS_RST_BANKS	1
+
 static struct ofw_compat_data compat_data[] = {
        {"mediatek,mt7623-hifsys", 1},
        {"mediatek,mt2701-hifsys", 1},
@@ -118,20 +122,9 @@ hifsys_clk_attach(device_t dev) {
 static int
 hifsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
-       struct mdtk_clk_softc *sc = device_get_softc(dev);
-       uint32_t mask, reset_reg;
 
-       CLKDEV_DEVICE_LOCK(sc->dev);
-       KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
-
-
-       mask = 1 << (idx % 32);
-       reset_reg = (idx / 32) * 4;
-
-       CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-       CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-       return(0);
+	return (mdtk_clk_hwreset_assert(dev, HIFSYS_RST_BASE,
+	    HIFSYS_RST_BANKS, idx, value));
 }
 
 static int

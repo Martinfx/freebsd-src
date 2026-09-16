@@ -43,6 +43,7 @@
 #include <dev/clk/clk_gate.h>
 #include <dev/clk/clk_link.h>
 #include <arm/mediatek/mdtk_clk.h>
+#include "clkdev_if.h"
 #include "mt_clk_pll.h"
 
     static void
@@ -145,6 +146,33 @@ mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
     reg &= ~clear_mask;
     reg |= set_mask;
     bus_write_4(sc->mem_res, addr, reg);
+    return (0);
+}
+
+/*
+ * Assert or deassert one reset line of a clock controller.  The reset bits
+ * live in one or more consecutive 32 bit banks starting at "base"; which
+ * bank a line belongs to follows from its index, exactly as the reset ids in
+ * dt-bindings/reset/mt2701-resets.h are numbered.
+ */
+int
+mdtk_clk_hwreset_assert(device_t dev, bus_size_t base, int nbanks,
+                        intptr_t idx, bool value) {
+    struct mdtk_clk_softc *sc;
+    bus_size_t reg;
+    uint32_t mask;
+
+    if (idx < 0 || idx >= (intptr_t)nbanks * 32)
+        return (EINVAL);
+
+    sc = device_get_softc(dev);
+    mask = 1u << (idx % 32);
+    reg = base + (idx / 32) * 4;
+
+    CLKDEV_DEVICE_LOCK(sc->dev);
+    CLKDEV_MODIFY_4(sc->dev, reg, mask, value ? mask : 0);
+    CLKDEV_DEVICE_UNLOCK(sc->dev);
+
     return (0);
 }
 

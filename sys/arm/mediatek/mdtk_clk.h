@@ -171,6 +171,9 @@ int mdtk_clkdev_write_4(device_t dev, bus_addr_t addr, uint32_t val);
 int mdtk_clkdev_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
                          uint32_t set_mask);
 
+int mdtk_clk_hwreset_assert(device_t dev, bus_size_t base, int nbanks,
+                            intptr_t idx, bool value);
+
 void mdtk_clkdev_device_lock(device_t dev);
 
 void mdtk_clkdev_device_unlock(device_t dev);
