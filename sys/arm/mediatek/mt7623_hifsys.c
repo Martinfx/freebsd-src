@@ -50,143 +50,163 @@
 #include "hwreset_if.h"
 #include "mdtk_clk.h"
 
+/* HIF_SYS_RST; this block has a single bank. */
+#define	HIFSYS_RST_BASE	0x0034
+#define	HIFSYS_RST_BANKS	1
+
 static struct ofw_compat_data compat_data[] = {
-       {"mediatek,mt7623-hifsys", 1},
-       {"mediatek,mt2701-hifsys", 1},
-       {NULL, 0},
+	{"mediatek,mt7623-hifsys", 1},
+	{"mediatek,mt2701-hifsys", 1},
+	{NULL, 0},
 };
 
+/*
+ * HIF gates.  The polarity of this block is not covered by the datasheet
+ * chapter we have; the bits are treated like the power-down bits of every
+ * other block until that can be confirmed.  Nothing consumes these clocks
+ * yet, the usb phy and pcie drivers are what will.
+ */
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_HIFSYS_USB0PHY, "usb0_phy_clk", "ethpll_500m_ck", 0x0030, 21),
-	GATE(CLK_HIFSYS_USB1PHY, "usb1_phy_clk", "ethpll_500m_ck", 0x0030, 22),
-	GATE(CLK_HIFSYS_PCIE0, "pcie0_clk", "ethpll_500m_ck", 0x0030, 24),
-	GATE(CLK_HIFSYS_PCIE1, "pcie1_clk", "ethpll_500m_ck", 0x0030, 25),
-	GATE(CLK_HIFSYS_PCIE2, "pcie2_clk", "ethpll_500m_ck", 0x0030, 26),
+PDN_GATE(CLK_HIFSYS_USB0PHY, "usb0_phy_clk", "ethpll_500m_ck", 0x0030, 21),
+PDN_GATE(CLK_HIFSYS_USB1PHY, "usb1_phy_clk", "ethpll_500m_ck", 0x0030, 22),
+	PDN_GATE(CLK_HIFSYS_PCIE0, "pcie0_clk", "ethpll_500m_ck", 0x0030, 24),
+	PDN_GATE(CLK_HIFSYS_PCIE1, "pcie1_clk", "ethpll_500m_ck", 0x0030, 25),
+	PDN_GATE(CLK_HIFSYS_PCIE2, "pcie2_clk", "ethpll_500m_ck", 0x0030, 26),
 };
 
 static struct mdtk_clk_def clk_def = {
-       .gates_def = gates_clk,
-       .num_gates = nitems(gates_clk),
+	.gates_def = gates_clk,
+	.num_gates = nitems(gates_clk),
 };
 
 static int
 hifsys_clk_detach(device_t dev)
 {
-       device_printf(dev, "Error: Clock driver cannot be detached\n");
-       return (EBUSY);
+
+	return (EBUSY);
 }
 
 static int
 hifsys_clk_probe(device_t dev)
 {
-       if (!ofw_bus_status_okay(dev))
-	       return (ENXIO);
+	if (!ofw_bus_status_okay(dev))
+		return (ENXIO);
 
-       if (ofw_bus_search_compatible(dev, compat_data)->ocd_data != 0) {
-	       device_set_desc(dev, "Mediatek hifsys clocks");
-	       return (BUS_PROBE_DEFAULT);
-       }
+	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data != 0) {
+		device_set_desc(dev, "Mediatek hifsys clocks");
+		return (BUS_PROBE_DEFAULT);
+	}
 
-       return (ENXIO);
+	return (ENXIO);
 }
 
 static int
-hifsys_clk_attach(device_t dev) {
-       struct mdtk_clk_softc *sc = device_get_softc(dev);
-       int rid = 0;
+hifsys_clk_attach(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+	int rid, rv;
 
-       sc->dev = dev;
+	sc = device_get_softc(dev);
+	sc->dev = dev;
 
-       mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		return (ENXIO);
+	}
 
-       if (ofw_bus_is_compatible(dev, "syscon")) {
-	       sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-		   RF_ACTIVE);
-	       if (sc->mem_res == NULL) {
-		       device_printf(dev,
-			   "Cannot allocate memory resource\n");
-		       return (ENXIO);
-	       }
+	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
+	/*
+	 * A node that also claims to be a syscon serves its registers to
+	 * other drivers; the clocks work either way.
+	 */
+	if (ofw_bus_is_compatible(dev, "syscon")) {
+		sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
+		    ofw_bus_get_node(dev));
+		if (sc->syscon == NULL) {
+			device_printf(dev, "cannot register syscon\n");
+			rv = ENXIO;
+			goto fail;
+		}
+	}
 
-       }
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
 
-       mdtk_register_clocks(dev, &clk_def);
-       return (0);
+	return (0);
+
+fail:
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
+	return (rv);
 }
 
 static int
 hifsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
-       struct mdtk_clk_softc *sc = device_get_softc(dev);
-       uint32_t mask, reset_reg;
 
-       CLKDEV_DEVICE_LOCK(sc->dev);
-       KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
-
-
-       mask = 1 << (idx % 32);
-       reset_reg = (idx / 32) * 4;
-
-       CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-       CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-       return(0);
+	return (mdtk_clk_hwreset_assert(dev, HIFSYS_RST_BASE,
+	    HIFSYS_RST_BANKS, idx, value));
 }
 
 static int
 hifsys_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
 {
-       struct mdtk_clk_softc *sc;
+	struct mdtk_clk_softc *sc;
 
-       sc = device_get_softc(dev);
-       *syscon = sc->syscon;
-       if (*syscon == NULL) {
-	       return (ENODEV);
-       }
+	sc = device_get_softc(dev);
+	*syscon = sc->syscon;
+	if (*syscon == NULL) {
+		return (ENODEV);
+	}
 
-       return (0);
+	return (0);
 }
 
 static void
 hifsys_clk_syscon_lock(device_t dev)
 {
-       struct mdtk_clk_softc *sc;
+	struct mdtk_clk_softc *sc;
 
-       sc = device_get_softc(dev);
-       mtx_lock(&sc->mtx);
+	sc = device_get_softc(dev);
+	mtx_lock(&sc->mtx);
 }
 
 static void
 hifsys_clk_syscon_unlock(device_t dev)
 {
-       struct mdtk_clk_softc *sc;
+	struct mdtk_clk_softc *sc;
 
-       sc = device_get_softc(dev);
-       mtx_unlock(&sc->mtx);
+	sc = device_get_softc(dev);
+	mtx_unlock(&sc->mtx);
 }
 
 static device_method_t mt7623_hifsys_methods[] = {
-       /* Device interface */
-       DEVMETHOD(device_probe,		 hifsys_clk_probe),
-       DEVMETHOD(device_attach,	 hifsys_clk_attach),
-       DEVMETHOD(device_detach, 	 hifsys_clk_detach),
+	/* Device interface */
+	DEVMETHOD(device_probe,		 hifsys_clk_probe),
+	DEVMETHOD(device_attach,	 hifsys_clk_attach),
+	DEVMETHOD(device_detach, 	 hifsys_clk_detach),
 
-       /* Clkdev interface*/
-       DEVMETHOD(clkdev_read_4,        mdtk_clkdev_read_4),
-       DEVMETHOD(clkdev_write_4,	    mdtk_clkdev_write_4),
-       DEVMETHOD(clkdev_modify_4,	    mdtk_clkdev_modify_4),
-       DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
-       DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
+	/* Clkdev interface*/
+	DEVMETHOD(clkdev_read_4,        mdtk_clkdev_read_4),
+	DEVMETHOD(clkdev_write_4,	    mdtk_clkdev_write_4),
+	DEVMETHOD(clkdev_modify_4,	    mdtk_clkdev_modify_4),
+	DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
+	DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
 
-       DEVMETHOD(hwreset_assert,	hifsys_clk_hwreset_assert),
+	DEVMETHOD(hwreset_assert,	hifsys_clk_hwreset_assert),
 
-       /* Syscon interface */
-       DEVMETHOD(syscon_get_handle,    hifsys_clk_syscon_get_handle),
-       DEVMETHOD(syscon_device_lock,   hifsys_clk_syscon_lock),
-       DEVMETHOD(syscon_device_unlock, hifsys_clk_syscon_unlock),
+	/* Syscon interface */
+	DEVMETHOD(syscon_get_handle,    hifsys_clk_syscon_get_handle),
+	DEVMETHOD(syscon_device_lock,   hifsys_clk_syscon_lock),
+	DEVMETHOD(syscon_device_unlock, hifsys_clk_syscon_unlock),
 
-       DEVMETHOD_END
+	DEVMETHOD_END
 };
 
 DEFINE_CLASS_1(mt7623_hifsys, mt7623_hifsys_driver, mt7623_hifsys_methods,

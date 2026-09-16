@@ -44,7 +44,6 @@
 #include <dev/clk/clk_mux.h>
 #include <dev/clk/clk_gate.h>
 #include <dev/clk/clk_link.h>
-#include <dev/hwreset/hwreset.h>
 
 #include <dt-bindings/clock/mt2701-clk.h>
 #include <arm/mediatek/mdtk_clk.h>
@@ -57,8 +56,8 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_VDEC_CKGEN, "vdec_cken", "vdec_sel", 0x0000, 0),
-	GATE(CLK_VDEC_LARB, "vdec_larb_cken", "mm_sel", 0x0000, 0),
+	PDN_GATE(CLK_VDEC_CKGEN, "vdec_cken", "vdec_sel", 0x0000, 0),
+	PDN_GATE(CLK_VDEC_LARB, "vdec_larb_cken", "mm_sel", 0x0000, 0),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -69,7 +68,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 vdecsy_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -88,35 +87,38 @@ vdecsy_clk_probe(device_t dev)
 }
 
 static int
-vdecsy_clk_attach(device_t dev) {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
+vdecsy_clk_attach(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
 	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
 
-	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
-
-	/* Resource setup. */
 	rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE);
-	if (!sc->mem_res) {
+	if (sc->mem_res == NULL) {
 		device_printf(dev, "cannot allocate memory resource\n");
-		rv = ENXIO;
-		goto fail;
+		return (ENXIO);
 	}
 
-	mdtk_register_clocks(dev,  &clk_def);
+	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
 
 fail:
-	if (sc->mem_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, 0, sc->mem_res);
-
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
 	return (rv);
 }
 
-static device_method_t mt7622_vdecsys_methods[] = {
+static device_method_t mt7623_vdecsys_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		 vdecsy_clk_probe),
 	DEVMETHOD(device_attach,	     vdecsy_clk_attach),
@@ -132,8 +134,9 @@ static device_method_t mt7622_vdecsys_methods[] = {
 	DEVMETHOD_END
 };
 
-DEFINE_CLASS_0(mt7622_vdecsys, mt7622_vdecsys_driver, mt7622_vdecsys_methods,
+DEFINE_CLASS_0(mt7623_vdecsys, mt7623_vdecsys_driver, mt7623_vdecsys_methods,
     sizeof(struct mdtk_clk_softc));
 
-EARLY_DRIVER_MODULE(mt7622_vdecsys, simplebus, mt7622_vdecsys_driver, NULL, NULL,
+EARLY_DRIVER_MODULE(mt7623_vdecsys, simplebus, mt7623_vdecsys_driver, NULL,
+    NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 2);

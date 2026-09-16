@@ -41,12 +41,10 @@
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/syscon/syscon.h>
 #include <dev/clk/clk_gate.h>
-#include <dev/hwreset/hwreset.h>
 
 #include <dt-bindings/clock/mt2701-clk.h>
 #include "syscon_if.h"
 #include "clkdev_if.h"
-#include "hwreset_if.h"
 #include "mdtk_clk.h"
 
 static struct ofw_compat_data compat_data[] = {
@@ -56,56 +54,56 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_BDP_BRG_BA, "brg_baclk", "mm_sel", 0x0100, 0),
-	GATE(CLK_BDP_BRG_DRAM, "brg_dram", "mm_sel", 0x0100, 1),
-	GATE(CLK_BDP_LARB_DRAM, "larb_dram", "mm_sel", 0x0100, 2),
-	GATE(CLK_BDP_WR_VDI_PXL, "wr_vdi_pxl", "hdmi_0_deep340m", 0x0100, 3),
-	GATE(CLK_BDP_WR_VDI_DRAM, "wr_vdi_dram", "mm_sel", 0x0100, 4),
-	GATE(CLK_BDP_WR_B, "wr_bclk", "mm_sel", 0x0100, 5),
-	GATE(CLK_BDP_DGI_IN, "dgi_in", "dpi1_sel", 0x0100, 6),
-	GATE(CLK_BDP_DGI_OUT, "dgi_out", "dpi1_sel", 0x0100, 7),
-	GATE(CLK_BDP_FMT_MAST_27, "fmt_mast_27", "dpi1_sel", 0x0100, 8),
-	GATE(CLK_BDP_FMT_B, "fmt_bclk", "mm_sel", 0x0100, 9),
-	GATE(CLK_BDP_OSD_B, "osd_bclk", "mm_sel", 0x0100, 10),
-	GATE(CLK_BDP_OSD_DRAM, "osd_dram", "mm_sel", 0x0100, 11),
-	GATE(CLK_BDP_OSD_AGENT, "osd_agent", "osd_sel", 0x0100, 12),
-	GATE(CLK_BDP_OSD_PXL, "osd_pxl", "dpi1_sel", 0x0100, 13),
-	GATE(CLK_BDP_RLE_B, "rle_bclk", "mm_sel", 0x0100, 14),
-	GATE(CLK_BDP_RLE_AGENT, "rle_agent", "mm_sel", 0x0100,  15),
-	GATE(CLK_BDP_RLE_DRAM, "rle_dram", "mm_sel", 0x0100, 16),
-	GATE(CLK_BDP_F27M, "f27m", "di_sel", 0x0100, 17),
-	GATE(CLK_BDP_F27M_VDOUT, "f27m_vdout", "di_sel", 0x0100, 18),
-	GATE(CLK_BDP_F27_74_74, "f27_74_74", "di_sel", 0x0100, 19),
-	GATE(CLK_BDP_F2FS, "f2fs", "di_sel", 0x0100, 20),
-	GATE(CLK_BDP_F2FS74_148, "f2fs74_148", "di_sel", 0x0100, 21),
-	GATE(CLK_BDP_FB, "fbclk", "mm_sel", 0x0100, 22),
-	GATE(CLK_BDP_VDO_DRAM, "vdo_dram", "mm_sel", 0x0100, 23),
-	GATE(CLK_BDP_VDO_2FS, "vdo_2fs", "di_sel", 0x0100, 24),
-	GATE(CLK_BDP_VDO_B, "vdo_bclk", "mm_sel", 0x0100, 25),
-	GATE(CLK_BDP_WR_DI_PXL, "wr_di_pxl", "di_sel", 0x0100, 26),
-	GATE(CLK_BDP_WR_DI_DRAM, "wr_di_dram", "mm_sel", 0x0100, 27),
-	GATE(CLK_BDP_WR_DI_B, "wr_di_bclk", "mm_sel", 0x0100, 28),
-	GATE(CLK_BDP_NR_PXL, "nr_pxl", "nr_sel", 0x0100, 29),
-	GATE(CLK_BDP_NR_DRAM, "nr_dram", "mm_sel", 0x0100, 30),
-	GATE(CLK_BDP_NR_B, "nr_bclk", "mm_sel", 0x0100, 31),
+	PDN_GATE(CLK_BDP_BRG_BA, "brg_baclk", "mm_sel", 0x0100, 0),
+	PDN_GATE(CLK_BDP_BRG_DRAM, "brg_dram", "mm_sel", 0x0100, 1),
+	PDN_GATE(CLK_BDP_LARB_DRAM, "larb_dram", "mm_sel", 0x0100, 2),
+PDN_GATE(CLK_BDP_WR_VDI_PXL, "wr_vdi_pxl", "hdmi_0_deep340m", 0x0100, 3),
+	PDN_GATE(CLK_BDP_WR_VDI_DRAM, "wr_vdi_dram", "mm_sel", 0x0100, 4),
+	PDN_GATE(CLK_BDP_WR_B, "wr_bclk", "mm_sel", 0x0100, 5),
+	PDN_GATE(CLK_BDP_DGI_IN, "dgi_in", "dpi1_sel", 0x0100, 6),
+	PDN_GATE(CLK_BDP_DGI_OUT, "dgi_out", "dpi1_sel", 0x0100, 7),
+	PDN_GATE(CLK_BDP_FMT_MAST_27, "fmt_mast_27", "dpi1_sel", 0x0100, 8),
+	PDN_GATE(CLK_BDP_FMT_B, "fmt_bclk", "mm_sel", 0x0100, 9),
+	PDN_GATE(CLK_BDP_OSD_B, "osd_bclk", "mm_sel", 0x0100, 10),
+	PDN_GATE(CLK_BDP_OSD_DRAM, "osd_dram", "mm_sel", 0x0100, 11),
+	PDN_GATE(CLK_BDP_OSD_AGENT, "osd_agent", "osd_sel", 0x0100, 12),
+	PDN_GATE(CLK_BDP_OSD_PXL, "osd_pxl", "dpi1_sel", 0x0100, 13),
+	PDN_GATE(CLK_BDP_RLE_B, "rle_bclk", "mm_sel", 0x0100, 14),
+	PDN_GATE(CLK_BDP_RLE_AGENT, "rle_agent", "mm_sel", 0x0100,  15),
+	PDN_GATE(CLK_BDP_RLE_DRAM, "rle_dram", "mm_sel", 0x0100, 16),
+	PDN_GATE(CLK_BDP_F27M, "f27m", "di_sel", 0x0100, 17),
+	PDN_GATE(CLK_BDP_F27M_VDOUT, "f27m_vdout", "di_sel", 0x0100, 18),
+	PDN_GATE(CLK_BDP_F27_74_74, "f27_74_74", "di_sel", 0x0100, 19),
+	PDN_GATE(CLK_BDP_F2FS, "f2fs", "di_sel", 0x0100, 20),
+	PDN_GATE(CLK_BDP_F2FS74_148, "f2fs74_148", "di_sel", 0x0100, 21),
+	PDN_GATE(CLK_BDP_FB, "fbclk", "mm_sel", 0x0100, 22),
+	PDN_GATE(CLK_BDP_VDO_DRAM, "vdo_dram", "mm_sel", 0x0100, 23),
+	PDN_GATE(CLK_BDP_VDO_2FS, "vdo_2fs", "di_sel", 0x0100, 24),
+	PDN_GATE(CLK_BDP_VDO_B, "vdo_bclk", "mm_sel", 0x0100, 25),
+	PDN_GATE(CLK_BDP_WR_DI_PXL, "wr_di_pxl", "di_sel", 0x0100, 26),
+	PDN_GATE(CLK_BDP_WR_DI_DRAM, "wr_di_dram", "mm_sel", 0x0100, 27),
+	PDN_GATE(CLK_BDP_WR_DI_B, "wr_di_bclk", "mm_sel", 0x0100, 28),
+	PDN_GATE(CLK_BDP_NR_PXL, "nr_pxl", "nr_sel", 0x0100, 29),
+	PDN_GATE(CLK_BDP_NR_DRAM, "nr_dram", "mm_sel", 0x0100, 30),
+	PDN_GATE(CLK_BDP_NR_B, "nr_bclk", "mm_sel", 0x0100, 31),
 
-	GATE(CLK_BDP_RX_F, "rx_fclk", "hadds2_fbclk", 0x0110, 0),
-	GATE(CLK_BDP_RX_X, "rx_xclk", "clk26m", 0x0110, 1),
-	GATE(CLK_BDP_RXPDT, "rxpdtclk", "hdmi_0_pix340m", 0x0110, 2),
-	GATE(CLK_BDP_RX_CSCL_N, "rx_cscl_n", "clk26m", 0x0110, 3),
-	GATE(CLK_BDP_RX_CSCL, "rx_cscl", "clk26m", 0x0110, 4),
-	GATE(CLK_BDP_RX_DDCSCL_N, "rx_ddcscl_n", "hdmi_scl_rx", 0x0110, 5),
-	GATE(CLK_BDP_RX_DDCSCL, "rx_ddcscl", "hdmi_scl_rx", 0x0110, 6),
-	GATE(CLK_BDP_RX_VCO, "rx_vcoclk", "hadds2pll_294m", 0x0110, 7),
-	GATE(CLK_BDP_RX_DP, "rx_dpclk", "hdmi_0_pll340m", 0x0110, 8),
-	GATE(CLK_BDP_RX_P, "rx_pclk", "hdmi_0_pll340m", 0x0110, 9),
-	GATE(CLK_BDP_RX_M, "rx_mclk", "hadds2pll_294m", 0x0110, 10),
-	GATE(CLK_BDP_RX_PLL, "rx_pllclk", "hdmi_0_pix340m", 0x0110, 11),
-	GATE(CLK_BDP_BRG_RT_B, "brg_rt_bclk", "mm_sel", 0x0110, 12),
-	GATE(CLK_BDP_BRG_RT_DRAM, "brg_rt_dram", "mm_sel", 0x0110, 13),
-	GATE(CLK_BDP_LARBRT_DRAM, "larbrt_dram", "mm_sel", 0x0110, 14),
-	GATE(CLK_BDP_TMDS_SYN, "tmds_syn", "hdmi_0_pll340m", 0x0110, 15),
-	GATE(CLK_BDP_HDMI_MON, "hdmi_mon", "hdmi_0_pll340m", 0x0110, 16),
+	PDN_GATE(CLK_BDP_RX_F, "rx_fclk", "hadds2_fbclk", 0x0110, 0),
+	PDN_GATE(CLK_BDP_RX_X, "rx_xclk", "clk26m", 0x0110, 1),
+	PDN_GATE(CLK_BDP_RXPDT, "rxpdtclk", "hdmi_0_pix340m", 0x0110, 2),
+	PDN_GATE(CLK_BDP_RX_CSCL_N, "rx_cscl_n", "clk26m", 0x0110, 3),
+	PDN_GATE(CLK_BDP_RX_CSCL, "rx_cscl", "clk26m", 0x0110, 4),
+	PDN_GATE(CLK_BDP_RX_DDCSCL_N, "rx_ddcscl_n", "hdmi_scl_rx", 0x0110, 5),
+	PDN_GATE(CLK_BDP_RX_DDCSCL, "rx_ddcscl", "hdmi_scl_rx", 0x0110, 6),
+	PDN_GATE(CLK_BDP_RX_VCO, "rx_vcoclk", "hadds2pll_294m", 0x0110, 7),
+	PDN_GATE(CLK_BDP_RX_DP, "rx_dpclk", "hdmi_0_pll340m", 0x0110, 8),
+	PDN_GATE(CLK_BDP_RX_P, "rx_pclk", "hdmi_0_pll340m", 0x0110, 9),
+	PDN_GATE(CLK_BDP_RX_M, "rx_mclk", "hadds2pll_294m", 0x0110, 10),
+	PDN_GATE(CLK_BDP_RX_PLL, "rx_pllclk", "hdmi_0_pix340m", 0x0110, 11),
+	PDN_GATE(CLK_BDP_BRG_RT_B, "brg_rt_bclk", "mm_sel", 0x0110, 12),
+	PDN_GATE(CLK_BDP_BRG_RT_DRAM, "brg_rt_dram", "mm_sel", 0x0110, 13),
+	PDN_GATE(CLK_BDP_LARBRT_DRAM, "larbrt_dram", "mm_sel", 0x0110, 14),
+	PDN_GATE(CLK_BDP_TMDS_SYN, "tmds_syn", "hdmi_0_pll340m", 0x0110, 15),
+	PDN_GATE(CLK_BDP_HDMI_MON, "hdmi_mon", "hdmi_0_pll340m", 0x0110, 16),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -116,7 +114,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 bdpsys_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -135,48 +133,51 @@ bdpsys_clk_probe(device_t dev)
 }
 
 static int
-bdpsys_clk_attach(device_t dev) {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	int rid = 0;
+bdpsys_clk_attach(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
+
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		return (ENXIO);
+	}
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
+	/*
+	 * A node that also claims to be a syscon serves its registers to
+	 * other drivers; the clocks work either way.
+	 */
 	if (ofw_bus_is_compatible(dev, "syscon")) {
-		sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-		    RF_ACTIVE);
-		if (sc->mem_res == NULL) {
-			device_printf(dev,
-			    "Cannot allocate memory resource\n");
-			return (ENXIO);
+		sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
+		    ofw_bus_get_node(dev));
+		if (sc->syscon == NULL) {
+			device_printf(dev, "cannot register syscon\n");
+			rv = ENXIO;
+			goto fail;
 		}
-
-
 	}
 
-	mdtk_register_clocks(dev, &clk_def);
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
+
+fail:
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
+	return (rv);
 }
 
-static int
-bdpsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
-{
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	uint32_t mask, reset_reg;
-
-	CLKDEV_DEVICE_LOCK(sc->dev);
-	KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
-
-
-	mask = 1 << (idx % 32);
-	reset_reg = (idx / 32) * 4;
-
-	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-	CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-	return(0);
-}
 
 static int
 bdpsys_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
@@ -210,7 +211,7 @@ bdpsys_clk_syscon_unlock(device_t dev)
 	mtx_unlock(&sc->mtx);
 }
 
-static device_method_t mt7622_bdpsys_methods[] = {
+static device_method_t mt7623_bdpsys_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		 bdpsys_clk_probe),
 	DEVMETHOD(device_attach,	 bdpsys_clk_attach),
@@ -223,7 +224,6 @@ static device_method_t mt7622_bdpsys_methods[] = {
 	DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
 	DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
 
-	DEVMETHOD(hwreset_assert,	bdpsys_clk_hwreset_assert),
 
 	/* Syscon interface */
 	DEVMETHOD(syscon_get_handle,    bdpsys_clk_syscon_get_handle),
@@ -233,8 +233,8 @@ static device_method_t mt7622_bdpsys_methods[] = {
 	DEVMETHOD_END
 };
 
-DEFINE_CLASS_1(mt7622_bdpsys, mt7622_bdpsys_driver, mt7622_bdpsys_methods,
+DEFINE_CLASS_1(mt7623_bdpsys, mt7623_bdpsys_driver, mt7623_bdpsys_methods,
     sizeof(struct mdtk_clk_softc), syscon_class);
 
-EARLY_DRIVER_MODULE(mt7622_bdpsys, simplebus, mt7622_bdpsys_driver, NULL, NULL,
+EARLY_DRIVER_MODULE(mt7623_bdpsys, simplebus, mt7623_bdpsys_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);

@@ -41,12 +41,10 @@
 #include <dev/ofw/ofw_bus_subr.h>
 #include <dev/syscon/syscon.h>
 #include <dev/clk/clk_gate.h>
-#include <dev/hwreset/hwreset.h>
 
 #include <dt-bindings/clock/mt2701-clk.h>
 #include "syscon_if.h"
 #include "clkdev_if.h"
-#include "hwreset_if.h"
 #include "mdtk_clk.h"
 
 static struct ofw_compat_data compat_data[] = {
@@ -56,12 +54,12 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_IMG_SMI_COMM, "img_smi_comm", "mm_sel", 0x0000, 0),
-	GATE(CLK_IMG_RESZ, "img_resz", "mm_sel", 0x0000, 1),
-	GATE(CLK_IMG_JPGDEC_SMI, "img_jpgdec_smi", "mm_sel", 0x0000, 5),
-	GATE(CLK_IMG_JPGDEC, "img_jpgdec", "mm_sel", 0x0000, 6),
-	GATE(CLK_IMG_VENC_LT, "img_venc_lt", "mm_sel", 0x0000, 8),
-	GATE(CLK_IMG_VENC, "img_venc", "mm_sel", 0x0000, 9),
+	PDN_GATE(CLK_IMG_SMI_COMM, "img_smi_comm", "mm_sel", 0x0000, 0),
+	PDN_GATE(CLK_IMG_RESZ, "img_resz", "mm_sel", 0x0000, 1),
+	PDN_GATE(CLK_IMG_JPGDEC_SMI, "img_jpgdec_smi", "mm_sel", 0x0000, 5),
+	PDN_GATE(CLK_IMG_JPGDEC, "img_jpgdec", "mm_sel", 0x0000, 6),
+	PDN_GATE(CLK_IMG_VENC_LT, "img_venc_lt", "mm_sel", 0x0000, 8),
+	PDN_GATE(CLK_IMG_VENC, "img_venc", "mm_sel", 0x0000, 9),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -72,7 +70,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 imgsys_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -91,48 +89,51 @@ imgsys_clk_probe(device_t dev)
 }
 
 static int
-imgsys_clk_attach(device_t dev) {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	int rid = 0;
+imgsys_clk_attach(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
+
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		return (ENXIO);
+	}
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
+	/*
+	 * A node that also claims to be a syscon serves its registers to
+	 * other drivers; the clocks work either way.
+	 */
 	if (ofw_bus_is_compatible(dev, "syscon")) {
-		sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-		    RF_ACTIVE);
-		if (sc->mem_res == NULL) {
-			device_printf(dev,
-			    "Cannot allocate memory resource\n");
-			return (ENXIO);
+		sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
+		    ofw_bus_get_node(dev));
+		if (sc->syscon == NULL) {
+			device_printf(dev, "cannot register syscon\n");
+			rv = ENXIO;
+			goto fail;
 		}
-
-
 	}
 
-	mdtk_register_clocks(dev, &clk_def);
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
+
+fail:
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
+	return (rv);
 }
 
-static int
-imgsys_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
-{
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	uint32_t mask, reset_reg;
-
-	CLKDEV_DEVICE_LOCK(sc->dev);
-	KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
-
-
-	mask = 1 << (idx % 32);
-	reset_reg = (idx / 32) * 4;
-
-	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-	CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-	return(0);
-}
 
 static int
 imgsys_clk_syscon_get_handle(device_t dev, struct syscon **syscon)
@@ -166,7 +167,7 @@ imgsys_clk_syscon_unlock(device_t dev)
 	mtx_unlock(&sc->mtx);
 }
 
-static device_method_t mt7622_imgsys_methods[] = {
+static device_method_t mt7623_imgsys_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		 imgsys_clk_probe),
 	DEVMETHOD(device_attach,	 imgsys_clk_attach),
@@ -179,7 +180,6 @@ static device_method_t mt7622_imgsys_methods[] = {
 	DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
 	DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
 
-	DEVMETHOD(hwreset_assert,	imgsys_clk_hwreset_assert),
 
 	/* Syscon interface */
 	DEVMETHOD(syscon_get_handle,    imgsys_clk_syscon_get_handle),
@@ -189,8 +189,8 @@ static device_method_t mt7622_imgsys_methods[] = {
 	DEVMETHOD_END
 };
 
-DEFINE_CLASS_1(mt7622_imgsys, mt7622_imgsys_driver, mt7622_imgsys_methods,
+DEFINE_CLASS_1(mt7623_imgsys, mt7623_imgsys_driver, mt7623_imgsys_methods,
     sizeof(struct mdtk_clk_softc), syscon_class);
 
-EARLY_DRIVER_MODULE(mt7622_imgsys, simplebus, mt7622_imgsys_driver, NULL, NULL,
+EARLY_DRIVER_MODULE(mt7623_imgsys, simplebus, mt7623_imgsys_driver, NULL, NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);

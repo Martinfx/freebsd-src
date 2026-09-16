@@ -50,6 +50,10 @@
 #include "hwreset_if.h"
 #include "mdtk_clk.h"
 
+/* INFRA_GLOBALCON_RST0/1; note these are not at offset 0, unlike pericfg. */
+#define	INFRACFG_RST_BASE	0x0030
+#define	INFRACFG_RST_BANKS	2
+
 static struct ofw_compat_data compat_data[] = {
 	{"mediatek,mt7623-infracfg", 1},
 	{"mediatek,mt2701-infracfg", 1},
@@ -61,24 +65,24 @@ static struct clk_fixed_def fixed_clk[] = {
 };
 
 static struct clk_gate_def gates_clk[] = {
-	GATE(CLK_INFRA_DBG, "dbgclk", "axi_sel", 0x0048, 0),
-	GATE(CLK_INFRA_SMI, "smi_ck", "mm_sel", 0x0048, 1),
-	GATE(CLK_INFRA_QAXI_CM4, "cm4_ck", "axi_sel", 0x0048, 2),
-	GATE(CLK_INFRA_AUD_SPLIN_B, "audio_splin_bck", "hadds2pll_294m", 0x0048, 4),
-	GATE(CLK_INFRA_AUDIO, "audio_ck", "clk26m", 0x0048, 5),
-	GATE(CLK_INFRA_EFUSE, "efuse_ck", "clk26m", 0x0048, 6),
-	GATE(CLK_INFRA_L2C_SRAM, "l2c_sram_ck", "mm_sel", 0x0048, 7),
-	GATE(CLK_INFRA_M4U, "m4u_ck", "mem_sel", 0x0048, 8),
-	GATE(CLK_INFRA_CONNMCU, "connsys_bus", "wbg_dig_ck_416m", 0x0048, 12),
-	GATE(CLK_INFRA_TRNG, "trng_ck", "axi_sel", 0x0048, 13),
-	GATE(CLK_INFRA_RAMBUFIF, "rambufif_ck", "mem_sel", 0x0048, 14),
-	GATE(CLK_INFRA_CPUM, "cpum_ck", "mem_sel", 0x0048, 15),
-	GATE(CLK_INFRA_KP, "kp_ck", "axi_sel", 0x0048, 16),
-	GATE(CLK_INFRA_CEC, "cec_ck", "rtc_sel", 0x0048, 18),
-	GATE(CLK_INFRA_IRRX, "irrx_ck", "axi_sel", 0x0048, 19),
-	GATE(CLK_INFRA_PMICSPI, "pmicspi_ck", "pmicspi_sel", 0x0048, 22),
-	GATE(CLK_INFRA_PMICWRAP, "pmicwrap_ck", "axi_sel", 0x0048, 23),
-	GATE(CLK_INFRA_DDCCI, "ddcci_ck", "axi_sel", 0x0048, 24),
+	PDN_GATE(CLK_INFRA_DBG, "dbgclk", "axi_sel", 0x0048, 0),
+	PDN_GATE(CLK_INFRA_SMI, "smi_ck", "mm_sel", 0x0048, 1),
+	PDN_GATE(CLK_INFRA_QAXI_CM4, "cm4_ck", "axi_sel", 0x0048, 2),
+PDN_GATE(CLK_INFRA_AUD_SPLIN_B, "audio_splin_bck", "hadds2pll_294m", 0x0048, 4),
+	PDN_GATE(CLK_INFRA_AUDIO, "audio_ck", "clk26m", 0x0048, 5),
+	PDN_GATE(CLK_INFRA_EFUSE, "efuse_ck", "clk26m", 0x0048, 6),
+	PDN_GATE(CLK_INFRA_L2C_SRAM, "l2c_sram_ck", "mm_sel", 0x0048, 7),
+	PDN_GATE(CLK_INFRA_M4U, "m4u_ck", "mem_sel", 0x0048, 8),
+PDN_GATE(CLK_INFRA_CONNMCU, "connsys_bus", "wbg_dig_ck_416m", 0x0048, 12),
+	PDN_GATE(CLK_INFRA_TRNG, "trng_ck", "axi_sel", 0x0048, 13),
+	PDN_GATE(CLK_INFRA_RAMBUFIF, "rambufif_ck", "mem_sel", 0x0048, 14),
+	PDN_GATE(CLK_INFRA_CPUM, "cpum_ck", "mem_sel", 0x0048, 15),
+	PDN_GATE(CLK_INFRA_KP, "kp_ck", "axi_sel", 0x0048, 16),
+	PDN_GATE(CLK_INFRA_CEC, "cec_ck", "rtc_sel", 0x0048, 18),
+	PDN_GATE(CLK_INFRA_IRRX, "irrx_ck", "axi_sel", 0x0048, 19),
+	PDN_GATE(CLK_INFRA_PMICSPI, "pmicspi_ck", "pmicspi_sel", 0x0048, 22),
+	PDN_GATE(CLK_INFRA_PMICWRAP, "pmicwrap_ck", "axi_sel", 0x0048, 23),
+	PDN_GATE(CLK_INFRA_DDCCI, "ddcci_ck", "axi_sel", 0x0048, 24),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -91,7 +95,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 infracfg_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -110,53 +114,57 @@ infracfg_clk_probe(device_t dev)
 }
 
 static int
-infracfg_clk_attach(device_t dev) {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	int rid = 0;
+infracfg_clk_attach(device_t dev)
+{
+	struct mdtk_clk_softc *sc;
+	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
+
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		return (ENXIO);
+	}
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
 
+	/*
+	 * A node that also claims to be a syscon serves its registers to
+	 * other drivers; the clocks work either way.
+	 */
 	if (ofw_bus_is_compatible(dev, "syscon")) {
-		sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-		    RF_ACTIVE);
-		if (sc->mem_res == NULL) {
-			device_printf(dev,
-			    "Cannot allocate memory resource\n");
-			return (ENXIO);
-		}
-
-		sc->syscon = syscon_create_ofw_node(dev,
-		    &syscon_class, ofw_bus_get_node(dev));
+		sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
+		    ofw_bus_get_node(dev));
 		if (sc->syscon == NULL) {
-			device_printf(dev,
-			    "Failed to create/register syscon\n");
-			return (ENXIO);
+			device_printf(dev, "cannot register syscon\n");
+			rv = ENXIO;
+			goto fail;
 		}
 	}
 
-	mdtk_register_clocks(dev, &clk_def);
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
+
+fail:
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
+	return (rv);
 }
 
 static int
 infracfg_clk_hwreset_assert(device_t dev, intptr_t idx, bool value)
 {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	uint32_t mask, reset_reg;
 
-	CLKDEV_DEVICE_LOCK(sc->dev);
-	KASSERT((idx > 0 && idx < 32), ("%s: idx out of range",__func__));
-
-
-	mask = 1 << (idx % 32);
-	reset_reg = (idx / 32) * 4;
-
-	CLKDEV_MODIFY_4(sc->dev, reset_reg, mask, value ? mask : 0);
-	CLKDEV_DEVICE_UNLOCK(sc->dev);
-
-	return(0);
+	return (mdtk_clk_hwreset_assert(dev, INFRACFG_RST_BASE,
+	    INFRACFG_RST_BANKS, idx, value));
 }
 
 static int
@@ -217,5 +225,6 @@ static device_method_t mt7623_infracfg_methods[] = {
 DEFINE_CLASS_1(mt7623_infracfg, mt7623_infracfg_driver, mt7623_infracfg_methods,
     sizeof(struct mdtk_clk_softc), syscon_class);
 
-EARLY_DRIVER_MODULE(mt7623_infracfg, simplebus, mt7623_infracfg_driver, NULL, NULL,
+EARLY_DRIVER_MODULE(mt7623_infracfg, simplebus, mt7623_infracfg_driver, NULL,
+    NULL,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE + 4);
