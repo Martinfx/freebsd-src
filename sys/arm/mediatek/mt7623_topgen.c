@@ -754,7 +754,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 topckgen_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -775,30 +775,32 @@ topckgen_clk_probe(device_t dev)
 static int
 topckgen_clk_attach(device_t dev)
 {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
+	struct mdtk_clk_softc *sc;
 	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
 
-	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
-
-	/* Resource setup. */
 	rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
 	    RF_ACTIVE);
-	if (!sc->mem_res) {
+	if (sc->mem_res == NULL) {
 		device_printf(dev, "cannot allocate memory resource\n");
-		rv = ENXIO;
-		goto fail;
+		return (ENXIO);
 	}
 
-	mdtk_register_clocks(dev,  &clk_def);
+	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
 
 fail:
-	if (sc->mem_res)
-		bus_release_resource(dev, SYS_RES_MEMORY, 0, sc->mem_res);
-
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
 	return (rv);
 }
 

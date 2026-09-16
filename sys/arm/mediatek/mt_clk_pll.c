@@ -58,31 +58,26 @@
 /* Default number of integer bits when pll_pcwibits is not provided. */
 #define MT_PLL_INTEGER_BITS    7
 
-/*
- * pll_flags bit.  Keep this in sync with the value used in the board PLL
- * table; ideally move it to mt_clk_pll.h next to struct clk_pll_def.
- */
-#define MT_PLL_FLAG_RST_BAR    (1u << 0)
-
 struct mt_pll_clknode_softc {
-	bus_size_t pll_base_reg;
-	bus_size_t pll_pwr_reg;
-	uint32_t pll_flags;
-	uint64_t pll_fmin;
-	uint64_t pll_fmax;
-	uint32_t pll_en_mask;
-	bus_size_t pll_pd_reg;
-	bus_size_t pll_tuner_reg;
-	bus_size_t pll_tuner_en_reg;
-	uint32_t pll_tuner_en_bit;
-	int pll_pd_shift;
-	int pll_pcwbits;
-	int pll_pcwibits;
-	bus_size_t pll_pcw_reg;
-	uint32_t pll_pcw_chg_reg;
-	int pll_pcw_shift;
-	struct div_table *pll_div_table;
-	uint32_t pll_rst_bar_mask;
+	bool			pll_running;
+	bus_size_t		pll_base_reg;
+	bus_size_t		pll_pwr_reg;
+	uint32_t		pll_flags;
+	uint64_t		pll_fmin;
+	uint64_t		pll_fmax;
+	uint32_t		pll_en_mask;
+	bus_size_t		pll_pd_reg;
+	bus_size_t		pll_tuner_reg;
+	bus_size_t		pll_tuner_en_reg;
+	uint32_t		pll_tuner_en_bit;
+	int			pll_pd_shift;
+	int			pll_pcwbits;
+	int			pll_pcwibits;
+	bus_size_t		pll_pcw_reg;
+	uint32_t		pll_pcw_chg_reg;
+	int			pll_pcw_shift;
+	struct div_table	*pll_div_table;
+	uint32_t		pll_rst_bar_mask;
 };
 
 /*
@@ -121,6 +116,52 @@ mt_clk_pll_init(struct clknode *clk, device_t dev)
 
 	sc = clknode_get_softc(clk);
 
+	/* Take the current state from the hardware, do not disturb it. */
+	RD4(clk, sc->pll_pwr_reg, &reg);
+	sc->pll_running = (reg & MT_PLL_PWR_ON) != 0 &&
+	    (reg & MT_PLL_ISO_EN) == 0;
+	if (sc->pll_running && sc->pll_en_mask != 0) {
+		RD4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, &reg);
+		sc->pll_running = (reg & sc->pll_en_mask) == sc->pll_en_mask;
+	}
+
+	clknode_init_parent_idx(clk, 0);
+	return (0);
+}
+
+static int
+mt_clk_pll_set_gate(struct clknode *clk, bool enable)
+{
+	struct mt_pll_clknode_softc *sc;
+	uint32_t reg;
+
+	sc = clknode_get_softc(clk);
+
+	/* An always on PLL feeds the cpu; stopping it stops the machine. */
+	if (!enable && (sc->pll_flags & MT_PLL_AO) != 0)
+		return (0);
+
+	if (!enable) {
+		if ((sc->pll_flags & MT_PLL_RST_BAR) != 0) {
+			RD4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, &reg);
+			reg &= ~sc->pll_rst_bar_mask;
+			WR4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, reg);
+		}
+		if (sc->pll_en_mask != 0) {
+			RD4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, &reg);
+			reg &= ~sc->pll_en_mask;
+			WR4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, reg);
+		}
+		RD4(clk, sc->pll_pwr_reg, &reg);
+		reg |= MT_PLL_ISO_EN;
+		WR4(clk, sc->pll_pwr_reg, reg);
+		reg &= ~MT_PLL_PWR_ON;
+		WR4(clk, sc->pll_pwr_reg, reg);
+
+		sc->pll_running = false;
+		return (0);
+	}
+
 	/* Power the PLL on. */
 	RD4(clk, sc->pll_pwr_reg, &reg);
 	reg |= MT_PLL_PWR_ON;
@@ -151,16 +192,26 @@ mt_clk_pll_init(struct clknode *clk, device_t dev)
 		WR4(clk, sc->pll_tuner_reg, reg);
 	}
 
-	/* Wait for the PLL to lock before releasing the reset bar. */
+	/* Wait for the PLL to lock before releasing the divider reset. */
 	DELAY(20);
 
-	if ((sc->pll_flags & MT_PLL_FLAG_RST_BAR) != 0) {
+	if ((sc->pll_flags & MT_PLL_RST_BAR) != 0) {
 		RD4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, &reg);
 		reg |= sc->pll_rst_bar_mask;
 		WR4(clk, sc->pll_base_reg + MT_PLL_REG_CON0, reg);
 	}
 
-	clknode_init_parent_idx(clk, 0);
+	sc->pll_running = true;
+	return (0);
+}
+
+static int
+mt_clk_pll_get_gate(struct clknode *clk, bool *enabled)
+{
+	struct mt_pll_clknode_softc *sc;
+
+	sc = clknode_get_softc(clk);
+	*enabled = sc->pll_running;
 	return (0);
 }
 
@@ -272,6 +323,8 @@ mt_clk_pll_set_freq(struct clknode *clk, uint64_t fin, uint64_t *fout,
 
 static clknode_method_t mt_pllnode_methods[] = {
 		CLKNODEMETHOD(clknode_init, mt_clk_pll_init),
+		CLKNODEMETHOD(clknode_set_gate, mt_clk_pll_set_gate),
+		CLKNODEMETHOD(clknode_get_gate, mt_clk_pll_get_gate),
 		CLKNODEMETHOD(clknode_recalc_freq, mt_clk_pll_recalc_freq),
 		CLKNODEMETHOD(clknode_set_freq, mt_clk_pll_set_freq),
 		CLKNODEMETHOD_END

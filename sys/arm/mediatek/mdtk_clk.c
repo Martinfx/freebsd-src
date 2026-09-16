@@ -46,80 +46,105 @@
 #include "clkdev_if.h"
 #include "mt_clk_pll.h"
 
-	static void
-init_pll(struct mdtk_clk_softc *sc, struct clk_pll_def *clks,
-			int nclks)
+/*
+ * Register every clock of one kind.  A clock the hardware description got
+ * wrong must not take the machine down with it, so failures are reported to
+ * the caller, which gives up on the whole controller.
+ */
+static int
+init_pll(struct mdtk_clk_softc *sc, struct clk_pll_def *clks, int nclks)
 {
 	int i, rv;
 
 	for (i = 0; i < nclks; i++) {
 		rv = mt_clk_pll_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_pll_register failed");
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register pll %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
 	}
-
+	return (0);
 }
 
-static void
-init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks,
-			int nclks)
+static int
+init_fixeds(struct mdtk_clk_softc *sc, struct clk_fixed_def *clks, int nclks)
 {
 	int i, rv;
 
 	for (i = 0; i < nclks; i++) {
 		rv = clknode_fixed_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_fixed_register failed");
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register clock %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
 	}
-
+	return (0);
 }
 
-static void
-init_linked(struct mdtk_clk_softc *sc, struct clk_link_def *clks,
-			int nclks)
+static int
+init_linked(struct mdtk_clk_softc *sc, struct clk_link_def *clks, int nclks)
 {
-	for (int i = 0; i < nclks; i++) {
-		int rv = clknode_link_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_link_register failed");
-	}
+	int i, rv;
 
+	for (i = 0; i < nclks; i++) {
+		rv = clknode_link_register(sc->clkdom, clks + i);
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register link %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
+	}
+	return (0);
 }
 
-static void
+static int
 init_muxes(struct mdtk_clk_softc *sc, struct clk_mux_def *clks, int nclks)
 {
 	int i, rv;
 
 	for (i = 0; i < nclks; i++) {
 		rv = clknode_mux_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_mux_register failed");
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register mux %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
 	}
+	return (0);
 }
 
-static void
+static int
 init_gates(struct mdtk_clk_softc *sc, struct clk_gate_def *clks, int nclks)
 {
 	int i, rv;
 
 	for (i = 0; i < nclks; i++) {
 		rv = clknode_gate_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_gate_register failed");
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register gate %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
 	}
+	return (0);
 }
 
-static void
+static int
 init_div(struct mdtk_clk_softc *sc, struct clk_div_def *clks, int nclks)
 {
 	int i, rv;
 
 	for (i = 0; i < nclks; i++) {
 		rv = clknode_div_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("clknode_div_register failed");
+		if (rv != 0) {
+			device_printf(sc->dev, "cannot register divider %s\n",
+			    clks[i].clkdef.name);
+			return (rv);
+		}
 	}
+	return (0);
 }
 
 int
@@ -203,24 +228,45 @@ mdtk_clkdev_device_unlock(device_t dev)
 	mtx_unlock(&sc->mtx);
 }
 
-void
+int
 mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef)
 {
 	struct mdtk_clk_softc *sc;
+	int rv;
 
 	sc = device_get_softc(dev);
 	sc->clkdom = clkdom_create(dev);
-	if (sc->clkdom == NULL)
-		panic("clkdom == NULL");
+	if (sc->clkdom == NULL) {
+		device_printf(dev, "cannot create clock domain\n");
+		return (ENXIO);
+	}
 
-	init_pll(sc, cldef->pll_def, cldef->num_pll);
-	init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
-	init_linked(sc, cldef->linked_def, cldef->num_linked);
-	init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
-	init_gates(sc, cldef->gates_def, cldef->num_gates);
-	init_div(sc, cldef->dived_def, cldef->num_dived);
+	rv = init_pll(sc, cldef->pll_def, cldef->num_pll);
+	if (rv == 0)
+		rv = init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
+	if (rv == 0)
+		rv = init_linked(sc, cldef->linked_def, cldef->num_linked);
+	if (rv == 0)
+		rv = init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
+	if (rv == 0)
+		rv = init_gates(sc, cldef->gates_def, cldef->num_gates);
+	if (rv == 0)
+		rv = init_div(sc, cldef->dived_def, cldef->num_dived);
+	/*
+	 * There is no way to tear a half built domain down again, so on
+	 * failure it is simply left behind and the controller does not
+	 * attach.
+	 */
+	if (rv != 0)
+		return (rv);
 
-	clkdom_finit(sc->clkdom);
+	rv = clkdom_finit(sc->clkdom);
+	if (rv != 0) {
+		device_printf(dev, "cannot finalize clock domain\n");
+		return (rv);
+	}
 	if (bootverbose)
 		clkdom_dump(sc->clkdom);
+
+	return (0);
 }

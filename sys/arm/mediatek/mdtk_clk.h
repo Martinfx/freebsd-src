@@ -186,6 +186,6 @@ int	mdtk_clk_hwreset_assert(device_t dev, bus_size_t base, int nbanks,
 	    intptr_t idx, bool value);
 void	mdtk_clkdev_device_lock(device_t dev);
 void	mdtk_clkdev_device_unlock(device_t dev);
-void	mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef);
+int	mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef);
 
 #endif /* __MDTK_CLK_H__ */

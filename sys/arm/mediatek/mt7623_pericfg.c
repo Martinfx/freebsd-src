@@ -145,7 +145,7 @@ static struct mdtk_clk_def clk_def = {
 static int
 pericfg_clk_detach(device_t dev)
 {
-	device_printf(dev, "Error: Clock driver cannot be detached\n");
+
 	return (EBUSY);
 }
 
@@ -166,32 +166,47 @@ pericfg_clk_probe(device_t dev)
 static int
 pericfg_clk_attach(device_t dev)
 {
-	struct mdtk_clk_softc *sc = device_get_softc(dev);
-	int rid = 0;
+	struct mdtk_clk_softc *sc;
+	int rid, rv;
 
+	sc = device_get_softc(dev);
 	sc->dev = dev;
 
-	if (ofw_bus_is_compatible(dev, "syscon")) {
-		sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-											 RF_ACTIVE);
-		if (sc->mem_res == NULL) {
-			device_printf(dev,
-						  "Cannot allocate memory resource\n");
-			return (ENXIO);
-		}
+	rid = 0;
+	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
+	    RF_ACTIVE);
+	if (sc->mem_res == NULL) {
+		device_printf(dev, "cannot allocate memory resource\n");
+		return (ENXIO);
+	}
 
-		mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
-		sc->syscon = syscon_create_ofw_node(dev,
-											&syscon_class, ofw_bus_get_node(dev));
+	mtx_init(&sc->mtx, device_get_nameunit(dev), NULL, MTX_DEF);
+
+	/*
+	 * A node that also claims to be a syscon serves its registers to
+	 * other drivers; the clocks work either way.
+	 */
+	if (ofw_bus_is_compatible(dev, "syscon")) {
+		sc->syscon = syscon_create_ofw_node(dev, &syscon_class,
+		    ofw_bus_get_node(dev));
 		if (sc->syscon == NULL) {
-			device_printf(dev,
-						  "Failed to create/register syscon\n");
-			return (ENXIO);
+			device_printf(dev, "cannot register syscon\n");
+			rv = ENXIO;
+			goto fail;
 		}
 	}
 
-	mdtk_register_clocks(dev, &clk_def);
+	rv = mdtk_register_clocks(dev, &clk_def);
+	if (rv != 0)
+		goto fail;
+
 	return (0);
+
+fail:
+	mtx_destroy(&sc->mtx);
+	bus_release_resource(dev, SYS_RES_MEMORY, rid, sc->mem_res);
+	sc->mem_res = NULL;
+	return (rv);
 }
 
 static int
