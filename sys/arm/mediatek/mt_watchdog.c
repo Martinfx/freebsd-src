@@ -103,12 +103,12 @@ struct mt_watchdog_softc {
 static void
 mt_watchdog_disable(struct mt_watchdog_softc *sc)
 {
-        uint32_t mode;
+	uint32_t mode;
 
-        mode = bus_read_4(sc->res, TOPRGUWDT_MODE);
-        mode &= ~TOPRGUWDT_MODE_EN;
-        mode |= TOPRGUWDT_MODE_KEY;
-        bus_write_4(sc->res, TOPRGUWDT_MODE, mode);
+	mode = bus_read_4(sc->res, TOPRGUWDT_MODE);
+	mode &= ~TOPRGUWDT_MODE_EN;
+	mode |= TOPRGUWDT_MODE_KEY;
+	bus_write_4(sc->res, TOPRGUWDT_MODE, mode);
 }
 
 /*
@@ -119,94 +119,94 @@ mt_watchdog_disable(struct mt_watchdog_softc *sc)
 static uint32_t
 mt_watchdog_units(u_int interval)
 {
-        uint64_t units;
+	uint64_t units;
 
-        if (interval >= 64)
-                return (0);
-        units = howmany(1ULL << interval, TOPRGUWDT_UNIT_NS);
-        if (units > TOPRGUWDT_MAX_UNITS)
-                return (0);
-        if (units < TOPRGUWDT_MIN_UNITS)
-                units = TOPRGUWDT_MIN_UNITS;
-        return (units);
+	if (interval >= 64)
+		return (0);
+	units = howmany(1ULL << interval, TOPRGUWDT_UNIT_NS);
+	if (units > TOPRGUWDT_MAX_UNITS)
+		return (0);
+	if (units < TOPRGUWDT_MIN_UNITS)
+		units = TOPRGUWDT_MIN_UNITS;
+	return (units);
 }
 
 static void
 mt_watchdog_fn(void *private, u_int cmd, int *error)
 {
-        struct mt_watchdog_softc *sc;
-        uint32_t mode, units;
+	struct mt_watchdog_softc *sc;
+	uint32_t mode, units;
 
-        sc = private;
-        cmd &= WD_INTERVAL;
+	sc = private;
+	cmd &= WD_INTERVAL;
 
-        /* watchdog(9): on disable and on failure to arm, leave *error alone. */
-        if (cmd == 0) {
-                mt_watchdog_disable(sc);
-                return;
-        }
+	/* watchdog(9): on disable and on failure to arm, leave *error alone. */
+	if (cmd == 0) {
+		mt_watchdog_disable(sc);
+		return;
+	}
 
-        units = mt_watchdog_units(cmd);
-        if (units == 0) {
-                if (bootverbose)
-                        device_printf(sc->dev,
-                            "cannot arm, timeout 2^%u ns is over %u s\n",
-                            cmd, TOPRGUWDT_MAX_TIMEOUT);
-                mt_watchdog_disable(sc);
-                return;
-        }
+	units = mt_watchdog_units(cmd);
+	if (units == 0) {
+		if (bootverbose)
+			device_printf(sc->dev,
+			    "cannot arm, timeout 2^%u ns is over %u s\n",
+			    cmd, TOPRGUWDT_MAX_TIMEOUT);
+		mt_watchdog_disable(sc);
+		return;
+	}
 
-        if (bootverbose)
-                device_printf(sc->dev, "timeout 2^%u ns, %u units of %u us\n",
-                    cmd, units, (u_int)(TOPRGUWDT_UNIT_NS / 1000));
+	if (bootverbose)
+		device_printf(sc->dev, "timeout 2^%u ns, %u units of %u us\n",
+		    cmd, units, (u_int)(TOPRGUWDT_UNIT_NS / 1000));
 
-        /* The length lives in bits 15:5; the key unlocks the write. */
-        bus_write_4(sc->res, TOPRGUWDT_LENGTH,
-            TOPRGUWDT_LENGTH_TIMEOUT(units) | TOPRGUWDT_LENGTH_KEY);
+	/* The length lives in bits 15:5; the key unlocks the write. */
+	bus_write_4(sc->res, TOPRGUWDT_LENGTH,
+	    TOPRGUWDT_LENGTH_TIMEOUT(units) | TOPRGUWDT_LENGTH_KEY);
 
-        mode = TOPRGUWDT_MODE_KEY | TOPRGUWDT_MODE_EN |
-               TOPRGUWDT_MODE_EXRST_EN | TOPRGUWDT_MODE_EXT_POL_LOW;
-        bus_write_4(sc->res, TOPRGUWDT_MODE, mode);
-        bus_write_4(sc->res, TOPRGUWDT_RESTART, TOPRGUWDT_RESTART_RELOAD);
+	mode = TOPRGUWDT_MODE_KEY | TOPRGUWDT_MODE_EN |
+	       TOPRGUWDT_MODE_EXRST_EN | TOPRGUWDT_MODE_EXT_POL_LOW;
+	bus_write_4(sc->res, TOPRGUWDT_MODE, mode);
+	bus_write_4(sc->res, TOPRGUWDT_RESTART, TOPRGUWDT_RESTART_RELOAD);
 
-        *error = 0;
+	*error = 0;
 }
 
 static int
 mt_watchdog_probe(device_t dev)
 {
 
-        if (!ofw_bus_status_okay(dev))
-                return (ENXIO);
-        if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
-                return (ENXIO);
+	if (!ofw_bus_status_okay(dev))
+		return (ENXIO);
+	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
+		return (ENXIO);
 
-        device_set_desc(dev, "MediaTek TOPRGU watchdog");
-        return (BUS_PROBE_DEFAULT);
+	device_set_desc(dev, "MediaTek TOPRGU watchdog");
+	return (BUS_PROBE_DEFAULT);
 }
 
 static int
 mt_watchdog_attach(device_t dev)
 {
-        struct mt_watchdog_softc *sc;
-        int rid;
+	struct mt_watchdog_softc *sc;
+	int rid;
 
-        sc = device_get_softc(dev);
-        sc->dev = dev;
+	sc = device_get_softc(dev);
+	sc->dev = dev;
 
-        rid = 0;
-        sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
-        if (sc->res == NULL) {
-                device_printf(dev, "Could not allocate memory resource\n");
-                return (ENXIO);
-        }
+	rid = 0;
+	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
+	if (sc->res == NULL) {
+		device_printf(dev, "Could not allocate memory resource\n");
+		return (ENXIO);
+	}
 
-        EVENTHANDLER_REGISTER(watchdog_list, mt_watchdog_fn, sc, 0);
+	EVENTHANDLER_REGISTER(watchdog_list, mt_watchdog_fn, sc, 0);
 
-        /* Keep the watchdog off until watchdog(9) asks for it. */
-        mt_watchdog_disable(sc);
+	/* Keep the watchdog off until watchdog(9) asks for it. */
+	mt_watchdog_disable(sc);
 
-        return (0);
+	return (0);
 }
 
 static device_method_t mt_watchdog_methods[] = {
