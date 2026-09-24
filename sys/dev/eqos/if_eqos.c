@@ -1462,6 +1462,17 @@ eqos_attach(device_t dev)
 		error = mii_attach(dev, &sc->miibus, ifp, eqos_media_change,
 		    eqos_media_status, BMSR_DEFCAPMASK, phy,
 		    MII_OFFSET_ANY, 0);
+	/*
+	 * A device tree whose "reg" does not match the strapped address
+	 * worked before PHYs were looked up by address; keep it working.
+	 */
+	if (error == ENXIO && phy != MII_PHY_ANY) {
+		device_printf(dev, "no PHY at address %d, probing the bus\n",
+		    phy);
+		error = mii_attach(dev, &sc->miibus, ifp, eqos_media_change,
+		    eqos_media_status, BMSR_DEFCAPMASK, MII_PHY_ANY,
+		    MII_OFFSET_ANY, 0);
+	}
 	if (error != 0) {
 		device_printf(dev, "PHY attach failed\n");
 		bus_teardown_intr(dev, sc->res[EQOS_RES_IRQ0], sc->irq_handle);
