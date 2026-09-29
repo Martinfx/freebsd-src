@@ -97,12 +97,16 @@
 	.off_value = 1,					\
 }
 
+struct mt_clk_pll_def;
+
 struct mt_clk_def {
+    struct mt_clk_pll_def *pll_def;
     struct clk_link_def *linked_def;
     struct clk_fixed_def *fixed_def;
     struct clk_mux_def *muxes_def;
     struct clk_gate_def *gates_def;
     struct clk_div_def *dived_def;
+    int num_pll;
     int num_linked;
     int num_fixed;
     int num_muxes;
