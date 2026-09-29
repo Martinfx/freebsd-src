@@ -269,10 +269,19 @@ mt_clk_attach(device_t dev)
                 return (ENXIO);
         }
 
+        /*
+         * Clocks are already registered and cannot be unregistered, so
+         * failing attach here would leave clknodes referencing a freed
+         * softc. Keep the clock provider alive and only skip children.
+         */
         if (OF_child(node) > 0) {
                 rv = simplebus_attach_impl(dev, SB_FLAG_NO_RANGES, node);
-                if (rv != 0)
-                        return (rv);
+                if (rv != 0) {
+                        device_printf(dev,
+                            "failed to attach simplebus (%d), "
+                            "child nodes skipped\n", rv);
+                        return (0);
+                }
         }
 
         bus_attach_children(dev);
