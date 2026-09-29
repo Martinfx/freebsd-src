@@ -28,6 +28,7 @@
 #include <dev/hwreset/hwreset.h>
 
 #include "mt_clk.h"
+#include "mt_clk_pll.h"
 
 #include "clkdev_if.h"
 #include "syscon_if.h"
@@ -111,6 +112,22 @@ init_div(struct mt_clk_softc *sc, struct clk_div_def *clks, int nclks)
         return (0);
 }
 
+static int
+init_plls(struct mt_clk_softc *sc, struct mt_clk_pll_def *clks, int nclks)
+{
+        int i, rv;
+
+        for (i = 0; i < nclks; i++) {
+                rv = mt_clk_pll_register(sc->clkdom, clks + i);
+                if (rv != 0) {
+                        device_printf(sc->dev, "mt_clk_pll_register failed\n");
+                        return (ENXIO);
+                }
+        }
+
+        return (0);
+}
+
 int
 mt_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
 {
@@ -172,6 +189,11 @@ mt_register_clocks(device_t dev, struct mt_clk_softc *sc,
         sc->clkdom = clkdom_create(dev);
         if (sc->clkdom == NULL) {
                 device_printf(dev, "failed to create clkdom");
+                return (ENXIO);
+        }
+
+        rv = init_plls(sc, cldef->pll_def, cldef->num_pll);
+        if(rv != 0) {
                 return (ENXIO);
         }
 
