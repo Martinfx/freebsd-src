@@ -97,8 +97,6 @@
 	.off_value = 1,					\
 }
 
-struct mt_clk_pll_def;
-
 struct mt_clk_def {
     struct mt_clk_pll_def *pll_def;
     struct clk_link_def *linked_def;
