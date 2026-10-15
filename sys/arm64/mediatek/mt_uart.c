@@ -15,12 +15,14 @@
 #include <machine/bus.h>
 
 #include <dev/clk/clk.h>
+#include <dev/uart/uart.h>
+#ifdef FDT
+#include <dev/uart/uart_cpu_fdt.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
-#include <dev/uart/uart.h>
-#include <dev/uart/uart_cpu.h>
-#include <dev/uart/uart_cpu_fdt.h>
+#endif
 #include <dev/uart/uart_bus.h>
+#include <dev/uart/uart_cpu.h>
 #include <dev/uart/uart_dev_ns8250.h>
 #include <dev/ic/ns16550.h>
 
@@ -315,11 +317,11 @@ static int
 mt_uart_probe(device_t dev)
 {
         struct mt_softc *sc;
-	phandle_t node;
-	uint64_t freq;
-	int shift;
-	int rv;
-	const struct ofw_compat_data *cd;
+        phandle_t node;
+        uint64_t freq;
+        int shift;
+        int rv;
+        const struct ofw_compat_data *cd;
 
 	sc = device_get_softc(dev);
 	if (!ofw_bus_status_okay(dev))
@@ -329,37 +331,26 @@ mt_uart_probe(device_t dev)
 		return (ENXIO);
 	sc->ns8250_base.base.sc_class = (struct uart_class *)cd->ocd_data;
 
-	node = ofw_bus_get_node(dev);
-	shift = mt_uart_get_shift(node);
-	rv = clk_get_by_ofw_name(dev, 0, "baud", &sc->baud_clk);
-	if (rv != 0) {
-		device_printf(dev, "Cannot get UART baud clock: %d\n", rv);
-		return (ENXIO);
-	}
-	rv = clk_enable(sc->baud_clk);
-	if (rv != 0) {
-		device_printf(dev, "Cannot enable UART baud clock: %d\n", rv);
-		return (ENXIO);
-	}
+        node = ofw_bus_get_node(dev);
+        shift = mt_uart_get_shift(node);
+        rv = clk_get_by_ofw_name(dev, 0, "baud", &sc->baud_clk);
+        if (rv != 0) {
+                device_printf(dev, "Cannot get UART baud clock: %d\n", rv);
+                return (ENXIO);
+        }
+        rv = clk_enable(sc->baud_clk);
+        if (rv != 0) {
+                device_printf(dev, "Cannot enable UART baud clock: %d\n", rv);
+                return (ENXIO);
+        }
 
-	rv = clk_get_by_ofw_name(dev, 0, "bus", &sc->bus_clk);
-	if (rv != 0) {
-		device_printf(dev, "Cannot get UART bus clock: %d\n", rv);
-		return (ENXIO);
-	}
-	rv = clk_enable(sc->bus_clk);
-	if (rv != 0) {
-		device_printf(dev, "Cannot enable UART bus clock: %d\n", rv);
-		return (ENXIO);
-	}
+        rv = clk_get_freq(sc->baud_clk, &freq);
+        if (rv != 0) {
+                device_printf(dev, "Cannot get freq UART clock: %d\n", rv);
+                return (ENXIO);
+        }
 
-	rv = clk_get_freq(sc->baud_clk, &freq);
-	if (rv != 0) {
-		device_printf(dev, "Cannot get freq UART clock: %d\n", rv);
-		return (ENXIO);
-	}
-
-	return (uart_bus_probe(dev, shift, 0, (int)freq, 0, 0, 0));
+        return (uart_bus_probe(dev, shift, 0, (int)freq, 0, 0, 0));
 }
 
 static int
@@ -370,10 +361,6 @@ mt_uart_detach(device_t dev)
 	sc = device_get_softc(dev);
 	if (sc->baud_clk != NULL) {
 		clk_release(sc->baud_clk);
-	}
-
-	if (sc->bus_clk != NULL) {
-		clk_release(sc->bus_clk);
 	}
 
 	return (uart_bus_detach(dev));
