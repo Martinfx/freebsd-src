@@ -45,6 +45,7 @@
 #include "clkdev_if.h"
 #include "hwreset_if.h"
 #include "mdtk_clk.h"
+#include "mt_clk_cpumux.h"
 
 static struct ofw_compat_data compat_data[] = {
         {"mediatek,mt7622-infracfg", 1},
@@ -67,15 +68,17 @@ static struct clk_gate_def gates_clk[] = {
         GATE(CLK_INFRA_PMIC_PD, "infra_pmic_pd", "pmicspi_sel", 0x44, 22),
 };
 
-static struct clk_mux_def muxes_clk[] = {
-        MUX0(CLK_INFRA_MUX1_SEL, "infra_mux1_sel", infra_mux1_parents, 0x000, 2, 2),
+/* CPU clock: armpll, main_core_en while armpll is reprogrammed. */
+static struct mt_clk_cpumux_def cpumux_clk[] = {
+        MT_CPUMUX(CLK_INFRA_MUX1_SEL, "infra_mux1_sel", infra_mux1_parents,
+            0x000, 2, 2, 1, 2),
 };
 
 static struct mdtk_clk_def clk_def = {
         .gates_def = gates_clk,
         .num_gates = nitems(gates_clk),
-        .muxes_def = muxes_clk,
-        .num_muxes = nitems(muxes_clk),
+        .cpumux_def = cpumux_clk,
+        .num_cpumux = nitems(cpumux_clk),
 };
 
 static int
