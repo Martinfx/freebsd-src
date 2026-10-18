@@ -28,6 +28,7 @@ struct mt_clk_pll_def {
 	uint32_t		pd_shift;
 	uint32_t		pcw_reg;	/* PCW register */
 	uint32_t		pcw_shift;
+	uint32_t		pcw_chg_reg;	/* PCW_CHG, 0 = CON1 */
 	uint32_t		pcwbits;	/* Total PCW width */
 	uint32_t		pcwibits;	/* Integer PCW bits, 0 = 7 */
 	uint64_t		fmin;		/* VCO range, 0 = 1000 MHz */
@@ -35,6 +36,7 @@ struct mt_clk_pll_def {
 	uint32_t		flags;
 #define	MT_PLL_HAVE_RST_BAR	0x0001
 #define	MT_PLL_AO		0x0002	/* Always on, never disable. */
+#define	MT_PLL_SET_FREQ		0x0004	/* Frequency may be changed. */
 };
 
 #define	MT_PLL(_id, _name, _pname, _reg, _pwr_reg, _en_mask, _flags,	\

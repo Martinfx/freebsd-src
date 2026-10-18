@@ -36,7 +36,7 @@ static struct ofw_compat_data compat_data[] = {
 /* Register layout from Linux clk-mt7622-apmixedsys.c */
 static struct mt_clk_pll_def plls_clk[] = {
 	PLL(CLK_APMIXED_ARMPLL, "armpll", 0x0200, 0x020C, 0,
-	    MT_PLL_AO, 21, 0x0204, 24, 0x0204, 0),
+	    MT_PLL_AO | MT_PLL_SET_FREQ, 21, 0x0204, 24, 0x0204, 0),
 	PLL(CLK_APMIXED_MAINPLL, "mainpll", 0x0210, 0x021C, 0,
 	    MT_PLL_HAVE_RST_BAR, 21, 0x0214, 24, 0x0214, 0),
 	PLL(CLK_APMIXED_UNIV2PLL, "univ2pll", 0x0220, 0x022C, 0,
@@ -46,9 +46,9 @@ static struct mt_clk_pll_def plls_clk[] = {
 	PLL(CLK_APMIXED_ETH2PLL, "eth2pll", 0x0314, 0x0320, 0,
 	    0, 21, 0x0314, 1, 0x0318, 0),
 	PLL(CLK_APMIXED_AUD1PLL, "aud1pll", 0x0324, 0x0330, 0,
-	    0, 31, 0x0324, 1, 0x0328, 0),
+	    MT_PLL_SET_FREQ, 31, 0x0324, 1, 0x0328, 0),
 	PLL(CLK_APMIXED_AUD2PLL, "aud2pll", 0x0334, 0x0340, 0,
-	    0, 31, 0x0334, 1, 0x0338, 0),
+	    MT_PLL_SET_FREQ, 31, 0x0334, 1, 0x0338, 0),
 	PLL(CLK_APMIXED_TRGPLL, "trgpll", 0x0344, 0x0354, 0,
 	    0, 21, 0x0344, 1, 0x0348, 0),
 	PLL(CLK_APMIXED_SGMIPLL, "sgmipll", 0x0358, 0x0368, 0,

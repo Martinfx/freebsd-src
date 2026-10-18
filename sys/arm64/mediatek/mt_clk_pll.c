@@ -14,6 +14,8 @@
 #define	PLL_PWR_ON		(1u << 0)
 #define	PLL_ISO_EN		(1u << 1)
 #define	PLL_EN			(1u << 0)
+#define	PLL_PCW_CHG		(1u << 31)
+#define	PLL_REG_CON1		0x4
 
 #define	PLL_POSTDIV_MASK	0x7
 #define	PLL_POSTDIV_MAX		4	/* Valid post dividers are /1 ... /16 */
@@ -41,6 +43,7 @@ struct mt_clk_pll_sc {
 	uint32_t	pd_shift;
 	uint32_t	pcw_reg;
 	uint32_t	pcw_shift;
+	uint32_t	pcw_chg_reg;
 	uint32_t	pcwbits;
 	uint32_t	pcwibits;
 	uint64_t	fmin;
@@ -317,6 +320,39 @@ mt_clk_pll_set_gate(struct clknode *clk, bool enable)
 	return (0);
 }
 
+/* Linux mtk_pll_set_rate_regs() */
+static int
+mt_clk_pll_write_freq(struct clknode *clk, struct mt_clk_pll_sc *sc,
+    uint32_t pcw, uint32_t postdiv)
+{
+	uint32_t pcw_mask, pd_mask;
+	int rv;
+
+	pcw_mask = ((1u << sc->pcwbits) - 1) << sc->pcw_shift;
+	pd_mask = PLL_POSTDIV_MASK << sc->pd_shift;
+
+	/* Post divider and PCW must be set at once if they share a register. */
+	if (sc->pd_reg == sc->pcw_reg) {
+		rv = MD4(clk, sc->pcw_reg, pcw_mask | pd_mask,
+		    (pcw << sc->pcw_shift) | (postdiv << sc->pd_shift));
+	} else {
+		rv = MD4(clk, sc->pd_reg, pd_mask, postdiv << sc->pd_shift);
+		if (rv == 0)
+			rv = MD4(clk, sc->pcw_reg, pcw_mask,
+			    pcw << sc->pcw_shift);
+	}
+	if (rv != 0)
+		return (rv);
+
+	/* Latch the new PCW. */
+	rv = MD4(clk, sc->pcw_chg_reg, 0, PLL_PCW_CHG);
+	if (rv != 0)
+		return (rv);
+	DELAY(PLL_LOCK_DELAY);
+
+	return (0);
+}
+
 static int
 mt_clk_pll_calc_values(struct mt_clk_pll_sc *sc, uint64_t fin, uint64_t freq,
     int flags, uint32_t *pcwp, uint32_t *postdivp, uint64_t *foutp)
@@ -395,6 +431,24 @@ mt_clk_pll_set_freq(struct clknode *clk, uint64_t fin, uint64_t *fout,
 	if (rv != 0)
 		return (rv);
 
+	if (pcw == st.pcw && postdiv == st.postdiv) {
+		*fout = freq;
+		*done = 1;
+		return (0);
+	}
+
+	/*
+	 * Gates and muxes pass frequency requests to their parent, so only
+	 * PLLs that are known to be safe to change are reprogrammed.
+	 */
+	if ((sc->flags & MT_PLL_SET_FREQ) == 0) {
+		if ((flags & CLK_SET_DRYRUN) == 0)
+			printf("%s: changing PLL frequency to %ju Hz "
+			    "is not allowed\n", clknode_get_name(clk),
+			    (uintmax_t)freq);
+		return (EOPNOTSUPP);
+	}
+
 	/* Dry run: only report what would be set. */
 	if ((flags & CLK_SET_DRYRUN) != 0) {
 		*fout = freq;
@@ -402,16 +456,28 @@ mt_clk_pll_set_freq(struct clknode *clk, uint64_t fin, uint64_t *fout,
 		return (0);
 	}
 
-	if (pcw == st.pcw && postdiv == st.postdiv) {
-		*fout = freq;
-		*done = 1;
-		return (0);
-	}
+	DEVICE_LOCK(clk);
+	rv = mt_clk_pll_write_freq(clk, sc, pcw, postdiv);
+	DEVICE_UNLOCK(clk);
+	if (rv != 0)
+		return (rv);
 
-	/* Reprogramming a PLL is not supported yet. */
-	printf("%s: changing PLL frequency to %ju Hz is not supported\n",
-	    clknode_get_name(clk), (uintmax_t)freq);
-	return (EOPNOTSUPP);
+	/* Verify that the hardware followed. */
+	rv = mt_clk_pll_read_state(clk, &st);
+	if (rv != 0)
+		return (rv);
+	if (st.pcw != pcw || st.postdiv != postdiv) {
+		printf("%s: PLL frequency change failed (pcw %#x, postdiv %u)\n",
+		    clknode_get_name(clk), st.pcw, st.postdiv);
+		return (EIO);
+	}
+	if (bootverbose)
+		printf("%s: %ju Hz (pcw %#x, postdiv /%u)\n",
+		    clknode_get_name(clk), (uintmax_t)freq, pcw, 1u << postdiv);
+
+	*fout = freq;
+	*done = 1;
+	return (0);
 }
 
 static clknode_method_t mt_clk_pll_methods[] = {
@@ -448,6 +514,8 @@ mt_clk_pll_register(struct clkdom *clkdom, struct mt_clk_pll_def *clkdef)
 	sc->pd_shift = clkdef->pd_shift;
 	sc->pcw_reg = clkdef->pcw_reg;
 	sc->pcw_shift = clkdef->pcw_shift;
+	sc->pcw_chg_reg = clkdef->pcw_chg_reg != 0 ?
+	    clkdef->pcw_chg_reg : clkdef->base_reg + PLL_REG_CON1;
 	sc->pcwbits = clkdef->pcwbits;
 	sc->pcwibits = clkdef->pcwibits != 0 ?
 	    clkdef->pcwibits : PLL_INTEGER_BITS;
