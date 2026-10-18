@@ -45,18 +45,18 @@
 #include <dev/clk/clk_link.h>
 
 #include "mdtk_clk.h"
-#include "mt7622_clk_pll.h"
+#include "mt_clk_pll.h"
 
 static void
-init_pll(struct mdtk_clk_softc *sc, struct clk_pll_def *clks,
+init_pll(struct mdtk_clk_softc *sc, struct mt_clk_pll_def *clks,
             int nclks)
 {
     int i, rv;
 
     for (i = 0; i < nclks; i++) {
-        rv = mt7622_clk_pll_register(sc->clkdom, clks + i);
+        rv = mt_clk_pll_register(sc->clkdom, clks + i);
         if (rv != 0)
-            panic("clknode_pll_register failed");
+            panic("mt_clk_pll_register failed");
     }
 
 }

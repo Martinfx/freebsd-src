@@ -31,27 +31,6 @@
 /* Parent list */
 #define PLIST(_name) static const char *_name[]
 
-#define PLL(_id, cname, pname, _base_reg, _pwr_reg, _en_mask, _flags, _pcwbits, \
-                   _pd_reg, _pd_shift, _tuner_reg, _pcw_reg, \
-                   _pcw_shift)                          \
-{                                                                   \
-    .clkdef.id = _id,                                                \
-    .clkdef.name = cname,                                            \
-    .clkdef.parent_names = (const char *[]){pname},                    \
-    .clkdef.parent_cnt = 1,                                            \
-    .clkdef.flags = CLK_NODE_STATIC_STRINGS,                        \
-    .pll_base_reg = (_base_reg),                                        \
-    .pll_pwr_reg = (_pwr_reg),                                          \
-    .pll_en_mask = (_en_mask),                                          \
-    .pll_pd_reg = (_pd_reg),                                            \
-    .pll_tuner_reg = (_tuner_reg),                                      \
-    .pll_pd_shift = (_pd_shift),                                        \
-    .pll_flags = (_flags),                                              \
-    .pll_pcwbits = (_pcwbits),                                          \
-    .pll_pcw_reg = (_pcw_reg),                                          \
-    .pll_pcw_shift = (_pcw_shift),                                      \
-}
-
 /* Standard gate. */
 #define    GATE(_id, cname, plist, o, s)                    \
 {                                    \
@@ -137,8 +116,10 @@
 	.off_value = 1,					\
 }
 
+struct mt_clk_pll_def;
+
 struct mdtk_clk_def {
-    struct clk_pll_def *pll_def;
+    struct mt_clk_pll_def *pll_def;
     struct clk_link_def *linked_def;
     struct clk_fixed_def *fixed_def;
     struct clk_mux_def *muxes_def;

@@ -42,32 +42,42 @@
 #include "clkdev_if.h"
 #include "hwreset_if.h"
 #include "mdtk_clk.h"
-#include "mt7622_clk_pll.h"
+#include "mt_clk_pll.h"
+
+#define	MT7622_PLL_FMAX		2500000000ULL
+#define	CON0_MT7622_RST_BAR	(1u << 27)
+
+#define	PLL(_id, _name, _reg, _pwr_reg, _en_mask, _flags, _pcwbits,	\
+    _pd_reg, _pd_shift, _pcw_reg, _pcw_shift)				\
+	MT_PLL(_id, _name, "clkxtal", _reg, _pwr_reg, _en_mask, _flags,	\
+	    _pcwbits, _pd_reg, _pd_shift, _pcw_reg, _pcw_shift,		\
+	    CON0_MT7622_RST_BAR, MT7622_PLL_FMAX)
 
 static struct ofw_compat_data compat_data[] = {
         {"mediatek,mt7622-apmixedsys", 1},
         {NULL, 0},
 };
 
-static struct clk_pll_def pll_clk[] = {
-        PLL(CLK_APMIXED_ARMPLL, "armpll", "clkxtal", 0x0200, 0x020C, 0x00000001,
-            2, 21, 0x0204, 24, 0, 0x0204, 0),
-        PLL(CLK_APMIXED_MAINPLL, "mainpll", "clkxtal", 0x0210, 0x021C, 0x00000001,
-            1, 21, 0x0214, 24, 0, 0x0214, 0),
-        PLL(CLK_APMIXED_UNIV2PLL, "univ2pll", "clkxtal", 0x0220, 0x022C, 0x00000001,
-            1, 7, 0x0224, 24, 0, 0x0224, 14),
-        PLL(CLK_APMIXED_ETH1PLL, "eth1pll", "clkxtal", 0x0300, 0x0310, 0x00000001,
-            0, 21, 0x0300, 1, 0, 0x0304, 0),
-        PLL(CLK_APMIXED_ETH2PLL, "eth2pll", "clkxtal", 0x0314, 0x0320, 0x00000001,
-            0, 21, 0x0314, 1, 0, 0x0318, 0),
-        PLL(CLK_APMIXED_AUD1PLL, "aud1pll", "clkxtal", 0x0324, 0x0330, 0x00000001,
-            0, 31, 0x0324, 1, 0, 0x0328, 0),
-        PLL(CLK_APMIXED_AUD2PLL, "aud2pll", "clkxtal", 0x0334, 0x0340, 0x00000001,
-            0, 31, 0x0334, 1, 0, 0x0338, 0),
-        PLL(CLK_APMIXED_TRGPLL, "trgpll", "clkxtal", 0x0344, 0x0354, 0x00000001,
-            0, 21, 0x0344, 1, 0, 0x0348, 0),
-        PLL(CLK_APMIXED_SGMIPLL, "sgmipll", "clkxtal",  0x0358, 0x0368, 0x00000001,
-            0, 21, 0x0358, 1, 0, 0x035C, 0),
+/* Register layout from Linux clk-mt7622-apmixedsys.c */
+static struct mt_clk_pll_def pll_clk[] = {
+	PLL(CLK_APMIXED_ARMPLL, "armpll", 0x0200, 0x020C, 0,
+	    MT_PLL_AO, 21, 0x0204, 24, 0x0204, 0),
+	PLL(CLK_APMIXED_MAINPLL, "mainpll", 0x0210, 0x021C, 0,
+	    MT_PLL_HAVE_RST_BAR, 21, 0x0214, 24, 0x0214, 0),
+	PLL(CLK_APMIXED_UNIV2PLL, "univ2pll", 0x0220, 0x022C, 0,
+	    MT_PLL_HAVE_RST_BAR, 7, 0x0224, 24, 0x0224, 14),
+	PLL(CLK_APMIXED_ETH1PLL, "eth1pll", 0x0300, 0x0310, 0,
+	    0, 21, 0x0300, 1, 0x0304, 0),
+	PLL(CLK_APMIXED_ETH2PLL, "eth2pll", 0x0314, 0x0320, 0,
+	    0, 21, 0x0314, 1, 0x0318, 0),
+	PLL(CLK_APMIXED_AUD1PLL, "aud1pll", 0x0324, 0x0330, 0,
+	    0, 31, 0x0324, 1, 0x0328, 0),
+	PLL(CLK_APMIXED_AUD2PLL, "aud2pll", 0x0334, 0x0340, 0,
+	    0, 31, 0x0334, 1, 0x0338, 0),
+	PLL(CLK_APMIXED_TRGPLL, "trgpll", 0x0344, 0x0354, 0,
+	    0, 21, 0x0344, 1, 0x0348, 0),
+	PLL(CLK_APMIXED_SGMIPLL, "sgmipll", 0x0358, 0x0368, 0,
+	    0, 21, 0x0358, 1, 0x035C, 0),
 };
 
 static struct clk_gate_def gates_clk[] = {
