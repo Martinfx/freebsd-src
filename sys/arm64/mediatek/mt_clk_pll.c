@@ -108,7 +108,6 @@ mt_clk_pll_calc_freq(struct mt_clk_pll_sc *sc, uint64_t fin, uint32_t pcw,
 	return (howmany(vco, 1ULL << postdiv));
 }
 
-/* Check that the state programmed by the firmware makes sense. */
 static int
 mt_clk_pll_check(struct mt_clk_pll_sc *sc, struct mt_clk_pll_state *st)
 {
@@ -157,10 +156,6 @@ mt_clk_pll_init(struct clknode *clk, device_t dev)
 		return (0);
 	}
 
-	/*
-	 * The parent is not linked yet, the frequency is checked and
-	 * reported by the first recalc.
-	 */
 	return (0);
 }
 
@@ -178,11 +173,6 @@ mt_clk_pll_recalc(struct clknode *clk, uint64_t *freq)
 	if (rv != 0)
 		return (rv);
 
-	/*
-	 * As in Linux the rate does not depend on the gate: a disabled PLL
-	 * reports the frequency it will run at once enabled.  A PLL without
-	 * a valid setup cannot produce any clock.
-	 */
 	if (st.pcw == 0 || st.postdiv > PLL_POSTDIV_MAX) {
 		*freq = 0;
 		return (0);
