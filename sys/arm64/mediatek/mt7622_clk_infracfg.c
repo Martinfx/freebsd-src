@@ -54,7 +54,7 @@ static struct ofw_compat_data compat_data[] = {
 PLIST(infra_mux1_parents) = {
         "clkxtal",
         "armpll",
-        //"main_core_en",
+        "main_core_en",
         "armpll"
 };
 
