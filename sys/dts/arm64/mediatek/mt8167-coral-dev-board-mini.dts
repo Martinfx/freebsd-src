@@ -28,6 +28,21 @@
 		device_type = "memory";
 		reg = <0 0x40000000 0 0x80000000>;
 	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * ARM Trusted Firmware BL31, placed there by Google's BL2.  The
+		 * same reservation is in the U-Boot device trees for the board.
+		 */
+		secmon@43000000 {
+			reg = <0 0x43000000 0 0x20000>;
+			no-map;
+		};
+	};
 };
 
 &uart0 {
