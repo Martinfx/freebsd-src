@@ -1,0 +1,14 @@
+#
+# MediaTek SoC support (MT8167 / MT8516 family)
+#
+
+# SoC support
+options 	SOC_MEDIATEK_MT8167
+
+# Serial (COM) ports
+device		uart_mtk		# MediaTek mt6577-compatible UART
+
+options 	FDT
+
+# DTBs
+makeoptions	MODULES_EXTRA+="dtb/mediatek"

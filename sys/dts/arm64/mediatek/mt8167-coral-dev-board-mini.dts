@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: BSD-2-Clause
+/*
+ * Google Coral Dev Board Mini (MediaTek MT8167S, 2 GiB LPDDR3, 8 GiB eMMC).
+ *
+ * This is a bring-up device tree: it describes only what is needed to get
+ * the kernel to the serial console on UART0 (40-pin header).  The full board
+ * description lives in the Mendel Linux kernel shipped by Google; fold it
+ * in here once more peripherals (eMMC, USB, Wi-Fi, PMIC) have drivers.
+ */
+
+/dts-v1/;
+
+#include "mediatek/mt8167.dtsi"
+
+/ {
+	model = "Google Coral Dev Board Mini";
+	compatible = "google,coral-dev-board-mini", "mediatek,mt8167";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0 0x40000000 0 0x80000000>;
+	};
+};
+
+&uart0 {
+	status = "okay";
+	/*
+	 * FreeBSD-only property: the UART baud clock (clk26m).  Needed until
+	 * the MediaTek clock controllers (topckgen, apmixedsys, infracfg)
+	 * have drivers and the "baud" clock reference can be resolved.
+	 */
+	clock-frequency = <26000000>;
+};

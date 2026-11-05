@@ -1,0 +1,56 @@
+#
+# MT8167 -- kernel configuration file for FreeBSD/arm64 on MediaTek MT8167
+#	    and MT8516 based boards (Google Coral Dev Board Mini, Pumpkin).
+#
+# This is a bring-up configuration.  Only the serial console is expected to
+# work; everything else on the SoC (clocks, pinctrl, eMMC/SD, USB, Wi-Fi,
+# PMIC) still needs drivers.  The board is expected to be booted through
+# U-Boot's booti (LINUX_BOOT_ABI from std.arm64), e.g. wrapped in an
+# Android boot image and loaded with "fastboot boot".
+#
+# For more information on this file, please read the config(5) manual page,
+# and/or the handbook section on Kernel Configuration Files:
+#
+#    https://docs.freebsd.org/en/books/handbook/kernelconfig/#kernelconfig-config
+#
+# The handbook is also available locally in /usr/share/doc/handbook
+# if you've installed the doc distribution, otherwise always see the
+# FreeBSD World Wide Web server (https://www.FreeBSD.org/) for the
+# latest information.
+#
+# An exhaustive list of options and more detailed explanations of the
+# device lines is also present in the ../../conf/NOTES and NOTES files.
+# If you are in doubt as to the purpose or necessity of a line, check first
+# in NOTES.
+#
+
+#NO_UNIVERSE
+
+cpu		ARM64
+ident		MT8167
+
+include		"std.arm64"
+include		"std.dev"
+include		"std.mediatek"
+
+# Embed the board DTB in the kernel.  It is used when the firmware passes no
+# DTB (e.g. "booti ${loadaddr} - -" in U-Boot); a DTB handed over by U-Boot,
+# such as the Mendel Linux one from an Android boot image, takes precedence.
+options 	FDT_DTB_STATIC
+makeoptions	FDT_DTS_FILE=mediatek/mt8167-coral-dev-board-mini.dts
+
+# Early console on UART0 (0x11005000), active before the FDT console
+# attaches.  Invaluable while the kernel dies before reaching uart(4).
+#options 	SOCDEV_PA=0x11005000
+#options 	EARLY_PRINTF=ns8250
+#options 	UART_NS8250_EARLY_REG_SHIFT=2
+#options 	UART_NS8250_EARLY_REG_IO_WIDTH=4
+
+# Debugging aids for bring-up.
+options 	KDB			# Enable kernel debugger support
+options 	DDB			# Support DDB
+options 	GDB			# Support remote GDB
+options 	INVARIANTS		# Enable calls of extra sanity checking
+options 	INVARIANT_SUPPORT	# Extra sanity checks of internal structures, required by INVARIANTS
+options 	WITNESS			# Enable checks to detect deadlocks and cycles
+options 	WITNESS_SKIPSPIN	# Don't run witness on spinlocks for speed
