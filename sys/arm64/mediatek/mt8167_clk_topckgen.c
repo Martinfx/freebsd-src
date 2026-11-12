@@ -106,6 +106,26 @@
 	MT_GATE(_id, _name, _pname, TOP_CG ## _bank ## _SET,		\
 	    TOP_CG ## _bank ## _CLR, TOP_CG ## _bank ## _STA, _bit, _flags)
 
+/*
+ * Clocks of the infracfg controller that are used as parents here.  That
+ * controller in turn takes its parents from this one, so neither can be
+ * registered first with all its parents present.  The stubs below stand in
+ * until infracfg attaches and replaces them with the real clocks.
+ */
+#define	TOP_LINK(_n, _name)						\
+{									\
+	.clkdef.id = MT8167_CLK_TOP_NR_CLK + (_n),			\
+	.clkdef.name = _name,						\
+	.clkdef.flags = CLK_NODE_STATIC_STRINGS,			\
+}
+
+static struct clk_link_def linked_clk[] = {
+	TOP_LINK(0, "ifr_eth_25m_sel"),
+	TOP_LINK(1, "ifr_i2c0_sel"),
+	TOP_LINK(2, "ifr_i2c1_sel"),
+	TOP_LINK(3, "ifr_i2c2_sel"),
+};
+
 static struct clk_fixed_def fixed_clk[] = {
 	FRATE(CLK_TOP_CLK_NULL, "clk_null", 0),
 	FRATE(CLK_TOP_I2S_INFRA_BCK, "i2s_infra_bck", 26000000),
@@ -620,6 +640,8 @@ static struct mt_clk_gate_def gates_clk[] = {
 };
 
 static struct mdtk_clk_def clk_def = {
+	.linked_def = linked_clk,
+	.num_linked = nitems(linked_clk),
 	.fixed_def = fixed_clk,
 	.num_fixed = nitems(fixed_clk),
 	.muxes_def = muxes_clk,
