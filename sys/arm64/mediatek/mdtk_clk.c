@@ -47,7 +47,6 @@
 
 #include "mdtk_clk.h"
 #include "mt_clk_pll.h"
-#include "mt_clk_cpumux.h"
 #include "mt_clk_gate.h"
 #include "syscon_if.h"
 
@@ -63,19 +62,6 @@ init_pll(struct mdtk_clk_softc *sc, struct mt_clk_pll_def *clks,
             panic("mt_clk_pll_register failed");
     }
 
-}
-
-static void
-init_cpumuxes(struct mdtk_clk_softc *sc, struct mt_clk_cpumux_def *clks,
-            int nclks)
-{
-    int i, rv;
-
-    for (i = 0; i < nclks; i++) {
-        rv = mt_clk_cpumux_register(sc->clkdom, clks + i);
-        if (rv != 0)
-            panic("mt_clk_cpumux_register failed");
-    }
 }
 
 static void
@@ -217,7 +203,6 @@ mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef)
         panic("clkdom == NULL");
 
     init_pll(sc, cldef->pll_def, cldef->num_pll);
-    init_cpumuxes(sc, cldef->cpumux_def, cldef->num_cpumux);
     init_fixeds(sc, cldef->fixed_def, cldef->num_fixed);
     init_linked(sc, cldef->linked_def, cldef->num_linked);
     init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
