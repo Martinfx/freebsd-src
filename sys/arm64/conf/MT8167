@@ -41,10 +41,11 @@ makeoptions	FDT_DTS_FILE=mediatek/mt8167-coral.dts
 
 # Early console on UART0 (0x11005000), active before the FDT console
 # attaches.  Invaluable while the kernel dies before reaching uart(4).
-#options 	SOCDEV_PA=0x11005000
-#options 	EARLY_PRINTF=ns8250
-#options 	UART_NS8250_EARLY_REG_SHIFT=2
-#options 	UART_NS8250_EARLY_REG_IO_WIDTH=4
+options 	SOCDEV_PA=0x11005000
+options 	EARLY_PRINTF=ns8250
+options 	UART_NS8250_EARLY_REG_SHIFT=2
+options 	UART_NS8250_EARLY_REG_IO_WIDTH=4
+options 	BOOTVERBOSE
 
 # Debugging aids for bring-up.
 options 	KDB			# Enable kernel debugger support
