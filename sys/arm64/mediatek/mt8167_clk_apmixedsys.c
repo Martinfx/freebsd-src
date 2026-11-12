@@ -49,7 +49,6 @@
 #include <dt-bindings/clock/mt8167-clk.h>
 
 #include <arm64/mediatek/mdtk_clk.h>
-#include <arm64/mediatek/mt_clk_gate.h>
 #include <arm64/mediatek/mt_clk_pll.h>
 
 #include "clkdev_if.h"

@@ -49,7 +49,6 @@
 #include <dt-bindings/clock/mt8167-clk.h>
 
 #include <arm64/mediatek/mdtk_clk.h>
-#include <arm64/mediatek/mt_clk_gate.h>
 #include <arm64/mediatek/mt_clk_pll.h>
 
 #include "clkdev_if.h"
@@ -81,7 +80,8 @@
 
 /*
  * Clock gate banks.  Banks 0 to 4 have a status register and write-one
- * SET and CLR registers; bank 5 shares TOP_CLKSEL9 and is modified in place.
+ * SET and CLR registers; bank 5 lives in TOP_CLKSEL9 and is modified in
+ * place.
  */
 #define	TOP_CG0_STA		0x020
 #define	TOP_CG0_SET		0x050
@@ -99,12 +99,16 @@
 #define	TOP_CG4_SET		0x0a4
 #define	TOP_CG4_CLR		0x0b4
 #define	TOP_CG5_STA		TOP_CLKSEL9
-#define	TOP_CG5_SET		TOP_CLKSEL9
-#define	TOP_CG5_CLR		TOP_CLKSEL9
 
-#define	CG(_bank, _id, _name, _pname, _bit, _flags)			\
-	MT_GATE(_id, _name, _pname, TOP_CG ## _bank ## _SET,		\
-	    TOP_CG ## _bank ## _CLR, TOP_CG ## _bank ## _STA, _bit, _flags)
+/*
+ * A gate bit is set while the clock is stopped, except for the inverted
+ * ones.  All of them are described by their status register;
+ * mt8167_topckgen_modify_4() takes care of the SET and CLR registers.
+ */
+#define	CG(_bank, _id, _name, _pname, _bit)				\
+	I_GATE(_id, _name, _pname, TOP_CG ## _bank ## _STA, _bit)
+#define	CG_INV(_bank, _id, _name, _pname, _bit)				\
+	GATE(_id, _name, _pname, TOP_CG ## _bank ## _STA, _bit)
 
 /*
  * Clocks of the infracfg controller that are used as parents here.  That
@@ -517,126 +521,110 @@ static struct clk_div_def dived_clk[] = {
 	    TOP_CLKDIV2, 0, 8),
 };
 
-static struct mt_clk_gate_def gates_clk[] = {
-	CG(0, CLK_TOP_PWM_MM, "pwm_mm", "pwm_mm_sel", 0, 0),
-	CG(0, CLK_TOP_CAM_MM, "cam_mm", "camtg_mm_sel", 1, 0),
-	CG(0, CLK_TOP_MFG_MM, "mfg_mm", "mfg_mm_sel", 2, 0),
-	CG(0, CLK_TOP_SPM_52M, "spm_52m", "spm_52m_sel", 3, 0),
-	CG(0, CLK_TOP_MIPI_26M_DBG, "mipi_26m_dbg", "mipi_26m", 4, MT_GATE_INV),
-	CG(0, CLK_TOP_SCAM_MM, "scam_mm", "scam_mm_sel", 5, 0),
-	CG(0, CLK_TOP_SMI_MM, "smi_mm", "smi_mm_sel", 9, 0),
-	CG(1, CLK_TOP_THEM, "them", "ahb_infra_sel", 1, 0),
-	CG(1, CLK_TOP_APDMA, "apdma", "ahb_infra_sel", 2, 0),
-	CG(1, CLK_TOP_I2C0, "i2c0", "ifr_i2c0_sel", 3, 0),
-	CG(1, CLK_TOP_I2C1, "i2c1", "ifr_i2c1_sel", 4, 0),
-	CG(1, CLK_TOP_AUXADC1, "auxadc1", "ahb_infra_sel", 5, 0),
-	CG(1, CLK_TOP_NFI, "nfi", "nfi1x_pad_sel", 6, 0),
-	CG(1, CLK_TOP_NFIECC, "nfiecc", "rg_nfiecc", 7, 0),
-	CG(1, CLK_TOP_DEBUGSYS, "debugsys", "rg_dbg_atclk", 8, 0),
-	CG(1, CLK_TOP_PWM, "pwm", "ahb_infra_sel", 9, 0),
-	CG(1, CLK_TOP_UART0, "uart0", "uart0_sel", 10, 0),
-	CG(1, CLK_TOP_UART1, "uart1", "uart1_sel", 11, 0),
-	CG(1, CLK_TOP_BTIF, "btif", "ahb_infra_sel", 12, 0),
-	CG(1, CLK_TOP_USB, "usb", "usb_78m", 13, 0),
-	CG(1, CLK_TOP_FLASHIF_26M, "flashif_26m", "clk26m_ck", 14, 0),
-	CG(1, CLK_TOP_AUXADC2, "auxadc2", "ahb_infra_sel", 15, 0),
-	CG(1, CLK_TOP_I2C2, "i2c2", "ifr_i2c2_sel", 16, 0),
-	CG(1, CLK_TOP_MSDC0, "msdc0", "msdc0_sel", 17, 0),
-	CG(1, CLK_TOP_MSDC1, "msdc1", "msdc1_sel", 18, 0),
-	CG(1, CLK_TOP_NFI2X, "nfi2x", "nfi2x_pad_sel", 19, 0),
-	CG(1, CLK_TOP_PMICWRAP_AP, "pwrap_ap", "clk26m_ck", 20, 0),
-	CG(1, CLK_TOP_SEJ, "sej", "ahb_infra_sel", 21, 0),
-	CG(1, CLK_TOP_MEMSLP_DLYER, "memslp_dlyer", "clk26m_ck", 22, 0),
-	CG(1, CLK_TOP_SPI, "spi", "spi_sel", 23, 0),
-	CG(1, CLK_TOP_APXGPT, "apxgpt", "clk26m_ck", 24, 0),
-	CG(1, CLK_TOP_AUDIO, "audio", "clk26m_ck", 25, 0),
-	CG(1, CLK_TOP_PMICWRAP_MD, "pwrap_md", "clk26m_ck", 27, 0),
-	CG(1, CLK_TOP_PMICWRAP_CONN, "pwrap_conn", "clk26m_ck", 28, 0),
-	CG(1, CLK_TOP_PMICWRAP_26M, "pwrap_26m", "clk26m_ck", 29, 0),
-	CG(1, CLK_TOP_AUX_ADC, "aux_adc", "clk26m_ck", 30, 0),
-	CG(1, CLK_TOP_AUX_TP, "aux_tp", "clk26m_ck", 31, 0),
-	CG(2, CLK_TOP_MSDC2, "msdc2", "ahb_infra_sel", 0, 0),
-	CG(2, CLK_TOP_RBIST, "rbist", "univpll_d12", 1, 0),
-	CG(2, CLK_TOP_NFI_BUS, "nfi_bus", "ahb_infra_sel", 2, 0),
-	CG(2, CLK_TOP_GCE, "gce", "ahb_infra_sel", 4, 0),
-	CG(2, CLK_TOP_TRNG, "trng", "ahb_infra_sel", 5, 0),
-	CG(2, CLK_TOP_SEJ_13M, "sej_13m", "clk26m_ck", 6, 0),
-	CG(2, CLK_TOP_AES, "aes", "ahb_infra_sel", 7, 0),
-	CG(2, CLK_TOP_PWM_B, "pwm_b", "rg_pwm_infra", 8, 0),
-	CG(2, CLK_TOP_PWM1_FB, "pwm1_fb", "rg_pwm_infra", 9, 0),
-	CG(2, CLK_TOP_PWM2_FB, "pwm2_fb", "rg_pwm_infra", 10, 0),
-	CG(2, CLK_TOP_PWM3_FB, "pwm3_fb", "rg_pwm_infra", 11, 0),
-	CG(2, CLK_TOP_PWM4_FB, "pwm4_fb", "rg_pwm_infra", 12, 0),
-	CG(2, CLK_TOP_PWM5_FB, "pwm5_fb", "rg_pwm_infra", 13, 0),
-	CG(2, CLK_TOP_USB_1P, "usb_1p", "usb_78m", 14, 0),
-	CG(2, CLK_TOP_FLASHIF_FREERUN, "flashif_freerun", "ahb_infra_sel", 15,
-	    0),
-	CG(2, CLK_TOP_26M_HDMI_SIFM, "hdmi_sifm_26m", "clk26m_ck", 16, 0),
-	CG(2, CLK_TOP_26M_CEC, "cec_26m", "clk26m_ck", 17, 0),
-	CG(2, CLK_TOP_32K_CEC, "cec_32k", "clk32k", 18, 0),
-	CG(2, CLK_TOP_66M_ETH, "eth_66m", "ahb_infra_d2", 19, 0),
-	CG(2, CLK_TOP_133M_ETH, "eth_133m", "ahb_infra_sel", 20, 0),
-	CG(2, CLK_TOP_FETH_25M, "feth_25m", "ifr_eth_25m_sel", 21, 0),
-	CG(2, CLK_TOP_FETH_50M, "feth_50m", "rg_eth", 22, 0),
-	CG(2, CLK_TOP_FLASHIF_AXI, "flashif_axi", "ahb_infra_sel", 23, 0),
-	CG(2, CLK_TOP_USBIF, "usbif", "ahb_infra_sel", 24, 0),
-	CG(2, CLK_TOP_UART2, "uart2", "rg_uart2", 25, 0),
-	CG(2, CLK_TOP_BSI, "bsi", "ahb_infra_sel", 26, 0),
-	CG(2, CLK_TOP_GCPU_B, "gcpu_b", "ahb_infra_sel", 27, 0),
-	CG(2, CLK_TOP_MSDC0_INFRA, "msdc0_infra", "msdc0", 28, MT_GATE_INV),
-	CG(2, CLK_TOP_MSDC1_INFRA, "msdc1_infra", "msdc1", 29, MT_GATE_INV),
-	CG(2, CLK_TOP_MSDC2_INFRA, "msdc2_infra", "rg_msdc2", 30, MT_GATE_INV),
-	CG(2, CLK_TOP_USB_78M, "usb_78m", "usb_78m_sel", 31, 0),
-	CG(3, CLK_TOP_RG_SPINOR, "rg_spinor", "spinor_sel", 0, 0),
-	CG(3, CLK_TOP_RG_MSDC2, "rg_msdc2", "msdc2_sel", 1, 0),
-	CG(3, CLK_TOP_RG_ETH, "rg_eth", "eth_sel", 2, 0),
-	CG(3, CLK_TOP_RG_VDEC, "rg_vdec", "vdec_mm_sel", 3, 0),
-	CG(3, CLK_TOP_RG_FDPI0, "rg_fdpi0", "dpi0_mm_sel", 4, 0),
-	CG(3, CLK_TOP_RG_FDPI1, "rg_fdpi1", "dpi1_mm_sel", 5, 0),
-	CG(3, CLK_TOP_RG_AXI_MFG, "rg_axi_mfg", "axi_mfg_in_sel", 6, 0),
-	CG(3, CLK_TOP_RG_SLOW_MFG, "rg_slow_mfg", "slow_mfg_sel", 7, 0),
-	CG(3, CLK_TOP_RG_AUD1, "rg_aud1", "aud1_sel", 8, 0),
-	CG(3, CLK_TOP_RG_AUD2, "rg_aud2", "aud2_sel", 9, 0),
-	CG(3, CLK_TOP_RG_AUD_ENGEN1, "rg_aud_engen1", "aud_engen1_sel", 10, 0),
-	CG(3, CLK_TOP_RG_AUD_ENGEN2, "rg_aud_engen2", "aud_engen2_sel", 11, 0),
-	CG(3, CLK_TOP_RG_I2C, "rg_i2c", "i2c_sel", 12, 0),
-	CG(3, CLK_TOP_RG_PWM_INFRA, "rg_pwm_infra", "pwm_sel", 13, 0),
+static struct clk_gate_def gates_clk[] = {
+	CG(0, CLK_TOP_PWM_MM, "pwm_mm", "pwm_mm_sel", 0),
+	CG(0, CLK_TOP_CAM_MM, "cam_mm", "camtg_mm_sel", 1),
+	CG(0, CLK_TOP_MFG_MM, "mfg_mm", "mfg_mm_sel", 2),
+	CG(0, CLK_TOP_SPM_52M, "spm_52m", "spm_52m_sel", 3),
+	CG_INV(0, CLK_TOP_MIPI_26M_DBG, "mipi_26m_dbg", "mipi_26m", 4),
+	CG(0, CLK_TOP_SCAM_MM, "scam_mm", "scam_mm_sel", 5),
+	CG(0, CLK_TOP_SMI_MM, "smi_mm", "smi_mm_sel", 9),
+	CG(1, CLK_TOP_THEM, "them", "ahb_infra_sel", 1),
+	CG(1, CLK_TOP_APDMA, "apdma", "ahb_infra_sel", 2),
+	CG(1, CLK_TOP_I2C0, "i2c0", "ifr_i2c0_sel", 3),
+	CG(1, CLK_TOP_I2C1, "i2c1", "ifr_i2c1_sel", 4),
+	CG(1, CLK_TOP_AUXADC1, "auxadc1", "ahb_infra_sel", 5),
+	CG(1, CLK_TOP_NFI, "nfi", "nfi1x_pad_sel", 6),
+	CG(1, CLK_TOP_NFIECC, "nfiecc", "rg_nfiecc", 7),
+	CG(1, CLK_TOP_DEBUGSYS, "debugsys", "rg_dbg_atclk", 8),
+	CG(1, CLK_TOP_PWM, "pwm", "ahb_infra_sel", 9),
+	CG(1, CLK_TOP_UART0, "uart0", "uart0_sel", 10),
+	CG(1, CLK_TOP_UART1, "uart1", "uart1_sel", 11),
+	CG(1, CLK_TOP_BTIF, "btif", "ahb_infra_sel", 12),
+	CG(1, CLK_TOP_USB, "usb", "usb_78m", 13),
+	CG(1, CLK_TOP_FLASHIF_26M, "flashif_26m", "clk26m_ck", 14),
+	CG(1, CLK_TOP_AUXADC2, "auxadc2", "ahb_infra_sel", 15),
+	CG(1, CLK_TOP_I2C2, "i2c2", "ifr_i2c2_sel", 16),
+	CG(1, CLK_TOP_MSDC0, "msdc0", "msdc0_sel", 17),
+	CG(1, CLK_TOP_MSDC1, "msdc1", "msdc1_sel", 18),
+	CG(1, CLK_TOP_NFI2X, "nfi2x", "nfi2x_pad_sel", 19),
+	CG(1, CLK_TOP_PMICWRAP_AP, "pwrap_ap", "clk26m_ck", 20),
+	CG(1, CLK_TOP_SEJ, "sej", "ahb_infra_sel", 21),
+	CG(1, CLK_TOP_MEMSLP_DLYER, "memslp_dlyer", "clk26m_ck", 22),
+	CG(1, CLK_TOP_SPI, "spi", "spi_sel", 23),
+	CG(1, CLK_TOP_APXGPT, "apxgpt", "clk26m_ck", 24),
+	CG(1, CLK_TOP_AUDIO, "audio", "clk26m_ck", 25),
+	CG(1, CLK_TOP_PMICWRAP_MD, "pwrap_md", "clk26m_ck", 27),
+	CG(1, CLK_TOP_PMICWRAP_CONN, "pwrap_conn", "clk26m_ck", 28),
+	CG(1, CLK_TOP_PMICWRAP_26M, "pwrap_26m", "clk26m_ck", 29),
+	CG(1, CLK_TOP_AUX_ADC, "aux_adc", "clk26m_ck", 30),
+	CG(1, CLK_TOP_AUX_TP, "aux_tp", "clk26m_ck", 31),
+	CG(2, CLK_TOP_MSDC2, "msdc2", "ahb_infra_sel", 0),
+	CG(2, CLK_TOP_RBIST, "rbist", "univpll_d12", 1),
+	CG(2, CLK_TOP_NFI_BUS, "nfi_bus", "ahb_infra_sel", 2),
+	CG(2, CLK_TOP_GCE, "gce", "ahb_infra_sel", 4),
+	CG(2, CLK_TOP_TRNG, "trng", "ahb_infra_sel", 5),
+	CG(2, CLK_TOP_SEJ_13M, "sej_13m", "clk26m_ck", 6),
+	CG(2, CLK_TOP_AES, "aes", "ahb_infra_sel", 7),
+	CG(2, CLK_TOP_PWM_B, "pwm_b", "rg_pwm_infra", 8),
+	CG(2, CLK_TOP_PWM1_FB, "pwm1_fb", "rg_pwm_infra", 9),
+	CG(2, CLK_TOP_PWM2_FB, "pwm2_fb", "rg_pwm_infra", 10),
+	CG(2, CLK_TOP_PWM3_FB, "pwm3_fb", "rg_pwm_infra", 11),
+	CG(2, CLK_TOP_PWM4_FB, "pwm4_fb", "rg_pwm_infra", 12),
+	CG(2, CLK_TOP_PWM5_FB, "pwm5_fb", "rg_pwm_infra", 13),
+	CG(2, CLK_TOP_USB_1P, "usb_1p", "usb_78m", 14),
+	CG(2, CLK_TOP_FLASHIF_FREERUN, "flashif_freerun", "ahb_infra_sel", 15),
+	CG(2, CLK_TOP_26M_HDMI_SIFM, "hdmi_sifm_26m", "clk26m_ck", 16),
+	CG(2, CLK_TOP_26M_CEC, "cec_26m", "clk26m_ck", 17),
+	CG(2, CLK_TOP_32K_CEC, "cec_32k", "clk32k", 18),
+	CG(2, CLK_TOP_66M_ETH, "eth_66m", "ahb_infra_d2", 19),
+	CG(2, CLK_TOP_133M_ETH, "eth_133m", "ahb_infra_sel", 20),
+	CG(2, CLK_TOP_FETH_25M, "feth_25m", "ifr_eth_25m_sel", 21),
+	CG(2, CLK_TOP_FETH_50M, "feth_50m", "rg_eth", 22),
+	CG(2, CLK_TOP_FLASHIF_AXI, "flashif_axi", "ahb_infra_sel", 23),
+	CG(2, CLK_TOP_USBIF, "usbif", "ahb_infra_sel", 24),
+	CG(2, CLK_TOP_UART2, "uart2", "rg_uart2", 25),
+	CG(2, CLK_TOP_BSI, "bsi", "ahb_infra_sel", 26),
+	CG(2, CLK_TOP_GCPU_B, "gcpu_b", "ahb_infra_sel", 27),
+	CG_INV(2, CLK_TOP_MSDC0_INFRA, "msdc0_infra", "msdc0", 28),
+	CG_INV(2, CLK_TOP_MSDC1_INFRA, "msdc1_infra", "msdc1", 29),
+	CG_INV(2, CLK_TOP_MSDC2_INFRA, "msdc2_infra", "rg_msdc2", 30),
+	CG(2, CLK_TOP_USB_78M, "usb_78m", "usb_78m_sel", 31),
+	CG(3, CLK_TOP_RG_SPINOR, "rg_spinor", "spinor_sel", 0),
+	CG(3, CLK_TOP_RG_MSDC2, "rg_msdc2", "msdc2_sel", 1),
+	CG(3, CLK_TOP_RG_ETH, "rg_eth", "eth_sel", 2),
+	CG(3, CLK_TOP_RG_VDEC, "rg_vdec", "vdec_mm_sel", 3),
+	CG(3, CLK_TOP_RG_FDPI0, "rg_fdpi0", "dpi0_mm_sel", 4),
+	CG(3, CLK_TOP_RG_FDPI1, "rg_fdpi1", "dpi1_mm_sel", 5),
+	CG(3, CLK_TOP_RG_AXI_MFG, "rg_axi_mfg", "axi_mfg_in_sel", 6),
+	CG(3, CLK_TOP_RG_SLOW_MFG, "rg_slow_mfg", "slow_mfg_sel", 7),
+	CG(3, CLK_TOP_RG_AUD1, "rg_aud1", "aud1_sel", 8),
+	CG(3, CLK_TOP_RG_AUD2, "rg_aud2", "aud2_sel", 9),
+	CG(3, CLK_TOP_RG_AUD_ENGEN1, "rg_aud_engen1", "aud_engen1_sel", 10),
+	CG(3, CLK_TOP_RG_AUD_ENGEN2, "rg_aud_engen2", "aud_engen2_sel", 11),
+	CG(3, CLK_TOP_RG_I2C, "rg_i2c", "i2c_sel", 12),
+	CG(3, CLK_TOP_RG_PWM_INFRA, "rg_pwm_infra", "pwm_sel", 13),
 	CG(3, CLK_TOP_RG_AUD_SPDIF_IN, "rg_aud_spdif_in", "aud_spdifin_sel",
-	    14, 0),
-	CG(3, CLK_TOP_RG_UART2, "rg_uart2", "uart2_sel", 15, 0),
-	CG(3, CLK_TOP_RG_BSI, "rg_bsi", "bsi_sel", 16, 0),
-	CG(3, CLK_TOP_RG_DBG_ATCLK, "rg_dbg_atclk", "dbg_atclk_sel", 17, 0),
-	CG(3, CLK_TOP_RG_NFIECC, "rg_nfiecc", "nfiecc_sel", 18, 0),
-	CG(4, CLK_TOP_RG_APLL1_D2_EN, "rg_apll1_d2_en", "apll1_d2", 8,
-	    MT_GATE_INV),
-	CG(4, CLK_TOP_RG_APLL1_D4_EN, "rg_apll1_d4_en", "apll1_d4", 9,
-	    MT_GATE_INV),
-	CG(4, CLK_TOP_RG_APLL1_D8_EN, "rg_apll1_d8_en", "apll1_d8", 10,
-	    MT_GATE_INV),
-	CG(4, CLK_TOP_RG_APLL2_D2_EN, "rg_apll2_d2_en", "apll2_d2", 11,
-	    MT_GATE_INV),
-	CG(4, CLK_TOP_RG_APLL2_D4_EN, "rg_apll2_d4_en", "apll2_d4", 12,
-	    MT_GATE_INV),
-	CG(4, CLK_TOP_RG_APLL2_D8_EN, "rg_apll2_d8_en", "apll2_d8", 13,
-	    MT_GATE_INV),
-	CG(5, CLK_TOP_APLL12_DIV0, "apll12_div0", "apll12_ck_div0", 0,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV1, "apll12_div1", "apll12_ck_div1", 1,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV2, "apll12_div2", "apll12_ck_div2", 2,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV3, "apll12_div3", "apll12_ck_div3", 3,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV4, "apll12_div4", "apll12_ck_div4", 4,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV4B, "apll12_div4b", "apll12_ck_div4b", 5,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV5, "apll12_div5", "apll12_ck_div5", 6,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV5B, "apll12_div5b", "apll12_ck_div5b", 7,
-	    MT_GATE_NO_SETCLR),
-	CG(5, CLK_TOP_APLL12_DIV6, "apll12_div6", "apll12_ck_div6", 8,
-	    MT_GATE_NO_SETCLR),
+	    14),
+	CG(3, CLK_TOP_RG_UART2, "rg_uart2", "uart2_sel", 15),
+	CG(3, CLK_TOP_RG_BSI, "rg_bsi", "bsi_sel", 16),
+	CG(3, CLK_TOP_RG_DBG_ATCLK, "rg_dbg_atclk", "dbg_atclk_sel", 17),
+	CG(3, CLK_TOP_RG_NFIECC, "rg_nfiecc", "nfiecc_sel", 18),
+	CG_INV(4, CLK_TOP_RG_APLL1_D2_EN, "rg_apll1_d2_en", "apll1_d2", 8),
+	CG_INV(4, CLK_TOP_RG_APLL1_D4_EN, "rg_apll1_d4_en", "apll1_d4", 9),
+	CG_INV(4, CLK_TOP_RG_APLL1_D8_EN, "rg_apll1_d8_en", "apll1_d8", 10),
+	CG_INV(4, CLK_TOP_RG_APLL2_D2_EN, "rg_apll2_d2_en", "apll2_d2", 11),
+	CG_INV(4, CLK_TOP_RG_APLL2_D4_EN, "rg_apll2_d4_en", "apll2_d4", 12),
+	CG_INV(4, CLK_TOP_RG_APLL2_D8_EN, "rg_apll2_d8_en", "apll2_d8", 13),
+	CG(5, CLK_TOP_APLL12_DIV0, "apll12_div0", "apll12_ck_div0", 0),
+	CG(5, CLK_TOP_APLL12_DIV1, "apll12_div1", "apll12_ck_div1", 1),
+	CG(5, CLK_TOP_APLL12_DIV2, "apll12_div2", "apll12_ck_div2", 2),
+	CG(5, CLK_TOP_APLL12_DIV3, "apll12_div3", "apll12_ck_div3", 3),
+	CG(5, CLK_TOP_APLL12_DIV4, "apll12_div4", "apll12_ck_div4", 4),
+	CG(5, CLK_TOP_APLL12_DIV4B, "apll12_div4b", "apll12_ck_div4b", 5),
+	CG(5, CLK_TOP_APLL12_DIV5, "apll12_div5", "apll12_ck_div5", 6),
+	CG(5, CLK_TOP_APLL12_DIV5B, "apll12_div5b", "apll12_ck_div5b", 7),
+	CG(5, CLK_TOP_APLL12_DIV6, "apll12_div6", "apll12_ck_div6", 8),
 };
 
 static struct mdtk_clk_def clk_def = {
@@ -648,9 +636,53 @@ static struct mdtk_clk_def clk_def = {
 	.num_muxes = nitems(muxes_clk),
 	.dived_def = dived_clk,
 	.num_dived = nitems(dived_clk),
-	.mtgates_def = gates_clk,
-	.num_mtgates = nitems(gates_clk),
+	.gates_def = gates_clk,
+	.num_gates = nitems(gates_clk),
 };
+
+/*
+ * Register modify for the clock nodes.  The gate banks 0 to 4 cannot be
+ * changed through their status register: bits are set by writing them to
+ * the SET register of the bank and cleared through the CLR register.
+ */
+static int
+mt8167_topckgen_modify_4(device_t dev, bus_addr_t addr, uint32_t clear_mask,
+    uint32_t set_mask)
+{
+	bus_addr_t set_reg, clr_reg;
+
+	switch (addr) {
+	case TOP_CG0_STA:
+		set_reg = TOP_CG0_SET;
+		clr_reg = TOP_CG0_CLR;
+		break;
+	case TOP_CG1_STA:
+		set_reg = TOP_CG1_SET;
+		clr_reg = TOP_CG1_CLR;
+		break;
+	case TOP_CG2_STA:
+		set_reg = TOP_CG2_SET;
+		clr_reg = TOP_CG2_CLR;
+		break;
+	case TOP_CG3_STA:
+		set_reg = TOP_CG3_SET;
+		clr_reg = TOP_CG3_CLR;
+		break;
+	case TOP_CG4_STA:
+		set_reg = TOP_CG4_SET;
+		clr_reg = TOP_CG4_CLR;
+		break;
+	default:
+		return (mdtk_clkdev_modify_4(dev, addr, clear_mask, set_mask));
+	}
+
+	clear_mask &= ~set_mask;
+	if (clear_mask != 0)
+		mdtk_clkdev_write_4(dev, clr_reg, clear_mask);
+	if (set_mask != 0)
+		mdtk_clkdev_write_4(dev, set_reg, set_mask);
+	return (0);
+}
 
 static struct ofw_compat_data compat_data[] = {
 	{"mediatek,mt8167-topckgen",	1},
@@ -694,7 +726,7 @@ static device_method_t mt8167_topckgen_methods[] = {
 	/* Clkdev interface */
 	DEVMETHOD(clkdev_read_4,	mdtk_clkdev_read_4),
 	DEVMETHOD(clkdev_write_4,	mdtk_clkdev_write_4),
-	DEVMETHOD(clkdev_modify_4,	mdtk_clkdev_modify_4),
+	DEVMETHOD(clkdev_modify_4,	mt8167_topckgen_modify_4),
 	DEVMETHOD(clkdev_device_lock,	mdtk_clkdev_device_lock),
 	DEVMETHOD(clkdev_device_unlock,	mdtk_clkdev_device_unlock),
 

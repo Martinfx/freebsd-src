@@ -728,7 +728,6 @@ arm/mv/clk/periph_clk_mux_gate.c		optional a37x0_nb_periph a37x0_sb_periph clk f
 
 # MediaTek
 arm64/mediatek/mdtk_clk.c			optional clk fdt soc_mediatek_mt8167
-arm64/mediatek/mt_clk_gate.c			optional clk fdt soc_mediatek_mt8167
 arm64/mediatek/mt_clk_pll.c			optional clk fdt soc_mediatek_mt8167
 arm64/mediatek/mt8167_clk_apmixedsys.c		optional clk fdt soc_mediatek_mt8167
 arm64/mediatek/mt8167_clk_infracfg.c		optional clk fdt soc_mediatek_mt8167

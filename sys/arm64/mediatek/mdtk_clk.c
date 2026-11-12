@@ -47,7 +47,6 @@
 
 #include "mdtk_clk.h"
 #include "mt_clk_pll.h"
-#include "mt_clk_gate.h"
 #include "syscon_if.h"
 
 static void
@@ -126,19 +125,6 @@ init_div(struct mdtk_clk_softc *sc, struct clk_div_def *clks, int nclks)
     }
 }
 
-static void
-init_mtgates(struct mdtk_clk_softc *sc, struct mt_clk_gate_def *clks,
-    int nclks)
-{
-	int i, rv;
-
-	for (i = 0; i < nclks; i++) {
-		rv = mt_clk_gate_register(sc->clkdom, clks + i);
-		if (rv != 0)
-			panic("mt_clk_gate_register failed");
-	}
-}
-
 int
 mdtk_clkdev_read_4(device_t dev, bus_addr_t addr, uint32_t *val)
 {
@@ -208,7 +194,6 @@ mdtk_register_clocks(device_t dev, struct mdtk_clk_def *cldef)
     init_muxes(sc, cldef->muxes_def, cldef->num_muxes);
     init_gates(sc, cldef->gates_def, cldef->num_gates);
     init_div(sc, cldef->dived_def, cldef->num_dived);
-    init_mtgates(sc, cldef->mtgates_def, cldef->num_mtgates);
 
     clkdom_finit(sc->clkdom);
     if (bootverbose)
