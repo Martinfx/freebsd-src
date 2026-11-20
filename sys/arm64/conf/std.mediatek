@@ -4,6 +4,7 @@
 
 # SoC support
 options 	SOC_MEDIATEK
+options 	SOC_MEDIATEK_MT7622
 options 	SOC_MEDIATEK_MT7986
 
 # Serial (COM) ports
