@@ -131,6 +131,8 @@ mtk_clk_def_clkdef(const struct mtk_clk_def *def)
 		return (&def->mux.clkdef);
 	case MTK_CLK_GATE:
 		return (&def->gate.clkdef);
+	case MTK_CLK_PLL_MT7622:
+		return (&def->pll_mt7622.clkdef);
 	default:
 		return (NULL);
 	}
@@ -176,6 +178,10 @@ mtk_clk_attach(device_t dev, const struct mtk_clk_desc *desc)
 			break;
 		case MTK_CLK_GATE:
 			rv = mtk_clk_gate_register(sc->clkdom, &def->gate);
+			break;
+		case MTK_CLK_PLL_MT7622:
+			rv = mt7622_clk_pll_register(sc->clkdom,
+			    &def->pll_mt7622);
 			break;
 		default:
 			rv = EINVAL;

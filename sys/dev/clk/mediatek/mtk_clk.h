@@ -21,6 +21,17 @@ struct mtk_clk_pll_def {
 	uint32_t		rst_bar;	/* CON0 reset bar mask, or 0 */
 };
 
+/* MT7622 PLL, see mt7622_clk_pll.c for the register layout. */
+struct mt7622_clk_pll_def {
+	struct clknode_init_def	clkdef;
+	uint32_t		con0;		/* control register */
+	uint32_t		pd_reg;		/* post divider, 3 bits */
+	uint32_t		pd_shift;
+	uint32_t		pcw_reg;	/* PCW */
+	uint32_t		pcw_shift;
+	uint32_t		pcwbits;	/* PCW width, 7 integer bits */
+};
+
 /*
  * Mux with an optional gate bit (set means gated) and an optional update
  * register latching the new selection.  The field is changed by
@@ -65,6 +76,7 @@ enum mtk_clk_type {
 	MTK_CLK_PLL,
 	MTK_CLK_MUX,
 	MTK_CLK_GATE,
+	MTK_CLK_PLL_MT7622,
 };
 
 struct mtk_clk_def {
@@ -75,6 +87,7 @@ struct mtk_clk_def {
 		struct mtk_clk_pll_def	pll;
 		struct mtk_clk_mux_def	mux;
 		struct mtk_clk_gate_def	gate;
+		struct mt7622_clk_pll_def pll_mt7622;
 	};
 };
 
@@ -129,6 +142,8 @@ int	mtk_clk_mux_register(struct clkdom *clkdom,
 	    const struct mtk_clk_mux_def *def);
 int	mtk_clk_gate_register(struct clkdom *clkdom,
 	    const struct mtk_clk_gate_def *def);
+int	mt7622_clk_pll_register(struct clkdom *clkdom,
+	    const struct mt7622_clk_pll_def *def);
 
 DECLARE_CLASS(mtk_clk_driver);
 
